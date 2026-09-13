@@ -12,8 +12,18 @@ class PackageConsumerError extends Schema.TaggedError<PackageConsumerError>()(
   { message: Schema.String, cause: Schema.optionalKey(Schema.Defect()) },
 ) {}
 
-const pairs = ["identity", "contracts", "atom", "server", "lazy"];
-const probes = [...pairs.flatMap((name) => [name, `${name}-root`]), "root"];
+const comparisons = [
+  ["identity", "identity-root"],
+  ["contracts", "contracts-root"],
+  ["atom", "atom-root"],
+  ["server", "server-root"],
+  ["lazy", "lazy-root"],
+  ["contracts", "contracts-group"],
+  ["server", "server-group"],
+  ["passkey", "passkey-group"],
+];
+
+const probes = [...new Set([...comparisons.flat(), "contracts-all", "root"])];
 const bundlers = ["esbuild", "vite"] as const;
 
 type Bundler = (typeof bundlers)[number];
@@ -175,8 +185,8 @@ const bundleConsumer = Effect.fn("packageConsumers.bundle")(function* (
     )
       return !["identity/codecs.mjs", "Schema.mjs"].includes(module);
     // A dynamic root import deliberately demonstrates the broad loading boundary.
-    if (probe === "lazy" || /^(?:contracts|atom)(?:-root)?$/.test(probe))
-      return /\/(?:sessions|passkey|totp|oauth)\/(?:module|signInModule)\.mjs$|\/node_modules\/@noble\//.test(
+    if (probe === "lazy" || /^(?:contracts|atom)(?:-root|-group|-all)?$/.test(probe))
+      return /\/(?:auth|sessions|passkey|totp|oauth|email|phone|password\/methods)\/(?:module|definition|signInModule|AuthStrategy|Auth)\.mjs$|\/node_modules\/@noble\//.test(
         file,
       );
 
@@ -270,22 +280,22 @@ export const verifyPackageConsumers = Effect.fn("verifyPackageConsumers")(functi
           { concurrency: 2 },
         );
 
-        for (const name of pairs) {
+        for (const [name, namespace] of comparisons) {
           const direct = results.find((result) => result.probe === name);
-          const root = results.find((result) => result.probe === `${name}-root`);
+          const root = results.find((result) => result.probe === namespace);
 
           if (direct === undefined || root === undefined)
             return yield* new PackageConsumerError({
-              message: `Missing ${bundler}/${name} comparison`,
+              message: `Missing ${bundler}/${namespace} comparison`,
             });
           const extra = root.modules.filter((module) => !direct.modules.includes(module));
 
           if (bundler === "vite" && name !== "lazy" && extra.length > 0)
             return yield* new PackageConsumerError({
-              message: `Vite ${name} root import retained extra modules: ${extra.join(", ")}`,
+              message: `Vite ${namespace} import retained extra modules: ${extra.join(", ")}`,
             });
           yield* Console.log(
-            `${bundler} ${name}: direct ${direct.initialBytes} + ${direct.deferredBytes} deferred; root ${root.initialBytes} + ${root.deferredBytes} deferred minified bytes (including Effect). Extra root modules: ${extra.length}.`,
+            `${bundler} ${name} vs ${namespace}: direct ${direct.initialBytes} + ${direct.deferredBytes} deferred; namespace ${root.initialBytes} + ${root.deferredBytes} deferred minified bytes (including Effect). Extra namespace modules: ${extra.length}.`,
           );
         }
       }
@@ -338,9 +348,26 @@ for (const [name, namespace] of Object.entries(root)) {
   const direct = await import("@yielded/auth/" + name);
   assert.strictEqual(namespace, direct, name + " must be a native module namespace");
 }
+const contracts = await import("@yielded/auth/contracts");
+const strategies = await import("@yielded/auth/strategies");
+for (const group of [contracts, strategies]) {
+  for (const [name, namespace] of Object.entries(group)) {
+    const direct = await import("@yielded/auth/" + name);
+    assert.strictEqual(namespace, direct, name + " group must preserve the direct namespace");
+  }
+}
+const names = [...Object.keys(contracts), ...Object.keys(strategies)];
+assert.equal(new Set(names).size, names.length, "Contract and strategy names must not collide");
+assert.equal(contracts.PasskeyContract.make, root.PasskeyContract.make);
+assert.equal(strategies.Passkey.make, root.Passkey.make);
 const { Effect } = await import("effect");
 assert.equal(await Effect.runPromise(root.Identity.stringSubjectId.toSubject("consumer")), "consumer");
 for (const bundler of ["esbuild", "vite"]) {
+  const passkey = await import("./bundles/" + bundler + "/passkey-group/entry.mjs");
+  const { Schema } = await import("effect");
+  const sessions = contracts.SessionContract.makeSessionContract("consumer/session", Schema.Struct({}));
+  assert.equal(passkey.contract("consumer/passkey", sessions).operations.Begin.exposure, "public");
+  assert.equal(typeof passkey.strategy({ relyingParty: { id: "example.com", name: "Example", origins: ["https://example.com"] } }).bind, "function");
   for (const suffix of ["", "-root"]) {
     const bundled = await import("./bundles/" + bundler + "/identity" + suffix + "/entry.mjs");
     assert.equal(await Effect.runPromise(bundled.stringSubjectId.toSubject("bundled-consumer")), "bundled-consumer");

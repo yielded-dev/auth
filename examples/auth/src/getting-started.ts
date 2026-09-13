@@ -1,6 +1,7 @@
-import { Auth, Http, Password, Passkey, PhoneOtp, Sessions } from "@yielded/auth";
+import { Auth, Http, Sessions } from "@yielded/auth";
 import type { RequestBindingConfiguration } from "@yielded/auth/Operations";
 import type { ProofKeyring } from "@yielded/auth/Proofs";
+import { Password, Passkey, PhoneOtp } from "@yielded/auth/strategies";
 import { Effect, Layer, Schema } from "effect";
 
 const AccountClaims = Schema.Struct({

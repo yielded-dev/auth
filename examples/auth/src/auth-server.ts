@@ -1,4 +1,5 @@
-import { Auth, Http, Password, Sessions } from "@yielded/auth";
+import { Auth, Http, Sessions } from "@yielded/auth";
+import { Password } from "@yielded/auth/strategies";
 import { Effect, Layer } from "effect";
 import { HttpApiBuilder } from "effect/unstable/httpapi";
 

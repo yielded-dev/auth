@@ -5,6 +5,8 @@ export default defineConfig({
     tsconfig: "tsconfig.build.json",
     entry: [
       "src/index.ts",
+      "src/Contracts.ts",
+      "src/Strategies.ts",
       "src/Auth.ts",
       "src/AuthContract.ts",
       "src/Client.ts",
@@ -69,13 +71,13 @@ export default defineConfig({
       {
         // Each target is also a pack entry. Keep native namespaces in JS and
         // declarations instead of materializing objects that retain every export.
-        name: "preserve-root-namespaces",
+        name: "preserve-public-namespaces",
         resolveId: {
           order: "pre",
           handler(source, importer) {
             if (
               importer !== undefined &&
-              /\/src\/index(?:\.d)?\.ts$/.test(importer) &&
+              /\/src\/(?:index|Contracts|Strategies)(?:\.d)?\.ts$/.test(importer) &&
               /^\.\/[A-Z]\w*(?:\.ts)?$/.test(source)
             ) {
               return { id: source.replace(/(?:\.ts)?$/, ".mjs"), external: true };

@@ -1,14 +1,12 @@
+import { PasskeyContract, SessionContract, TotpContract } from "@yielded/auth/contracts";
 import * as Hooks from "@yielded/auth/Hooks";
 import * as Http from "@yielded/auth/OperationHttp";
 import { makeOperation } from "@yielded/auth/Operations";
-import * as PasskeyContract from "@yielded/auth/PasskeyContract";
 import { SubjectId } from "@yielded/auth/Schema";
-import { makeSessionContract } from "@yielded/auth/SessionContract";
-import * as TotpContract from "@yielded/auth/TotpContract";
 import { Schema } from "effect";
 
 import { StudioClaims, registrationSchema } from "./studio-models";
-export const sessions = makeSessionContract("studio/Auth/sessions", StudioClaims);
+export const sessions = SessionContract.makeSessionContract("studio/Auth/sessions", StudioClaims);
 
 /** An independently contributed feature, using the same authorization boundary. */
 export const MemberProfile = makeOperation("studio/member-profile", {

@@ -18,7 +18,7 @@ Keep the contract safe to import in both the browser and server:
 
 ```ts [auth-contract.ts]
 import { Schema } from "effect";
-import * as AuthContract from "@yielded/auth/AuthContract";
+import { AuthContract } from "@yielded/auth/contracts";
 
 export const AuthApi = AuthContract.make("app/Auth", {
   claims: Schema.Struct({ displayName: Schema.String }),
@@ -44,7 +44,8 @@ and client use the same descriptors.
 Bind the contract to your methods and session configuration:
 
 ```ts [auth.ts]
-import { Auth, Http, Password, Sessions } from "@yielded/auth";
+import { Auth, Http, Sessions } from "@yielded/auth";
+import { Password } from "@yielded/auth/strategies";
 
 import { AuthApi } from "./auth-contract";
 
@@ -103,7 +104,7 @@ or require a headers argument.
 Add the native auth group beside your application groups in the shared API:
 
 ```ts [api.ts]
-import * as AuthContract from "@yielded/auth/AuthContract";
+import { AuthContract } from "@yielded/auth/contracts";
 import { HttpApi } from "effect/unstable/httpapi";
 
 import { AuthApi } from "./auth-contract";

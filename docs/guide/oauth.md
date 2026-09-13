@@ -13,7 +13,7 @@ Declare the shared actions:
 
 ```ts [auth-contract.ts]
 import { Schema } from "effect";
-import * as AuthContract from "@yielded/auth/AuthContract";
+import { AuthContract } from "@yielded/auth/contracts";
 
 export const AuthApi = AuthContract.make("app/Auth", {
   claims: Schema.Struct({ displayName: Schema.String }),
@@ -27,7 +27,8 @@ export const AuthApi = AuthContract.make("app/Auth", {
 Bind your auth service:
 
 ```ts [auth.ts]
-import { Auth, OAuth, Sessions } from "@yielded/auth";
+import { Auth, Sessions } from "@yielded/auth";
+import { OAuth } from "@yielded/auth/strategies";
 import { AuthApi } from "./auth-contract";
 
 export const AppAuth = Auth.make(AuthApi, {

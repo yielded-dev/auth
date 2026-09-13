@@ -1,4 +1,4 @@
-import { Auth, Password } from "@yielded/auth";
+import { Auth } from "@yielded/auth";
 import {
   coordinateCommit,
   hasCommitScope,
@@ -35,6 +35,7 @@ import {
   type AuthenticationRevision,
   type AuthenticationRequirement,
 } from "@yielded/auth/Sessions";
+import { Password } from "@yielded/auth/strategies";
 import { DateTime, Effect, Layer, Option, Redacted, Schema } from "effect";
 
 const Claims = Schema.Struct({ team: Schema.String });

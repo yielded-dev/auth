@@ -15,7 +15,8 @@ actions in a [shared contract](./http-and-client#expose-another-method).
 
 ```ts [auth.ts]
 import { Schema } from "effect";
-import { Auth, Email, Sessions } from "@yielded/auth";
+import { Auth, Sessions } from "@yielded/auth";
+import { Email } from "@yielded/auth/strategies";
 
 import { proofKeys, proofPolicy } from "./auth-config";
 
@@ -109,7 +110,7 @@ to cookies so they stay out of ordinary browser payloads.
 ## Use a magic link instead
 
 ```ts [magic-link.ts]
-import { Email } from "@yielded/auth";
+import { Email } from "@yielded/auth/strategies";
 
 import { proofPolicy } from "./auth-config";
 

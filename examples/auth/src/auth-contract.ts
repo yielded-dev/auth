@@ -1,4 +1,4 @@
-import * as AuthContract from "@yielded/auth/AuthContract";
+import { AuthContract } from "@yielded/auth/contracts";
 import { Schema } from "effect";
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from "effect/unstable/httpapi";
 

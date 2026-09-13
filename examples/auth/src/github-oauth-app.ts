@@ -1,4 +1,4 @@
-import { Auth, OAuth } from "@yielded/auth";
+import { Auth } from "@yielded/auth";
 import * as GitHub from "@yielded/auth/GitHub";
 import {
   makeConnectedModule,
@@ -15,6 +15,7 @@ import {
 import type { AuthInvocation } from "@yielded/auth/Operations";
 import type { SubjectId } from "@yielded/auth/Schema";
 import type { SessionSigningKeyring } from "@yielded/auth/Sessions";
+import { OAuth } from "@yielded/auth/strategies";
 import { layerWebCrypto } from "@yielded/auth/WebCrypto";
 import { Context, Effect, Layer, Schema, Stream } from "effect";
 import type { HttpClientResponse } from "effect/unstable/http";
