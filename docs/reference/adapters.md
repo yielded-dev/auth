@@ -88,8 +88,8 @@ for each request or use [the HTTP adapter](../guide/http-and-client).
 
 `Auth.make` wires the selected methods, session implementation, Web Crypto, and
 empty lifecycle hooks. Password hashing also has a bounded default implementation.
-Separately constructed adapters need crypto and hooks supplied explicitly,
-as above. You supply storage mappings, account authority, claims, delivery, and
+Adapter factories expose their crypto and hook requirements; supply them as above
+or use a Layer helper that installs defaults. You supply storage mappings, account authority, claims, delivery, and
 secret keys. Adapters provide implementations; they are not installed automatically.
 
 ## Choose a driver
@@ -183,8 +183,10 @@ export const ProofPersistenceLive = Layer.effect(
 ```
 
 `DatabaseLive` is your configured Effect SQL client Layer. The phone Layer supplies
-`PhonePersistence`, `PhoneAdmission`, and `PhoneSignInTargets`; the proof Layer
-stores challenges, consumption, and rate limits. You provide table mappings and
+`PhonePersistence`, `PhoneAdmission`, and `PhoneSignInTargets`, with overridable
+Web Crypto and empty hook defaults. The proof Layer stores challenges, consumption,
+and rate limits. Sign-in uses lookup and admission; number-management operations
+also use `PhonePersistence`. You provide table mappings and
 migrations. See the [SQLite example](https://github.com/yielded-dev/auth/blob/main/examples/auth/src/phone-sqlite-bun.ts)
 for the full composition.
 

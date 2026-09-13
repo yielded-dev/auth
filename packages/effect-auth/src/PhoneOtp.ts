@@ -7,7 +7,14 @@ export {
 } from "./phone/models";
 
 export { PhoneSignInTargets } from "./phone/PhoneSignInTargets";
-export { type PhoneOtpOptions, make } from "./phone/definition";
+
+export {
+  type PhoneOtpOptions,
+  type PhoneLifecycleOptions,
+  make,
+  makeLifecycle,
+} from "./phone/definition";
+
 export { makePhoneOtp as makeModule } from "./phone/module";
 
 export { PhoneRequestContext } from "./phone/PhoneRequestContext";

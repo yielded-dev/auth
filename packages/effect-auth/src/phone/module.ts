@@ -1,14 +1,4 @@
-import {
-  Context,
-  Crypto,
-  DateTime,
-  Effect,
-  Encoding,
-  Layer,
-  Option,
-  Schema,
-  type Types,
-} from "effect";
+import { Crypto, DateTime, Effect, Encoding, Layer, Option, Schema } from "effect";
 
 import { makeAuthStrategy } from "../auth/AuthStrategy";
 import { cryptoLayer, defaultLayer, hooksLayer } from "../auth/defaults";
@@ -22,7 +12,7 @@ import { makeRequestBinding, RequestBindingFlowId } from "../operations/requestB
 import type { ProofKeyring } from "../proofs/crypto";
 import { readProofCommit } from "../proofs/dispatch";
 import { ProofBinding, ProofPurpose, ProofRequestId, ProofRequestReceipt } from "../proofs/models";
-import { makeProofModule, snapshotProofConfiguration } from "../proofs/module";
+import { makeProofModule } from "../proofs/module";
 import type { ProofPolicy } from "../proofs/policy";
 import { TokenDigest } from "../Schema";
 import { AuthenticationAuthority } from "../sessions/AuthenticationAuthority";
@@ -32,14 +22,10 @@ import {
   type AuthenticationEvidence,
 } from "../sessions/models";
 import type { makeSessionModule } from "../sessions/module";
+import { phoneAdmission, phoneDigest, phoneAttemptAdmission } from "./admission";
+import { makePhoneClaims } from "./claims";
+import { defaultPolicy } from "./configuration";
 import { phoneFailure } from "./failure";
-import {
-  makePhoneLifecycle,
-  phoneAdmission,
-  phoneDigest,
-  phoneAttemptAdmission,
-} from "./lifecycle";
-import type { PhoneLifecyclePolicy } from "./lifecycleModels";
 import {
   PhoneCredentialSnapshot,
   PhoneNumber,
@@ -47,45 +33,9 @@ import {
   PhoneOtpRejected,
   PhoneOtpUnavailable,
 } from "./models";
+import { PhoneAdmission } from "./PhoneAdmission";
 import { PhoneDeliveryEligibility } from "./PhoneDeliveryEligibility";
 import { PhoneSignInTargets } from "./PhoneSignInTargets";
-
-const defaultPolicy: ProofPolicy = {
-  lifetimeMillis: 300_000,
-  continuationLifetimeMillis: 30_000,
-  maximumFailedAttempts: 5,
-  maximumDeliveryAttempts: 1,
-  deliveryClaimMillis: 10_000,
-  deliveryRetryMillis: 30_000,
-  requestRetentionMillis: 3_600_000,
-  abuse: {
-    issues: { limit: 5, windowMillis: 3_600_000 },
-    attempts: { limit: 10, windowMillis: 300_000 },
-    subjectIssues: { limit: 5, windowMillis: 3_600_000 },
-    subjectAttempts: { limit: 10, windowMillis: 300_000 },
-    actionIssues: { limit: 1000, windowMillis: 3_600_000 },
-    actionAttempts: { limit: 1000, windowMillis: 300_000 },
-    resendCooldownMillis: 30_000,
-  },
-};
-
-/** Capture the phone method's proof defaults when its descriptor is constructed. */
-export const snapshotPhoneConfiguration = <
-  Configuration extends {
-    readonly template: string;
-    readonly keys: ProofKeyring;
-    readonly policy?: ProofPolicy;
-    readonly digits?: 6 | 7 | 8 | 9 | 10;
-    readonly lifecycle?: PhoneLifecyclePolicy;
-  },
->(
-  input: Configuration,
-) =>
-  snapshotProofConfiguration({
-    ...input,
-    policy: input.policy ?? defaultPolicy,
-    secret: { _tag: "NumericCode" as const, digits: input.digits ?? 6 },
-  });
 
 const Start = Schema.Struct({
   flowId: RequestBindingFlowId,
@@ -118,7 +68,6 @@ export const makePhoneOtp = <
     readonly keys: ProofKeyring;
     readonly policy?: ProofPolicy;
     readonly digits?: 6 | 7 | 8 | 9 | 10;
-    readonly lifecycle?: PhoneLifecyclePolicy;
   },
 ) => {
   const { sessions } = options;
@@ -134,24 +83,7 @@ export const makePhoneOtp = <
     policy: options.policy ?? defaultPolicy,
   });
 
-  const ClaimsForPhone = Context.Service<
-    {
-      readonly moduleId: Id;
-      readonly kind: "phone-claims";
-      readonly claims: Types.Invariant<Claims["Type"]>;
-    },
-    {
-      readonly resolve: (
-        credential: PhoneCredentialSnapshot,
-      ) => Effect.Effect<Claims["Type"], PhoneOtpUnavailable>;
-    }
-  >(`effect-auth/ClaimsForPhone/${moduleId.length}:${moduleId}`);
-
-  const lifecycle = makePhoneLifecycle(
-    moduleId,
-    { ...options, policy: options.policy ?? defaultPolicy, digits: options.digits ?? 6 },
-    ClaimsForPhone,
-  );
+  const ClaimsForPhone = makePhoneClaims<Id, Claims>(moduleId);
 
   const capture = Effect.fn("PhoneOtp.capture")(function* (request: {
     readonly flowId: RequestBindingFlowId;
@@ -386,26 +318,16 @@ export const makePhoneOtp = <
     Layer.provide(defaultLayer(binding.RequestBinding, binding.layer)),
     Layer.provide(defaultLayer(proof.Proofs, proof.smsLayer)),
     Layer.provide([cryptoLayer, hooksLayer]),
-    Layer.merge(lifecycle.layer),
   );
 
   return Object.freeze({
     ClaimsForPhone,
-    lifecycle,
     binding,
     proof,
     layer,
-    handlersLayer: Layer.merge(handlersLayer, lifecycle.handlersLayer),
-    operations: { SignIn, Complete, ...lifecycle.operations },
-    group: operationGroup(
-      SignIn,
-      Complete,
-      lifecycle.operations.Begin,
-      lifecycle.operations.Resend,
-      lifecycle.operations.CompleteLifecycle,
-      lifecycle.operations.Cancel,
-      lifecycle.operations.Cleanup,
-    ),
+    handlersLayer,
+    operations: { SignIn, Complete },
+    group: operationGroup(SignIn, Complete),
     strategy: makeAuthStrategy(
       {
         signIn: Effect.fn("PhoneOtp.signInRequest")(function* (
@@ -424,9 +346,11 @@ export const makePhoneOtp = <
           });
         }),
         completeSignIn: Complete.invoke,
-        ...lifecycle.methods,
       },
-      layer.pipe(Layer.provideMerge(cryptoLayer)),
+      layer.pipe(
+        Layer.provideMerge(cryptoLayer),
+        Layer.merge(Layer.effect(PhoneAdmission, PhoneAdmission)),
+      ),
       { completion: true },
     ),
   });

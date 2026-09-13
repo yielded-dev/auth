@@ -1,6 +1,7 @@
 import { BunRuntime } from "@effect/platform-bun";
 import * as SqliteClient from "@effect/sql-sqlite-bun/SqliteClient";
 import { AuthRequest, RequestBindingConfig } from "@yielded/auth/Auth";
+import { phonePersistenceLayer } from "@yielded/auth/Drizzle";
 import {
   makeAuthenticationAuthorityServices,
   makePhonePersistenceServices,
@@ -14,9 +15,6 @@ import {
   PhoneDeliveryEligibility,
   PhoneOtpUnavailable,
   PhoneRequestContext,
-  PhonePersistence,
-  PhoneAdmission,
-  PhoneSignInTargets,
 } from "@yielded/auth/PhoneOtp";
 import {
   ProofPersistence,
@@ -52,8 +50,8 @@ export const phoneConsumer = Effect.gen(function* () {
 
   yield* migrate(client);
 
-  const native = yield* makePhonePersistenceServices(database, mapping),
-    proofServices = yield* makeProofPersistenceServices(database, proofs);
+  const phoneStorage = phonePersistenceLayer(makePhonePersistenceServices(database, mapping));
+  const proofServices = yield* makeProofPersistenceServices(database, proofs);
 
   const authority = yield* makeAuthenticationAuthorityServices(database, {
     subjectId,
@@ -105,9 +103,7 @@ export const phoneConsumer = Effect.gen(function* () {
   );
 
   const ports = Layer.mergeAll(
-    Layer.succeed(PhonePersistence, native.phonePersistence),
-    Layer.succeed(PhoneAdmission, native.phoneAdmission),
-    Layer.succeed(PhoneSignInTargets, native.phoneSignInTargets),
+    phoneStorage,
     Layer.succeed(ProofPersistence, proofServices.proofPersistence),
     Layer.succeed(AuthenticationAuthority, authority.authenticationAuthority),
     Layer.succeed(phone.ClaimsForPhone, {
@@ -219,7 +215,7 @@ export const phoneConsumer = Effect.gen(function* () {
           ...(sourcePhoneNumber === undefined ? {} : { sourcePhoneNumber }),
         };
 
-        const challenge = yield* as(invocation, auth.begin(input));
+        const challenge = yield* as(invocation, auth.begin("phoneLifecycle", input));
 
         return { input, challenge, binding: token("request-binding") };
       });
@@ -238,7 +234,7 @@ export const phoneConsumer = Effect.gen(function* () {
 
         return yield* as(
           invocation,
-          auth.completeLifecycle({
+          auth.completeLifecycle("phoneLifecycle", {
             ...started.input,
             requestBinding: started.binding,
             reference: started.challenge.reference,
@@ -252,7 +248,7 @@ export const phoneConsumer = Effect.gen(function* () {
 
     const wrong = yield* as(
       guest,
-      auth.completeLifecycle({
+      auth.completeLifecycle("phoneLifecycle", {
         ...registered.input,
         requestBinding: registered.binding,
         reference: registered.challenge.reference,
@@ -275,9 +271,9 @@ export const phoneConsumer = Effect.gen(function* () {
       reference: registered.challenge.reference,
     };
 
-    const resent = yield* as(guest, auth.resend(resendInput));
+    const resent = yield* as(guest, auth.resend("phoneLifecycle", resendInput));
     const delivered = sent.length;
-    const duplicateResend = yield* as(guest, auth.resend(resendInput));
+    const duplicateResend = yield* as(guest, auth.resend("phoneLifecycle", resendInput));
 
     assert(
       duplicateResend.reference.proofId === resent.reference.proofId && sent.length === delivered,

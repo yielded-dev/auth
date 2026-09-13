@@ -69,7 +69,9 @@ const result = yield* auth.completeSignIn({
   requestBinding,
   reference,
   code,
-});
+}).pipe(
+  Effect.provideService(PhoneOtp.PhoneRequestContext, { networkKey }),
+);
 ```
 
 ```text
@@ -95,7 +97,7 @@ import { SmsProofDelivery } from "@yielded/auth/Proofs";
 
 import { AppAuth } from "./auth";
 import { AuthDependencies } from "./auth-dependencies";
-import { authorizePhoneChange, resolvePhoneClaims } from "./auth-accounts";
+import { resolvePhoneClaims } from "./auth-accounts";
 import { PhonePersistenceLive, ProofPersistenceLive } from "./auth-persistence";
 import { canSendSms, sendSms, smsVendor } from "./sms";
 
@@ -103,19 +105,18 @@ export const PhoneLive = Layer.mergeAll(
   PhonePersistenceLive,
   ProofPersistenceLive,
   Layer.succeed(PhoneOtp.PhoneDeliveryEligibility, { allowed: canSendSms }),
-  Layer.succeed(PhoneOtp.PhoneActionEvidence, { verify: authorizePhoneChange }),
   Layer.succeed(AppAuth.strategies.phone.ClaimsForPhone, { resolve: resolvePhoneClaims }),
   SmsProofDelivery.layer(smsVendor, sendSms),
 );
 
 export const AuthLive = AppAuth.layer.pipe(
-  Layer.provideMerge(PhoneLive),
+  Layer.provide(PhoneLive),
   Layer.provide(AuthDependencies),
 );
 ```
 
 The relative imports are your application modules. `PhonePersistenceLive` supplies
-`PhoneSignInTargets`, `PhonePersistence`, and `PhoneAdmission`; see the
+`PhoneSignInTargets` and `PhoneAdmission` for sign-in; see the
 [Drizzle wiring](../reference/adapters#phone). `ProofPersistenceLive` supplies
 `ProofPersistence`. `AuthDependencies` provides the shared
 [session, account, and key configuration](../reference/adapters#compose-the-application-layer).
@@ -125,11 +126,43 @@ session claims. `sendSms` returns a `ProofDeliveryOutcome`. Set `smsVendor` to
 `{ vendorId: "your-sender", idempotencyMillis: 0 }` unless your vendor guarantees
 deduplication for a longer interval.
 
-Web Crypto and empty lifecycle hooks are installed automatically.
-`Layer.provideMerge` keeps phone admission services available to local calls.
+Web Crypto and empty lifecycle hooks are installed automatically. SMS delivery
+has no default: omitting its Layer leaves a TypeScript dependency error.
 
-Phone registration and number changes use separate lifecycle operations.
-The phone definition includes their storage and `PhoneActionEvidence` requirements;
-`authorizePhoneChange` must verify independent evidence for a number change.
-Do not link accounts because their supplied phone strings match. See the
+<details>
+<summary>Register or change phone numbers</summary>
+
+Opt into `PhoneOtp.makeLifecycle`. Pass both strategies to `Auth.make`, using the
+same namespace to share credentials and claims:
+
+```ts
+const phone = {
+  namespace: "app/Auth/phone",
+  template: "sign-in-sms",
+  keys: proofKeys,
+} as const;
+
+const strategies = {
+  phone: PhoneOtp.make(phone),
+  phoneLifecycle: PhoneOtp.makeLifecycle(phone),
+};
+```
+
+These operations additionally require `PhonePersistence` and `PhoneActionEvidence`.
+The Drizzle Layer above already supplies `PhonePersistence`. Add independent
+authorization to `PhoneLive`:
+
+```ts
+Layer.succeed(PhoneOtp.PhoneActionEvidence, { verify: authorizePhoneChange });
+```
+
+`authorizePhoneChange` is your application's check of independent evidence for
+a number change. Start with `auth.begin("phoneLifecycle", input)` and finish with
+`auth.completeLifecycle("phoneLifecycle", input)`. Supply `PhoneRequestContext`
+for each request, as for sign-in.
+
+When moving existing lifecycle operations, retain their original namespace.
+Do not link accounts because their phone strings match. See the
 [complete phone composition](https://github.com/yielded-dev/auth/blob/main/examples/auth/src/phone-sqlite-bun.ts).
+
+</details>
