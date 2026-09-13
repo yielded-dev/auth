@@ -30,7 +30,8 @@ Native ESM loads the root's static dependencies. Direct paths also keep that
 module-loading boundary narrow when running without a bundler.
 
 Optional adapters are direct imports, for example `@yielded/auth/DrizzlePostgres`,
-`@yielded/auth/OpenIdClient`, or `@yielded/auth/PasskeyBrowser`. Install only the peers
+`@yielded/auth/OpenIdClient`, `@yielded/auth/PasskeyBrowser`, or
+`@yielded/auth/adapters/Twilio`. Install only the peers
 required by the selected adapters. `@yielded/auth/Testing` remains test-only.
 
 ## Application composition
@@ -80,7 +81,7 @@ These are available through direct subpaths only:
 | ------------------------------------------------------------------------------- | ---------------------------------------------------------- |
 | `OpenIdClient`, `OpenIdClientConnected`                                         | OAuth/OIDC verification and connected grant management.    |
 | `GitHub`                                                                        | GitHub provider configuration and operations.              |
-| `Twilio`                                                                        | SMS delivery through Effect HTTP; requires `TwilioConfig`. |
+| `adapters/Twilio`                                                               | SMS delivery through Effect HTTP; requires `TwilioConfig`. |
 | `PasskeySimpleWebAuthn`, `PasskeyBrowser`                                       | Server verification and browser WebAuthn ceremonies.       |
 | `PasskeyPassword`                                                               | Password-backed authority for passkey workflows.           |
 | `Drizzle`                                                                       | Shared Drizzle adapter contracts.                          |

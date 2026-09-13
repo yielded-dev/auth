@@ -18,7 +18,7 @@ import { Auth, Sessions } from "@yielded/auth";
 import { PhoneOtp } from "@yielded/auth/strategies";
 
 export const AppAuth = Auth.make("app/Auth", {
-  claims: Schema.Struct({ displayName: Schema.String }),
+  claims: Schema.Struct({ phoneNumber: PhoneOtp.PhoneNumber }),
   sessions: Sessions.stateful(),
   strategies: {
     phone: PhoneOtp.make(),
@@ -82,21 +82,47 @@ a new code. SMS proves possession; it does not provide phishing resistance.
 
 ## Supply the services
 
-These services have no automatic defaults. Connect your database, account policy,
-and SMS sender:
+The strategy handles code generation and verification. Supply these implementations:
+
+| Layer or service           | What it does                                                        | Where it comes from                           |
+| -------------------------- | ------------------------------------------------------------------- | --------------------------------------------- |
+| `PhonePersistenceLive`     | Finds the account for a phone number and enforces admission limits. | Your database, using a library adapter below. |
+| `ProofPersistenceLive`     | Stores code digests, expiry, failed attempts, and consumption.      | Your database, using a library adapter below. |
+| `PhoneDeliveryEligibility` | Decides which destination numbers you support.                      | Your application policy.                      |
+| `ClaimsForPhone`           | Returns the session fields declared in `AppAuth.claims`.            | Your application.                             |
+| `SmsDelivery`              | Sends the message.                                                  | `Twilio.layer` or another transport.          |
+
+`PhonePersistenceLive` and `ProofPersistenceLive` are names for the Layers you build
+below, not package exports. The adapters implement the storage operations; you
+supply your table mappings and migrations.
+
+<details>
+<summary>Build the database Layers — SQLite on Bun</summary>
+
+<!--@include: ../reference/adapters.md#phone-layers-->
+
+</details>
+
+Wire those Layers with a sending policy and session claims:
 
 ```ts [phone-live.ts]
-import { Layer } from "effect";
+import { Config, Effect, Layer } from "effect";
 import { PhoneOtp } from "@yielded/auth/strategies";
-import * as Twilio from "@yielded/auth/Twilio";
+import * as Twilio from "@yielded/auth/adapters/Twilio";
 import { FetchHttpClient } from "effect/unstable/http";
 
 import { AppAuth } from "./auth";
 import { AuthDependencies } from "./auth-dependencies";
-import { resolvePhoneClaims } from "./auth-accounts";
 import { PhonePersistenceLive, ProofPersistenceLive } from "./auth-persistence";
-import { canSendSms } from "./sms";
-import { TwilioConfigLive } from "./auth-config";
+
+const TwilioConfigLive = Layer.effect(
+  Twilio.TwilioConfig,
+  Config.all({
+    accountSid: Config.string("TWILIO_ACCOUNT_SID"),
+    authToken: Config.redacted("TWILIO_AUTH_TOKEN"),
+    from: Config.string("TWILIO_FROM"),
+  }),
+);
 
 const SmsLive = Twilio.layer.pipe(
   Layer.provide(TwilioConfigLive),
@@ -106,8 +132,12 @@ const SmsLive = Twilio.layer.pipe(
 export const PhoneLive = Layer.mergeAll(
   PhonePersistenceLive,
   ProofPersistenceLive,
-  Layer.succeed(PhoneOtp.PhoneDeliveryEligibility, { allowed: canSendSms }),
-  Layer.succeed(AppAuth.strategies.phone.ClaimsForPhone, { resolve: resolvePhoneClaims }),
+  Layer.succeed(PhoneOtp.PhoneDeliveryEligibility, {
+    allowed: (number) => Effect.succeed(number.startsWith("+1")),
+  }),
+  Layer.succeed(AppAuth.strategies.phone.ClaimsForPhone, {
+    resolve: ({ phoneNumber }) => Effect.succeed({ phoneNumber }),
+  }),
   SmsLive,
 );
 
@@ -117,20 +147,19 @@ export const AuthLive = AppAuth.layer.pipe(
 );
 ```
 
-The relative imports are your application modules. `PhonePersistenceLive` supplies
-`PhoneSignInTargets` and `PhoneAdmission` for sign-in; see the
-[Drizzle wiring](../reference/adapters#phone). `ProofPersistenceLive` supplies
-`ProofPersistence`. `AuthDependencies` provides the shared
-[session, account, and key configuration](../reference/adapters#compose-the-application-layer).
+This example allows `+1` destinations and stores the **verified** phone number
+in the session. Replace the prefix check with your supported destinations. To add
+account fields to claims, query your account using `snapshot.revision.subjectId`
+inside `resolve` and return the fields declared in `AppAuth.claims`.
 
-`canSendSms` applies your country and delivery policy; `resolvePhoneClaims` loads
-session claims. `TwilioConfigLive` supplies `Twilio.TwilioConfig` with `accountSid`,
-a redacted `authToken`, and either `from` or `messagingServiceSid`. It can load those
-values from Effect Config or your secret store. Twilio uses Effect HTTP; no SDK is needed.
+`TwilioConfigLive` loads credentials from Effect Config; use `messagingServiceSid`
+instead of `from` for a Twilio Messaging Service. The adapter uses Effect HTTP and
+requires no Twilio SDK.
 
-Supply another `SmsDelivery` implementation to use another vendor. Delivery is
-required; omitting it leaves a TypeScript dependency error. Web Crypto and empty
-lifecycle hooks have defaults. Shared `ProofKeys` come from `AuthDependencies`.
+`AuthDependencies` is defined in the [shared application composition](../reference/adapters#compose-the-application-layer).
+It supplies session storage, account authority, request-binding configuration, and
+`ProofKeys`. Web Crypto and empty lifecycle hooks have defaults. Database storage,
+destination policy, claims, and delivery have no automatic implementations.
 
 <details>
 <summary>Customize the SMS message</summary>

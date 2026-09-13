@@ -157,6 +157,8 @@ committing its result.
 
 Wrap the adapter's phone services in one Layer:
 
+<!-- #region phone-layers -->
+
 ```ts [auth-persistence.ts]
 import * as Drizzle from "drizzle-orm/effect-sqlite-bun";
 import { Effect, Layer } from "effect";
@@ -167,8 +169,10 @@ import {
 } from "@yielded/auth/DrizzleSqliteBun";
 import { ProofPersistence } from "@yielded/auth/Proofs";
 
-import { DatabaseLive } from "./database";
+import * as SqliteClient from "@effect/sql-sqlite-bun/SqliteClient";
 import { phoneMapping, proofMapping } from "./schema";
+
+const DatabaseLive = SqliteClient.layer({ filename: "auth.sqlite" });
 
 export const PhonePersistenceLive = phonePersistenceLayer(
   Effect.gen(function* () {
@@ -187,13 +191,15 @@ export const ProofPersistenceLive = Layer.effect(
 ).pipe(Layer.provide(DatabaseLive));
 ```
 
-`DatabaseLive` is your configured Effect SQL client Layer. The phone Layer supplies
+The database connection above uses SQLite on Bun. The phone Layer supplies
 `PhonePersistence`, `PhoneAdmission`, and `PhoneSignInTargets`, with overridable
 Web Crypto and empty hook defaults. The proof Layer stores challenges, consumption,
 and rate limits. Sign-in uses lookup and admission; number-management operations
 also use `PhonePersistence`. You provide table mappings and
 migrations. See the [SQLite example](https://github.com/yielded-dev/auth/blob/main/examples/auth/src/phone-sqlite-bun.ts)
-for the full composition.
+for the table definitions and mappings.
+
+<!-- #endregion phone-layers -->
 
 ## Connected OAuth grants
 

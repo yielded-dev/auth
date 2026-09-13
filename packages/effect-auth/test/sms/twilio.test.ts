@@ -1,6 +1,6 @@
 import { it } from "@effect/vitest";
+import * as Twilio from "@yielded/auth/adapters/Twilio";
 import { SmsDelivery } from "@yielded/auth/SmsDelivery";
-import * as Twilio from "@yielded/auth/Twilio";
 import { Deferred, Effect, Fiber, Layer, Redacted } from "effect";
 import { TestClock } from "effect/testing";
 import { HttpClient, HttpClientResponse } from "effect/unstable/http";

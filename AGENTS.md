@@ -78,6 +78,7 @@ identities from the Auth definition. Supply storage, delivery, secrets, and prov
 through required services and Layers. Optional rendering uses a defaulted service.
 Adapter Layers require their config and platform services; keep every dependency visible in `R`.
 Do not add strategies or constructor callbacks merely to forward service dependencies.
+Guides show concrete Layer construction and distinguish library defaults from application policy.
 
 ## Package dependency direction
 
