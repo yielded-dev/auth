@@ -56,7 +56,7 @@ export const AuthDependencies = Layer.mergeAll(
 export const AuthLive = AppAuth.layer.pipe(Layer.provide(AuthDependencies));
 ```
 
-Provide `AuthDependencies` to `AuthHttp.layer(...)`; use `AuthLive` for direct service
+Provide `AuthDependencies` to `Http.layer(...)`; use `AuthLive` for direct service
 composition. The `auth-*` imports are your application modules. TypeScript reports any remaining
 service requirements. `Sessions.stateful(...)` on `Auth.make` configures sessions;
 supply a separate session/completion Layer only when using custom session setup

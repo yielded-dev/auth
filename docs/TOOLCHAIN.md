@@ -45,10 +45,13 @@ retain their initialization even when only one API is used.
 
 `vp run check:package-consumers` requires built packages and runs during `build`.
 It stages the publisher's manifests and built files with only required dependencies,
-bundles representative browser consumers, checks their declarations, and runs a native
-ESM consumer. It protects narrow identity imports, browser contracts, and root namespace
-identity without installing optional adapter peers. Reported bytes include Effect;
-they are diagnostics, not a fixed bundle-size budget.
+compares equivalent root/direct consumers through esbuild and Vite/Rolldown,
+checks their declarations, and runs native ESM and bundled consumers. It protects
+narrow identity imports, browser contracts, deferred client loading, and root
+namespace identity without optional adapter peers. Reported initial/deferred
+bytes include Effect and are diagnostics, not fixed size budgets. Retained-module
+checks enforce the boundaries; esbuild's re-exported namespace retention remains
+visible in the comparisons. Keep direct paths for lazy imports and browser code.
 
 ## Contributor skills
 

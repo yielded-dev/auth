@@ -14,12 +14,12 @@ browser to authenticate, and verify the response on your server.
 ```ts [passkey-contract.ts]
 import { Schema } from "effect";
 import * as AuthContract from "@yielded/auth/AuthContract";
-import { makePasskeyContract } from "@yielded/auth/PasskeyContract";
+import * as PasskeyContract from "@yielded/auth/PasskeyContract";
 
 export const PasskeyApi = AuthContract.make("app/Auth", {
   claims: Schema.Struct({ displayName: Schema.String }),
   actions: (sessions) => {
-    const passkey = makePasskeyContract("app/Auth/passkey", sessions);
+    const passkey = PasskeyContract.make("app/Auth/passkey", sessions);
 
     return {
       signIn: AuthContract.fromOperation(passkey.operations.Begin, { strategy: "passkey" }),

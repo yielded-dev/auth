@@ -5,7 +5,7 @@ import { cryptoLayer, defaultLayer, hooksLayer } from "../auth/defaults";
 import type { AuthInvocation } from "../operations/context";
 import type { AuthOperationResult } from "../operations/credentials";
 import { operationGroup } from "../operations/operation";
-import { makePasskeyContract } from "../PasskeyContract";
+import { make as makePasskeyContract } from "../PasskeyContract";
 import type { AuthenticationAuthority } from "../sessions/AuthenticationAuthority";
 import type { makeSessionModule } from "../sessions/module";
 import {

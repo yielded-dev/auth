@@ -35,8 +35,7 @@ Bind the server implementation and mount its HTTP routes:
 <!-- #region auth-server -->
 
 ```ts [auth.ts]
-import { Auth, Password, Sessions } from "@yielded/auth";
-import * as AuthHttp from "@yielded/auth/Http";
+import { Auth, Http, Password, Sessions } from "@yielded/auth";
 
 import { AuthApi } from "./auth-contract";
 
@@ -46,7 +45,7 @@ export const AppAuth = Auth.make(AuthApi, {
   defaultStrategy: "password",
 });
 
-export const AuthRoutes = AuthHttp.layer(AppAuth, { origin: "https://app.example.com" });
+export const AuthRoutes = Http.layer(AppAuth, { origin: "https://app.example.com" });
 ```
 
 <!-- #endregion auth-server -->

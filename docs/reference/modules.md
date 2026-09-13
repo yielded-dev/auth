@@ -18,11 +18,13 @@ import * as IdentityModule from "@yielded/auth/Identity";
 import * as SessionContractModule from "@yielded/auth/SessionContract";
 ```
 
-Prefer a direct subpath when bundle size or module-loading cost matters. Named
-imports such as `import { stringSubjectId } from "@yielded/auth/Identity"` let a
-bundler discard unrelated identity operations. Root namespaces are convenient,
-but retaining a namespace as a value can retain its other exports. Native ESM
-loads the root's entire static dependency graph; tree shaking requires a bundler.
+Use root imports for application composition. Use direct paths for smaller
+esbuild bundles and lazy loading; esbuild can retain unused members of a
+re-exported namespace. Both styles keep operations on their module, such as
+`Http.layer`, `PasskeyContract.make`, and `TotpContract.make`.
+
+Native ESM loads the root's static dependencies. Direct paths also keep that
+module-loading boundary narrow when running without a bundler.
 
 Optional adapters are direct imports, for example `@yielded/auth/DrizzlePostgres`,
 `@yielded/auth/OpenIdClient`, or `@yielded/auth/PasskeyBrowser`. Install only the peers
@@ -59,8 +61,8 @@ helpers separately from server verifiers and persistence adapters.
 | `Atom`                                               | Effect Atom queries, mutations, and client workflows.               |
 | `HttpServer`, `Rpc`                                  | Lower-level HTTP and RPC integrations.                              |
 
-`AuthContract` is also available as a root namespace. Import `Http`, `Client`,
-`Atom`, and the low-level transport modules through their direct subpaths.
+`AuthContract`, `Http`, `Client`, `Atom`, and the contract modules are also root
+namespaces. Shared and browser examples use direct paths to keep bundles narrow.
 React applications use `@effect/atom-react` with the same importable atoms;
 Yielded Auth has no React-specific export.
 

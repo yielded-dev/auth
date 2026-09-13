@@ -6,7 +6,7 @@ import { LastSignInMethod } from "../identity/models";
 import type { AuthInvocation } from "../operations/context";
 import type { AuthOperationResult } from "../operations/credentials";
 import { operationGroup } from "../operations/operation";
-import { makePasskeyManagementContract } from "../PasskeyContract";
+import { makeManagement as makePasskeyManagementContract } from "../PasskeyContract";
 import { TokenDigest } from "../Schema";
 import { assessAuthentication } from "../sessions/assurance";
 import { sessionInvalidationWindow } from "../sessions/invalidation";

@@ -1,5 +1,4 @@
-import * as Atom from "@yielded/auth/Atom";
-import * as Client from "@yielded/auth/Client";
+import { Atom, Client } from "@yielded/auth";
 
 export const make = Atom.make;
 export const query = Atom.query;

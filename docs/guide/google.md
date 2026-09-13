@@ -15,13 +15,13 @@ Add `https://app.example.com/auth/google/callback` as an authorized redirect URI
 
 ```ts [google.ts]
 import { Redacted } from "effect";
-import * as AuthHttp from "@yielded/auth/Http";
+import { Http } from "@yielded/auth";
 import * as OpenIdClient from "@yielded/auth/OpenIdClient";
 
 import { AppAuth } from "./auth";
 import { config } from "./config";
 
-export const AuthRoutes = AuthHttp.layer(AppAuth, {
+export const AuthRoutes = Http.layer(AppAuth, {
   origin: config.AUTH_ORIGIN,
   oauth: {
     providers: {

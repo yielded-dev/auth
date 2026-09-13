@@ -18,7 +18,7 @@ import {
 } from "../sessions/models";
 import type { makeSessionModule } from "../sessions/module";
 import {
-  makeTotpContract,
+  make as makeTotpContract,
   BeginInput,
   ConfirmInput,
   ManageInput,

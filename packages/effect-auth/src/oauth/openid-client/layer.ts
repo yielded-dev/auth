@@ -56,7 +56,7 @@ const resolve = <R>(providers: ReadonlyArray<Provider<R>>) =>
         },
   );
 
-/** Declare an OIDC or OAuth provider for AuthHttp.layer. No I/O runs until its
+/** Declare an OIDC or OAuth provider for Http.layer. No I/O runs until its
  * Layer builds. The HTTP host supplies the provider ID and callback URLs. */
 export const provider = <R = never>(
   options: ProviderOptions<R>,

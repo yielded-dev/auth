@@ -1,5 +1,4 @@
-import { Auth, Sessions } from "@yielded/auth";
-import * as AuthHttp from "@yielded/auth/Http";
+import { Auth, Sessions, Http } from "@yielded/auth";
 import { Effect, Layer } from "effect";
 import { HttpApiBuilder } from "effect/unstable/httpapi";
 
@@ -10,7 +9,7 @@ export const AppAuth = Auth.make("example/session-auth", {
   sessions: Sessions.stateful({ idleTimeout: "7 days", maxAge: "30 days" }),
 });
 
-const http = AuthHttp.make(AppAuth, {
+const http = Http.make(AppAuth, {
   origin: "https://app.example.com",
   cookie: { name: SessionHttp.cookieName },
 });

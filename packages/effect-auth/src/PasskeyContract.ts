@@ -19,7 +19,7 @@ import {
 } from "./passkey/models";
 
 /** Canonical passkey contracts without a verifier, storage, or authority Layers. */
-export const makePasskeyContract = <
+export const make = <
   const Id extends string,
   Session extends Schema.Codec<unknown, unknown, unknown, unknown>,
   Completion extends Schema.Codec<unknown, unknown, unknown, unknown>,
@@ -63,7 +63,7 @@ export const makePasskeyContract = <
   return Object.freeze({ operations, group: operationGroup(...Object.values(operations)) });
 };
 
-export const makePasskeyRegistrationContract = <
+export const makeRegistration = <
   const Id extends string,
   Registration extends Schema.Codec<unknown, unknown, unknown, unknown>,
 >(
@@ -118,7 +118,7 @@ const listResult = Schema.Struct({
   cursor: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(2048))),
 });
 
-export const makePasskeyManagementContract = <const Id extends string>(moduleId: Id) => {
+export const makeManagement = <const Id extends string>(moduleId: Id) => {
   const BeginInput = Schema.Struct({
     ...PasskeyBegin.fields,
     name: PasskeyLabel,

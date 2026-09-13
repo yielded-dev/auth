@@ -1,14 +1,10 @@
 import * as Hooks from "@yielded/auth/Hooks";
 import * as Http from "@yielded/auth/OperationHttp";
 import { makeOperation } from "@yielded/auth/Operations";
-import {
-  makePasskeyContract,
-  makePasskeyRegistrationContract,
-  makePasskeyManagementContract,
-} from "@yielded/auth/PasskeyContract";
+import * as PasskeyContract from "@yielded/auth/PasskeyContract";
 import { SubjectId } from "@yielded/auth/Schema";
 import { makeSessionContract } from "@yielded/auth/SessionContract";
-import { makeTotpContract } from "@yielded/auth/TotpContract";
+import * as TotpContract from "@yielded/auth/TotpContract";
 import { Schema } from "effect";
 
 import { StudioClaims, registrationSchema } from "./studio-models";
@@ -36,10 +32,10 @@ export const memberPlugin = Hooks.pluginContributions({
 });
 
 const modules = {
-  passkey: makePasskeyContract("studio/passkey", sessions),
-  registration: makePasskeyRegistrationContract("studio/passkey", registrationSchema),
-  keys: makePasskeyManagementContract("studio/passkey"),
-  authenticator: makeTotpContract("studio/totp", sessions),
+  passkey: PasskeyContract.make("studio/passkey", sessions),
+  registration: PasskeyContract.makeRegistration("studio/passkey", registrationSchema),
+  keys: PasskeyContract.makeManagement("studio/passkey"),
+  authenticator: TotpContract.make("studio/totp", sessions),
 };
 
 export const transport = Http.make({

@@ -1,5 +1,4 @@
-import { Auth, Password, Sessions } from "@yielded/auth";
-import * as AuthHttp from "@yielded/auth/Http";
+import { Auth, Http, Password, Sessions } from "@yielded/auth";
 import { Effect, Layer } from "effect";
 import { HttpApiBuilder } from "effect/unstable/httpapi";
 
@@ -11,7 +10,7 @@ export const AppAuth = Auth.make(AuthApi, {
   defaultStrategy: "password",
 });
 
-export const http = AuthHttp.make(AppAuth, { origin: "https://app.example.com" });
+export const http = Http.make(AppAuth, { origin: "https://app.example.com" });
 
 const HealthHandlers = HttpApiBuilder.group(AppApi, "health", (handlers) =>
   handlers.handle("check", () => Effect.succeed("ok")),
@@ -25,7 +24,7 @@ export const Routes = HttpApiBuilder.layer(AppApi, { openapiPath: "/openapi.json
 );
 
 // For a raw HttpRouter, merge this Layer with the application's route Layers.
-export const AuthRoutes = AuthHttp.layer(AppAuth, { origin: "https://app.example.com" });
+export const AuthRoutes = Http.layer(AppAuth, { origin: "https://app.example.com" });
 
 // In an application route covered by http.middleware, these local methods use
 // AuthRequest from Effect context. Calling them does not make an HTTP request.

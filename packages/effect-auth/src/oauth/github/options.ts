@@ -53,7 +53,7 @@ export type ProviderRegistration = Pick<GitHubOAuthAppGeneration, "clientId" | "
 export type ProviderOptions = Transport &
   (ProviderRegistration | { readonly registrations: ReadonlyArray<ProviderRegistration> });
 
-/** Declare GitHub for AuthHttp.layer. The host supplies its provider key and
+/** Declare GitHub for Http.layer. The host supplies its provider key and
  * callback destinations. Retired registrations remain available to finish flows. */
 export const provider = (
   options: ProviderOptions,

@@ -1,6 +1,5 @@
-import { Auth, Email, OAuth, Sessions } from "@yielded/auth";
+import { Auth, Email, Http, OAuth, Sessions } from "@yielded/auth";
 import * as GitHub from "@yielded/auth/GitHub";
-import * as AuthHttp from "@yielded/auth/Http";
 import * as OpenIdClient from "@yielded/auth/OpenIdClient";
 import type { SessionSigningKeyring } from "@yielded/auth/Sessions";
 import { Effect, Layer, Schema } from "effect";
@@ -56,7 +55,7 @@ export const makeServer = (config: {
 }) => {
   const AppAuth = makeAppAuth(config.email);
 
-  const http = AuthHttp.make(AppAuth, {
+  const http = Http.make(AppAuth, {
     origin,
     oauth: {
       providers: {

@@ -40,7 +40,7 @@ export const StepUpInput = Schema.Struct({
 });
 
 /** Canonical TOTP contracts without secret encryption, storage, or authority Layers. */
-export const makeTotpContract = <
+export const make = <
   const Id extends string,
   Session extends Schema.Codec<unknown, unknown, unknown, unknown>,
   Completion extends Schema.Codec<unknown, unknown, unknown, unknown>,

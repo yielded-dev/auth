@@ -1,5 +1,4 @@
-import { Auth, Password, Passkey, PhoneOtp, Sessions } from "@yielded/auth";
-import * as AuthHttp from "@yielded/auth/Http";
+import { Auth, Http, Password, Passkey, PhoneOtp, Sessions } from "@yielded/auth";
 import type { RequestBindingConfiguration } from "@yielded/auth/Operations";
 import type { ProofKeyring } from "@yielded/auth/Proofs";
 import { Effect, Layer, Schema } from "effect";
@@ -39,9 +38,9 @@ export const makeApplicationAuth = (configuration: {
     Layer.provide(Auth.RequestBindingConfig.layer(configuration.requestBinding)),
   );
 
-  const http = AuthHttp.make(AppAuth, { origin: configuration.origin });
+  const http = Http.make(AppAuth, { origin: configuration.origin });
 
-  const AuthRoutes = AuthHttp.layer(AppAuth, { origin: configuration.origin }).pipe(
+  const AuthRoutes = Http.layer(AppAuth, { origin: configuration.origin }).pipe(
     Layer.provide(Auth.RequestBindingConfig.layer(configuration.requestBinding)),
   );
 
