@@ -105,13 +105,7 @@ export const AppAuth = Auth.make("app/Auth", {
   sessions: Sessions.stateful(),
   strategies: {
     password: Password.make(),
-    passkey: Passkey.make({
-      relyingParty: {
-        id: "app.example.com",
-        name: "My app",
-        origins: ["https://app.example.com"],
-      },
-    }),
+    passkey: Passkey.make(),
   },
   defaultStrategy: "password",
 });

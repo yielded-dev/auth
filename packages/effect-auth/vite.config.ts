@@ -60,6 +60,8 @@ export default defineConfig({
       "src/IdentityResolver.ts",
       "src/PasswordCredentialStore.ts",
       "src/PhoneOtp.ts",
+      "src/SmsDelivery.ts",
+      "src/Twilio.ts",
       "src/Totp.ts",
       "src/PasskeyContract.ts",
       "src/TotpContract.ts",

@@ -9,7 +9,7 @@ import { LoginIdentifier } from "../../identity/models";
 import { type AuthInvocation } from "../../operations/context";
 import type { AuthOperationResult } from "../../operations/credentials";
 import { makeOperation, operationGroup } from "../../operations/operation";
-import type { ProofKeyring, ProofSecretPolicy } from "../../proofs/crypto";
+import type { ProofSecretPolicy } from "../../proofs/crypto";
 import { readProofCommit } from "../../proofs/dispatch";
 import {
   ProofBinding,
@@ -113,6 +113,7 @@ const makePasswordWithManagement = <
   const SessionModuleId extends string,
   Claims extends Schema.Codec<unknown, unknown, unknown, unknown>,
   Registration extends Schema.Codec<unknown, unknown, unknown, unknown>,
+  const Secret extends ProofSecretPolicy = ProofSecretPolicy,
 >(
   moduleId: Id,
   input: {
@@ -120,10 +121,8 @@ const makePasswordWithManagement = <
     readonly registration: Registration;
     readonly policy: PasswordMethodPolicy;
     readonly reset: {
-      readonly template: string;
-      readonly secret: ProofSecretPolicy;
+      readonly secret: Secret;
       readonly policy: ProofPolicy;
-      readonly keys?: ProofKeyring;
     };
   },
 ) => {
@@ -955,10 +954,13 @@ export function makePasswordMethod<
   const SessionId extends string,
   Claims extends Schema.Codec<unknown, unknown, unknown, unknown>,
   Registration extends Schema.Codec<unknown, unknown, unknown, unknown>,
+  const Secret extends ProofSecretPolicy = ProofSecretPolicy,
 >(
   moduleId: Id,
-  options: Parameters<typeof makePasswordWithManagement<Id, SessionId, Claims, Registration>>[1],
-): ReturnType<typeof makePasswordWithManagement<Id, SessionId, Claims, Registration>>;
+  options: Parameters<
+    typeof makePasswordWithManagement<Id, SessionId, Claims, Registration, Secret>
+  >[1],
+): ReturnType<typeof makePasswordWithManagement<Id, SessionId, Claims, Registration, Secret>>;
 
 export function makePasswordMethod<
   const Id extends string,
@@ -974,11 +976,12 @@ export function makePasswordMethod<
   const SessionId extends string,
   Claims extends Schema.Codec<unknown, unknown, unknown, unknown>,
   Registration extends Schema.Codec<unknown, unknown, unknown, unknown>,
+  const Secret extends ProofSecretPolicy = ProofSecretPolicy,
 >(
   moduleId: Id,
   options:
     | PasswordSignInOptions<SessionId, Claims>
-    | Parameters<typeof makePasswordWithManagement<Id, SessionId, Claims, Registration>>[1],
+    | Parameters<typeof makePasswordWithManagement<Id, SessionId, Claims, Registration, Secret>>[1],
 ) {
   return "registration" in options
     ? makePasswordWithManagement(moduleId, options)

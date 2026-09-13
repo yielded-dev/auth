@@ -34,19 +34,13 @@ import { AuthApi } from "./auth-contract";
 export const AppAuth = Auth.make(AuthApi, {
   sessions: Sessions.stateful(),
   strategies: {
-    social: OAuth.make({
-      policy: {
-        generation: 1,
-        lifetimeMillis: 5 * 60_000,
-        claimLifetimeMillis: 30_000,
-        retentionMillis: 10 * 60_000,
-        settlementTimeoutMillis: 5_000,
-      },
-    }),
+    social: OAuth.make(),
   },
   defaultStrategy: "social",
 });
 ```
+
+Flows default to five minutes; override `policy` when needed.
 
 `OAuth.make` signs in accounts with an existing provider link. To create accounts
 during sign-in, use `OAuth.makeRegistration` with your registration schema and

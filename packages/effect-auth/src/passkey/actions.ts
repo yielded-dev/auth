@@ -58,6 +58,7 @@ import {
   type PasskeyRegistrationStarted,
   type PasskeyDescriptor,
 } from "./models";
+import type { PasskeyConfig } from "./PasskeyConfig";
 import { PasskeyCredentials } from "./PasskeyCredentials";
 import { PasskeyEnrollmentContext } from "./PasskeyEnrollmentContext";
 import { PasskeyPersistence, type PreparePasskeyCommit } from "./PasskeyPersistence";
@@ -141,7 +142,7 @@ const contextPurpose = {
  * evidence operation is installed. Callers authenticate target contexts first. */
 export const makePasskeyCeremony = <const Id extends string, const Purpose extends PasskeyPurpose>(
   moduleId: Id,
-  source: Effect.Effect<PasskeyMethodPolicy, PasskeyConfigurationError>,
+  source: Effect.Effect<PasskeyMethodPolicy, PasskeyConfigurationError, PasskeyConfig>,
   purpose: Purpose,
 ) => {
   const binding = makeRequestBinding(moduleId, `passkey-${purpose}`);
@@ -825,7 +826,7 @@ export const makePasskeyCeremony = <const Id extends string, const Purpose exten
  * authorization; callers MUST resolve the private target capability each time. */
 export const makePasskeyActions = <const Id extends string>(
   moduleId: Id,
-  source: Effect.Effect<PasskeyMethodPolicy, PasskeyConfigurationError>,
+  source: Effect.Effect<PasskeyMethodPolicy, PasskeyConfigurationError, PasskeyConfig>,
 ) => {
   const ceremony = makePasskeyCeremony(moduleId, source, "action");
 

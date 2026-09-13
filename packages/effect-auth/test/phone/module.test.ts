@@ -1,7 +1,8 @@
 import { it } from "@effect/vitest";
 import { Auth, Sessions } from "@yielded/auth";
-import { ProofPersistence, SmsProofDelivery } from "@yielded/auth/Proofs";
-import { PhoneOtp } from "@yielded/auth/strategies";
+import { ProofPersistence, ProofKeys } from "@yielded/auth/Proofs";
+import { SmsDelivery } from "@yielded/auth/SmsDelivery";
+import { Email, OAuth, Passkey, Password, PhoneOtp, Totp } from "@yielded/auth/strategies";
 import { Effect, Encoding, Layer, Redacted, Schema } from "effect";
 import { expect, expectTypeOf } from "vite-plus/test";
 
@@ -13,8 +14,53 @@ const keyring = {
 const AppAuth = Auth.make("test/phone-sign-in", {
   claims: Schema.Struct({ name: Schema.String }),
   sessions: Sessions.stateful(),
-  strategies: { phone: PhoneOtp.make({ template: "sign-in", keys: keyring }) },
+  strategies: { phone: PhoneOtp.make() },
   defaultStrategy: "phone",
+});
+
+it("defines every strategy with defaults while retaining infrastructure requirements", () => {
+  const app = Auth.make("test/default-strategies", {
+    claims: Schema.Struct({}),
+    sessions: Sessions.stateful(),
+    strategies: {
+      phone: PhoneOtp.make(),
+      email: Email.makeCode(),
+      link: Email.makeLink(),
+      password: Password.make(),
+      passkey: Passkey.make(),
+      oauth: OAuth.make(),
+      totp: Totp.make(),
+    },
+  });
+
+  type Dependencies = Layer.Services<typeof app.layer>;
+  expectTypeOf<Extract<Dependencies, SmsDelivery>>().toEqualTypeOf<SmsDelivery>();
+  expectTypeOf<Extract<Dependencies, ProofKeys>>().toEqualTypeOf<ProofKeys>();
+  expectTypeOf<
+    Extract<Dependencies, Passkey.PasskeyConfig>
+  >().toEqualTypeOf<Passkey.PasskeyConfig>();
+  expectTypeOf<
+    Extract<Layer.Services<typeof app.strategies.link.layer>, ProofKeys>
+  >().toEqualTypeOf<never>();
+
+  const managedPassword = Auth.make("test/password-defaults", {
+    claims: Schema.Struct({}),
+    sessions: Sessions.stateful(),
+    strategies: { password: Password.make({ registration: Schema.Struct({}) }) },
+  });
+
+  expectTypeOf<
+    Extract<Layer.Services<typeof managedPassword.layer>, ProofKeys>
+  >().toEqualTypeOf<never>();
+  expect(Object.keys(app.strategies)).toEqual([
+    "phone",
+    "email",
+    "link",
+    "password",
+    "passkey",
+    "oauth",
+    "totp",
+  ]);
 });
 
 it.effect(
@@ -30,6 +76,7 @@ it.effect(
         Layer.mock(AppAuth.sessions.StatefulSessionPersistence, {}),
         Layer.mock(AppAuth.sessions.SessionRepository, {}),
         Layer.mock(ProofPersistence, {}),
+        ProofKeys.layer(keyring),
         Layer.mock(PhoneOtp.PhoneSignInTargets, {}),
         Layer.mock(PhoneOtp.PhoneDeliveryEligibility, {}),
         Layer.mock(AppAuth.strategies.phone.ClaimsForPhone, {}),
@@ -46,13 +93,13 @@ it.effect(
 
       const withoutSms = AppAuth.layer.pipe(Layer.provide(dependencies));
 
-      expectTypeOf<Layer.Services<typeof withoutSms>>().toEqualTypeOf<SmsProofDelivery>();
+      expectTypeOf<Layer.Services<typeof withoutSms>>().toEqualTypeOf<SmsDelivery>();
 
       const AuthLive = withoutSms.pipe(
         Layer.provide(
-          SmsProofDelivery.layer({ vendorId: "test", idempotencyMillis: 0 }, () =>
-            Effect.die("Rejected admission must not send an SMS"),
-          ),
+          Layer.succeed(SmsDelivery, {
+            send: () => Effect.die("Rejected admission must not send an SMS"),
+          }),
         ),
       );
 

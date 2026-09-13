@@ -18,6 +18,7 @@ import {
 import { LoginIdentifier } from "@yielded/auth/Identity";
 import {
   ProofPersistence,
+  ProofKeys,
   ProofUnavailable,
   ProofBinding,
   type ProofCompletionInput,
@@ -65,20 +66,17 @@ const proofPolicy = {
   },
 };
 
-const code = {
-  namespace: "example/email" as const,
-  template: "email-code",
-  keys: {
-    activeKeyId: "example",
-    keys: [
-      {
-        id: "example",
-        material: Redacted.make(Encoding.encodeBase64Url(new Uint8Array(32).fill(24))),
-      },
-    ],
-  },
-  policy: proofPolicy,
+const proofKeys = {
+  activeKeyId: "example",
+  keys: [
+    {
+      id: "example",
+      material: Redacted.make(Encoding.encodeBase64Url(new Uint8Array(32).fill(24))),
+    },
+  ],
 };
+
+const code = { namespace: "example/email" as const, policy: proofPolicy };
 
 export const emailAuth = Auth.make("example/email-auth", {
   claims: Claims,
@@ -88,7 +86,6 @@ export const emailAuth = Auth.make("example/email-auth", {
     code: Email.makeCode(code),
     link: Email.makeLink({
       namespace: "example/email",
-      template: "email-link",
       policy: proofPolicy,
     }),
     registration: Email.makeRegistration({ ...code, registration: Claims }),
@@ -752,6 +749,7 @@ export const makeEmailConsumer = Effect.gen(function* () {
   return {
     layer: Layer.mergeAll(
       Layer.succeed(ProofPersistence, proofStore),
+      ProofKeys.layer(proofKeys),
       Layer.succeed(AuthenticationAuthority, authority),
       Layer.succeed(EmailAddressPersistence, addressStore),
       Layer.succeed(EmailActionEvidence, actions),

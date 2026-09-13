@@ -14,28 +14,20 @@ import { Schema } from "effect";
 import { Auth, Sessions } from "@yielded/auth";
 import { Password } from "@yielded/auth/strategies";
 
-import { proofPolicy } from "./auth-config";
-
 export const AppAuth = Auth.make("app/Auth", {
   claims: Schema.Struct({ displayName: Schema.String }),
   sessions: Sessions.stateful(),
   strategies: {
     password: Password.make({
       registration: Schema.Struct({ displayName: Schema.NonEmptyString }),
-      policy: Password.defaultPasswordMethodPolicy,
-      reset: {
-        template: "password-reset",
-        secret: { _tag: "Token" },
-        policy: proofPolicy,
-      },
     }),
   },
   defaultStrategy: "password",
 });
 ```
 
-The [email guide](./codes) shows the proof-policy fields. Your application
-controls account creation and recovery delivery. For sign-in only, use
+Password policy and reset-token expiry have defaults. Your application controls
+account creation and recovery delivery. Override `policy` or `reset` when needed. For sign-in only, use
 `password: Password.make()` as in [getting started](./getting-started).
 
 This definition exposes local methods. The calls below belong inside an existing
@@ -134,8 +126,9 @@ alongside those shared services. Keep normalization stable for stored credential
 <summary>Reset and retry boundaries</summary>
 
 Password recovery uses `requestReset` → `verifyReset` → `completeReset`. Enable
-`reset` with an email template and proof policy, and supply email delivery and
-proof persistence. A reset requires an independently verified address.
+registration/management to include recovery, and supply email delivery and
+proof persistence. Reset links use token proofs by default; override `reset` to
+change the secret or expiry policy. A reset requires an independently verified address.
 
 Keep continuation credentials in private delivery. A consumed proof or an unknown
 commit outcome is not permission to repeat a password mutation. Prepared-password

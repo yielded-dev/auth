@@ -71,6 +71,14 @@ specifications, planning documents, decision registers, ADRs, roadmaps, or evide
 8. Concurrency is bounded and uses Effect structured concurrency.
 9. Node platform assumptions must not enter core domain modules.
 
+## Designing strategies
+
+Strategy constructors configure behavior; default to `make()` where possible and derive
+identities from the Auth definition. Supply storage, delivery, secrets, and provider config
+through required services and Layers. Optional rendering uses a defaulted service.
+Adapter Layers require their config and platform services; keep every dependency visible in `R`.
+Do not add strategies or constructor callbacks merely to forward service dependencies.
+
 ## Package dependency direction
 
 ```text

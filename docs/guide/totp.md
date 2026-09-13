@@ -19,22 +19,15 @@ export const AppAuth = Auth.make("app/Auth", {
   claims: Schema.Struct({ displayName: Schema.String }),
   strategies: {
     password: Password.make(),
-    totp: Totp.make({
-      issuer: "My app",
-      enrollmentLifetimeMillis: 5 * 60_000,
-      revealLifetimeMillis: 60_000,
-      clockSkewSteps: 1,
-      attemptLimit: 5,
-      attemptWindowMillis: 5 * 60_000,
-      maximumEvidenceAgeMillis: 60_000,
-      allowRecoveryCodeForPending: true,
-      lostFactorRecovery: "deny",
-      requireImmediateInvalidation: true,
-    }),
+    totp: Totp.make({ issuer: "My app" }),
   },
   defaultStrategy: "password",
 });
 ```
+
+`Totp.make()` also works; `issuer` customizes the authenticator label. Enrollment,
+attempt, and recovery policies have defaults. Recovery for lost factors is denied
+unless explicitly enabled.
 
 Your `AuthenticationAuthority` decides which accounts require two factors.
 Provide `TotpPersistence`, `TotpSecretKeys`, `TotpActionEvidence`, and stateful

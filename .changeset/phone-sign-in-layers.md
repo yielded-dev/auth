@@ -2,6 +2,6 @@
 "@yielded/auth": minor
 ---
 
-Separate phone sign-in from optional registration and number-management strategies, and acquire phone admission through the strategy Layer while keeping request context per call. Supply default crypto and hooks in `phonePersistenceLayer`.
+Default strategy constructors to behavior-only configuration and supply infrastructure through Layers. Add optional phone message rendering and an Effect HTTP Twilio adapter requiring `TwilioConfig` and `HttpClient`.
 
-BEHAVIOR CHANGE: `PhoneOtp.make` and `PhoneOtp.makeModule` expose sign-in only. Select `PhoneOtp.makeLifecycle` for lifecycle operations and move its `lifecycle` configuration there; share the original namespace with sign-in to preserve credentials, proofs, and the claims service. SMS delivery remains an explicit Layer dependency.
+BEHAVIOR CHANGE: Supply `ProofKeys` for code verification and `SmsDelivery` for phone delivery instead of constructor keys and template labels. Enable phone lifecycle operations with `PhoneOtp.make({ lifecycle: true })` on the same strategy. Supply `PasskeyConfig` to both passkey strategies and the `layerSimpleWebAuthnPasskeyProtocol` Layer value. Preserve existing namespaces and key IDs; outstanding requests created with custom template labels require a fresh flow.

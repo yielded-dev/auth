@@ -526,6 +526,7 @@ export const makeStudioLive = Effect.fn("Studio.live")(function* (
 
   const base = Layer.mergeAll(
     storage,
+    Passkey.PasskeyConfig.layer({ profiles: [Studio.profile] }),
     hookLayer,
     layerWebCrypto,
     Auth.RequestBindingConfig.layer(binding),
@@ -605,9 +606,7 @@ export const makeStudioLive = Effect.fn("Studio.live")(function* (
         modules.keys.binding.layer,
       ),
     ),
-    Layer.provideMerge(
-      PasskeyProtocol.layerSimpleWebAuthnPasskeyProtocol({ profiles: [Studio.profile] }),
-    ),
+    Layer.provideMerge(PasskeyProtocol.layerSimpleWebAuthnPasskeyProtocol),
   );
 
   return Layer.mergeAll(

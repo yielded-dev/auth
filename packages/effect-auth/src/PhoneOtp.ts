@@ -8,12 +8,7 @@ export {
 
 export { PhoneSignInTargets } from "./phone/PhoneSignInTargets";
 
-export {
-  type PhoneOtpOptions,
-  type PhoneLifecycleOptions,
-  make,
-  makeLifecycle,
-} from "./phone/definition";
+export { type PhoneOtpOptions, type PhoneLifecycleOptions, make } from "./phone/definition";
 
 export { makePhoneOtp as makeModule } from "./phone/module";
 
@@ -37,3 +32,5 @@ export {
   PhoneLifecycleFailure,
   PhoneMutationDecision,
 } from "./phone/lifecycleModels";
+
+export { Template, type PhoneTemplate } from "./phone/Template";

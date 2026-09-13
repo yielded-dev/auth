@@ -9,11 +9,11 @@ import type { AuthInvocation } from "../operations/context";
 import { makeOperation, operationGroup } from "../operations/operation";
 import type { RequestBindingCredential } from "../operations/requestBinding";
 import { makeRequestBinding, RequestBindingFlowId } from "../operations/requestBinding";
-import type { ProofKeyring } from "../proofs/crypto";
 import { readProofCommit } from "../proofs/dispatch";
 import { ProofBinding, ProofPurpose, ProofRequestId, ProofRequestReceipt } from "../proofs/models";
 import { makeProofModule } from "../proofs/module";
 import type { ProofPolicy } from "../proofs/policy";
+import { defaultProofPolicy } from "../proofs/policy";
 import { TokenDigest } from "../Schema";
 import { AuthenticationAuthority } from "../sessions/AuthenticationAuthority";
 import {
@@ -24,7 +24,7 @@ import {
 import type { makeSessionModule } from "../sessions/module";
 import { phoneAdmission, phoneDigest, phoneAttemptAdmission } from "./admission";
 import { makePhoneClaims } from "./claims";
-import { defaultPolicy } from "./configuration";
+import { deliveryLayer } from "./delivery";
 import { phoneFailure } from "./failure";
 import {
   PhoneCredentialSnapshot,
@@ -64,8 +64,6 @@ export const makePhoneOtp = <
   moduleId: Id,
   options: {
     readonly sessions: ReturnType<typeof makeSessionModule<SessionId, Claims>>;
-    readonly template: string;
-    readonly keys: ProofKeyring;
     readonly policy?: ProofPolicy;
     readonly digits?: 6 | 7 | 8 | 9 | 10;
   },
@@ -77,10 +75,9 @@ export const makePhoneOtp = <
     purpose: ProofPurpose.make("phone-otp-sign-in"),
     binding: ProofBinding,
     channel: "sms",
-    template: options.template,
-    keys: options.keys,
+    template: "phone-otp-sign-in",
     secret: { _tag: "NumericCode", digits: options.digits ?? 6 },
-    policy: options.policy ?? defaultPolicy,
+    policy: options.policy ?? defaultProofPolicy,
   });
 
   const ClaimsForPhone = makePhoneClaims<Id, Claims>(moduleId);
@@ -173,7 +170,7 @@ export const makePhoneOtp = <
         "request",
         input.requestId,
         yield* phoneDigest(["sign-in", input.flowId, input.phoneNumber, input.locale]),
-        options.policy?.requestRetentionMillis ?? defaultPolicy.requestRetentionMillis,
+        options.policy?.requestRetentionMillis ?? defaultProofPolicy.requestRetentionMillis,
       ))
     )
       return yield* PhoneOtpRejected.make({});
@@ -316,7 +313,7 @@ export const makePhoneOtp = <
 
   const layer = handlersLayer.pipe(
     Layer.provide(defaultLayer(binding.RequestBinding, binding.layer)),
-    Layer.provide(defaultLayer(proof.Proofs, proof.smsLayer)),
+    Layer.provide(defaultLayer(proof.Proofs, proof.smsLayer.pipe(Layer.provide(deliveryLayer)))),
     Layer.provide([cryptoLayer, hooksLayer]),
   );
 

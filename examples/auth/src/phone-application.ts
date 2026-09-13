@@ -40,20 +40,11 @@ export const Claims = Schema.Struct({
   segment: Schema.Literals(["retail", "wholesale"]),
 });
 
-// Both strategies use the existing credential namespace and the same claims service.
-const phoneOptions = {
-  namespace: "shop/phone",
-  template: "customer-login",
-  keys: keyring,
-  policy: proofPolicy,
-} as const;
-
 export const shopAuth = Auth.make("shop", {
   sessionNamespace: "shop/sessions",
   claims: Claims,
   strategies: {
-    phone: PhoneOtp.make(phoneOptions),
-    phoneLifecycle: PhoneOtp.makeLifecycle({ ...phoneOptions, lifecycle: lifecyclePolicy }),
+    phone: PhoneOtp.make({ policy: proofPolicy, lifecycle: lifecyclePolicy }),
   },
   defaultStrategy: "phone",
 });

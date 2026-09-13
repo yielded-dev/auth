@@ -23,7 +23,7 @@ import {
   RequestBindingFlowId,
   RequestBindingPublic,
 } from "../operations/requestBinding";
-import type { ProofKeyring, ProofSecretPolicy } from "../proofs/crypto";
+import type { ProofSecretPolicy } from "../proofs/crypto";
 import { readProofCommit } from "../proofs/dispatch";
 import { ProofInvalid, ProofRequestConflict } from "../proofs/errors";
 import {
@@ -146,6 +146,14 @@ export interface EmailModule<Id extends string, Kind extends string, Claims> {
  * address mutation and notification dependencies. Proof/session authorities remain
  * consumer-owned; this factory installs no storage or implicit mail sender.
  */
+export interface EmailProofOptions<Mode extends "code" | "link"> {
+  readonly secret: {
+    readonly code: Extract<ProofSecretPolicy, { readonly _tag: "NumericCode" }>;
+    readonly link: Extract<ProofSecretPolicy, { readonly _tag: "Token" }>;
+  }[Mode];
+  readonly policy: ProofPolicy;
+}
+
 export const makeEmailSignInModule = <
   const Id extends string,
   const SessionId extends string,
@@ -156,12 +164,7 @@ export const makeEmailSignInModule = <
   options: {
     readonly sessions: ReturnType<typeof makeSessionModule<SessionId, Claims>>;
     readonly mode: Mode;
-    readonly proof: {
-      readonly template: string;
-      readonly secret: ProofSecretPolicy;
-      readonly keys?: ProofKeyring;
-      readonly policy: ProofPolicy;
-    };
+    readonly proof: EmailProofOptions<Mode>;
   },
 ) => {
   const sessions = options.sessions;
@@ -522,9 +525,7 @@ export const makeEmailAccountModule = <
   options: {
     readonly sessions: ReturnType<typeof makeSessionModule<SessionId, Claims>>;
     readonly code: {
-      readonly template: string;
       readonly secret: Extract<ProofSecretPolicy, { readonly _tag: "NumericCode" }>;
-      readonly keys: ProofKeyring;
       readonly policy: ProofPolicy;
     };
   },
@@ -634,7 +635,7 @@ export const makeEmailMethod = <
 >(
   moduleId: Id,
   options: Parameters<typeof makeEmailAccountModule<Id, SessionId, Claims>>[1] & {
-    readonly link: { readonly template: string; readonly policy: ProofPolicy };
+    readonly link: { readonly policy: ProofPolicy };
   },
 ) => {
   const accounts = makeEmailAccountModule<Id, SessionId, Claims>(moduleId, options);

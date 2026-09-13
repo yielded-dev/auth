@@ -1,3 +1,5 @@
+import { Effect, Layer } from "effect";
+
 import type {
   BindingOf,
   ClaimsCodec,
@@ -5,8 +7,10 @@ import type {
   StrategyDefinition,
   StrategyTypeLambda,
 } from "../auth/definition";
+import { operationGroup } from "../operations/operation";
 import { snapshotPhoneConfiguration } from "./configuration";
 import { makePhoneLifecycle } from "./lifecycle";
+import type { PhoneLifecyclePolicy } from "./lifecycleModels";
 import { makePhoneOtp } from "./module";
 
 export type PhoneOtpOptions<Namespace extends string | undefined = undefined> = Omit<
@@ -74,26 +78,9 @@ const define = <const Namespace extends string | undefined>(
   return Object.freeze(definition);
 };
 
-/** Sign in existing phone credentials. Supply SMS delivery, storage, and account policy as Layers. */
-export function make<const Namespace extends string>(
-  options: PhoneOtpOptions<Namespace> & { readonly namespace: Namespace },
-): ReturnType<typeof define<Namespace>>;
-
-export function make<const Namespace extends string | undefined = undefined>(
-  options: PhoneOtpOptions<Namespace>,
-): ReturnType<typeof define<Namespace | undefined>>;
-
-export function make<const Namespace extends string | undefined>(
-  options: PhoneOtpOptions<Namespace>,
-) {
-  return define(options.namespace, options);
-}
-
 /** Opt into phone registration, verification, and number changes. Delivery remains a Layer. */
-export type PhoneLifecycleOptions<Namespace extends string | undefined = undefined> = Omit<
-  Parameters<typeof makePhoneLifecycle>[1],
-  "sessions"
-> & { readonly namespace?: Namespace };
+export type PhoneLifecycleOptions<Namespace extends string | undefined = undefined> =
+  PhoneOtpOptions<Namespace> & { readonly lifecycle: true | PhoneLifecyclePolicy };
 
 /** Bind the phone method to its Auth definition; runtime authorities come from Layers. */
 const captureLifecycle = <const Namespace extends string | undefined>(
@@ -102,7 +89,7 @@ const captureLifecycle = <const Namespace extends string | undefined>(
 ) => {
   const options = snapshotPhoneConfiguration({
     ...input,
-    ...(input.lifecycle === undefined ? {} : { lifecycle: Object.freeze({ ...input.lifecycle }) }),
+    lifecycle: input.lifecycle === true ? (true as const) : Object.freeze({ ...input.lifecycle }),
   });
 
   return { options };
@@ -119,9 +106,41 @@ const bindLifecycle = <
 ) => {
   const { options } = captured;
 
-  return makePhoneLifecycle<Id, SessionId, Claims>(binding.namespace, {
+  const phone = makePhoneOtp<Id, SessionId, Claims>(binding.namespace, {
     ...options,
     sessions: binding.sessions,
+  });
+
+  const lifecycle = makePhoneLifecycle<Id, SessionId, Claims>(binding.namespace, {
+    ...options,
+    lifecycle: options.lifecycle === true ? undefined : options.lifecycle,
+    sessions: binding.sessions,
+  });
+
+  return Object.freeze({
+    ...phone,
+    lifecycle,
+    operations: { ...phone.operations, ...lifecycle.operations },
+    group: operationGroup(
+      phone.operations.SignIn,
+      phone.operations.Complete,
+      lifecycle.operations.Begin,
+      lifecycle.operations.Resend,
+      lifecycle.operations.CompleteLifecycle,
+      lifecycle.operations.Cancel,
+      lifecycle.operations.Cleanup,
+    ),
+    layer: Layer.merge(phone.layer, lifecycle.layer),
+    handlersLayer: Layer.merge(phone.handlersLayer, lifecycle.handlersLayer),
+    strategy: {
+      completion: true as const,
+      make: Effect.gen(function* () {
+        const signIn = yield* phone.strategy.make;
+        const management = yield* lifecycle.strategy.make;
+
+        return { ...signIn, ...management };
+      }),
+    },
   });
 };
 
@@ -160,20 +179,27 @@ const defineLifecycle = <const Namespace extends string | undefined>(
   return Object.freeze(definition);
 };
 
-/**
- * Register, verify, or change phone numbers with independent action authorization.
- * Share the sign-in namespace to use the same credentials and claims service.
- */
-export function makeLifecycle<const Namespace extends string>(
+/** Configure phone behavior; delivery, keys, and storage remain Layer dependencies. */
+export function make<const Namespace extends string>(
   options: PhoneLifecycleOptions<Namespace> & { readonly namespace: Namespace },
 ): ReturnType<typeof defineLifecycle<Namespace>>;
 
-export function makeLifecycle<const Namespace extends string | undefined = undefined>(
+export function make<const Namespace extends string | undefined = undefined>(
   options: PhoneLifecycleOptions<Namespace>,
 ): ReturnType<typeof defineLifecycle<Namespace | undefined>>;
 
-export function makeLifecycle<const Namespace extends string | undefined>(
-  options: PhoneLifecycleOptions<Namespace>,
+export function make<const Namespace extends string>(
+  options: PhoneOtpOptions<Namespace> & { readonly namespace: Namespace },
+): ReturnType<typeof define<Namespace>>;
+
+export function make<const Namespace extends string | undefined = undefined>(
+  options?: PhoneOtpOptions<Namespace>,
+): ReturnType<typeof define<Namespace | undefined>>;
+
+export function make<const Namespace extends string | undefined>(
+  options: PhoneOtpOptions<Namespace> | PhoneLifecycleOptions<Namespace> = {},
 ) {
-  return defineLifecycle(options.namespace, options);
+  return "lifecycle" in options
+    ? defineLifecycle(options.namespace, options)
+    : define(options.namespace, options);
 }

@@ -287,3 +287,11 @@ export const OAuthCleanupInput = Schema.Struct({
 });
 
 export type OAuthCleanupInput = typeof OAuthCleanupInput.Type;
+
+export const defaultOAuthSignInPolicy: OAuthSignInPolicy = {
+  generation: 1,
+  lifetimeMillis: 300_000,
+  claimLifetimeMillis: 30_000,
+  settlementTimeoutMillis: 10_000,
+  retentionMillis: 3_600_000,
+};

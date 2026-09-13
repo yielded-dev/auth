@@ -18,25 +18,18 @@ import { Schema } from "effect";
 import { Auth, Sessions } from "@yielded/auth";
 import { Email } from "@yielded/auth/strategies";
 
-import { proofKeys, proofPolicy } from "./auth-config";
-
 export const AppAuth = Auth.make("app/Auth", {
   claims: Schema.Struct({ displayName: Schema.String }),
   sessions: Sessions.stateful(),
   strategies: {
-    email: Email.makeCode({
-      template: "sign-in-code",
-      digits: 6,
-      keys: proofKeys,
-      policy: proofPolicy,
-    }),
+    email: Email.makeCode(),
   },
   defaultStrategy: "email",
 });
 ```
 
-`proofKeys` is your secret-managed proof keyring. Set expiry and attempt limits
-in `proofPolicy`; its full shape is shown below.
+Codes default to six digits and five minutes. Override `digits` or `policy` when
+needed. Supply shared `ProofKeys` through [AuthDependencies](../reference/adapters#compose-the-application-layer).
 
 ## Start the flow and send a code
 
@@ -112,12 +105,7 @@ to cookies so they stay out of ordinary browser payloads.
 ```ts [magic-link.ts]
 import { Email } from "@yielded/auth/strategies";
 
-import { proofPolicy } from "./auth-config";
-
-export const magicLink = Email.makeLink({
-  template: "sign-in-link",
-  policy: proofPolicy,
-});
+export const magicLink = Email.makeLink();
 ```
 
 Use this strategy with the same begin → request → verify → complete flow.

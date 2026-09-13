@@ -17,23 +17,18 @@ import { Schema } from "effect";
 import { Auth, Sessions } from "@yielded/auth";
 import { PhoneOtp } from "@yielded/auth/strategies";
 
-import { proofKeys } from "./auth-config";
-
 export const AppAuth = Auth.make("app/Auth", {
   claims: Schema.Struct({ displayName: Schema.String }),
   sessions: Sessions.stateful(),
   strategies: {
-    phone: PhoneOtp.make({
-      template: "sign-in-sms",
-      keys: proofKeys,
-    }),
+    phone: PhoneOtp.make(),
   },
   defaultStrategy: "phone",
 });
 ```
 
-Load `proofKeys` from your secret configuration. The default code has six digits
-and expires after five minutes. You can override `digits` and `policy`.
+The default code has six digits and expires after five minutes. Override `digits`
+or `policy` only to change that behavior. Keys and delivery come from Layers.
 
 ## Send a code
 
@@ -93,20 +88,27 @@ and SMS sender:
 ```ts [phone-live.ts]
 import { Layer } from "effect";
 import { PhoneOtp } from "@yielded/auth/strategies";
-import { SmsProofDelivery } from "@yielded/auth/Proofs";
+import * as Twilio from "@yielded/auth/Twilio";
+import { FetchHttpClient } from "effect/unstable/http";
 
 import { AppAuth } from "./auth";
 import { AuthDependencies } from "./auth-dependencies";
 import { resolvePhoneClaims } from "./auth-accounts";
 import { PhonePersistenceLive, ProofPersistenceLive } from "./auth-persistence";
-import { canSendSms, sendSms, smsVendor } from "./sms";
+import { canSendSms } from "./sms";
+import { TwilioConfigLive } from "./auth-config";
+
+const SmsLive = Twilio.layer.pipe(
+  Layer.provide(TwilioConfigLive),
+  Layer.provide(FetchHttpClient.layer),
+);
 
 export const PhoneLive = Layer.mergeAll(
   PhonePersistenceLive,
   ProofPersistenceLive,
   Layer.succeed(PhoneOtp.PhoneDeliveryEligibility, { allowed: canSendSms }),
   Layer.succeed(AppAuth.strategies.phone.ClaimsForPhone, { resolve: resolvePhoneClaims }),
-  SmsProofDelivery.layer(smsVendor, sendSms),
+  SmsLive,
 );
 
 export const AuthLive = AppAuth.layer.pipe(
@@ -122,31 +124,40 @@ The relative imports are your application modules. `PhonePersistenceLive` suppli
 [session, account, and key configuration](../reference/adapters#compose-the-application-layer).
 
 `canSendSms` applies your country and delivery policy; `resolvePhoneClaims` loads
-session claims. `sendSms` returns a `ProofDeliveryOutcome`. Set `smsVendor` to
-`{ vendorId: "your-sender", idempotencyMillis: 0 }` unless your vendor guarantees
-deduplication for a longer interval.
+session claims. `TwilioConfigLive` supplies `Twilio.TwilioConfig` with `accountSid`,
+a redacted `authToken`, and either `from` or `messagingServiceSid`. It can load those
+values from Effect Config or your secret store. Twilio uses Effect HTTP; no SDK is needed.
 
-Web Crypto and empty lifecycle hooks are installed automatically. SMS delivery
-has no default: omitting its Layer leaves a TypeScript dependency error.
+Supply another `SmsDelivery` implementation to use another vendor. Delivery is
+required; omitting it leaves a TypeScript dependency error. Web Crypto and empty
+lifecycle hooks have defaults. Shared `ProofKeys` come from `AuthDependencies`.
+
+<details>
+<summary>Customize the SMS message</summary>
+
+Add this optional Layer to `PhoneLive`:
+
+```ts
+PhoneOtp.Template.layer({
+  render: (code) => `Your Acme sign-in code is ${code}.`,
+});
+```
+
+The default is `Your sign-in code is 123456.` The renderer also receives locale
+and expiry as its second argument. Text stays private through delivery.
+
+</details>
 
 <details>
 <summary>Register or change phone numbers</summary>
 
-Opt into `PhoneOtp.makeLifecycle`. Pass both strategies to `Auth.make`, using the
-same namespace to share credentials and claims:
+Enable lifecycle operations on the same strategy:
 
 ```ts
-const phone = {
-  namespace: "app/Auth/phone",
-  template: "sign-in-sms",
-  keys: proofKeys,
-} as const;
-
-const strategies = {
-  phone: PhoneOtp.make(phone),
-  phoneLifecycle: PhoneOtp.makeLifecycle(phone),
-};
+phone: PhoneOtp.make({ lifecycle: true });
 ```
+
+Use a lifecycle policy object instead of `true` to customize its behavior.
 
 These operations additionally require `PhonePersistence` and `PhoneActionEvidence`.
 The Drizzle Layer above already supplies `PhonePersistence`. Add independent
@@ -157,11 +168,10 @@ Layer.succeed(PhoneOtp.PhoneActionEvidence, { verify: authorizePhoneChange });
 ```
 
 `authorizePhoneChange` is your application's check of independent evidence for
-a number change. Start with `auth.begin("phoneLifecycle", input)` and finish with
-`auth.completeLifecycle("phoneLifecycle", input)`. Supply `PhoneRequestContext`
+a number change. Start with `auth.begin(input)` and finish with
+`auth.completeLifecycle(input)`. Supply `PhoneRequestContext`
 for each request, as for sign-in.
 
-When moving existing lifecycle operations, retain their original namespace.
 Do not link accounts because their phone strings match. See the
 [complete phone composition](https://github.com/yielded-dev/auth/blob/main/examples/auth/src/phone-sqlite-bun.ts).
 

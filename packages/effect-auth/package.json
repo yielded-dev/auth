@@ -81,6 +81,8 @@
     "./IdentityResolver": "./src/IdentityResolver.ts",
     "./PasswordCredentialStore": "./src/PasswordCredentialStore.ts",
     "./PhoneOtp": "./src/PhoneOtp.ts",
+    "./SmsDelivery": "./src/SmsDelivery.ts",
+    "./Twilio": "./src/Twilio.ts",
     "./Totp": "./src/Totp.ts",
     "./PasskeyContract": "./src/PasskeyContract.ts",
     "./TotpContract": "./src/TotpContract.ts",

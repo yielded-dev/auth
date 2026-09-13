@@ -14,7 +14,7 @@ import { makeOperation, operationGroup } from "../operations/operation";
 import type { ProofCompletionPlan } from "./completion";
 import {
   makeProofCrypto,
-  type ProofKeyring,
+  proofKeysFor,
   type ProofSecretPolicy,
   validateProofBinding,
 } from "./crypto";
@@ -69,7 +69,6 @@ export const snapshotProofConfiguration = <
   Configuration extends {
     readonly secret: ProofSecretPolicy;
     readonly policy: ProofPolicy;
-    readonly keys?: ProofKeyring;
   },
 >(
   input: Configuration,
@@ -89,17 +88,6 @@ export const snapshotProofConfiguration = <
         actionAttempts: Object.freeze({ ...input.policy?.abuse?.actionAttempts }),
       }),
     }),
-    keys:
-      input.keys === undefined
-        ? undefined
-        : Object.freeze({
-            ...input.keys,
-            keys: Object.freeze(
-              (Array.isArray(input.keys?.keys) ? input.keys.keys : []).map((entry) =>
-                Object.freeze({ ...entry }),
-              ),
-            ),
-          }),
   });
 
 /** Each module has one fixed purpose and a schema that makes required binding fields mandatory.
@@ -109,19 +97,22 @@ export const snapshotProofConfiguration = <
 export const makeProofModule = <
   const Id extends string,
   Binding extends Schema.Codec<ProofBinding, unknown, unknown, unknown>,
+  const Secret extends ProofSecretPolicy = ProofSecretPolicy,
 >(
   moduleId: Id,
   input: {
     readonly purpose: ProofPurpose;
     readonly binding: Binding;
     readonly channel: "email" | "sms";
-    readonly template: string;
-    readonly secret: ProofSecretPolicy;
+    readonly template?: string;
+    readonly secret: Secret;
     readonly policy: ProofPolicy;
-    readonly keys?: ProofKeyring;
   },
 ) => {
-  const options = snapshotProofConfiguration(input);
+  const options = snapshotProofConfiguration({
+    ...input,
+    template: input.template ?? input.purpose,
+  });
 
   const BindingCodec: Schema.Codec<
     Binding["Type"],
@@ -212,7 +203,7 @@ export const makeProofModule = <
           moduleId,
           options.purpose,
           options.secret,
-          options.keys,
+          yield* proofKeysFor(options.secret),
         );
 
         const store = yield* ProofPersistence;

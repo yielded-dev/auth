@@ -13,7 +13,6 @@ import {
   RequestBindingCredential,
   RequestBindingFlowId,
 } from "../operations/requestBinding";
-import type { ProofKeyring } from "../proofs/crypto";
 import { readProofCommit } from "../proofs/dispatch";
 import {
   ProofBinding,
@@ -25,6 +24,7 @@ import {
 } from "../proofs/models";
 import { makeProofModule } from "../proofs/module";
 import type { ProofPolicy } from "../proofs/policy";
+import { defaultProofPolicy } from "../proofs/policy";
 import { assessAuthentication } from "../sessions/assurance";
 import { AuthenticationAuthority } from "../sessions/AuthenticationAuthority";
 import { SessionInvalidationWindow, sessionInvalidationWindow } from "../sessions/invalidation";
@@ -36,7 +36,7 @@ import {
 import type { makeSessionModule } from "../sessions/module";
 import { phoneAdmission, phoneDigest, phoneAttemptAdmission } from "./admission";
 import { makePhoneClaims } from "./claims";
-import { defaultPolicy } from "./configuration";
+import { deliveryLayer } from "./delivery";
 import { phoneFailure, phoneActionFailure } from "./failure";
 import {
   PhoneActionChallenge,
@@ -104,8 +104,6 @@ export const makePhoneLifecycle = <
   moduleId: Id,
   options: {
     readonly sessions: ReturnType<typeof makeSessionModule<SessionId, Claims>>;
-    readonly template: string;
-    readonly keys: ProofKeyring;
     readonly policy?: ProofPolicy;
     readonly digits?: 6 | 7 | 8 | 9 | 10;
     readonly lifecycle?: PhoneLifecyclePolicy;
@@ -121,10 +119,9 @@ export const makePhoneLifecycle = <
     purpose: ProofPurpose.make("phone-lifecycle"),
     binding: ProofBinding,
     channel: "sms",
-    template: options.template,
-    keys: options.keys,
+    template: "phone-lifecycle",
     secret: { _tag: "NumericCode", digits: options.digits ?? 6 },
-    policy: options.policy ?? defaultPolicy,
+    policy: options.policy ?? defaultProofPolicy,
   });
 
   const Result = Schema.Union([
@@ -150,7 +147,7 @@ export const makePhoneLifecycle = <
           input.locale,
           input.reference?.proofId ?? "",
         ]),
-        (options.policy ?? defaultPolicy).requestRetentionMillis,
+        (options.policy ?? defaultProofPolicy).requestRetentionMillis,
       ))
     )
       return yield* PhoneOtpRejected.make({});
@@ -576,7 +573,7 @@ export const makePhoneLifecycle = <
 
   const layer = handlersLayer.pipe(
     Layer.provide(defaultLayer(binding.RequestBinding, binding.layer)),
-    Layer.provide(defaultLayer(proof.Proofs, proof.smsLayer)),
+    Layer.provide(defaultLayer(proof.Proofs, proof.smsLayer.pipe(Layer.provide(deliveryLayer)))),
     Layer.provide([cryptoLayer, hooksLayer]),
   );
 

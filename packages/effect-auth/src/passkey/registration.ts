@@ -28,6 +28,7 @@ import {
   PasskeyRegistrationResult,
   PasskeyUserHandle,
 } from "./models";
+import type { PasskeyConfig } from "./PasskeyConfig";
 import type { PreparePasskeyCommit } from "./PasskeyPersistence";
 import type { PasskeyMethodPolicy } from "./policy";
 import { freezePasskey, snapshotPasskey, snapshotPasskeySync } from "./snapshot";
@@ -47,7 +48,7 @@ export const makePasskeyRegistration = <
   Registration extends Schema.Codec<unknown, unknown, unknown, unknown>,
 >(
   moduleId: Id,
-  source: Effect.Effect<PasskeyMethodPolicy, PasskeyConfigurationError>,
+  source: Effect.Effect<PasskeyMethodPolicy, PasskeyConfigurationError, PasskeyConfig>,
   codec: Registration,
 ) => {
   const {

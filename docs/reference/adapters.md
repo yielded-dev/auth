@@ -40,20 +40,25 @@ Supply `LifecycleHooks` and your other account/session Layers at the composition
 import { Layer } from "effect";
 import { Auth } from "@yielded/auth";
 import { LifecycleHooks } from "@yielded/auth/Hooks";
+import { ProofKeys } from "@yielded/auth/Proofs";
 import { layerWebCrypto } from "@yielded/auth/WebCrypto";
 
 import { AccountsLive } from "./auth-accounts";
-import { requestBinding } from "./auth-config";
+import { requestBinding, proofKeys } from "./auth-config";
 import { SessionPersistenceLive } from "./session-persistence";
 
 export const AuthDependencies = Layer.mergeAll(
   Auth.RequestBindingConfig.layer(requestBinding),
+  ProofKeys.layer(proofKeys),
   SessionPersistenceLive,
   AccountsLive,
   layerWebCrypto,
   LifecycleHooks.empty,
 );
 ```
+
+`proofKeys` is your secret-managed numeric-code keyring. Retain old key IDs until
+their proofs expire.
 
 `AccountsLive` supplies `Sessions.AuthenticationAuthority`: it checks the current
 account and credential revisions and decides which factors are required.
