@@ -58,20 +58,31 @@ Provide services to the Layer from your provider setup page:
 
 ```ts [oauth-live.ts]
 import { Layer } from "effect";
-import { OAuthReturnTargets, OAuthTransactionProtector } from "@yielded/auth/OAuth";
+import { OAuth } from "@yielded/auth/strategies";
 
+import { AppAuth } from "./auth";
+import { AuthDependencies } from "./auth-dependencies";
+import { resolveOAuthClaims } from "./auth-accounts";
 import { transactionKeys } from "./auth-config";
+import { OAuthPersistenceLive } from "./auth-persistence";
 import { AuthRoutes } from "./github";
 
-export const Routes = AuthRoutes.pipe(
-  Layer.provide(OAuthTransactionProtector.xchacha20poly1305(transactionKeys)),
-  Layer.provide(OAuthReturnTargets.exactRoutes(["/account"])),
+export const OAuthLive = Layer.mergeAll(
+  OAuthPersistenceLive,
+  Layer.succeed(AppAuth.strategies.social.ClaimsForOAuth, { resolve: resolveOAuthClaims }),
+  OAuth.OAuthTransactionProtector.xchacha20poly1305(transactionKeys),
+  OAuth.OAuthReturnTargets.exactRoutes(["/account"]),
 );
+
+export const Routes = AuthRoutes.pipe(Layer.provide(OAuthLive), Layer.provide(AuthDependencies));
 ```
 
-Use a dedicated encryption keyring. Supply the remaining account lookup, claims,
-[OAuth persistence](../reference/adapters#oauth), session, and
-`Auth.RequestBindingConfig` Layers from your application.
+The relative imports are your application modules. `OAuthPersistenceLive` supplies
+flow storage and account lookup through [the OAuth adapter](../reference/adapters#oauth).
+`AuthDependencies` supplies the shared
+[session, account, and key configuration](../reference/adapters#compose-the-application-layer).
+These services have no automatic defaults. The library supplies the encryption
+and return-route helpers; you supply a dedicated encryption keyring and allowed routes.
 
 `Http.layer` wires `AppAuth` and its providers, action handlers, and callbacks.
 Merge it with your application route Layers.

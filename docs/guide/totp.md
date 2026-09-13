@@ -38,7 +38,8 @@ export const AppAuth = Auth.make("app/Auth", {
 
 Your `AuthenticationAuthority` decides which accounts require two factors.
 Provide `TotpPersistence`, `TotpSecretKeys`, `TotpActionEvidence`, and stateful
-sessions with pending-authentication support. This definition omits `sessions`
+sessions with pending-authentication support. Storage, secret keys, and action
+authorization have no automatic defaults. This definition omits `sessions`
 so you can supply the custom completion Layer below to `AppAuth.layer`.
 
 ```ts [sessions.ts]

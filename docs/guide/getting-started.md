@@ -83,7 +83,9 @@ request handler
 
 `AppAuth.layer` tells TypeScript which services remain to be provided. Use
 [session configuration](./sessions#configure-sessions) and
-[persistence adapters](../reference/adapters) to supply them. For HTTP,
+[the Layer wiring example](../reference/adapters#compose-the-application-layer) to
+connect storage, accounts, and keys. These services have no automatic defaults;
+the library supplies Web Crypto, empty hooks, and password hashing. For HTTP,
 [the server adapter](./http-and-client#configure-the-server) supplies the request
 boundary and writes credential cookies.
 

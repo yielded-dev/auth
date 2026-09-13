@@ -137,9 +137,38 @@ export const PasskeyProtocolLive = layerSimpleWebAuthnPasskeyProtocol({
 });
 ```
 
-Provide this Layer with your passkey persistence, account/claims services, and
-session configuration. Install its `@simplewebauthn/server` and `tldts` peers.
+Install its `@simplewebauthn/server` and `tldts` peers.
 Keep the verifier profile consistent with the method's relying-party configuration.
+
+## Supply the services
+
+The verifier is an optional adapter; storage and claims have no automatic defaults:
+
+```ts [passkey-live.ts]
+import { Layer } from "effect";
+
+import { AppAuth } from "./auth";
+import { AuthDependencies } from "./auth-dependencies";
+import { resolvePasskeyClaims } from "./auth-accounts";
+import { PasskeyPersistenceLive } from "./auth-persistence";
+import { PasskeyProtocolLive } from "./passkey-protocol";
+
+export const PasskeyLive = Layer.mergeAll(
+  PasskeyPersistenceLive,
+  PasskeyProtocolLive,
+  Layer.succeed(AppAuth.strategies.passkey.ClaimsForPasskey, { resolve: resolvePasskeyClaims }),
+);
+
+export const AuthLive = AppAuth.layer.pipe(
+  Layer.provide(PasskeyLive),
+  Layer.provide(AuthDependencies),
+);
+```
+
+The relative imports are your application modules. `PasskeyPersistenceLive`
+provides ceremony and credential storage through [the passkey adapters](../reference/adapters#passkeys).
+`AuthDependencies` provides shared [session, account, and key configuration](../reference/adapters#compose-the-application-layer).
+The method supplies its default policy, Web Crypto, and empty hooks.
 
 ## Registration and management
 
