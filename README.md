@@ -20,7 +20,7 @@ Define the shared contract in `auth-contract.ts`:
 
 ```ts [auth-contract.ts]
 import { Schema } from "effect";
-import * as AuthContract from "@yielded/auth/AuthContract";
+import { AuthContract } from "@yielded/auth/contracts";
 
 export const AuthApi = AuthContract.make("app/Auth", {
   claims: Schema.Struct({ displayName: Schema.String }),
@@ -35,8 +35,8 @@ Bind the server implementation and mount its HTTP routes:
 <!-- #region auth-server -->
 
 ```ts [auth.ts]
-import { Auth, Password, Sessions } from "@yielded/auth";
-import * as AuthHttp from "@yielded/auth/Http";
+import { Auth, Http, Sessions } from "@yielded/auth";
+import { Password } from "@yielded/auth/strategies";
 
 import { AuthApi } from "./auth-contract";
 
@@ -46,7 +46,7 @@ export const AppAuth = Auth.make(AuthApi, {
   defaultStrategy: "password",
 });
 
-export const AuthRoutes = AuthHttp.layer(AppAuth, { origin: "https://app.example.com" });
+export const AuthRoutes = Http.layer(AppAuth, { origin: "https://app.example.com" });
 ```
 
 <!-- #endregion auth-server -->

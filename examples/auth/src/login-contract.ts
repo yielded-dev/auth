@@ -1,4 +1,4 @@
-import * as AuthContract from "@yielded/auth/AuthContract";
+import { AuthContract } from "@yielded/auth/contracts";
 import * as Email from "@yielded/auth/Email";
 import { HookDenied } from "@yielded/auth/Hooks";
 import { IdentityConflict } from "@yielded/auth/Identity";

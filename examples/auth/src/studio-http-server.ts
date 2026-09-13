@@ -1,4 +1,4 @@
-import * as AuthHttp from "@yielded/auth/Http";
+import { Http } from "@yielded/auth";
 import * as HttpServer from "@yielded/auth/OperationHttpServer";
 import { requireAuthenticated } from "@yielded/auth/Operations";
 import { type AnyRelations, eq } from "drizzle-orm";
@@ -27,7 +27,7 @@ export const memberLayer = (db: EffectPgDatabase<AnyRelations>) =>
   );
 
 /** Localhost uses an explicit insecure cookie override; production uses HTTPS defaults. */
-const http = AuthHttp.make(StudioAuth, {
+const http = Http.make(StudioAuth, {
   origin: "http://localhost:4179",
   cookie: { prefix: "studio-", secure: false },
   csrf: { header: "x-studio-csrf", value: "operation" },

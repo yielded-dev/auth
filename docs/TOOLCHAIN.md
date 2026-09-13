@@ -26,9 +26,11 @@ regression coverage; new tests follow the repository's testing policy.
 
 ## Public modules
 
-Use explicit, flat source exports with matching `vp pack` entries. Root namespaces
-and direct subpaths identify the same public module. Internal imports go directly
-to their owning implementation, without routing through self-barrels.
+Use explicit, flat source exports with matching `vp pack` entries. Root namespaces,
+the lowercase `contracts` and `strategies` groups, and direct subpaths identify the
+same public modules. Group exports retain distinct contract and strategy names.
+Internal imports go directly to their owning implementation, without routing
+through self-barrels.
 
 The export check validates casing, namespace targets, build entries, and workspace
 dependencies, including relative imports through the package's own public barrels.
@@ -36,19 +38,23 @@ The purity check rejects production paths that reach test-only code.
 `@yielded/auth/Testing` is an explicit test-only entrypoint. Optional adapters remain
 separate exports, and `sideEffects: []` requires import-time code to stay free of I/O.
 
-The package build preserves implementation modules and native root namespaces in
-both JavaScript and declarations. Every root namespace target is also an explicit
-pack entry; the root resolver leaves those sibling imports external to the root
-entry so the bundler does not synthesize namespace objects or expose helper exports.
+The package build preserves implementation modules and native root/group namespaces
+in both JavaScript and declarations. Every namespace target is also an explicit
+pack entry. The resolver leaves sibling imports external to root and group entries
+so the bundler does not synthesize namespace objects or expose helper exports.
 Do not merge unrelated implementations into shared chunks: consumer bundlers can
 retain their initialization even when only one API is used.
 
 `vp run check:package-consumers` requires built packages and runs during `build`.
 It stages the publisher's manifests and built files with only required dependencies,
-bundles representative browser consumers, checks their declarations, and runs a native
-ESM consumer. It protects narrow identity imports, browser contracts, and root namespace
-identity without installing optional adapter peers. Reported bytes include Effect;
-they are diagnostics, not a fixed bundle-size budget.
+compares equivalent root/group/direct consumers through esbuild and Vite/Rolldown,
+checks their declarations, and runs native ESM and bundled consumers. It protects
+narrow identity imports, browser contracts, deferred client loading, and root
+namespace identity without optional adapter peers. Reported initial/deferred
+bytes include Effect and are diagnostics, not fixed size budgets. Retained-module
+checks enforce the boundaries; esbuild's re-exported namespace retention remains
+visible in the comparisons. The full contracts group must exclude strategy
+implementations and cryptography. Keep direct paths for lazy imports and narrow bundles.
 
 ## Contributor skills
 

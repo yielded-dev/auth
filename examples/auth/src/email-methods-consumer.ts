@@ -1,4 +1,4 @@
-import { Auth, Email } from "@yielded/auth";
+import { Auth } from "@yielded/auth";
 import {
   EmailAddressPersistence,
   EmailActionEvidence,
@@ -40,6 +40,7 @@ import {
   type AuthenticationRequirement,
   type StatefulSessionRecord,
 } from "@yielded/auth/Sessions";
+import { Email } from "@yielded/auth/strategies";
 import { Crypto, DateTime, Effect, Encoding, Layer, Option, Schema, Redacted } from "effect";
 
 export const Claims = Schema.Struct({ team: Schema.String, number: Schema.FiniteFromString });

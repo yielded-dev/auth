@@ -137,7 +137,11 @@ export default defineConfig({
         rules: { "exports/no-internal-barrel": "error" },
       },
       {
-        files: ["packages/*/src/**/index.ts"],
+        files: [
+          "packages/*/src/**/index.ts",
+          "packages/*/src/Contracts.ts",
+          "packages/*/src/Strategies.ts",
+        ],
         rules: {
           "exports/public-entrypoint": "error",
         },

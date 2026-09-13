@@ -14,7 +14,8 @@ a [shared contract](./http-and-client#expose-another-method) for browser clients
 
 ```ts [auth.ts]
 import { Schema } from "effect";
-import { Auth, PhoneOtp, Sessions } from "@yielded/auth";
+import { Auth, Sessions } from "@yielded/auth";
+import { PhoneOtp } from "@yielded/auth/strategies";
 
 import { proofKeys } from "./auth-config";
 

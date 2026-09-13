@@ -153,47 +153,51 @@ export const verifyPackageExports = Effect.fn("verifyPackageExports")(
           if (!filenames.has(target.slice("./src/".length)))
             report(pkg.file, `${target} is missing or has different filesystem casing`);
         }
-        const index = yield* parse(`${base}/src/index.ts`);
-        const namespaces = new Set<string>();
+        // Lowercase entrypoints are public groups; PascalCase paths are modules.
+        for (const [key, target] of Object.entries(manifest.exports)) {
+          if (key !== "." && !/^\.\/[a-z][a-z0-9-]*$/.test(key)) continue;
+          const index = yield* parse(`${base}/${target.slice(2)}`);
+          const namespaces = new Set<string>();
 
-        for (const statement of index.statements) {
-          if (ts.isEmptyStatement(statement)) continue;
-          if (
-            !ts.isExportDeclaration(statement) ||
-            !statement.exportClause ||
-            !statement.moduleSpecifier ||
-            !ts.isStringLiteral(statement.moduleSpecifier)
-          ) {
-            report(
-              index.fileName,
-              "Root must contain only namespace or explicit named re-export declarations",
-            );
-            continue;
-          }
-          if (ts.isNamedExports(statement.exportClause)) {
+          for (const statement of index.statements) {
+            if (ts.isEmptyStatement(statement)) continue;
             if (
-              statement.exportClause.elements.length === 0 ||
-              statement.exportClause.elements.some((element) => element.name.text === "default")
-            )
+              !ts.isExportDeclaration(statement) ||
+              !statement.exportClause ||
+              !statement.moduleSpecifier ||
+              !ts.isStringLiteral(statement.moduleSpecifier)
+            ) {
               report(
                 index.fileName,
-                "Root named re-exports must be nonempty and cannot export a default",
+                "Public groups must contain only namespace or explicit named re-export declarations",
               );
-            continue;
-          }
-          const name = statement.exportClause.name.text;
+              continue;
+            }
+            if (ts.isNamedExports(statement.exportClause)) {
+              if (
+                statement.exportClause.elements.length === 0 ||
+                statement.exportClause.elements.some((element) => element.name.text === "default")
+              )
+                report(
+                  index.fileName,
+                  "Public group named re-exports must be nonempty and cannot export a default",
+                );
+              continue;
+            }
+            const name = statement.exportClause.name.text;
 
-          if (namespaces.has(name)) report(index.fileName, `Duplicate namespace ${name}`);
-          namespaces.add(name);
-          if (
-            !/^[A-Z][A-Za-z0-9]*$/.test(name) ||
-            statement.moduleSpecifier.text !== `./${name}.ts` ||
-            !targets.includes(`./src/${name}.ts`)
-          ) {
-            report(
-              index.fileName,
-              `${name} must reference the published same-name module ./${name}.ts`,
-            );
+            if (namespaces.has(name)) report(index.fileName, `Duplicate namespace ${name}`);
+            namespaces.add(name);
+            if (
+              !/^[A-Z][A-Za-z0-9]*$/.test(name) ||
+              statement.moduleSpecifier.text !== `./${name}.ts` ||
+              !targets.includes(`./src/${name}.ts`)
+            ) {
+              report(
+                index.fileName,
+                `${name} must reference the published same-name module ./${name}.ts`,
+              );
+            }
           }
         }
         const config = yield* parse(`${base}/vite.config.ts`);

@@ -28,6 +28,8 @@
   "sideEffects": [],
   "exports": {
     ".": "./src/index.ts",
+    "./contracts": "./src/Contracts.ts",
+    "./strategies": "./src/Strategies.ts",
     "./Auth": "./src/Auth.ts",
     "./Drizzle": "./src/Drizzle.ts",
     "./DrizzleD1": "./src/DrizzleD1.ts",

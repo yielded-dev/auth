@@ -13,13 +13,12 @@ browser to authenticate, and verify the response on your server.
 
 ```ts [passkey-contract.ts]
 import { Schema } from "effect";
-import * as AuthContract from "@yielded/auth/AuthContract";
-import { makePasskeyContract } from "@yielded/auth/PasskeyContract";
+import { AuthContract, PasskeyContract } from "@yielded/auth/contracts";
 
 export const PasskeyApi = AuthContract.make("app/Auth", {
   claims: Schema.Struct({ displayName: Schema.String }),
   actions: (sessions) => {
-    const passkey = makePasskeyContract("app/Auth/passkey", sessions);
+    const passkey = PasskeyContract.make("app/Auth/passkey", sessions);
 
     return {
       signIn: AuthContract.fromOperation(passkey.operations.Begin, { strategy: "passkey" }),
@@ -45,7 +44,8 @@ the named server call nor the browser payload includes that credential. The
 ## Enable passkeys
 
 ```ts [auth.ts]
-import { Auth, Passkey, Sessions } from "@yielded/auth";
+import { Auth, Sessions } from "@yielded/auth";
+import { Passkey } from "@yielded/auth/strategies";
 
 import { PasskeyApi } from "./passkey-contract";
 

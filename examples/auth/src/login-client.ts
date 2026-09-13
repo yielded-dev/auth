@@ -46,7 +46,7 @@ export const logout = Effect.gen(function* () {
   yield* client.auth.signOut();
 });
 
-// OAuth callbacks are served by AuthHttp. The app's /register page dispatches
+// OAuth callbacks are served by Http. The app's /register page dispatches
 // auth.register with the public flowId/reference supplied by the server redirect.
 // Start a fresh login after RegistrationAccepted.
 

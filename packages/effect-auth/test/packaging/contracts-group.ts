@@ -1,7 +1,9 @@
-import * as AuthContract from "@yielded/auth/AuthContract";
-import * as PasskeyContract from "@yielded/auth/PasskeyContract";
-import * as SessionContract from "@yielded/auth/SessionContract";
-import * as TotpContract from "@yielded/auth/TotpContract";
+import {
+  AuthContract,
+  SessionContract,
+  PasskeyContract,
+  TotpContract,
+} from "@yielded/auth/contracts";
 
 export const makeSessionContract = SessionContract.makeSessionContract;
 export const makePasskey = PasskeyContract.make;

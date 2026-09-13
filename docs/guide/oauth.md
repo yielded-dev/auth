@@ -13,7 +13,7 @@ Declare the shared actions:
 
 ```ts [auth-contract.ts]
 import { Schema } from "effect";
-import * as AuthContract from "@yielded/auth/AuthContract";
+import { AuthContract } from "@yielded/auth/contracts";
 
 export const AuthApi = AuthContract.make("app/Auth", {
   claims: Schema.Struct({ displayName: Schema.String }),
@@ -27,7 +27,8 @@ export const AuthApi = AuthContract.make("app/Auth", {
 Bind your auth service:
 
 ```ts [auth.ts]
-import { Auth, OAuth, Sessions } from "@yielded/auth";
+import { Auth, Sessions } from "@yielded/auth";
+import { OAuth } from "@yielded/auth/strategies";
 import { AuthApi } from "./auth-contract";
 
 export const AppAuth = Auth.make(AuthApi, {
@@ -72,12 +73,12 @@ Use a dedicated encryption keyring. Supply the remaining account lookup, claims,
 [OAuth persistence](../reference/adapters#oauth), session, and
 `Auth.RequestBindingConfig` Layers from your application.
 
-`AuthHttp.layer` wires `AppAuth` and its providers, action handlers, and callbacks.
+`Http.layer` wires `AppAuth` and its providers, action handlers, and callbacks.
 Merge it with your application route Layers.
 
 ## Complete the callback
 
-`AuthHttp.layer` serves each callback and completes sign-in. It recovers the flow ID
+`Http.layer` serves each callback and completes sign-in. It recovers the flow ID
 from the verified HttpOnly binding cookie, validates the provider response, and
 redirects to the flow's approved `returnTarget`. No browser callback page is needed.
 
@@ -94,7 +95,7 @@ explicit IDs for application-managed flows; supplying IDs does not make it repla
 Override a path in your HTTP configuration:
 
 ```ts
-const AuthRoutes = AuthHttp.layer(AppAuth, {
+const AuthRoutes = Http.layer(AppAuth, {
   origin,
   oauth: {
     providers,
@@ -126,7 +127,7 @@ mapping. Use `oauth.complete` to select an action when more than one is declared
 For application-owned callback handling, use `GitHub.layer` or `OpenIdClient.layer`
 with an explicit `redirectUri` and complete through your protected transport.
 
-For custom HttpApi composition, `AuthHttp.make(AppAuth, options)` exposes
+For custom HttpApi composition, `Http.make(AppAuth, options)` exposes
 `handlers(api)`, `callbackRoutes()`, and middleware. Merge the callback routes
 alongside your API and provide `http.layer` to share the configured auth service
 and providers. `http.oauth.callbackUrl(provider)` returns the registered URL.
@@ -201,7 +202,7 @@ account authorization; refresh does not promise to update that snapshot.
 Add providers to the same HTTP configuration:
 
 ```ts
-const AuthRoutes = AuthHttp.layer(AppAuth, {
+const AuthRoutes = Http.layer(AppAuth, {
   origin,
   oauth: {
     providers: {

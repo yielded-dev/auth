@@ -18,7 +18,7 @@ Keep the contract safe to import in both the browser and server:
 
 ```ts [auth-contract.ts]
 import { Schema } from "effect";
-import * as AuthContract from "@yielded/auth/AuthContract";
+import { AuthContract } from "@yielded/auth/contracts";
 
 export const AuthApi = AuthContract.make("app/Auth", {
   claims: Schema.Struct({ displayName: Schema.String }),
@@ -44,8 +44,8 @@ and client use the same descriptors.
 Bind the contract to your methods and session configuration:
 
 ```ts [auth.ts]
-import { Auth, Password, Sessions } from "@yielded/auth";
-import * as AuthHttp from "@yielded/auth/Http";
+import { Auth, Http, Sessions } from "@yielded/auth";
+import { Password } from "@yielded/auth/strategies";
 
 import { AuthApi } from "./auth-contract";
 
@@ -55,10 +55,10 @@ export const AppAuth = Auth.make(AuthApi, {
   defaultStrategy: "password",
 });
 
-export const AuthRoutes = AuthHttp.layer(AppAuth, { origin: "https://app.example.com" });
+export const AuthRoutes = Http.layer(AppAuth, { origin: "https://app.example.com" });
 ```
 
-`AuthHttp.layer` mounts the shared actions and configured OAuth callbacks, and
+`Http.layer` mounts the shared actions and configured OAuth callbacks, and
 supplies `AppAuth.layer`. Provide your stores and account authority to the result.
 The [adapter guide](../reference/adapters#compose-the-application-layer) shows the
 `AuthDependencies` composition used below.
@@ -80,14 +80,14 @@ export const Routes = Layer.mergeAll(AuthRoutes, ApplicationRoutes).pipe(
 
 ### Application routes
 
-For application routes that call auth, build the middleware with `AuthHttp.make`:
+For application routes that call auth, build the middleware with `Http.make`:
 
 ```ts [auth-http.ts]
-import * as AuthHttp from "@yielded/auth/Http";
+import { Http } from "@yielded/auth";
 
 import { AppAuth } from "./auth";
 
-export const http = AuthHttp.make(AppAuth, { origin: "https://app.example.com" });
+export const http = Http.make(AppAuth, { origin: "https://app.example.com" });
 ```
 
 Wrap those route Layers with `ApplicationRoutes.pipe(http.middleware,
@@ -104,7 +104,7 @@ or require a headers argument.
 Add the native auth group beside your application groups in the shared API:
 
 ```ts [api.ts]
-import * as AuthContract from "@yielded/auth/AuthContract";
+import { AuthContract } from "@yielded/auth/contracts";
 import { HttpApi } from "effect/unstable/httpapi";
 
 import { AuthApi } from "./auth-contract";

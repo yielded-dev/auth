@@ -5,7 +5,7 @@ import { LifecycleEventId, lifecycleEvent, lifecycleSnapshot } from "../hooks/mo
 import type { AuthInvocation } from "../operations/context";
 import type { AuthOperationResult } from "../operations/credentials";
 import { operationGroup } from "../operations/operation";
-import { makePasskeyRegistrationContract } from "../PasskeyContract";
+import { makeRegistration as makePasskeyRegistrationContract } from "../PasskeyContract";
 import { TokenDigest } from "../Schema";
 import {
   passkeyUnexpected,

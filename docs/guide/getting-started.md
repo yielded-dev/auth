@@ -95,7 +95,8 @@ strategy:
 
 ```ts [auth-with-passkeys.ts]
 import { Schema } from "effect";
-import { Auth, Passkey, Password, Sessions } from "@yielded/auth";
+import { Auth, Sessions } from "@yielded/auth";
+import { Passkey, Password } from "@yielded/auth/strategies";
 
 export const AppAuth = Auth.make("app/Auth", {
   claims: Schema.Struct({ displayName: Schema.String }),

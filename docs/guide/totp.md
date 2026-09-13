@@ -12,7 +12,8 @@ request handlers, with `AppAuth` and the HTTP request boundary provided.
 
 ```ts [auth.ts]
 import { Schema } from "effect";
-import { Auth, Password, Totp } from "@yielded/auth";
+import { Auth } from "@yielded/auth";
+import { Password, Totp } from "@yielded/auth/strategies";
 
 export const AppAuth = Auth.make("app/Auth", {
   claims: Schema.Struct({ displayName: Schema.String }),
@@ -116,13 +117,12 @@ Use the pure TOTP contracts to add named actions:
 
 ```ts [totp-contract.ts]
 import { Schema } from "effect";
-import * as AuthContract from "@yielded/auth/AuthContract";
-import { makeTotpContract } from "@yielded/auth/TotpContract";
+import { AuthContract, TotpContract } from "@yielded/auth/contracts";
 
 export const TotpApi = AuthContract.make("app/Auth", {
   claims: Schema.Struct({ displayName: Schema.String }),
   actions: (sessions) => {
-    const totp = makeTotpContract("app/Auth/totp", sessions);
+    const totp = TotpContract.make("app/Auth/totp", sessions);
 
     return {
       signIn: AuthContract.passwordSignIn(sessions),
@@ -147,7 +147,7 @@ export const TotpApi = AuthContract.make("app/Auth", {
 
 In the server definition above, replace `"app/Auth"` with `TotpApi` and remove
 `claims`, which now belongs to the contract. Keep the same strategies and custom
-session Layer. Mount it with `AuthHttp.layer(AppAuth, options)` as in the
+session Layer. Mount it with `Http.layer(AppAuth, options)` as in the
 [HTTP guide](./http-and-client#configure-the-server).
 
 The named methods select the TOTP strategy and inject the pending cookie, so the
