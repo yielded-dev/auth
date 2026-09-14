@@ -1,6 +1,6 @@
-import type { Context } from "effect";
-import { Crypto, DateTime, Effect, Encoding, Layer, Redacted, Schema } from "effect";
+import { DateTime, Effect, Layer, Schema } from "effect";
 
+import { makeAuthStrategy } from "../auth/AuthStrategy";
 import { cryptoLayer, defaultLayer, hooksLayer } from "../auth/defaults";
 import { hasCommitScope } from "../hooks/commit";
 import { LifecycleHooks } from "../hooks/LifecycleHooks";
@@ -13,7 +13,6 @@ import {
   RequestBindingCredential,
   RequestBindingFlowId,
 } from "../operations/requestBinding";
-import type { ProofKeyring } from "../proofs/crypto";
 import { readProofCommit } from "../proofs/dispatch";
 import {
   ProofBinding,
@@ -25,7 +24,7 @@ import {
 } from "../proofs/models";
 import { makeProofModule } from "../proofs/module";
 import type { ProofPolicy } from "../proofs/policy";
-import { TokenDigest } from "../Schema";
+import { defaultProofPolicy } from "../proofs/policy";
 import { assessAuthentication } from "../sessions/assurance";
 import { AuthenticationAuthority } from "../sessions/AuthenticationAuthority";
 import { SessionInvalidationWindow, sessionInvalidationWindow } from "../sessions/invalidation";
@@ -35,6 +34,9 @@ import {
   type AuthenticationEvidence,
 } from "../sessions/models";
 import type { makeSessionModule } from "../sessions/module";
+import { phoneAdmission, phoneDigest, phoneAttemptAdmission } from "./admission";
+import { makePhoneClaims } from "./claims";
+import { deliveryLayer } from "./delivery";
 import { phoneFailure, phoneActionFailure } from "./failure";
 import {
   PhoneActionChallenge,
@@ -46,17 +48,11 @@ import {
   PhoneLifecyclePolicy,
   type PhoneActionAuthorization,
 } from "./lifecycleModels";
-import {
-  PhoneNumber,
-  PhoneOtpRejected,
-  PhoneOtpUnavailable,
-  type PhoneCredentialSnapshot,
-} from "./models";
+import { PhoneNumber, PhoneOtpRejected, PhoneOtpUnavailable } from "./models";
 import { PhoneActionEvidence } from "./PhoneActionEvidence";
 import { PhoneAdmission } from "./PhoneAdmission";
 import { PhoneDeliveryEligibility } from "./PhoneDeliveryEligibility";
 import { PhonePersistence } from "./PhonePersistence";
-import { PhoneRequestContext } from "./PhoneRequestContext";
 const Code = Schema.RedactedFromValue(Schema.String.check(Schema.isPattern(/^[0-9]{6,10}$/)));
 const ActionProof = Schema.RedactedFromValue(Schema.String.check(Schema.isMaxLength(4096)));
 
@@ -100,82 +96,21 @@ export const defaultPhoneLifecyclePolicy: PhoneLifecyclePolicy = {
   requireImmediateInvalidation: false,
 };
 
-const tuple = Schema.fromJsonString(Schema.Array(Schema.String));
-
-export const phoneDigest = Effect.fn("Phone.digest")(function* (values: ReadonlyArray<string>) {
-  const bytes = new TextEncoder().encode(
-    yield* Schema.encodeEffect(tuple)(values).pipe(Effect.mapError(phoneFailure)),
-  );
-
-  return TokenDigest.make(
-    Encoding.encodeBase64Url(
-      yield* (yield* Crypto.Crypto).digest("SHA-256", bytes).pipe(Effect.mapError(phoneFailure)),
-    ),
-  );
-});
-
-/** Trusted network scope is resolved per invocation, including suppressed requests. */
-export const phoneAdmission = Effect.fn("Phone.admission")(function* (
-  moduleId: string,
-  action: "request" | "attempt",
-  requestId: string,
-  fingerprint: string,
-  replayLifetimeMillis = 0,
-) {
-  const context = yield* PhoneRequestContext;
-
-  return yield* (yield* PhoneAdmission).admit({
-    moduleId,
-    action,
-    requestId,
-    fingerprint,
-    replayLifetimeMillis,
-    networkKey: Redacted.value(context.networkKey),
-  });
-});
-
-export const phoneAttemptAdmission = Effect.fn("Phone.admitAttempt")(function* (
-  moduleId: string,
-  flowId: string,
-  proofId: string,
-) {
-  const requestId = yield* (yield* Crypto.Crypto).randomUUIDv4.pipe(Effect.mapError(phoneFailure));
-
-  if (
-    !(yield* phoneAdmission(
-      moduleId,
-      "attempt",
-      requestId,
-      yield* phoneDigest(["attempt", flowId, proofId]),
-    ))
-  )
-    return yield* PhoneOtpRejected.make({});
-});
-
 export const makePhoneLifecycle = <
   const Id extends string,
   const SessionId extends string,
   Claims extends Schema.Codec<unknown, unknown, unknown, unknown>,
-  ClaimsId,
 >(
   moduleId: Id,
   options: {
     readonly sessions: ReturnType<typeof makeSessionModule<SessionId, Claims>>;
-    readonly template: string;
-    readonly keys: ProofKeyring;
-    readonly policy: ProofPolicy;
-    readonly digits: 6 | 7 | 8 | 9 | 10;
+    readonly policy?: ProofPolicy;
+    readonly digits?: 6 | 7 | 8 | 9 | 10;
     readonly lifecycle?: PhoneLifecyclePolicy;
   },
-  ClaimsForPhone: Context.Key<
-    ClaimsId,
-    {
-      readonly resolve: (
-        credential: PhoneCredentialSnapshot,
-      ) => Effect.Effect<Claims["Type"], PhoneOtpUnavailable>;
-    }
-  >,
 ) => {
+  const ClaimsForPhone = makePhoneClaims<Id, Claims>(moduleId);
+
   const { sessions } = options,
     policy = Object.freeze({ ...(options.lifecycle ?? defaultPhoneLifecyclePolicy) }),
     binding = makeRequestBinding(moduleId, "phone-lifecycle");
@@ -184,10 +119,9 @@ export const makePhoneLifecycle = <
     purpose: ProofPurpose.make("phone-lifecycle"),
     binding: ProofBinding,
     channel: "sms",
-    template: options.template,
-    keys: options.keys,
-    secret: { _tag: "NumericCode", digits: options.digits },
-    policy: options.policy,
+    template: "phone-lifecycle",
+    secret: { _tag: "NumericCode", digits: options.digits ?? 6 },
+    policy: options.policy ?? defaultProofPolicy,
   });
 
   const Result = Schema.Union([
@@ -213,7 +147,7 @@ export const makePhoneLifecycle = <
           input.locale,
           input.reference?.proofId ?? "",
         ]),
-        options.policy.requestRetentionMillis,
+        (options.policy ?? defaultProofPolicy).requestRetentionMillis,
       ))
     )
       return yield* PhoneOtpRejected.make({});
@@ -639,11 +573,20 @@ export const makePhoneLifecycle = <
 
   const layer = handlersLayer.pipe(
     Layer.provide(defaultLayer(binding.RequestBinding, binding.layer)),
-    Layer.provide(defaultLayer(proof.Proofs, proof.smsLayer)),
+    Layer.provide(defaultLayer(proof.Proofs, proof.smsLayer.pipe(Layer.provide(deliveryLayer)))),
     Layer.provide([cryptoLayer, hooksLayer]),
   );
 
+  const methods = {
+    begin: Begin.invoke,
+    resend: Resend.invoke,
+    completeLifecycle: CompleteLifecycle.invoke,
+    cancelLifecycle: Cancel.invoke,
+    cleanupLifecycle: Cleanup.invoke,
+  };
+
   return Object.freeze({
+    ClaimsForPhone,
     binding,
     proof,
     Result,
@@ -651,12 +594,13 @@ export const makePhoneLifecycle = <
     handlersLayer,
     operations: { Begin, Resend, CompleteLifecycle, Cancel, Cleanup },
     group: operationGroup(Begin, Resend, CompleteLifecycle, Cancel, Cleanup),
-    methods: {
-      begin: Begin.invoke,
-      resend: Resend.invoke,
-      completeLifecycle: CompleteLifecycle.invoke,
-      cancelLifecycle: Cancel.invoke,
-      cleanupLifecycle: Cleanup.invoke,
-    },
+    strategy: makeAuthStrategy(
+      methods,
+      layer.pipe(
+        Layer.provideMerge(cryptoLayer),
+        Layer.merge(Layer.effect(PhoneAdmission, PhoneAdmission)),
+      ),
+      { completion: true },
+    ),
   });
 };

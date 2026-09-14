@@ -75,3 +75,22 @@ export const validateProofPolicy = Effect.fn("validateProofPolicy")(function* (i
     }),
   });
 });
+
+export const defaultProofPolicy: ProofPolicy = {
+  lifetimeMillis: 300_000,
+  continuationLifetimeMillis: 30_000,
+  maximumFailedAttempts: 5,
+  maximumDeliveryAttempts: 1,
+  deliveryClaimMillis: 10_000,
+  deliveryRetryMillis: 30_000,
+  requestRetentionMillis: 3_600_000,
+  abuse: {
+    issues: { limit: 5, windowMillis: 3_600_000 },
+    attempts: { limit: 10, windowMillis: 300_000 },
+    subjectIssues: { limit: 5, windowMillis: 3_600_000 },
+    subjectAttempts: { limit: 10, windowMillis: 300_000 },
+    actionIssues: { limit: 1000, windowMillis: 3_600_000 },
+    actionAttempts: { limit: 1000, windowMillis: 300_000 },
+    resendCooldownMillis: 30_000,
+  },
+};

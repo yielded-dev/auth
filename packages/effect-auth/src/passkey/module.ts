@@ -17,12 +17,7 @@ import {
   readPasskeyCommit,
 } from "./actions";
 import type { PasskeyFailure } from "./errors";
-import {
-  PasskeyMethodUnsupported,
-  PasskeyRejected,
-  PasskeyUnavailable,
-  PasskeyConfigurationError,
-} from "./errors";
+import { PasskeyMethodUnsupported, PasskeyRejected, PasskeyUnavailable } from "./errors";
 import { makePasskeyManagement } from "./management";
 import {
   type PasskeyAuthenticationStarted,
@@ -31,69 +26,49 @@ import {
   PasskeyComplete,
   type PasskeyCredential,
 } from "./models";
+import { PasskeyConfig } from "./PasskeyConfig";
 import type { PasskeyCredentials } from "./PasskeyCredentials";
 import { PasskeyPersistence } from "./PasskeyPersistence";
 import { makePasskeyPending } from "./pending";
-import { type PasskeyManagementPolicy, PasskeyMethodPolicy, validatePasskeyPolicy } from "./policy";
+import { type PasskeyMethodPolicy, type PasskeyManagementPolicy } from "./policy";
 import { makePasskeyRegistration } from "./registration";
 import { snapshotPasskey } from "./snapshot";
 import { makePasskeyStepUp } from "./stepUp";
 
-type PasskeyConfiguration =
-  | { readonly policy: PasskeyMethodPolicy; readonly relyingParty?: never }
-  | {
-      readonly policy?: never;
-      readonly relyingParty: {
-        readonly id: string;
-        readonly name: string;
-        readonly origins: readonly string[];
-        readonly developmentLocalhost?: boolean;
-      };
-    };
+export interface PasskeyConfiguration {
+  readonly policy?: Partial<Omit<PasskeyMethodPolicy, "profiles">>;
+}
 
-/** Descriptors capture policy data once; invalid policies remain typed Effect failures. */
+/** Behavior is captured by the descriptor; host profiles are supplied by the application Layer. */
 export const capturePasskeyConfiguration = (options: PasskeyConfiguration) => {
-  const defaultPolicy =
-    options.policy === undefined
-      ? {
-          generation: 1,
-          lifetimeMillis: 300_000,
-          claimLifetimeMillis: 30_000,
-          retentionMillis: 3_600_000,
-          maximumPending: 1000,
-          maximumPendingPerSubject: 5,
-          admission: {
+  const configured = options.policy;
+
+  const policy = {
+    generation: configured?.generation ?? 1,
+    lifetimeMillis: configured?.lifetimeMillis ?? 300_000,
+    claimLifetimeMillis: configured?.claimLifetimeMillis ?? 30_000,
+    retentionMillis: configured?.retentionMillis ?? 3_600_000,
+    maximumPending: configured?.maximumPending ?? 1000,
+    maximumPendingPerSubject: configured?.maximumPendingPerSubject ?? 5,
+    admission:
+      configured?.admission === undefined
+        ? {
             global: { limit: 1000, windowMillis: 60_000 },
             subject: { limit: 10, windowMillis: 60_000 },
             target: { limit: 10, windowMillis: 60_000 },
+          }
+        : {
+            global: { ...configured.admission.global },
+            subject: { ...configured.admission.subject },
+            target: { ...configured.admission.target },
           },
-          profiles: [
-            {
-              profileId: "default",
-              generation: 1,
-              rpId: options.relyingParty?.id,
-              rpName: options.relyingParty?.name,
-              origins: Array.isArray(options.relyingParty?.origins)
-                ? [...options.relyingParty.origins]
-                : options.relyingParty?.origins,
-              developmentLocalhost: options.relyingParty?.developmentLocalhost ?? false,
-              residentKey: "required",
-              userVerification: "required",
-              primarySignIn: true,
-              attestation: "none",
-              algorithms: [-7, -257],
-            },
-          ],
-        }
-      : undefined;
+  };
 
-  return options.policy === undefined
-    ? // eslint-disable-next-line no-restricted-properties -- Relying-party configuration becomes a complete, validated policy here.
-      Schema.decodeUnknownEffect(PasskeyMethodPolicy)(defaultPolicy).pipe(
-        Effect.flatMap(validatePasskeyPolicy),
-        Effect.mapError(() => PasskeyConfigurationError.make({})),
-      )
-    : capturePasskeyPolicy(options.policy);
+  return Effect.gen(function* () {
+    const config = yield* PasskeyConfig;
+
+    return yield* capturePasskeyPolicy({ ...policy, profiles: config.profiles });
+  });
 };
 
 export const makePasskeyMethod = <

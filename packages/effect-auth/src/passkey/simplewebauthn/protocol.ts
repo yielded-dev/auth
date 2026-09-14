@@ -34,6 +34,7 @@ import {
   PasskeyRegistrationVerified,
   PasskeyUserHandle,
 } from "../models";
+import { PasskeyConfig } from "../PasskeyConfig";
 import { PasskeyProtocol } from "../PasskeyProtocol";
 import { samePasskey, snapshotPasskey } from "../snapshot";
 import { captureSimpleWebAuthnProfiles } from "./configuration";
@@ -723,7 +724,8 @@ export const makeSimpleWebAuthnPasskeyProtocol = Effect.fn("makeSimpleWebAuthnPa
   },
 );
 
-export const layerSimpleWebAuthnPasskeyProtocol = (
-  options: SimpleWebAuthnPasskeyProtocolOptions,
-): Layer.Layer<PasskeyProtocol, PasskeyConfigurationError> =>
-  Layer.effect(PasskeyProtocol, makeSimpleWebAuthnPasskeyProtocol(options));
+/** Requires the same host profiles as the strategy. */
+export const layerSimpleWebAuthnPasskeyProtocol = Layer.effect(
+  PasskeyProtocol,
+  Effect.flatMap(PasskeyConfig, makeSimpleWebAuthnPasskeyProtocol),
+);

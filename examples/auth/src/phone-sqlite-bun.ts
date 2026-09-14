@@ -1,6 +1,7 @@
 import { BunRuntime } from "@effect/platform-bun";
 import * as SqliteClient from "@effect/sql-sqlite-bun/SqliteClient";
 import { AuthRequest, RequestBindingConfig } from "@yielded/auth/Auth";
+import { phonePersistenceLayer } from "@yielded/auth/Drizzle";
 import {
   makeAuthenticationAuthorityServices,
   makePhonePersistenceServices,
@@ -14,16 +15,11 @@ import {
   PhoneDeliveryEligibility,
   PhoneOtpUnavailable,
   PhoneRequestContext,
-  PhonePersistence,
-  PhoneAdmission,
-  PhoneSignInTargets,
 } from "@yielded/auth/PhoneOtp";
-import {
-  ProofPersistence,
-  SmsProofDelivery,
-  type ProofDeliveryMessage,
-} from "@yielded/auth/Proofs";
+import { ProofPersistence, ProofKeys } from "@yielded/auth/Proofs";
 import { AuthenticationAuthority } from "@yielded/auth/Sessions";
+import { SmsDelivery, type SmsMessage } from "@yielded/auth/SmsDelivery";
+import { PhoneOtp } from "@yielded/auth/strategies";
 import { layerWebCrypto } from "@yielded/auth/WebCrypto";
 import { eq } from "drizzle-orm";
 import * as Drizzle from "drizzle-orm/effect-sqlite-bun";
@@ -52,8 +48,8 @@ export const phoneConsumer = Effect.gen(function* () {
 
   yield* migrate(client);
 
-  const native = yield* makePhonePersistenceServices(database, mapping),
-    proofServices = yield* makeProofPersistenceServices(database, proofs);
+  const phoneStorage = phonePersistenceLayer(makePhonePersistenceServices(database, mapping));
+  const proofServices = yield* makeProofPersistenceServices(database, proofs);
 
   const authority = yield* makeAuthenticationAuthorityServices(database, {
     subjectId,
@@ -76,12 +72,11 @@ export const phoneConsumer = Effect.gen(function* () {
     isConstraintConflict: () => false,
   });
 
-  const sent: ProofDeliveryMessage[] = [];
+  const sent: SmsMessage[] = [];
   let failNext = false;
 
-  const sender = SmsProofDelivery.layer(
-    { vendorId: "controlled-example", idempotencyMillis: 60_000 },
-    (message) =>
+  const sender = Layer.succeed(SmsDelivery, {
+    send: (message) =>
       Effect.sync(() => {
         if (failNext) {
           failNext = false;
@@ -92,22 +87,22 @@ export const phoneConsumer = Effect.gen(function* () {
 
         return { _tag: "Accepted" as const };
       }),
-  );
+  });
 
   const base = Layer.mergeAll(
     layerWebCrypto,
     LifecycleHooks.empty,
     RequestBindingConfig.layer({ keyring, lifetimeMillis: 120_000, generation: 1 }),
     sender,
+    ProofKeys.layer(keyring),
+    PhoneOtp.Template.layer({ render: (code) => code }),
     Layer.succeed(PhoneDeliveryEligibility, {
       allowed: (number) => Effect.succeed(number.startsWith("+2782")),
     }),
   );
 
   const ports = Layer.mergeAll(
-    Layer.succeed(PhonePersistence, native.phonePersistence),
-    Layer.succeed(PhoneAdmission, native.phoneAdmission),
-    Layer.succeed(PhoneSignInTargets, native.phoneSignInTargets),
+    phoneStorage,
     Layer.succeed(ProofPersistence, proofServices.proofPersistence),
     Layer.succeed(AuthenticationAuthority, authority.authenticationAuthority),
     Layer.succeed(phone.ClaimsForPhone, {
@@ -230,9 +225,7 @@ export const phoneConsumer = Effect.gen(function* () {
       actionProof?: string,
     ) =>
       Effect.gen(function* () {
-        const message = sent.find(
-          (m) => m.reference.proofId === started.challenge.reference.proofId,
-        );
+        const message = sent.find((m) => m.id === started.challenge.reference.proofId);
 
         assert(message !== undefined, "controlled sender missed challenge");
 
@@ -242,7 +235,7 @@ export const phoneConsumer = Effect.gen(function* () {
             ...started.input,
             requestBinding: started.binding,
             reference: started.challenge.reference,
-            code: Redacted.value(message.secret),
+            code: Redacted.value(message.body),
             ...(actionProof === undefined ? {} : { actionProof }),
           }),
         );
@@ -258,8 +251,7 @@ export const phoneConsumer = Effect.gen(function* () {
         reference: registered.challenge.reference,
         code:
           Redacted.value(
-            sent.find((m) => m.reference.proofId === registered.challenge.reference.proofId)!
-              .secret,
+            sent.find((m) => m.id === registered.challenge.reference.proofId)!.body,
           ) === "000000"
             ? "111111"
             : "000000",
@@ -329,7 +321,7 @@ export const phoneConsumer = Effect.gen(function* () {
       const challenge = yield* as(guest, auth.signIn({ phoneNumber: number, locale: "en-ZA" }));
 
       const requestBinding = token("request-binding"),
-        message = sent.find((m) => m.reference.proofId === challenge.reference.proofId);
+        message = sent.find((m) => m.id === challenge.reference.proofId);
 
       assert(message !== undefined, "sign-in was not delivered");
 
@@ -340,7 +332,7 @@ export const phoneConsumer = Effect.gen(function* () {
           phoneNumber: number,
           requestBinding,
           reference: challenge.reference,
-          code: Redacted.value(message.secret),
+          code: Redacted.value(message.body),
         }),
       );
 
@@ -373,7 +365,7 @@ export const phoneConsumer = Effect.gen(function* () {
     const failed = yield* begin("register", "+27820000004", guest);
 
     assert(
-      !sent.some((m) => m.reference.proofId === failed.challenge.reference.proofId),
+      !sent.some((m) => m.id === failed.challenge.reference.proofId),
       "failed delivery created accepted message",
     );
     const old = yield* sessionStrategy.verify(Redacted.make(initialToken));

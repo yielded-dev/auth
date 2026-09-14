@@ -14,7 +14,7 @@ export type PasskeyOptions<Namespace extends string | undefined = undefined> = M
   Parameters<typeof makePasskeyMethod>[1]
 > & { readonly namespace?: Namespace };
 
-/** Relying-party configuration is static; storage, claims and session completion are Layers. */
+/** Behavior is static; host configuration, storage, claims and session completion are Layers. */
 const captureDefine = <const Namespace extends string | undefined>(
   _namespace: Namespace,
   input: PasskeyOptions<Namespace>,
@@ -84,11 +84,11 @@ export function make<const Namespace extends string>(
 ): ReturnType<typeof define<Namespace>>;
 
 export function make<const Namespace extends string | undefined = undefined>(
-  options: PasskeyOptions<Namespace>,
+  options?: PasskeyOptions<Namespace>,
 ): ReturnType<typeof define<Namespace | undefined>>;
 
 export function make<const Namespace extends string | undefined>(
-  options: PasskeyOptions<Namespace>,
+  options: PasskeyOptions<Namespace> = {},
 ) {
   return define(options.namespace, options);
 }
@@ -362,11 +362,11 @@ export function makePending<const Namespace extends string>(
 ): ReturnType<typeof defineCompletion<"pending", Namespace>>;
 
 export function makePending<const Namespace extends string | undefined = undefined>(
-  options: PasskeyOptions<Namespace>,
+  options?: PasskeyOptions<Namespace>,
 ): ReturnType<typeof defineCompletion<"pending", Namespace | undefined>>;
 
 export function makePending<const Namespace extends string | undefined>(
-  options: PasskeyOptions<Namespace>,
+  options: PasskeyOptions<Namespace> = {},
 ) {
   return defineCompletion("pending", options.namespace, options);
 }
@@ -376,11 +376,11 @@ export function makeStepUp<const Namespace extends string>(
 ): ReturnType<typeof defineCompletion<"stepUp", Namespace>>;
 
 export function makeStepUp<const Namespace extends string | undefined = undefined>(
-  options: PasskeyOptions<Namespace>,
+  options?: PasskeyOptions<Namespace>,
 ): ReturnType<typeof defineCompletion<"stepUp", Namespace | undefined>>;
 
 export function makeStepUp<const Namespace extends string | undefined>(
-  options: PasskeyOptions<Namespace>,
+  options: PasskeyOptions<Namespace> = {},
 ) {
   return defineCompletion("stepUp", options.namespace, options);
 }

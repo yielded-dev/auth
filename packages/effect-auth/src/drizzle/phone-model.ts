@@ -1,6 +1,7 @@
 import type { InferInsertModel, InferSelectModel, SQL, Table } from "drizzle-orm";
 import { Effect, Layer } from "effect";
 
+import { cryptoLayer, hooksLayer } from "../auth/defaults";
 import type { PhoneAdmissionPolicy, PhoneLifecyclePolicy } from "../phone/lifecycleModels";
 import type { PhoneNumber } from "../phone/models";
 import { PhoneAdmission } from "../phone/PhoneAdmission";
@@ -171,6 +172,7 @@ export interface PhonePersistenceServices {
   readonly phoneSignInTargets: PhoneSignInTargets["Service"];
 }
 
+/** Bundle phone storage, admission, and lookup with overridable crypto and hook defaults. */
 export const phonePersistenceLayer = <E, R>(
   services: Effect.Effect<PhonePersistenceServices, E, R>,
 ) =>
@@ -182,4 +184,4 @@ export const phonePersistenceLayer = <E, R>(
         Layer.succeed(PhoneSignInTargets, value.phoneSignInTargets),
       ),
     ),
-  );
+  ).pipe(Layer.provide([cryptoLayer, hooksLayer]));

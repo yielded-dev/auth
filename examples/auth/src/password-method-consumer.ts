@@ -61,7 +61,6 @@ export const passwordAuth = Auth.make("example/password-auth", {
         },
       },
       reset: {
-        template: "password-reset",
         secret: { _tag: "Token" },
         policy: {
           lifetimeMillis: 60_000,

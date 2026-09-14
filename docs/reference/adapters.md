@@ -36,32 +36,66 @@ Supply `LifecycleHooks` and your other account/session Layers at the composition
 
 ## Compose the application Layer
 
-```ts [auth-live.ts]
+```ts [auth-dependencies.ts]
 import { Layer } from "effect";
 import { Auth } from "@yielded/auth";
+import { LifecycleHooks } from "@yielded/auth/Hooks";
+import { ProofKeys } from "@yielded/auth/Proofs";
+import { layerWebCrypto } from "@yielded/auth/WebCrypto";
 
-import { AppAuth } from "./auth";
 import { AccountsLive } from "./auth-accounts";
-import { requestBinding } from "./auth-config";
-import { PasswordPersistenceLive } from "./auth-persistence";
+import { requestBinding, proofKeys } from "./auth-config";
 import { SessionPersistenceLive } from "./session-persistence";
 
 export const AuthDependencies = Layer.mergeAll(
   Auth.RequestBindingConfig.layer(requestBinding),
-  PasswordPersistenceLive,
+  ProofKeys.layer(proofKeys),
   SessionPersistenceLive,
   AccountsLive,
+  layerWebCrypto,
+  LifecycleHooks.empty,
 );
-
-export const AuthLive = AppAuth.layer.pipe(Layer.provide(AuthDependencies));
 ```
 
-Provide `AuthDependencies` to `Http.layer(...)`; use `AuthLive` for direct service
-composition. The `auth-*` imports are your application modules. TypeScript reports any remaining
-service requirements. `Sessions.stateful(...)` on `Auth.make` configures sessions;
+`proofKeys` is your secret-managed numeric-code keyring. Retain old key IDs until
+their proofs expire.
+
+`AccountsLive` supplies `Sessions.AuthenticationAuthority`: it checks the current
+account and credential revisions and decides which factors are required.
+`SessionPersistenceLive` supplies the bound `AppAuth.sessions.StatefulSessionPersistence`
+and `AppAuth.sessions.SessionRepository`. Both Layers use your account model;
+neither has an automatic default.
+
+Add the method's Layers, such as `PasswordLive` from the [password guide](../guide/passwords#supply-the-services):
+
+```ts [auth-routes.ts]
+import { Layer } from "effect";
+import { Http } from "@yielded/auth";
+
+import { AppAuth } from "./auth";
+import { AuthDependencies } from "./auth-dependencies";
+import { PasswordLive } from "./password-live";
+
+export const AuthRoutes = Http.layer(AppAuth, { origin: "https://app.example.com" }).pipe(
+  Layer.provide(PasswordLive),
+  Layer.provide(AuthDependencies),
+);
+```
+
+The relative imports are your application modules. Use `AppAuth.layer` in place
+of `Http.layer(...)` for local service composition. TypeScript reports any remaining
+requirements. `Sessions.stateful(...)` on `Auth.make` configures sessions;
 supply a separate session/completion Layer only when using custom session setup
 such as [pending authentication](../guide/totp). Keep `Auth.AuthRequest` out of this shared Layer; supply it
 for each request or use [the HTTP adapter](../guide/http-and-client).
+
+### Defaults and required configuration
+
+`Auth.make` wires the selected methods, session implementation, Web Crypto, and
+empty lifecycle hooks. Password hashing also has a bounded default implementation.
+Adapter factories expose their crypto and hook requirements; supply them as above
+or use a Layer helper that installs defaults. You supply storage mappings, account authority, claims, delivery, and
+secret keys. Adapters provide implementations; they are not installed automatically.
 
 ## Choose a driver
 
@@ -118,6 +152,54 @@ a fresh flow after an uncertain exchange.
 registration, and management services have separate factories. Completion rechecks
 the challenge, relying party, account revision, and credential revision before
 committing its result.
+
+## Phone
+
+Wrap the adapter's phone services in one Layer:
+
+<!-- #region phone-layers -->
+
+```ts [auth-persistence.ts]
+import * as Drizzle from "drizzle-orm/effect-sqlite-bun";
+import { Effect, Layer } from "effect";
+import { phonePersistenceLayer } from "@yielded/auth/Drizzle";
+import {
+  makePhonePersistenceServices,
+  makeProofPersistenceServices,
+} from "@yielded/auth/DrizzleSqliteBun";
+import { ProofPersistence } from "@yielded/auth/Proofs";
+
+import * as SqliteClient from "@effect/sql-sqlite-bun/SqliteClient";
+import { phoneMapping, proofMapping } from "./schema";
+
+const DatabaseLive = SqliteClient.layer({ filename: "auth.sqlite" });
+
+export const PhonePersistenceLive = phonePersistenceLayer(
+  Effect.gen(function* () {
+    const db = yield* Drizzle.makeWithDefaults({});
+    return yield* makePhonePersistenceServices(db, phoneMapping);
+  }),
+).pipe(Layer.provide(DatabaseLive));
+
+export const ProofPersistenceLive = Layer.effect(
+  ProofPersistence,
+  Effect.gen(function* () {
+    const db = yield* Drizzle.makeWithDefaults({});
+    const services = yield* makeProofPersistenceServices(db, proofMapping);
+    return services.proofPersistence;
+  }),
+).pipe(Layer.provide(DatabaseLive));
+```
+
+The database connection above uses SQLite on Bun. The phone Layer supplies
+`PhonePersistence`, `PhoneAdmission`, and `PhoneSignInTargets`, with overridable
+Web Crypto and empty hook defaults. The proof Layer stores challenges, consumption,
+and rate limits. Sign-in uses lookup and admission; number-management operations
+also use `PhonePersistence`. You provide table mappings and
+migrations. See the [SQLite example](https://github.com/yielded-dev/auth/blob/main/examples/auth/src/phone-sqlite-bun.ts)
+for the table definitions and mappings.
+
+<!-- #endregion phone-layers -->
 
 ## Connected OAuth grants
 

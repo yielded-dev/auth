@@ -18,25 +18,18 @@ import { Schema } from "effect";
 import { Auth, Sessions } from "@yielded/auth";
 import { Email } from "@yielded/auth/strategies";
 
-import { proofKeys, proofPolicy } from "./auth-config";
-
 export const AppAuth = Auth.make("app/Auth", {
   claims: Schema.Struct({ displayName: Schema.String }),
   sessions: Sessions.stateful(),
   strategies: {
-    email: Email.makeCode({
-      template: "sign-in-code",
-      digits: 6,
-      keys: proofKeys,
-      policy: proofPolicy,
-    }),
+    email: Email.makeCode(),
   },
   defaultStrategy: "email",
 });
 ```
 
-`proofKeys` is your secret-managed proof keyring. Set expiry and attempt limits
-in `proofPolicy`; its full shape is shown below.
+Codes default to six digits and five minutes. Override `digits` or `policy` when
+needed. Supply shared `ProofKeys` through [AuthDependencies](../reference/adapters#compose-the-application-layer).
 
 ## Start the flow and send a code
 
@@ -112,12 +105,7 @@ to cookies so they stay out of ordinary browser payloads.
 ```ts [magic-link.ts]
 import { Email } from "@yielded/auth/strategies";
 
-import { proofPolicy } from "./auth-config";
-
-export const magicLink = Email.makeLink({
-  template: "sign-in-link",
-  policy: proofPolicy,
-});
+export const magicLink = Email.makeLink();
 ```
 
 Use this strategy with the same begin → request → verify → complete flow.
@@ -158,11 +146,39 @@ flow IDs must not reset account-level attempt budgets.
 
 ## Supply the services
 
-Provide `EmailSignInTargets`, `AppAuth.strategies.email.ClaimsForEmail`,
-`ProofPersistence`, `EmailProofDelivery`, and `EmailReturnTargets`, plus session
-and request-binding services. Use an exact return-route allowlist.
-Implement `EmailProofDelivery.layer(vendor, send)` from `@yielded/auth/Proofs`
-with your chosen sender, template, and credentials.
+Lookup, claims, storage, and delivery are application-supplied. The library provides
+an exact-route allowlist helper, Web Crypto, and empty lifecycle hooks:
+
+```ts [email-live.ts]
+import { Layer } from "effect";
+import { Email } from "@yielded/auth/strategies";
+import { EmailProofDelivery } from "@yielded/auth/Proofs";
+
+import { AppAuth } from "./auth";
+import { AuthDependencies } from "./auth-dependencies";
+import { lookupEmail, resolveEmailClaims } from "./auth-accounts";
+import { ProofPersistenceLive } from "./auth-persistence";
+import { emailVendor, sendEmail } from "./email";
+
+export const EmailLive = Layer.mergeAll(
+  ProofPersistenceLive,
+  Layer.succeed(Email.EmailSignInTargets, { lookup: lookupEmail }),
+  Layer.succeed(AppAuth.strategies.email.ClaimsForEmail, { resolve: resolveEmailClaims }),
+  Email.EmailReturnTargets.exactRoutes(["/account"]),
+  EmailProofDelivery.layer(emailVendor, sendEmail),
+);
+
+export const AuthLive = AppAuth.layer.pipe(
+  Layer.provide(EmailLive),
+  Layer.provide(AuthDependencies),
+);
+```
+
+The relative imports are your application modules. `sendEmail` returns a
+`ProofDeliveryOutcome`; `emailVendor` declares your sender's ID and deduplication
+interval (`0` when unsupported). `AuthDependencies` supplies the shared
+[session, account, and key configuration](../reference/adapters#compose-the-application-layer).
+For database-backed lookup, use [the email adapter](../reference/adapters#email).
 
 For new accounts use `Email.makeRegistration`; for verified-address management
 use `Email.makeAddresses`. Verification alone does not sign in or link an account.

@@ -62,6 +62,7 @@ export {
 
 export {
   type ProofKeyring,
+  ProofKeys,
   ProofSecretPolicy,
   makeProofCrypto,
   validateProofBinding,

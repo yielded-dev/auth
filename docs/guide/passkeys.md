@@ -52,20 +52,13 @@ import { PasskeyApi } from "./passkey-contract";
 export const AppAuth = Auth.make(PasskeyApi, {
   sessions: Sessions.stateful(),
   strategies: {
-    passkey: Passkey.make({
-      relyingParty: {
-        id: "app.example.com",
-        name: "My app",
-        origins: ["https://app.example.com"],
-      },
-    }),
+    passkey: Passkey.make(),
   },
   defaultStrategy: "passkey",
 });
 ```
 
-Use your actual relying-party ID and exact allowed origins. Changing these can
-make existing passkeys unusable.
+Supply the relying-party configuration once through `PasskeyConfig`, below.
 
 ## Begin sign-in on the server
 
@@ -116,30 +109,55 @@ The client exposes the same calls as `client.auth.signIn(...)` and
 ## Install the server verifier
 
 ```ts [passkey-protocol.ts]
+import { Layer } from "effect";
+import { PasskeyConfig } from "@yielded/auth/Passkey";
 import { layerSimpleWebAuthnPasskeyProtocol } from "@yielded/auth/PasskeySimpleWebAuthn";
 
-export const PasskeyProtocolLive = layerSimpleWebAuthnPasskeyProtocol({
-  profiles: [
-    {
-      profileId: "default",
-      generation: 1,
-      rpId: "app.example.com",
-      rpName: "My app",
-      origins: ["https://app.example.com"],
-      developmentLocalhost: false,
-      residentKey: "required",
-      userVerification: "required",
-      primarySignIn: true,
-      attestation: "none",
-      algorithms: [-7, -257],
-    },
-  ],
+export const PasskeyConfigLive = PasskeyConfig.layer({
+  id: "app.example.com",
+  name: "My app",
+  origins: ["https://app.example.com"],
 });
+
+export const PasskeyProtocolLive = layerSimpleWebAuthnPasskeyProtocol.pipe(
+  Layer.provide(PasskeyConfigLive),
+);
 ```
 
-Provide this Layer with your passkey persistence, account/claims services, and
-session configuration. Install its `@simplewebauthn/server` and `tldts` peers.
-Keep the verifier profile consistent with the method's relying-party configuration.
+Install its `@simplewebauthn/server` and `tldts` peers.
+Both the strategy and verifier require `PasskeyConfig`. Use your actual relying-party
+ID and exact allowed origins; changing them can make existing passkeys unusable.
+
+## Supply the services
+
+The verifier is an optional adapter; storage and claims have no automatic defaults:
+
+```ts [passkey-live.ts]
+import { Layer } from "effect";
+
+import { AppAuth } from "./auth";
+import { AuthDependencies } from "./auth-dependencies";
+import { resolvePasskeyClaims } from "./auth-accounts";
+import { PasskeyPersistenceLive } from "./auth-persistence";
+import { PasskeyConfigLive, PasskeyProtocolLive } from "./passkey-protocol";
+
+export const PasskeyLive = Layer.mergeAll(
+  PasskeyPersistenceLive,
+  PasskeyConfigLive,
+  PasskeyProtocolLive,
+  Layer.succeed(AppAuth.strategies.passkey.ClaimsForPasskey, { resolve: resolvePasskeyClaims }),
+);
+
+export const AuthLive = AppAuth.layer.pipe(
+  Layer.provide(PasskeyLive),
+  Layer.provide(AuthDependencies),
+);
+```
+
+The relative imports are your application modules. `PasskeyPersistenceLive`
+provides ceremony and credential storage through [the passkey adapters](../reference/adapters#passkeys).
+`AuthDependencies` provides shared [session, account, and key configuration](../reference/adapters#compose-the-application-layer).
+The method supplies its default policy, Web Crypto, and empty hooks.
 
 ## Registration and management
 

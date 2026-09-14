@@ -5,6 +5,7 @@ import {
   AuthCredentialCommandCollector,
 } from "@yielded/auth/Operations";
 import {
+  ProofKeys,
   EmailProofDelivery,
   IdentifierProofBinding,
   make as makeProofs,
@@ -40,7 +41,20 @@ const policy: ProofPolicy = {
   },
 };
 
-const base = Layer.mergeAll(layerWebCrypto, LifecycleHooks.empty);
+const base = Layer.mergeAll(
+  layerWebCrypto,
+  LifecycleHooks.empty,
+  ProofKeys.layer({
+    activeKeyId: "current",
+    keys: [
+      {
+        id: "current",
+        material: Redacted.make(Encoding.encodeBase64Url(new Uint8Array(32).fill(23))),
+      },
+    ],
+  }),
+);
+
 const authority = Layer.unwrap(makeExampleProofAuthority).pipe(Layer.provide(base));
 // Trusted method authority resolves eligibility/binding. An HTTP client never supplies it.
 const invocation = { _tag: "System", authority: "example-method" } as const;
@@ -67,19 +81,6 @@ const program = Effect.gen(function* () {
       template: "verify-identifier",
       secret: channel === "email" ? { _tag: "NumericCode", digits: 6 } : { _tag: "Token" },
       policy,
-      ...(channel === "email"
-        ? {
-            keys: {
-              activeKeyId: "current",
-              keys: [
-                {
-                  id: "current",
-                  material: Redacted.make(Encoding.encodeBase64Url(new Uint8Array(32).fill(23))),
-                },
-              ],
-            },
-          }
-        : {}),
     });
 
     const capability = (

@@ -12,12 +12,12 @@ import type {
 import type { OAuthAccountsPolicy } from "./accountsModels";
 import type { OAuthConnectedPolicy } from "./connectedModels";
 import type { OAuthRegistrationPolicy } from "./registrationModels";
-import type { OAuthSignInPolicy } from "./signInModels";
+import { defaultOAuthSignInPolicy, type OAuthSignInPolicy } from "./signInModels";
 import { makeOAuthMethod } from "./signInModule";
 
 export interface OAuthOptions<Namespace extends string | undefined = undefined> {
   readonly namespace?: Namespace;
-  readonly policy: OAuthSignInPolicy;
+  readonly policy?: Partial<OAuthSignInPolicy>;
 }
 
 export interface OAuthRegistrationOptions<
@@ -32,7 +32,10 @@ const captureDefine = <const Namespace extends string | undefined>(
   _namespace: Namespace,
   input: OAuthOptions<Namespace>,
 ) => {
-  const options = Object.freeze({ ...input, policy: Object.freeze({ ...input.policy }) });
+  const options = Object.freeze({
+    ...input,
+    policy: Object.freeze({ ...defaultOAuthSignInPolicy, ...input.policy }),
+  });
 
   return { options };
 };
@@ -103,10 +106,12 @@ export function make<const Namespace extends string>(
 ): ReturnType<typeof define<Namespace>>;
 
 export function make<const Namespace extends string | undefined = undefined>(
-  options: OAuthOptions<Namespace>,
+  options?: OAuthOptions<Namespace>,
 ): ReturnType<typeof define<Namespace | undefined>>;
 
-export function make<const Namespace extends string | undefined>(options: OAuthOptions<Namespace>) {
+export function make<const Namespace extends string | undefined>(
+  options: OAuthOptions<Namespace> = {},
+) {
   return define(options.namespace, options);
 }
 
@@ -119,7 +124,7 @@ const captureDefineRegistration = <
 ) => {
   const options = Object.freeze({
     ...input,
-    policy: Object.freeze({ ...input.policy }),
+    policy: Object.freeze({ ...defaultOAuthSignInPolicy, ...input.policy }),
     registrationPolicy: Object.freeze({ ...input.registrationPolicy }),
   });
 

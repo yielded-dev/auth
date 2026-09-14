@@ -1,4 +1,4 @@
-import { Crypto, Effect, Encoding, Redacted, Result, Schema } from "effect";
+import { Context, Crypto, Effect, Encoding, Layer, Redacted, Result, Schema } from "effect";
 
 import { TokenDigest } from "../Schema";
 import { SubtleCrypto } from "../WebCrypto";
@@ -32,6 +32,28 @@ const Keyring = Schema.Struct({
     Schema.isMaxLength(8),
   ),
 });
+
+/** Shared numeric-code verification keys. Keep old IDs until their proofs expire. */
+export class ProofKeys extends Context.Service<ProofKeys, ProofKeyring>()("effect-auth/ProofKeys") {
+  static readonly layer = (keyring: ProofKeyring) =>
+    Layer.effect(
+      ProofKeys,
+      Schema.decodeEffect(Keyring)(keyring).pipe(
+        Effect.mapError(() => ProofConfigurationError.make({ reason: "keyring" })),
+      ),
+    );
+}
+
+type KeyRequirement<Secret extends ProofSecretPolicy> =
+  Extract<Secret, { readonly _tag: "NumericCode" }> extends never ? never : ProofKeys;
+
+/** The policy discriminant determines the service requirement; token proofs need no keyring. */
+export const proofKeysFor = <Secret extends ProofSecretPolicy>(secret: Secret) =>
+  (secret._tag === "Token" ? Effect.succeed(undefined) : ProofKeys) as Effect.Effect<
+    ProofKeyring | undefined,
+    never,
+    KeyRequirement<Secret>
+  >;
 
 const OpaqueSecret = Schema.String.check(Schema.isPattern(/^[A-Za-z0-9_-]{43}$/));
 const encoder = new TextEncoder();

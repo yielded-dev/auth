@@ -5,22 +5,19 @@ import type {
   StrategyDefinition,
   StrategyTypeLambda,
 } from "../auth/definition";
-import type { ProofKeyring } from "../proofs/crypto";
 import { snapshotProofConfiguration } from "../proofs/module";
-import type { ProofPolicy } from "../proofs/policy";
+import { defaultProofPolicy, type ProofPolicy } from "../proofs/policy";
 import type { EmailAddressPolicy } from "./addresses";
-import { makeEmailAccountModule, makeEmailSignInModule } from "./module";
+import { type EmailProofOptions, makeEmailAccountModule, makeEmailSignInModule } from "./module";
 
 export interface EmailLinkOptions<Namespace extends string | undefined = undefined> {
   readonly namespace?: Namespace;
-  readonly template: string;
-  readonly policy: ProofPolicy;
+  readonly policy?: ProofPolicy;
 }
 
 export interface EmailCodeOptions<
   Namespace extends string | undefined = undefined,
 > extends EmailLinkOptions<Namespace> {
-  readonly keys: ProofKeyring;
   readonly digits?: 6 | 7 | 8 | 9 | 10;
 }
 
@@ -30,7 +27,7 @@ const captureDefine = <
 >(
   mode: Mode,
   _namespace: Namespace,
-  input: Parameters<typeof makeEmailSignInModule>[1]["proof"],
+  input: EmailProofOptions<Mode>,
 ) => {
   const proof = snapshotProofConfiguration(input);
 
@@ -74,7 +71,7 @@ export interface DefineStrategy<
 const define = <const Mode extends "code" | "link", const Namespace extends string | undefined>(
   mode: Mode,
   namespace: Namespace,
-  input: Parameters<typeof makeEmailSignInModule>[1]["proof"],
+  input: EmailProofOptions<Mode>,
 ) => {
   const captured = captureDefine<Mode, Namespace>(mode, namespace, input);
 
@@ -99,14 +96,15 @@ export function makeCode<const Namespace extends string>(
 ): ReturnType<typeof define<"code", Namespace>>;
 
 export function makeCode<const Namespace extends string | undefined = undefined>(
-  options: EmailCodeOptions<Namespace>,
+  options?: EmailCodeOptions<Namespace>,
 ): ReturnType<typeof define<"code", Namespace | undefined>>;
 
 export function makeCode<const Namespace extends string | undefined>(
-  options: EmailCodeOptions<Namespace>,
+  options: EmailCodeOptions<Namespace> = {},
 ) {
   return define("code", options.namespace, {
     ...options,
+    policy: options.policy ?? defaultProofPolicy,
     secret: { _tag: "NumericCode", digits: options.digits ?? 6 },
   });
 }
@@ -116,13 +114,17 @@ export function makeLink<const Namespace extends string>(
 ): ReturnType<typeof define<"link", Namespace>>;
 
 export function makeLink<const Namespace extends string | undefined = undefined>(
-  options: EmailLinkOptions<Namespace>,
+  options?: EmailLinkOptions<Namespace>,
 ): ReturnType<typeof define<"link", Namespace | undefined>>;
 
 export function makeLink<const Namespace extends string | undefined>(
-  options: EmailLinkOptions<Namespace>,
+  options: EmailLinkOptions<Namespace> = {},
 ) {
-  return define("link", options.namespace, { ...options, secret: { _tag: "Token" } });
+  return define("link", options.namespace, {
+    ...options,
+    policy: options.policy ?? defaultProofPolicy,
+    secret: { _tag: "Token" },
+  });
 }
 
 export interface EmailRegistrationOptions<
@@ -147,6 +149,7 @@ const captureDefineRegistration = <
 ) => {
   const options = snapshotProofConfiguration({
     ...input,
+    policy: input.policy ?? defaultProofPolicy,
     secret: { _tag: "NumericCode" as const, digits: input.digits ?? 6 },
   });
 
@@ -235,6 +238,7 @@ const captureDefineAddresses = <const Namespace extends string | undefined>(
 ) => {
   const options = snapshotProofConfiguration({
     ...input,
+    policy: input.policy ?? defaultProofPolicy,
     addresses: Object.freeze({ ...input.addresses }),
     secret: { _tag: "NumericCode" as const, digits: input.digits ?? 6 },
   });

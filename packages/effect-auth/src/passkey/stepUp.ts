@@ -24,6 +24,7 @@ import {
   PasskeyComplete,
   PasskeyTarget,
 } from "./models";
+import type { PasskeyConfig } from "./PasskeyConfig";
 import type { PasskeyCredentials } from "./PasskeyCredentials";
 import type { PasskeyEnrollmentContext } from "./PasskeyEnrollmentContext";
 import type { PasskeyMethodPolicy } from "./policy";
@@ -36,7 +37,7 @@ export const makePasskeyStepUp = <
   Claims extends Schema.Codec<unknown, unknown, unknown, unknown>,
 >(
   moduleId: Id,
-  source: Effect.Effect<PasskeyMethodPolicy, PasskeyConfigurationError>,
+  source: Effect.Effect<PasskeyMethodPolicy, PasskeyConfigurationError, PasskeyConfig>,
   sessions: ReturnType<typeof makeSessionModule<SessionId, Claims>>,
 ) => {
   const ceremony = makePasskeyCeremony(moduleId, source, "step-up");

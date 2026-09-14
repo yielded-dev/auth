@@ -43,6 +43,7 @@ import {
   PasskeyUserHandle,
 } from "./models";
 import { PasskeyActionEvidence } from "./PasskeyActionEvidence";
+import type { PasskeyConfig } from "./PasskeyConfig";
 import { PasskeyEnrollmentContext } from "./PasskeyEnrollmentContext";
 import { PasskeyManagementPersistence } from "./PasskeyManagementPersistence";
 import { PasskeyManagementPolicy, type PasskeyMethodPolicy } from "./policy";
@@ -86,7 +87,7 @@ export const makePasskeyManagement = <
   Claims extends Schema.Codec<unknown, unknown, unknown, unknown>,
 >(
   moduleId: Id,
-  source: Effect.Effect<PasskeyMethodPolicy, PasskeyConfigurationError>,
+  source: Effect.Effect<PasskeyMethodPolicy, PasskeyConfigurationError, PasskeyConfig>,
   input: PasskeyManagementPolicy,
   sessions: ReturnType<typeof makeSessionModule<SessionId, Claims>>,
 ) => {

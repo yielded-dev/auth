@@ -1,5 +1,5 @@
-import * as Auth from "@yielded/auth/Auth";
-import * as PhoneOtp from "@yielded/auth/PhoneOtp";
+import { Auth } from "@yielded/auth";
+import { PhoneOtp } from "@yielded/auth/strategies";
 import { Encoding, Redacted, Schema } from "effect";
 
 import { lifecyclePolicy } from "./phone-sqlite-schema";
@@ -44,13 +44,7 @@ export const shopAuth = Auth.make("shop", {
   sessionNamespace: "shop/sessions",
   claims: Claims,
   strategies: {
-    phone: PhoneOtp.make({
-      namespace: "shop/phone",
-      template: "customer-login",
-      keys: keyring,
-      policy: proofPolicy,
-      lifecycle: lifecyclePolicy,
-    }),
+    phone: PhoneOtp.make({ policy: proofPolicy, lifecycle: lifecyclePolicy }),
   },
   defaultStrategy: "phone",
 });

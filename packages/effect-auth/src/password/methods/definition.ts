@@ -5,11 +5,15 @@ import type {
   StrategyDefinition,
   StrategyTypeLambda,
 } from "../../auth/definition";
-import type { ProofKeyring, ProofSecretPolicy } from "../../proofs/crypto";
+import type { ProofSecretPolicy } from "../../proofs/crypto";
 import { snapshotProofConfiguration } from "../../proofs/module";
-import type { ProofPolicy } from "../../proofs/policy";
+import { defaultProofPolicy, type ProofPolicy } from "../../proofs/policy";
 import { makePasswordMethod } from "./module";
-import { type PasswordMethodPolicy, snapshotPasswordMethodPolicy } from "./policy";
+import {
+  defaultPasswordMethodPolicy,
+  type PasswordMethodPolicy,
+  snapshotPasswordMethodPolicy,
+} from "./policy";
 import { makePasswordSignIn } from "./signIn";
 
 export interface PasswordOptions<Namespace extends string | undefined = undefined> {
@@ -20,14 +24,12 @@ export interface PasswordOptions<Namespace extends string | undefined = undefine
 export interface PasswordManagementOptions<
   Registration extends ClaimsCodec,
   Namespace extends string | undefined = undefined,
+  Secret extends ProofSecretPolicy = ProofSecretPolicy,
 > extends PasswordOptions<Namespace> {
   readonly registration: Registration;
-  readonly policy: PasswordMethodPolicy;
-  readonly reset: {
-    readonly template: string;
-    readonly secret: ProofSecretPolicy;
-    readonly policy: ProofPolicy;
-    readonly keys?: ProofKeyring;
+  readonly reset?: {
+    readonly secret?: Secret;
+    readonly policy?: ProofPolicy;
   };
 }
 
@@ -98,14 +100,18 @@ const signIn = <const Namespace extends string | undefined = undefined>(
 const captureManagement = <
   Registration extends ClaimsCodec,
   const Namespace extends string | undefined = undefined,
+  const Secret extends ProofSecretPolicy = { readonly _tag: "Token" },
 >(
   _namespace: Namespace,
-  input: PasswordManagementOptions<Registration, Namespace>,
+  input: PasswordManagementOptions<Registration, Namespace, Secret>,
 ) => {
   const options = Object.freeze({
     ...input,
-    policy: snapshotPasswordMethodPolicy(input.policy),
-    reset: snapshotProofConfiguration(input.reset),
+    policy: snapshotPasswordMethodPolicy(input.policy ?? defaultPasswordMethodPolicy),
+    reset: snapshotProofConfiguration({
+      secret: input.reset?.secret ?? { _tag: "Token" },
+      policy: input.reset?.policy ?? defaultProofPolicy,
+    }),
   });
 
   return { options };
@@ -117,13 +123,20 @@ const bindManagement = <
   Claims extends ClaimsCodec,
   const Id extends string,
   const SessionId extends string,
+  const Secret extends ProofSecretPolicy,
 >(
   binding: StrategyBinding<Claims, Id, SessionId>,
-  captured: ReturnType<typeof captureManagement<Registration, Namespace>>,
+  captured: ReturnType<typeof captureManagement<Registration, Namespace, Secret>>,
 ) => {
   const { options } = captured;
 
-  return makePasswordMethod<Id, SessionId, Claims, Registration>(binding.namespace, {
+  return makePasswordMethod<
+    Id,
+    SessionId,
+    Claims,
+    Registration,
+    Secret | { readonly _tag: "Token" }
+  >(binding.namespace, {
     ...options,
     sessions: binding.sessions,
   });
@@ -132,6 +145,7 @@ const bindManagement = <
 export interface ManagementStrategy<
   Registration extends ClaimsCodec,
   Namespace extends string | undefined = undefined,
+  Secret extends ProofSecretPolicy = { readonly _tag: "Token" },
 > extends StrategyTypeLambda {
   readonly type: ReturnType<
     typeof bindManagement<
@@ -139,7 +153,8 @@ export interface ManagementStrategy<
       Namespace,
       BindingOf<this>["claims"],
       BindingOf<this>["namespace"],
-      BindingOf<this>["sessionNamespace"]
+      BindingOf<this>["sessionNamespace"],
+      Secret
     >
   >;
 }
@@ -147,11 +162,12 @@ export interface ManagementStrategy<
 const management = <
   Registration extends ClaimsCodec,
   const Namespace extends string | undefined = undefined,
+  const Secret extends ProofSecretPolicy = { readonly _tag: "Token" },
 >(
   namespace: Namespace,
-  input: PasswordManagementOptions<Registration, Namespace>,
+  input: PasswordManagementOptions<Registration, Namespace, Secret>,
 ) => {
-  const captured = captureManagement<Registration, Namespace>(namespace, input);
+  const captured = captureManagement<Registration, Namespace, Secret>(namespace, input);
 
   const bind = <
     Claims extends ClaimsCodec,
@@ -159,9 +175,12 @@ const management = <
     const SessionId extends string,
   >(
     binding: StrategyBinding<Claims, Id, SessionId>,
-  ) => bindManagement<Registration, Namespace, Claims, Id, SessionId>(binding, captured);
+  ) => bindManagement<Registration, Namespace, Claims, Id, SessionId, Secret>(binding, captured);
 
-  const definition: StrategyDefinition<ManagementStrategy<Registration, Namespace>, Namespace> = {
+  const definition: StrategyDefinition<
+    ManagementStrategy<Registration, Namespace, Secret>,
+    Namespace
+  > = {
     namespace,
     bind,
   };
@@ -169,16 +188,23 @@ const management = <
   return Object.freeze(definition);
 };
 
-export function make<Registration extends ClaimsCodec, const Namespace extends string>(
-  options: PasswordManagementOptions<Registration, Namespace> & { readonly namespace: Namespace },
-): ReturnType<typeof management<Registration, Namespace>>;
+export function make<
+  Registration extends ClaimsCodec,
+  const Namespace extends string,
+  const Secret extends ProofSecretPolicy = { readonly _tag: "Token" },
+>(
+  options: PasswordManagementOptions<Registration, Namespace, Secret> & {
+    readonly namespace: Namespace;
+  },
+): ReturnType<typeof management<Registration, Namespace, Secret>>;
 
 export function make<
   Registration extends ClaimsCodec,
   const Namespace extends string | undefined = undefined,
+  const Secret extends ProofSecretPolicy = { readonly _tag: "Token" },
 >(
-  options: PasswordManagementOptions<Registration, Namespace>,
-): ReturnType<typeof management<Registration, Namespace | undefined>>;
+  options: PasswordManagementOptions<Registration, Namespace, Secret>,
+): ReturnType<typeof management<Registration, Namespace | undefined, Secret>>;
 
 export function make<const Namespace extends string>(
   options: PasswordOptions<Namespace> & { readonly namespace: Namespace },
@@ -192,7 +218,12 @@ export function make<const Namespace extends string | undefined = undefined>(
 export function make<
   Registration extends ClaimsCodec,
   const Namespace extends string | undefined = undefined,
->(options: PasswordOptions<Namespace> | PasswordManagementOptions<Registration, Namespace> = {}) {
+  const Secret extends ProofSecretPolicy = { readonly _tag: "Token" },
+>(
+  options:
+    | PasswordOptions<Namespace>
+    | PasswordManagementOptions<Registration, Namespace, Secret> = {},
+) {
   return "registration" in options
     ? management(options.namespace, options)
     : signIn(options.namespace, options);

@@ -79,3 +79,5 @@ export {
 } from "./passkey/definition";
 
 export { makePasskeyMethod as makeModule } from "./passkey/module";
+
+export { PasskeyConfig } from "./passkey/PasskeyConfig";
