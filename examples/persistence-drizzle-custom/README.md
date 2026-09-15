@@ -1,7 +1,7 @@
 # Drizzle with application-owned schema and migrations
 
 The account app from the managed example, with application-declared Drizzle tables
-and versioned SQL migrations. It supports registration, Cloudflare email verification,
+and Drizzle Kit migrations. It supports registration, Cloudflare email verification,
 password recovery, and adding and signing in with passkeys.
 
 Copy `.env.example` to `.env` and fill in `CLOUDFLARE_ACCOUNT_ID` and
@@ -17,9 +17,18 @@ Private proof and request-binding keys persist in `.data/keys.json`.
 
 [tables.ts](src/tables.ts) and [passkey-tables.ts](src/passkey-tables.ts) declare the
 application's physical tables and columns. [schema.ts](src/schema.ts) connects them
-with `Persistence.map({ subjects, tables })`. The application owns every migration
-in [migrations.ts](src/migrations.ts), recorded in `customer_migrations`.
-[live.ts](src/live.ts) runs those migrations before providing persistence:
+with `Persistence.map({ subjects, tables })`. [Drizzle Kit](drizzle.config.ts) generates
+SQL and snapshots from those declarations into [drizzle](drizzle). After changing a
+table, generate a migration, then review and commit it:
+
+```sh
+vp -C examples/persistence-drizzle-custom run db:generate --name=describe_change
+```
+
+[MigrationsLive](src/migrations.ts) applies the generated files with Drizzle and records
+them in `__drizzle_migrations`. Run `vp -C examples/persistence-drizzle-custom run db:migrate`
+to apply them separately. [live.ts](src/live.ts) also runs them before providing persistence;
+startup never generates or pushes schema changes:
 
 ```ts
 const DatabaseReady = MigrationsLive.pipe(Layer.provideMerge(Persistence.Config.layer(storage)));

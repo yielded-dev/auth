@@ -5,7 +5,7 @@ import { Effect } from "effect";
 
 import { AppAuth, requirement, recoveryRequirement, sessionRequirement } from "./auth";
 
-// Existing application table. Auth never migrates or allocates customer IDs.
+// Existing application table. The application owns its schema and customer IDs.
 export const customers = sqliteTable("customers", {
   id: text("customer_key").primaryKey(),
   enabled: integer("enabled", { mode: "boolean" }).notNull(),
@@ -38,3 +38,35 @@ export const storage = Persistence.managed({
 
 // Pure Drizzle tables are available to queries and schema tooling before startup.
 export const authSchema = storage.schema;
+
+// Drizzle Kit discovers table exports; these are the managed tables above.
+export const {
+  identifiers,
+  credentials,
+  passwords,
+  passwordAttempts,
+  passwordScopes,
+  passwordCharges,
+  passwordCommands,
+  proofRequests,
+  proofSeries,
+  proofGenerations,
+  proofContinuations,
+  proofScopes,
+  proofAbuse,
+  proofFailures,
+  proofCommands,
+  sessions,
+  sessionFlows,
+  passwordRegistrations,
+  emailCredentials,
+  emailCommands,
+  passkeyCredentials,
+  passkeyOwnership,
+  passkeyHandles,
+  passkeyModules,
+  passkeyFlows,
+  passkeyAdmissions,
+  passkeyCharges,
+  passkeyCommands,
+} = authSchema;

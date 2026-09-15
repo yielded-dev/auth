@@ -36,8 +36,13 @@ import type { QueryOperations } from "./query-operations";
 import { makeRegistrationAuthority, type CreateSubject } from "./registration";
 import { makeSessionKernel, type SessionSqlDatabase } from "./session-kernel";
 import { makeMappings } from "./storage-mapping";
-import { tableDefinition, storageTables, type StorageRole, StorageTable } from "./storage-tables";
-import { qualifiedTableName, validateStorage } from "./storage-validation";
+import {
+  tableDefinition,
+  storageTables,
+  type StorageRole,
+  type StorageTable,
+} from "./storage-tables";
+import { validateStorage } from "./storage-validation";
 import { makeTransactionExecutionKernel } from "./transaction-execution-kernel";
 import { makeTransactionKernel, type TransactionNativeDatabase } from "./transaction-kernel";
 
@@ -80,8 +85,6 @@ const timestampKeys = new Set([
   "occurredAt",
   "dedupUntil",
 ]);
-
-const quote = (name: string) => '"' + name.replaceAll('"', '""') + '"';
 
 export const createPersistence = <T extends object, R>(
   backend: Backend<T, R>,
@@ -204,7 +207,6 @@ export const createPersistence = <T extends object, R>(
         options.prefix ?? `auth_${digest(auth.namespace).slice(0, 12).replaceAll("-", "_")}`;
 
       const schema: Partial<Record<StorageRole, T>> = { ...options.tables };
-      const definitions: StorageTable[] = [];
 
       for (const role of roles) {
         if (schema[role] === undefined && managed) {
@@ -226,7 +228,6 @@ export const createPersistence = <T extends object, R>(
                 };
 
           schema[role] = backend.makeTable(adjusted);
-          definitions.push(adjusted);
         }
       }
       for (const role of roles) {
@@ -265,69 +266,12 @@ export const createPersistence = <T extends object, R>(
         schema: Object.freeze(schema) as Readonly<Record<Roles<C, Id, A>, T>>,
         tables: schema,
         subjects,
-        managed: definitions,
         encodeInstant:
           instantCodec === undefined ? (millis: number) => millis : Schema.encodeSync(instantCodec),
         decodeInstant: (value: unknown) => decodeInstant(value).pipe(Effect.mapError(mappingError)),
         decodeInstantSync,
       });
     };
-
-    const migrationsLayer = Layer.effectDiscard(
-      Effect.gen(function* () {
-        const storage = yield* ConfigKey;
-        const sql = yield* SqlClient.SqlClient;
-
-        const dialect = sql.onDialectOrElse({
-          pg: () => "pg" as const,
-          sqlite: () => "sqlite" as const,
-          orElse: () => undefined,
-        });
-
-        if (dialect === undefined)
-          return yield* configError("Managed migrations support PostgreSQL and SQLite");
-        yield* sql.withTransaction(
-          Effect.gen(function* () {
-            if (dialect === "pg")
-              yield* sql`select pg_advisory_xact_lock(hashtext('yielded-auth-migrations'))`;
-            yield* sql`create table if not exists yielded_auth_migrations (scope text not null, version text not null, primary key(scope, version))`;
-            for (const table of storage.managed) {
-              const version = digest(Schema.encodeSync(Schema.fromJsonString(StorageTable))(table));
-
-              const scope = qualifiedTableName(table);
-
-              const rows = yield* sql<{
-                readonly version: string;
-              }>`select version from yielded_auth_migrations where scope = ${scope}`;
-
-              if (rows.length !== 0) {
-                if (rows.length !== 1 || rows[0].version !== version)
-                  return yield* configError(
-                    `Managed schema changed for ${table.name}; apply an explicit versioned migration`,
-                  );
-                continue;
-              }
-
-              const columns = Object.values(table.columns).map(
-                (column) =>
-                  `${quote(column.name)} ${column.type === "text" ? "text" : column.type === "boolean" && dialect === "pg" ? "boolean" : dialect === "pg" ? "bigint" : "integer"}${column.nullable ? "" : " not null"}`,
-              );
-
-              const constraints = table.unique.map(
-                (keys) =>
-                  `unique (${keys.map((key) => quote(table.columns[key].name)).join(", ")})`,
-              );
-
-              // Deliberately no IF NOT EXISTS: a pre-existing unrecorded table is not owned by this migrator.
-              yield* sql.unsafe(
-                `create table ${scope} (${[...columns, ...constraints].join(", ")})`,
-              );
-              yield* sql`insert into yielded_auth_migrations (scope, version) values (${scope}, ${version})`;
-            }
-          }),
-        );
-      }),
-    );
 
     const services = Layer.effectContext(
       Effect.gen(function* () {
@@ -622,7 +566,6 @@ export const createPersistence = <T extends object, R>(
       Config,
       Provisioning: ProvisioningKey,
       layer: services,
-      migrationsLayer,
       managed: <N, Instant = number>(options: {
         readonly subjects: SubjectOptions<T, N>;
         readonly tables?: Partial<Record<Roles<C, Id, A>, T>>;

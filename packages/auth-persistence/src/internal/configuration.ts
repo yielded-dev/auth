@@ -25,10 +25,10 @@ import type {
   make as makeSessions,
 } from "@yielded/auth/Sessions";
 import { type Context, type Effect, type Layer, Schema } from "effect";
-import type { SqlClient, SqlError } from "effect/unstable/sql";
+import type { SqlClient } from "effect/unstable/sql";
 
 import type { PersistenceMappingError } from "./mapping-error";
-import type { StorageRole, StorageTable } from "./storage-tables";
+import type { StorageRole } from "./storage-tables";
 
 export class PersistenceConfigurationError extends Schema.TaggedError<PersistenceConfigurationError>()(
   "PersistenceConfigurationError",
@@ -219,7 +219,6 @@ export interface StorageLayout<
 > extends MappingInput {
   readonly namespace: string;
   readonly schema: Readonly<Record<Role, T>>;
-  readonly managed: ReadonlyArray<StorageTable>;
 }
 
 export interface ConfigId<Id extends string> {
@@ -257,12 +256,6 @@ export interface BoundPersistence<
     | PasskeyRequirement<A>
     | SqlClient.SqlClient
     | R
-  >;
-  /** Explicit startup migration. Never runs just because the persistence Layer was provided. */
-  readonly migrationsLayer: Layer.Layer<
-    never,
-    PersistenceConfigurationError | SqlError.SqlError,
-    ConfigId<A["namespace"]> | SqlClient.SqlClient
   >;
   readonly managed: <N, Instant = number>(options: {
     readonly subjects: SubjectOptions<T, N>;

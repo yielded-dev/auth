@@ -100,6 +100,7 @@
     "@simplewebauthn/browser": "14.0.0",
     "@simplewebauthn/server": "14.0.1",
     "drizzle-orm": "1.0.0-rc.5-ab785fc",
+    "drizzle-kit": "1.0.0-rc.5-ab785fc",
     "openid-client": "6.8.8",
     "tldts": "7.4.11",
     "@effect/platform-node-shared": "4.0.0-rc.112",

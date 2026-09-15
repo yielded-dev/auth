@@ -1,6 +1,6 @@
 import { integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 
-// Existing application table. Auth never migrates or allocates customer IDs.
+// Existing application table. The application owns its schema and customer IDs.
 export const customers = sqliteTable("customers", {
   id: text("customer_key").primaryKey(),
   enabled: integer("enabled", { mode: "boolean" }).notNull(),

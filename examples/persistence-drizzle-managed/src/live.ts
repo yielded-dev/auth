@@ -12,25 +12,16 @@ import { layerWebCrypto } from "@yielded/auth/WebCrypto";
 import { eq } from "drizzle-orm";
 import * as Drizzle from "drizzle-orm/effect-sqlite-bun";
 import { Crypto, Effect, Layer, Option, Schema } from "effect";
-import { SqlClient } from "effect/unstable/sql";
 
 import { AppAuth } from "./auth";
 import { Claims, minimumPasswordLength } from "./contract";
 import { HashingLive } from "./hashing";
+import { MigrationsLive } from "./migrations";
 import { ActionPoliciesLive } from "./policy";
 import { customers, Persistence, storage } from "./schema";
 
-const CustomerMigrations = Layer.effectDiscard(
-  Effect.gen(function* () {
-    const sql = yield* SqlClient.SqlClient;
-
-    yield* sql`create table if not exists customers (customer_key text primary key, enabled integer not null, auth_revision text not null, display_name text not null)`;
-  }),
-);
-
-// Explicit startup migration. Auth cannot start before these complete.
-export const DatabaseReady = Persistence.migrationsLayer.pipe(
-  Layer.provideMerge(CustomerMigrations),
+// Drizzle applies the generated customer and auth migrations before auth starts.
+export const DatabaseReady = MigrationsLive.pipe(
   Layer.provideMerge(Persistence.Config.layer(storage)),
 );
 

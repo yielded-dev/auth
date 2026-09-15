@@ -37,8 +37,19 @@ runs server-side over REST. Codes never appear in the app or public auth respons
 Ambiguous sends are not automatically retried. The server binds to loopback.
 
 [Schema](src/schema.ts) maps the application's customer table and selects managed
-auth tables. [Layers](src/live.ts) run migrations and provide subject creation,
-claims, and [custom hashing](src/hashing.ts). The library commits customer creation,
+auth tables. [Drizzle Kit](drizzle.config.ts) reads the exported tables and generates
+versioned SQL and snapshots in [drizzle](drizzle). After changing the schema, run:
+
+```sh
+vp -C examples/persistence-drizzle-managed run db:generate --name=describe_change
+```
+
+Review and commit the generated migration. [MigrationsLive](src/migrations.ts) applies
+those files with Drizzle before auth starts, recording them in `__drizzle_migrations`.
+Run `vp -C examples/persistence-drizzle-managed run db:migrate` to apply them separately.
+Startup never generates or pushes schema changes.
+
+[Layers](src/live.ts) provide subject creation, claims, and [custom hashing](src/hashing.ts). The library commits customer creation,
 identifier binding, password storage, and the registration receipt together. Existing
 account registration and exact request replays never overwrite a password.
 `Passkey.make()` and `Passkey.makeManagement()` enable the managed passkey tables.

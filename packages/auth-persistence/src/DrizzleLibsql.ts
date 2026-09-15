@@ -287,6 +287,15 @@ const phoneTarget = makePhoneTarget<
 
 export const { makePhonePersistenceServices, coordinatePhonePersistence } = phoneTarget;
 
+import { drizzleMigrationsLayer } from "./internal/drizzle-migrations";
 import { sqlitePersistence } from "./internal/drizzle-sqlite";
 
-export const AuthPersistence = sqlitePersistence(makeWithDefaults({}));
+export const AuthPersistence = {
+  ...sqlitePersistence(makeWithDefaults({})),
+  migrationsLayer: drizzleMigrationsLayer(
+    makeWithDefaults({}),
+    Effect.promise(() => import("drizzle-orm/effect-libsql/migrator")).pipe(
+      Effect.map((module) => module.migrate),
+    ),
+  ),
+};

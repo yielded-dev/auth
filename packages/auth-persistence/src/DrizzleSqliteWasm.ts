@@ -1,6 +1,7 @@
 import type { AnyRelations } from "drizzle-orm";
 import { type EffectSQLiteWasmDatabase, makeWithDefaults } from "drizzle-orm/effect-sqlite-wasm";
 import type { AnySQLiteTable } from "drizzle-orm/sqlite-core";
+import { Effect } from "effect";
 
 import type {
   AuthStoreTables,
@@ -244,6 +245,19 @@ const phoneTarget = makePhoneTarget<
 
 export const { makePhonePersistenceServices, coordinatePhonePersistence } = phoneTarget;
 
+import { drizzleMigrationsLayer } from "./internal/drizzle-migrations";
 import { sqlitePersistence } from "./internal/drizzle-sqlite";
 
-export const AuthPersistence = sqlitePersistence(makeWithDefaults({}));
+export const AuthPersistence = {
+  ...sqlitePersistence(makeWithDefaults({})),
+  migrationsLayer: (options: {
+    readonly migrations: Record<string, string>;
+    readonly migrationsTable?: string;
+  }) =>
+    drizzleMigrationsLayer(
+      makeWithDefaults({}),
+      Effect.promise(() => import("drizzle-orm/effect-sqlite-wasm/migrator")).pipe(
+        Effect.map((module) => module.migrate),
+      ),
+    )(options),
+};

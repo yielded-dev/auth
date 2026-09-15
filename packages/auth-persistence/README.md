@@ -9,8 +9,10 @@ does not require Drizzle. Core workflows and replaceable service contracts remai
 in `@yielded/auth`.
 
 Applications own subject provisioning, policy, claims, delivery, and their database
-connection. Managed migrations touch only the tables the configuration allocates;
-install the migration Layer explicitly before starting auth.
+connection. Drizzle Kit generates migrations from managed or application-declared
+Drizzle tables. Install `AuthPersistence.migrationsLayer({ migrationsFolder })`
+explicitly to apply those files before starting auth; direct SQL applications own
+their migration runner.
 
 The composed Layer covers password sign-in and management, email address verification
 and changes, phone sign-in, and passkey sign-in and management with stateful sessions

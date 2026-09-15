@@ -42,12 +42,12 @@ import { AuthPersistence } from "@yielded/auth-persistence/drizzle/sqlite-bun";
 
 Bind it to the Auth definition and map the existing customer table:
 
-```ts [storage.ts]
+```ts [schema.ts]
 import { AuthPersistence } from "@yielded/auth-persistence/drizzle/sqlite-bun";
 import { SubjectId } from "@yielded/auth/Schema";
 import { Effect } from "effect";
 import { AppAuth, requirement } from "./auth";
-import { customers } from "./schema";
+import { customers } from "./customers";
 
 export const Persistence = AuthPersistence.make(AppAuth);
 export const storage = Persistence.managed({
@@ -67,21 +67,38 @@ export const authSchema = storage.schema;
 `authSchema` contains ordinary Drizzle tables before any Layer starts. Only enabled
 capabilities allocate storage; shared proof storage is configured once. Use
 `Persistence.map({ subjects, tables })` when your application declares all tables.
-`managed` also accepts table overrides and leaves those tables to your migrations.
+`managed` also accepts table overrides. Export each enabled table from `authSchema`
+as a named export so Drizzle Kit discovers it; the
+[managed schema](https://github.com/yielded-dev/auth/blob/main/examples/persistence-drizzle-managed/src/schema.ts)
+shows the complete exports. Both Drizzle examples use Drizzle Kit:
+
+```ts [drizzle.config.ts]
+import { defineConfig } from "drizzle-kit";
+
+export default defineConfig({
+  dialect: "sqlite",
+  schema: ["./src/customers.ts", "./src/schema.ts"],
+  out: "./drizzle",
+});
+```
+
+Generate SQL after changing the schema, review it, and commit the SQL and snapshot.
+The examples expose `vp run db:generate --name=describe_change` and `vp run db:migrate`
+from their directories. The latter uses the same migration Layer as startup:
 
 ```ts [auth-live.ts]
 import * as SqliteClient from "@effect/sql-sqlite-bun/SqliteClient";
+import { AuthPersistence } from "@yielded/auth-persistence/drizzle/sqlite-bun";
 import { Layer } from "effect";
 import { AppAuth } from "./auth";
 import { ApplicationLive } from "./application"; // claims, keys, delivery, hashing
-import { Persistence, storage } from "./storage";
+import { Persistence, storage } from "./schema";
 
 const DatabaseLive = SqliteClient.layer({ filename: "auth.sqlite" });
 const ConfigLive = Persistence.Config.layer(storage);
-const DatabaseReady = Persistence.migrationsLayer.pipe(
-  Layer.provideMerge(ConfigLive),
-  Layer.provideMerge(DatabaseLive),
-);
+const DatabaseReady = AuthPersistence.migrationsLayer({
+  migrationsFolder: new URL("../drizzle/", import.meta.url).pathname,
+}).pipe(Layer.provideMerge(ConfigLive), Layer.provideMerge(DatabaseLive));
 export const AuthLive = AppAuth.layer.pipe(
   Layer.provide(Persistence.layer),
   Layer.provide(ApplicationLive),
@@ -89,11 +106,14 @@ export const AuthLive = AppAuth.layer.pipe(
 );
 ```
 
-The application must migrate its customer table first. Managed migrations install
-the current auth schema transactionally and record its fingerprint. Re-running
-them is safe; an unrecognized schema change requires an explicit versioned migration.
-They never adopt an unrecorded existing table or drop a disabled capability's data.
-The persistence Layer checks physical columns and unique keys before serving auth.
+Drizzle owns the migration journal and applies pending files transactionally.
+The generated migrations include the customer table and whichever auth tables the
+schema exports. Schema changes, including removal of a capability's tables, require
+a reviewed migration; startup only applies committed files. A failed migration stops
+auth startup. The persistence Layer checks physical columns and unique keys before
+serving auth. File-based drivers load the migration folder only when the Layer starts;
+SQLite WASM accepts Drizzle's `migrations` map instead of a folder. Direct Effect SQL
+applications supply their own migrations, as shown in the raw SQL example.
 
 The composed API supports password sign-in and management, email address verification
 and changes, phone sign-in, and stateful sessions. Email storage permits one verified
