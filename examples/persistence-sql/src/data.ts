@@ -1,4 +1,4 @@
-import * as PgLiteClient from "@effect/sql-pglite/PgLiteClient";
+import * as PgliteClient from "@effect/sql-pglite/PgliteClient";
 import * as SqliteClient from "@effect/sql-sqlite-bun/SqliteClient";
 import { RequestBindingConfig } from "@yielded/auth/Auth";
 import { ProofKeys } from "@yielded/auth/Proofs";
@@ -46,7 +46,7 @@ export const DatabaseLive = Layer.unwrap(
     // Both clients expose SqlClient; the auth adapter uses its dialect and transaction authority.
     const database: Layer.Layer<SqlClient.SqlClient, SqlError.SqlError> =
       dialect === "pg"
-        ? PgLiteClient.layer({ dataDir: path.join(directory, "postgres") })
+        ? PgliteClient.layer({ dataDir: path.join(directory, "postgres") })
         : SqliteClient.layer({ filename: path.join(directory, "auth.sqlite") });
 
     return database;

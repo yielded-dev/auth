@@ -1,4 +1,4 @@
-import * as PgLiteClient from "@effect/sql-pglite/PgLiteClient";
+import * as PgliteClient from "@effect/sql-pglite/PgliteClient";
 import * as SqliteClient from "@effect/sql-sqlite-bun/SqliteClient";
 import { PasswordUnavailable } from "@yielded/auth/Password";
 import { PhoneOtpUnavailable } from "@yielded/auth/PhoneOtp";
@@ -21,7 +21,7 @@ const DatabaseLive = Layer.unwrap(
     );
 
     const database: Layer.Layer<SqlClient.SqlClient, SqlError.SqlError> =
-      dialect === "pg" ? PgLiteClient.layer({}) : SqliteClient.layer({ filename: ":memory:" });
+      dialect === "pg" ? PgliteClient.layer({}) : SqliteClient.layer({ filename: ":memory:" });
 
     return database;
   }),
