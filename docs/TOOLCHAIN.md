@@ -24,6 +24,10 @@ under `examples/*`. Internal adapter fixtures belong to the package's `test/fixt
 Every workspace and repository script is typechecked. Tests retain their existing
 regression coverage; new tests follow the repository's testing policy.
 
+The Drizzle examples run generation through `scripts/db-generate.ts`. It forwards
+Drizzle Kit arguments and compacts JSON snapshots to one line. Snapshots are excluded
+from formatting and marked as generated in Git; SQL remains available for review.
+
 ## Public modules
 
 Use explicit, flat source exports with matching `vp pack` entries. Root namespaces,

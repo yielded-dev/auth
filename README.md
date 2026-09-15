@@ -4,7 +4,11 @@ Composable authentication, sessions, and identity workflows for Effect.
 
 Yielded Auth owns security-sensitive authentication behavior. Applications provide
 identity authority, persistence, protocol verification, and credential delivery.
-Optional adapters support Drizzle databases, Cloudflare, OAuth/OIDC, and WebAuthn.
+`@yielded/auth-persistence` supplies direct Effect SQL, Drizzle bindings, and opt-in
+managed storage. Optional adapters also support Cloudflare, OAuth/OIDC, and WebAuthn.
+
+See the [persistence examples](docs/reference/adapters.md#runnable-examples) for
+managed Drizzle, application-owned Drizzle, raw SQL, and custom service implementations.
 
 Install the beta release with Effect v4:
 
@@ -100,7 +104,7 @@ Use `auth.runtime` for client workflows that share the atoms' instance, or provi
 
 Start with the [documentation](https://yielded.dev/auth/) and
 [consumer examples](examples/auth). The public library lives in
-[`packages/effect-auth`](packages/effect-auth); examples are leaf workspaces.
+[`packages/auth`](packages/auth); examples are leaf workspaces.
 
 ## Development
 

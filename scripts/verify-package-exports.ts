@@ -153,8 +153,10 @@ export const verifyPackageExports = Effect.fn("verifyPackageExports")(
           if (!filenames.has(target.slice("./src/".length)))
             report(pkg.file, `${target} is missing or has different filesystem casing`);
         }
-        // Lowercase entrypoints are public groups; PascalCase paths are modules.
+        // Core's root and lowercase entrypoints are namespace groups. Companion
+        // packages may instead expose named facades, such as AuthPersistence.
         for (const [key, target] of Object.entries(manifest.exports)) {
+          if (manifest.name !== "@yielded/auth") continue;
           if (key !== "." && !/^\.\/[a-z][a-z0-9-]*$/.test(key)) continue;
           const index = yield* parse(`${base}/${target.slice(2)}`);
           const namespaces = new Set<string>();

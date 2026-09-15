@@ -1,6 +1,6 @@
 import { NodeRuntime } from "@effect/platform-node";
 import * as SqliteClient from "@effect/sql-sqlite-wasm/SqliteClient";
-import { makeAuthServices } from "@yielded/auth/DrizzleSqliteWasm";
+import { makeAuthServices } from "@yielded/auth-persistence/drizzle/sqlite-wasm";
 import * as Drizzle from "drizzle-orm/effect-sqlite-wasm";
 import { Effect } from "effect";
 

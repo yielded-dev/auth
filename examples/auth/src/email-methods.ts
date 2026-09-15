@@ -347,6 +347,9 @@ const program = Effect.gen(function* () {
           })
           .pipe(Effect.provideService(AuthRequest, { ...call, invocation: caller }));
 
+        if (verified.invalidation === undefined)
+          return yield* Effect.die("adding a new address must invalidate existing authentication");
+
         if (
           commands.filter((c) => c._tag === "Issue" && c.slot === "session").length !==
           beforeVerification

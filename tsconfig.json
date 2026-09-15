@@ -2,7 +2,7 @@
   "files": [],
   "references": [
     {
-      "path": "./packages/effect-auth"
+      "path": "./packages/auth"
     },
     {
       "path": "./examples/auth"

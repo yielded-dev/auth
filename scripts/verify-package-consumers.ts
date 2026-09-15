@@ -23,7 +23,7 @@ const comparisons = [
   ["passkey", "passkey-group"],
 ];
 
-const probes = [...new Set([...comparisons.flat(), "contracts-all", "root"])];
+const probes = [...new Set([...comparisons.flat(), "contracts-all", "root", "persistence"])];
 const bundlers = ["esbuild", "vite"] as const;
 
 type Bundler = (typeof bundlers)[number];
@@ -167,7 +167,7 @@ const bundleConsumer = Effect.fn("packageConsumers.bundle")(function* (
     for (const imported of chunks.find((chunk) => chunk.fileName === name)?.imports ?? [])
       initial.add(imported);
   }
-  const implementation = (file: string) => file.split("packages/effect-auth/dist/")[1];
+  const implementation = (file: string) => file.split("packages/auth/dist/")[1];
 
   const unwanted = retained.filter((file) => {
     if (
@@ -245,8 +245,8 @@ export const verifyPackageConsumers = Effect.fn("verifyPackageConsumers")(functi
     .makeTempDirectoryScoped({ prefix: "effect-auth-consumers-" })
     .pipe(Effect.flatMap((directory) => fs.realPath(directory)));
 
-  const source = path.join(repositoryRoot, "packages/effect-auth");
-  const destination = path.join(stage, "packages/effect-auth");
+  const source = path.join(repositoryRoot, "packages/auth");
+  const destination = path.join(stage, "packages/auth");
 
   const manifest = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(PublishManifest))(
     yield* fs.readFileString(path.join(source, "package.json")),
@@ -258,15 +258,41 @@ export const verifyPackageConsumers = Effect.fn("verifyPackageConsumers")(functi
   yield* fs.copy(path.join(source, "dist"), path.join(destination, "dist"));
   yield* fs.copy(path.join(source, "test/packaging"), path.join(stage, "fixtures"));
 
+  const persistenceSource = path.join(repositoryRoot, "packages/auth-persistence");
+  const persistenceDestination = path.join(stage, "packages/auth-persistence");
+
+  const persistenceManifest = yield* Schema.decodeUnknownEffect(
+    Schema.fromJsonString(PublishManifest),
+  )(yield* fs.readFileString(path.join(persistenceSource, "package.json")));
+
+  yield* fs.makeDirectory(persistenceDestination, { recursive: true });
+  yield* fs.copyFile(
+    path.join(persistenceSource, "package.json"),
+    path.join(persistenceDestination, "package.json"),
+  );
+  yield* fs.copy(path.join(persistenceSource, "dist"), path.join(persistenceDestination, "dist"));
+  yield* fs.copyFile(
+    path.join(persistenceSource, "test/packaging/raw.ts"),
+    path.join(stage, "fixtures/persistence.ts"),
+  );
+
   // Only required dependencies are installed. An accidental optional import must fail.
-  for (const name of ["@yielded/auth", "effect", ...Object.keys(manifest.dependencies ?? {})]) {
+  for (const name of new Set([
+    "@yielded/auth",
+    "@yielded/auth-persistence",
+    "effect",
+    ...Object.keys(manifest.dependencies ?? {}),
+    ...Object.keys(persistenceManifest.dependencies ?? {}),
+  ])) {
     const link = path.join(stage, "node_modules", name);
 
     yield* fs.makeDirectory(path.dirname(link), { recursive: true });
     yield* fs.symlink(
       name === "@yielded/auth"
         ? destination
-        : yield* fs.realPath(path.join(source, "node_modules", name)),
+        : name === "@yielded/auth-persistence"
+          ? persistenceDestination
+          : yield* fs.realPath(path.join(source, "node_modules", name)),
       link,
     );
   }
@@ -344,6 +370,9 @@ export const verifyPackageConsumers = Effect.fn("verifyPackageConsumers")(functi
           "--eval",
           `import assert from "node:assert/strict";
 const root = await import("@yielded/auth");
+const { AuthPersistence } = await import("@yielded/auth-persistence");
+assert.equal(typeof AuthPersistence.make, "function");
+assert.equal(typeof AuthPersistence.table, "function");
 for (const [name, namespace] of Object.entries(root)) {
   const direct = await import("@yielded/auth/" + name);
   assert.strictEqual(namespace, direct, name + " must be a native module namespace");
@@ -363,6 +392,9 @@ assert.equal(strategies.Passkey.make, root.Passkey.make);
 const { Effect } = await import("effect");
 assert.equal(await Effect.runPromise(root.Identity.stringSubjectId.toSubject("consumer")), "consumer");
 for (const bundler of ["esbuild", "vite"]) {
+  const persistence = await import("./bundles/" + bundler + "/persistence/entry.mjs");
+  assert.ok(persistence.storage.schema.passwords);
+  assert.equal(persistence.storage.schema.proofRequests, undefined);
   const passkey = await import("./bundles/" + bundler + "/passkey-group/entry.mjs");
   const { Schema } = await import("effect");
   const sessions = contracts.SessionContract.makeSessionContract("consumer/session", Schema.Struct({}));
@@ -381,7 +413,7 @@ assert.equal(typeof root.PasskeyContract.makeRegistration, "function");
 assert.equal(typeof root.PasskeyContract.makeManagement, "function");
 assert.equal(typeof root.TotpContract.make, "function");
 assert.ok(root.SessionContract.makeSessionContract);
-console.log("Published namespaces, bundled codecs, and deferred clients passed without optional peers.");`,
+console.log("Published namespaces, codecs, deferred clients, and raw SQL persistence passed without optional peers.");`,
         ],
         { cwd: stage, stdout: "pipe", stderr: "pipe" },
       );

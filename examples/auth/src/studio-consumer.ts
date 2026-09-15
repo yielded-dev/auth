@@ -1,6 +1,6 @@
+import * as Mapping from "@yielded/auth-persistence/drizzle";
+import * as Native from "@yielded/auth-persistence/drizzle/postgres";
 import * as Auth from "@yielded/auth/Auth";
-import * as Mapping from "@yielded/auth/Drizzle";
-import * as Native from "@yielded/auth/DrizzlePostgres";
 import * as Hooks from "@yielded/auth/Hooks";
 import type { RequestBindingConfiguration } from "@yielded/auth/Operations";
 import * as Passkey from "@yielded/auth/Passkey";
@@ -154,7 +154,7 @@ const flowMapping = {
     Schema.decodeUnknownEffect(Schema.Date)(value).pipe(
       Effect.map(DateTime.makeUnsafe),
       Effect.mapError(() =>
-        Mapping.DrizzleMappingError.make({ operation: "studio.decode", cause: undefined }),
+        Mapping.PersistenceMappingError.make({ operation: "studio.decode", cause: undefined }),
       ),
     ),
   encodePendingInsert: ({ evidence, subjectId, pendingDigest, dedupUntil }) => ({
@@ -204,13 +204,13 @@ const pendingMapping = {
   decode: (row: typeof pendingLogins.$inferSelect) =>
     Schema.decodeEffect(pendingCodec)(row.payload).pipe(
       Effect.mapError(() =>
-        Mapping.DrizzleMappingError.make({ operation: "studio.decode", cause: undefined }),
+        Mapping.PersistenceMappingError.make({ operation: "studio.decode", cause: undefined }),
       ),
     ),
   decodeContext: (row: typeof pendingLogins.$inferSelect) =>
     Schema.decodeEffect(pendingCodec)(row.payload).pipe(
       Effect.mapError(() =>
-        Mapping.DrizzleMappingError.make({ operation: "studio.decode", cause: undefined }),
+        Mapping.PersistenceMappingError.make({ operation: "studio.decode", cause: undefined }),
       ),
     ),
 } satisfies Mapping.PendingAuthenticationTables<
@@ -255,7 +255,7 @@ const sessionMapping = {
         version: Sessions.SecurityRevision.make(row.version),
       })),
       Effect.mapError(() =>
-        Mapping.DrizzleMappingError.make({ operation: "studio.decode", cause: undefined }),
+        Mapping.PersistenceMappingError.make({ operation: "studio.decode", cause: undefined }),
       ),
     ),
   allocateIdSync: () => globalThis.crypto.randomUUID(),
@@ -394,7 +394,10 @@ export const makeStudioStorage = Effect.fn("Studio.storage")(function* (
   // sessions and pending logins, so credential changes invalidate them immediately.
   const management = yield* Native.makePasskeyManagementServices(db, {
     ...Studio.managementMapping,
-    write: { ...Studio.write, policy: { ...Studio.write.policy, requirement: requirementFor } },
+    write: {
+      ...Studio.write,
+      policy: { ...Studio.write.policy, requirement: (row) => Effect.succeed(requirementFor(row)) },
+    },
     invalidation: { ...Studio.managementMapping.invalidation, mutations: [] },
   });
 

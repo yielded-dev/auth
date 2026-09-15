@@ -29,7 +29,7 @@ unused members of re-exported namespaces. Both styles support `PasskeyContract.m
 Native ESM loads the root's static dependencies. Direct paths also keep that
 module-loading boundary narrow when running without a bundler.
 
-Optional adapters are direct imports, for example `@yielded/auth/DrizzlePostgres`,
+Optional adapters are direct imports, for example `@yielded/auth-persistence/drizzle/postgres`,
 `@yielded/auth/OpenIdClient`, `@yielded/auth/PasskeyBrowser`, or
 `@yielded/auth/adapters/Twilio`. Install only the peers
 required by the selected adapters. `@yielded/auth/Testing` remains test-only.
@@ -77,18 +77,18 @@ client workflow composition.
 
 These are available through direct subpaths only:
 
-| Modules                                                                         | Integration                                                |
-| ------------------------------------------------------------------------------- | ---------------------------------------------------------- |
-| `OpenIdClient`, `OpenIdClientConnected`                                         | OAuth/OIDC verification and connected grant management.    |
-| `GitHub`                                                                        | GitHub provider configuration and operations.              |
-| `adapters/Twilio`                                                               | SMS delivery through Effect HTTP; requires `TwilioConfig`. |
-| `PasskeySimpleWebAuthn`, `PasskeyBrowser`                                       | Server verification and browser WebAuthn ceremonies.       |
-| `PasskeyPassword`                                                               | Password-backed authority for passkey workflows.           |
-| `Drizzle`                                                                       | Shared Drizzle adapter contracts.                          |
-| `DrizzlePostgres`, `DrizzlePglite`, `DrizzleMysql2`                             | PostgreSQL, PGlite, and MySQL drivers.                     |
-| `DrizzleLibsql`, `DrizzleD1`                                                    | libSQL and Cloudflare D1 drivers.                          |
-| `DrizzleSqliteBun`, `DrizzleSqliteNode`, `DrizzleSqliteWasm`, `DrizzleSqliteDo` | SQLite drivers by runtime.                                 |
-| `Cloudflare`                                                                    | Cloudflare platform integration.                           |
+| Modules                                   | Integration                                                |
+| ----------------------------------------- | ---------------------------------------------------------- |
+| `OpenIdClient`, `OpenIdClientConnected`   | OAuth/OIDC verification and connected grant management.    |
+| `GitHub`                                  | GitHub provider configuration and operations.              |
+| `adapters/Twilio`                         | SMS delivery through Effect HTTP; requires `TwilioConfig`. |
+| `PasskeySimpleWebAuthn`, `PasskeyBrowser` | Server verification and browser WebAuthn ceremonies.       |
+| `PasskeyPassword`                         | Password-backed authority for passkey workflows.           |
+| `Cloudflare`                              | Cloudflare platform integration.                           |
+
+Database adapters live in `@yielded/auth-persistence`. Its root exports the named
+`AuthPersistence` facade for direct Effect SQL; `drizzle/<driver>` exports the same
+name for that Drizzle runtime. `drizzle` exposes the explicit mapping contracts.
 
 The [adapter guide](./adapters) covers transaction authority, durable receipts,
 and runtime constraints.
@@ -109,4 +109,4 @@ composition. Start with `Auth.make` for application authentication.
 | `Testing`                                                   | Test-only helpers; exclude from production imports. |
 
 API comments and signatures live beside the
-[public source modules](https://github.com/yielded-dev/auth/tree/main/packages/effect-auth/src).
+[public source modules](https://github.com/yielded-dev/auth/tree/main/packages/auth/src).
