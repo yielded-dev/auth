@@ -167,7 +167,7 @@ const bundleConsumer = Effect.fn("packageConsumers.bundle")(function* (
     for (const imported of chunks.find((chunk) => chunk.fileName === name)?.imports ?? [])
       initial.add(imported);
   }
-  const implementation = (file: string) => file.split("packages/effect-auth/dist/")[1];
+  const implementation = (file: string) => file.split("packages/auth/dist/")[1];
 
   const unwanted = retained.filter((file) => {
     if (
@@ -245,8 +245,8 @@ export const verifyPackageConsumers = Effect.fn("verifyPackageConsumers")(functi
     .makeTempDirectoryScoped({ prefix: "effect-auth-consumers-" })
     .pipe(Effect.flatMap((directory) => fs.realPath(directory)));
 
-  const source = path.join(repositoryRoot, "packages/effect-auth");
-  const destination = path.join(stage, "packages/effect-auth");
+  const source = path.join(repositoryRoot, "packages/auth");
+  const destination = path.join(stage, "packages/auth");
 
   const manifest = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(PublishManifest))(
     yield* fs.readFileString(path.join(source, "package.json")),

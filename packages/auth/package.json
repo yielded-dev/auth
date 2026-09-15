@@ -18,7 +18,7 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/yielded-dev/auth.git",
-    "directory": "packages/effect-auth"
+    "directory": "packages/auth"
   },
   "files": [
     "dist",

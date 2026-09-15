@@ -32,7 +32,7 @@ import { OAuthStateStore } from "../../src/oauth/OAuthStateStore";
  * redirect, cookie-free callback, exchange, refresh, and revocation runs
  * over real HTTP, driven by a real browser.
  *
- * Run with `vp run --filter './packages/effect-auth' e2e`, then open
+ * Run with `vp run --filter './packages/auth' e2e`, then open
  * http://localhost:4600. Access-token lifetime is deliberately a few seconds
  * so a browser session can watch a live refresh.
  */

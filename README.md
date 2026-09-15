@@ -104,7 +104,7 @@ Use `auth.runtime` for client workflows that share the atoms' instance, or provi
 
 Start with the [documentation](https://yielded.dev/auth/) and
 [consumer examples](examples/auth). The public library lives in
-[`packages/effect-auth`](packages/effect-auth); examples are leaf workspaces.
+[`packages/auth`](packages/auth); examples are leaf workspaces.
 
 ## Development
 
