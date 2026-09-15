@@ -1,5 +1,39 @@
 # @yielded/auth
 
+## 0.1.0-beta.7
+
+### Minor Changes
+
+- [#26](https://github.com/yielded-dev/auth/pull/26) [`d1f2799`](https://github.com/yielded-dev/auth/commit/d1f279964029ac25e7a58dc6fe8ca29025bd4bd3) Thanks [@danieljvdm](https://github.com/danieljvdm)! - Move SQL adapters into `@yielded/auth-persistence` and add managed schemas, opt-in Layers for Drizzle Kit migrations, and direct Effect SQL persistence for password registration and recovery, email verification, phone sign-in, and stateful sessions.
+
+  BEHAVIOR CHANGE: Import Drizzle adapters from `@yielded/auth-persistence/drizzle/*`; both packages now release together at the same version.
+
+- [#25](https://github.com/yielded-dev/auth/pull/25) [`5ccfe5a`](https://github.com/yielded-dev/auth/commit/5ccfe5a26e15351ff0b19b0199b858a9e22b889c) Thanks [@danieljvdm](https://github.com/danieljvdm)! - Default strategy constructors to behavior-only configuration and supply infrastructure through Layers. Add optional phone message rendering and an Effect HTTP adapter at `@yielded/auth/adapters/Twilio` requiring `TwilioConfig` and `HttpClient`.
+
+  BEHAVIOR CHANGE: Supply `ProofKeys` for code verification and `SmsDelivery` for phone delivery instead of constructor keys and template labels. Enable phone lifecycle operations with `PhoneOtp.make({ lifecycle: true })` on the same strategy. Supply `PasskeyConfig` to both passkey strategies and the `layerSimpleWebAuthnPasskeyProtocol` Layer value. Preserve existing namespaces and key IDs; outstanding requests created with custom template labels require a fresh flow.
+
+- [#23](https://github.com/yielded-dev/auth/pull/23) [`57427ef`](https://github.com/yielded-dev/auth/commit/57427ef4c086fa66a519c80944a24fa6c53d0885) Thanks [@danieljvdm](https://github.com/danieljvdm)! - Group shared definitions under `@yielded/auth/contracts` and server methods under `@yielded/auth/strategies`, preserving distinct names such as `PasskeyContract` and `Passkey`. Expose `Http` from the root and shorten passkey and TOTP contract constructors.
+
+  BEHAVIOR CHANGE: Replace `makePasskeyContract`, `makePasskeyRegistrationContract`, and `makePasskeyManagementContract` with `PasskeyContract.make`, `.makeRegistration`, and `.makeManagement`; replace `makeTotpContract` with `TotpContract.make`.
+
+### Patch Changes
+
+- [#26](https://github.com/yielded-dev/auth/pull/26) [`d1f2799`](https://github.com/yielded-dev/auth/commit/d1f279964029ac25e7a58dc6fe8ca29025bd4bd3) Thanks [@danieljvdm](https://github.com/danieljvdm)! - Allow applications to configure the minimum new-password length with `NewPasswordCheck.layer`.
+
+- [#26](https://github.com/yielded-dev/auth/pull/26) [`d1f2799`](https://github.com/yielded-dev/auth/commit/d1f279964029ac25e7a58dc6fe8ca29025bd4bd3) Thanks [@danieljvdm](https://github.com/danieljvdm)! - Add a runnable account example with application-owned file persistence, username sign-in, and replaceable registration, hashing, and authorization services.
+
+- [#26](https://github.com/yielded-dev/auth/pull/26) [`d1f2799`](https://github.com/yielded-dev/auth/commit/d1f279964029ac25e7a58dc6fe8ca29025bd4bd3) Thanks [@danieljvdm](https://github.com/danieljvdm)! - Preserve existing sessions when confirming an already-bound, unverified email address, and let application policy accept its valid session evidence. Omit `invalidation` from that completion result; retain recent-authentication and invalidation requirements when adding or replacing an address.
+
+- [#26](https://github.com/yielded-dev/auth/pull/26) [`d1f2799`](https://github.com/yielded-dev/auth/commit/d1f279964029ac25e7a58dc6fe8ca29025bd4bd3) Thanks [@danieljvdm](https://github.com/danieljvdm)! - Preserve existing authentication when adding a passkey and allow application-defined authorization freshness limits.
+
+  BEHAVIOR CHANGE: `PasskeyEnrolled` and `PasskeyManagementPersistence.completeEnrollment` no longer include `invalidation`; custom persistence must preserve the subject security revision during enrollment.
+
+- [#26](https://github.com/yielded-dev/auth/pull/26) [`d1f2799`](https://github.com/yielded-dev/auth/commit/d1f279964029ac25e7a58dc6fe8ca29025bd4bd3) Thanks [@danieljvdm](https://github.com/danieljvdm)! - Compose Drizzle passkey sign-in and management storage from the Auth definition, with opt-in managed tables and migrations.
+
+  BEHAVIOR CHANGE: Return Effects from `write.policy.requirement` and `write.policy.remainingSignIn` in explicit passkey mappings, for example `() => Effect.succeed(requirement)`.
+
+- [#26](https://github.com/yielded-dev/auth/pull/26) [`d1f2799`](https://github.com/yielded-dev/auth/commit/d1f279964029ac25e7a58dc6fe8ca29025bd4bd3) Thanks [@danieljvdm](https://github.com/danieljvdm)! - Expose `defaultProofPolicy` so applications can share proof expiry and resend timing with their UI.
+
 ## 0.1.0-beta.6
 
 ### Minor Changes
