@@ -91,7 +91,7 @@ const recommendedOxlintConfig = {
   ],
 } satisfies OxlintConfig;
 
-const generatedPaths = toolIgnorePatterns;
+const generatedPaths = [...toolIgnorePatterns, "examples/*/drizzle/**/snapshot.json"];
 
 export default defineConfig({
   staged: {

@@ -44,6 +44,8 @@ versioned SQL and snapshots in [drizzle](drizzle). After changing the schema, ru
 vp -C examples/persistence-drizzle-managed run db:generate --name=describe_change
 ```
 
+Generation compacts JSON snapshots to one line; Git marks them as generated.
+
 Review and commit the generated migration. [MigrationsLive](src/migrations.ts) applies
 those files with Drizzle before auth starts, recording them in `__drizzle_migrations`.
 Run `vp -C examples/persistence-drizzle-managed run db:migrate` to apply them separately.
