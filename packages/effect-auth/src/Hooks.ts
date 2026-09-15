@@ -48,3 +48,5 @@ export {
   composePlugins,
   pluginContributions,
 } from "./hooks/plugins";
+
+export { CurrentCommitJournal } from "./hooks/commit";

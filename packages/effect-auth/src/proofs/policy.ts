@@ -76,6 +76,7 @@ export const validateProofPolicy = Effect.fn("validateProofPolicy")(function* (i
   });
 });
 
+/** Default proof lifetimes and abuse limits. Enforcement remains server-side. */
 export const defaultProofPolicy: ProofPolicy = {
   lifetimeMillis: 300_000,
   continuationLifetimeMillis: 30_000,

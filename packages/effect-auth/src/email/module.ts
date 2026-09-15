@@ -592,6 +592,7 @@ export const makeEmailAccountModule = <
 
     return Object.freeze({
       ...module,
+      persistence: Object.freeze({ kind: "email" as const, moduleId, addresses: true as const }),
       strategy: makeAuthStrategy(
         {
           beginEmailAddress: Begin.invoke,

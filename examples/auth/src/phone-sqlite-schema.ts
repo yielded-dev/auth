@@ -1,11 +1,11 @@
 import {
-  DrizzleMappingError,
+  PersistenceMappingError,
   requiredProofConstraints,
   type ProofPersistenceMapping,
   phoneProofCompletionMapping,
   requiredPhoneConstraints,
   type PhoneMapping,
-} from "@yielded/auth/Drizzle";
+} from "@yielded/auth-persistence/drizzle";
 import type { PhoneLifecyclePolicy, PhoneAdmissionPolicy } from "@yielded/auth/PhoneOtp";
 import {
   ProofBinding,
@@ -207,7 +207,7 @@ export const decodeInstant = (value: unknown) =>
   typeof value === "string" && Number.isFinite(Date.parse(value))
     ? Effect.succeed(Date.parse(value))
     : Effect.fail(
-        DrizzleMappingError.make({
+        PersistenceMappingError.make({
           operation: "phone-example-codec",
           cause: "invalid consumer value",
         }),
@@ -215,14 +215,14 @@ export const decodeInstant = (value: unknown) =>
 
 export const nativeSubject = (id: SubjectId) => {
   if (!/^customer:[1-9][0-9]*$/.test(id))
-    throw DrizzleMappingError.make({
+    throw PersistenceMappingError.make({
       operation: "phone-example-codec",
       cause: "invalid consumer value",
     });
   const result = Number(id.slice(9));
 
   if (!Number.isSafeInteger(result))
-    throw DrizzleMappingError.make({
+    throw PersistenceMappingError.make({
       operation: "phone-example-codec",
       cause: "invalid consumer value",
     });
@@ -235,7 +235,7 @@ export const subjectId = {
     Effect.try({
       try: () => nativeSubject(id),
       catch: () =>
-        DrizzleMappingError.make({
+        PersistenceMappingError.make({
           operation: "phone-example-codec",
           cause: "invalid consumer value",
         }),
@@ -250,7 +250,7 @@ const bindingCodec = Schema.fromJsonString(ProofBinding),
 const decodeBinding = (value: string) =>
   Schema.decodeEffect(bindingCodec)(value).pipe(
     Effect.mapError(() =>
-      DrizzleMappingError.make({
+      PersistenceMappingError.make({
         operation: "phone-example-codec",
         cause: "invalid consumer value",
       }),
@@ -381,7 +381,7 @@ export const proofs: ProofPersistenceMapping<
     decodeReceipt: (row) =>
       Schema.decodeEffect(receiptCodec)(row.receipt).pipe(
         Effect.mapError(() =>
-          DrizzleMappingError.make({
+          PersistenceMappingError.make({
             operation: "phone-example-codec",
             cause: "invalid consumer value",
           }),

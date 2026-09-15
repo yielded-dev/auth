@@ -53,3 +53,9 @@ export {
 } from "./email/definition";
 
 export type { EmailAddressPolicy } from "./email/addresses";
+
+export {
+  snapshotEmailCredential,
+  snapshotEmailRequirement,
+  snapshotEmailRevision,
+} from "./email/snapshot";

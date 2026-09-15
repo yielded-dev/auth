@@ -1,0 +1,40 @@
+import { AuthPersistence } from "@yielded/auth-persistence/drizzle/sqlite-bun";
+import { SubjectId } from "@yielded/auth/Schema";
+import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import { Effect } from "effect";
+
+import { AppAuth, requirement, recoveryRequirement, sessionRequirement } from "./auth";
+
+// Existing application table. Auth never migrates or allocates customer IDs.
+export const customers = sqliteTable("customers", {
+  id: text("customer_key").primaryKey(),
+  enabled: integer("enabled", { mode: "boolean" }).notNull(),
+  securityRevision: text("auth_revision").notNull(),
+  displayName: text("display_name").notNull(),
+});
+
+export const Persistence = AuthPersistence.make(AppAuth);
+
+export const storage = Persistence.managed({
+  subjects: {
+    table: customers,
+    id: "id",
+    status: "enabled",
+    activeValue: true,
+    securityRevision: "securityRevision",
+    idCodec: SubjectId,
+    requirements: () => Effect.succeed(requirement),
+    actionRequirements: (_row, action) =>
+      Effect.succeed(
+        action === "reset-password"
+          ? recoveryRequirement
+          : action === "verify-address" || action === "enroll-begin" || action === "enroll-complete"
+            ? sessionRequirement
+            : requirement,
+      ),
+  },
+  prefix: "customer_auth",
+});
+
+// Pure Drizzle tables are available to queries and schema tooling before startup.
+export const authSchema = storage.schema;

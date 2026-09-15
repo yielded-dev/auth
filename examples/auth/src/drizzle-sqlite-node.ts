@@ -1,5 +1,5 @@
-import { requiredAuthConstraints, type AuthTables } from "@yielded/auth/Drizzle";
-import type { makeAuthServices } from "@yielded/auth/DrizzleSqliteNode";
+import { requiredAuthConstraints, type AuthTables } from "@yielded/auth-persistence/drizzle";
+import type { makeAuthServices } from "@yielded/auth-persistence/drizzle/sqlite-node";
 import { OAuthState } from "@yielded/auth/OAuth";
 import {
   ConsumeChallenge,
@@ -127,7 +127,7 @@ export const mapping = {
         })),
         Effect.mapError(
           (cause) =>
-            ({ _tag: "DrizzleMappingError", operation: "challenge.decode", cause }) as never,
+            ({ _tag: "PersistenceMappingError", operation: "challenge.decode", cause }) as never,
         ),
       ),
   },
@@ -160,7 +160,7 @@ export const mapping = {
         Effect.map((registration) => ({ registration, consumed: row.used })),
         Effect.mapError(
           (cause) =>
-            ({ _tag: "DrizzleMappingError", operation: "registration.decode", cause }) as never,
+            ({ _tag: "PersistenceMappingError", operation: "registration.decode", cause }) as never,
         ),
       ),
   },
@@ -188,7 +188,8 @@ export const mapping = {
       }).pipe(
         Effect.map((state) => ({ state, consumed: row.used })),
         Effect.mapError(
-          (cause) => ({ _tag: "DrizzleMappingError", operation: "oauth.decode", cause }) as never,
+          (cause) =>
+            ({ _tag: "PersistenceMappingError", operation: "oauth.decode", cause }) as never,
         ),
       ),
   },

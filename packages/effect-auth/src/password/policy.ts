@@ -11,6 +11,10 @@ export const PasswordPolicy = Schema.Struct({
    */
   assurance: Schema.Literals(["single-factor", "always-mfa"]),
   normalization: PasswordNormalization,
+  /** Application override; defaults to 15, or 8 when assurance is always-mfa. */
+  minimumCodePoints: Schema.optionalKey(
+    Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 16384 })),
+  ),
   maximumCodePoints: Schema.Int.check(Schema.isBetween({ minimum: 64, maximum: 16384 })),
   maximumBytes: Schema.Int.check(Schema.isBetween({ minimum: 256, maximum: 65536 })),
 });
@@ -34,7 +38,10 @@ export const validatePasswordPolicy = Effect.fn("validatePasswordPolicy")(functi
     Effect.mapError(() => PasswordConfigurationError.make({ component: "policy" })),
   );
 
-  if (policy.maximumBytes < policy.maximumCodePoints * 4)
+  if (
+    policy.maximumBytes < policy.maximumCodePoints * 4 ||
+    (policy.minimumCodePoints ?? 0) > policy.maximumCodePoints
+  )
     return yield* PasswordConfigurationError.make({ component: "policy" });
 
   return Object.freeze(policy);

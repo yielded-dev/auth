@@ -38,6 +38,7 @@
     "@stylistic/eslint-plugin": "5.10.0",
     "@types/node": "catalog:",
     "@yielded/auth": "workspace:*",
+    "@yielded/auth-persistence": "workspace:*",
     "alchemy": "catalog:",
     "effect": "catalog:",
     "effect-cf": "catalog:",

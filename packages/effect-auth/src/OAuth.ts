@@ -241,3 +241,5 @@ export {
 } from "./oauth/definition";
 
 export { OAuthStateDecisions } from "./oauth/OAuthStateDecisions";
+
+export { snapshotOAuthSync } from "./oauth/signInSnapshot";

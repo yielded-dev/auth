@@ -1,0 +1,35 @@
+{
+  "name": "@yielded/example-persistence-sql",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "vp build",
+    "check": "tsc --noEmit -p tsconfig.json",
+    "test": "vp run test:persistence && vp run test:persistence:pg && vp run test:verification && vp run test:verification:pg",
+    "test:persistence": "bun test/persistence.ts",
+    "test:persistence:pg": "PERSISTENCE_DIALECT=pg bun test/persistence.ts",
+    "test:verification": "bun test/verification.ts",
+    "test:verification:pg": "PERSISTENCE_DIALECT=pg bun test/verification.ts"
+  },
+  "dependencies": {
+    "@effect/atom-react": "catalog:",
+    "@effect/platform-bun": "catalog:",
+    "@effect/sql-pglite": "catalog:",
+    "@effect/sql-sqlite-bun": "catalog:",
+    "@simplewebauthn/browser": "catalog:",
+    "@simplewebauthn/server": "catalog:",
+    "@yielded/auth": "workspace:*",
+    "@yielded/auth-persistence": "workspace:*",
+    "effect": "catalog:",
+    "react": "catalog:",
+    "react-dom": "catalog:",
+    "tldts": "catalog:"
+  },
+  "devDependencies": {
+    "@types/react": "catalog:",
+    "@types/react-dom": "catalog:",
+    "typescript": "catalog:",
+    "vite-plus": "catalog:"
+  }
+}

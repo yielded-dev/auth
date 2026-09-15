@@ -31,16 +31,6 @@
     "./contracts": "./src/Contracts.ts",
     "./strategies": "./src/Strategies.ts",
     "./Auth": "./src/Auth.ts",
-    "./Drizzle": "./src/Drizzle.ts",
-    "./DrizzleD1": "./src/DrizzleD1.ts",
-    "./DrizzleLibsql": "./src/DrizzleLibsql.ts",
-    "./DrizzleMysql2": "./src/DrizzleMysql2.ts",
-    "./DrizzlePglite": "./src/DrizzlePglite.ts",
-    "./DrizzlePostgres": "./src/DrizzlePostgres.ts",
-    "./DrizzleSqliteBun": "./src/DrizzleSqliteBun.ts",
-    "./DrizzleSqliteDo": "./src/DrizzleSqliteDo.ts",
-    "./DrizzleSqliteNode": "./src/DrizzleSqliteNode.ts",
-    "./DrizzleSqliteWasm": "./src/DrizzleSqliteWasm.ts",
     "./Cloudflare": "./src/Cloudflare.ts",
     "./Http": "./src/Http.ts",
     "./HttpServer": "./src/HttpServer.ts",
@@ -87,7 +77,8 @@
     "./PasskeyContract": "./src/PasskeyContract.ts",
     "./TotpContract": "./src/TotpContract.ts",
     "./AuthContract": "./src/AuthContract.ts",
-    "./Client": "./src/Client.ts"
+    "./Client": "./src/Client.ts",
+    "./Persistence": "./src/Persistence.ts"
   },
   "publishConfig": {
     "access": "public"
@@ -96,8 +87,7 @@
     "build": "vp pack",
     "check": "tsc --noEmit -p tsconfig.json",
     "test": "vp test --passWithNoTests",
-    "e2e": "bun test/e2e/harness.ts",
-    "example:totp": "bun test/fixtures/totp-sqlite-bun.ts"
+    "e2e": "bun test/e2e/harness.ts"
   },
   "dependencies": {
     "@noble/ciphers": "catalog:",
@@ -107,19 +97,9 @@
     "@cloudflare/workers-types": "catalog:",
     "@effect/platform-bun": "catalog:",
     "@effect/platform-node": "catalog:",
-    "@effect/sql-d1": "catalog:",
-    "@effect/sql-libsql": "catalog:",
-    "@effect/sql-mysql2": "catalog:",
-    "@effect/sql-pg": "catalog:",
-    "@effect/sql-pglite": "catalog:",
-    "@effect/sql-sqlite-bun": "catalog:",
-    "@effect/sql-sqlite-do": "catalog:",
-    "@effect/sql-sqlite-node": "catalog:",
-    "@effect/sql-sqlite-wasm": "catalog:",
     "@effect/vitest": "catalog:",
     "@simplewebauthn/browser": "catalog:",
     "@simplewebauthn/server": "catalog:",
-    "drizzle-orm": "catalog:",
     "effect": "catalog:",
     "effect-cf": "catalog:",
     "openid-client": "catalog:",
@@ -128,58 +108,18 @@
     "vite-plus": "catalog:"
   },
   "peerDependencies": {
-    "@effect/sql-d1": ">=4.0.0-rc.112",
-    "@effect/sql-libsql": ">=4.0.0-rc.112",
-    "@effect/sql-mysql2": ">=4.0.0-rc.112",
-    "@effect/sql-pg": ">=4.0.0-rc.112",
-    "@effect/sql-pglite": ">=4.0.0-rc.112",
-    "@effect/sql-sqlite-bun": ">=4.0.0-rc.112",
-    "@effect/sql-sqlite-do": ">=4.0.0-rc.112",
-    "@effect/sql-sqlite-node": ">=4.0.0-rc.112",
-    "@effect/sql-sqlite-wasm": ">=4.0.0-rc.112",
     "@simplewebauthn/browser": ">=14.0.0 <15",
     "@simplewebauthn/server": ">=14.0.1 <15",
-    "drizzle-orm": ">=1.0.0-rc.5-ab785fc",
     "effect": "^4.0.0-rc.112",
     "effect-cf": "^0.40.0",
     "openid-client": ">=6.8.8 <7",
     "tldts": ">=7.4.11 <8"
   },
   "peerDependenciesMeta": {
-    "@effect/sql-d1": {
-      "optional": true
-    },
-    "@effect/sql-libsql": {
-      "optional": true
-    },
-    "@effect/sql-mysql2": {
-      "optional": true
-    },
-    "@effect/sql-pg": {
-      "optional": true
-    },
-    "@effect/sql-pglite": {
-      "optional": true
-    },
-    "@effect/sql-sqlite-bun": {
-      "optional": true
-    },
-    "@effect/sql-sqlite-do": {
-      "optional": true
-    },
-    "@effect/sql-sqlite-node": {
-      "optional": true
-    },
-    "@effect/sql-sqlite-wasm": {
-      "optional": true
-    },
     "@simplewebauthn/browser": {
       "optional": true
     },
     "@simplewebauthn/server": {
-      "optional": true
-    },
-    "drizzle-orm": {
       "optional": true
     },
     "effect-cf": {

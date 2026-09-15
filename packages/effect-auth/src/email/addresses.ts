@@ -74,7 +74,7 @@ const ChangeRequest = Schema.Struct({ ...RequestInput.fields, sourceCredentialId
 const ChangeResend = Schema.Struct({ ...ResendInput.fields, sourceCredentialId: BoundedId });
 const ChangeAttempt = Schema.Struct({ ...AttemptInput.fields, sourceCredentialId: BoundedId });
 const ChangeComplete = Schema.Struct({ ...CompleteInput.fields, sourceCredentialId: BoundedId });
-const Success = Schema.Struct({ invalidation: SessionInvalidationWindow });
+const Success = Schema.Struct({ invalidation: Schema.optionalKey(SessionInvalidationWindow) });
 const AttemptSuccess = Schema.Struct({ continuation: ProofContinuation });
 
 const Failure = Schema.Union([
@@ -93,6 +93,7 @@ const noAmbient = Effect.fn("EmailAddresses.noAmbient")(function* () {
 });
 
 const Configuration = Schema.Struct({
+  /** Freshness cap for adding or replacing addresses. Existing-identifier confirmation uses application policy. */
   maximumEvidenceAgeMillis: Schema.Int.check(Schema.isBetween({ minimum: 1000, maximum: 300_000 })),
   requireImmediateInvalidation: Schema.Boolean,
 });
@@ -189,11 +190,6 @@ export const makeEmailAddresses = <
         request: typeof BindingInput.Type,
       ) {
         if (invocation._tag !== "Authenticated") return yield* EmailRejected.make({});
-        if (
-          policy.requireImmediateInvalidation &&
-          strategy.capabilities.subjectInvalidation !== "immediate"
-        )
-          return yield* EmailMethodUnsupported.make({});
         if (action === "change-address" && request.sourceCredentialId === undefined)
           return yield* EmailRejected.make({});
 
@@ -215,10 +211,20 @@ export const makeEmailAddresses = <
         const captured: EmailAddressTarget = Object.freeze({
           revision: snapshotEmailRevision(current.revision),
           eligible: current.eligible,
+          ...(current.targetIdentifierRevision === undefined
+            ? {}
+            : { targetIdentifierRevision: current.targetIdentifierRevision }),
           ...(current.source === undefined
             ? {}
             : { source: yield* snapshotEmailCredential(current.source) }),
         });
+
+        if (
+          !(action === "verify-address" && captured.targetIdentifierRevision !== undefined) &&
+          policy.requireImmediateInvalidation &&
+          strategy.capabilities.subjectInvalidation !== "immediate"
+        )
+          return yield* EmailMethodUnsupported.make({});
 
         if (
           captured.revision.subjectId !== invocation.subjectId ||
@@ -240,6 +246,7 @@ export const makeEmailAddresses = <
           captured.source?.credentialId ?? "",
           captured.source?.identifier.value ?? "",
           identifier.value,
+          captured.targetIdentifierRevision ?? "",
           ...[...captured.revision.credentials]
             .sort((a, b) =>
               a.credentialId < b.credentialId ? -1 : a.credentialId > b.credentialId ? 1 : 0,
@@ -253,6 +260,9 @@ export const makeEmailAddresses = <
           commandId: request.commandId,
           revision: captured.revision,
           target: identifier,
+          ...(captured.targetIdentifierRevision === undefined
+            ? {}
+            : { targetIdentifierRevision: captured.targetIdentifierRevision }),
           ...(captured.source === undefined
             ? {}
             : { sourceCredentialId: captured.source.credentialId }),
@@ -320,10 +330,11 @@ export const makeEmailAddresses = <
 
         const requirement = yield* snapshotEmailRequirement({
           ...grant.requirement,
-          maximumAgeMillis: Math.min(
-            policy.maximumEvidenceAgeMillis,
-            grant.requirement.maximumAgeMillis,
-          ),
+          maximumAgeMillis:
+            challenge.action === "verify-address" &&
+            challenge.targetIdentifierRevision !== undefined
+              ? grant.requirement.maximumAgeMillis
+              : Math.min(policy.maximumEvidenceAgeMillis, grant.requirement.maximumAgeMillis),
         });
 
         if (
@@ -408,11 +419,14 @@ export const makeEmailAddresses = <
               return yield* EmailRejected.make({});
             const authorization = yield* authorize(invocation, input, current.challenge);
 
-            const invalidation = sessionInvalidationWindow(
-              "identifier-change",
-              strategy.capabilities,
-              strategy.policy,
-            );
+            const invalidation =
+              action === "verify-address" && current.captured.targetIdentifierRevision !== undefined
+                ? undefined
+                : sessionInvalidationWindow(
+                    "identifier-change",
+                    strategy.capabilities,
+                    strategy.policy,
+                  );
 
             const snapshot = lifecycleSnapshot({
               action: "identifier-change",
@@ -446,7 +460,7 @@ export const makeEmailAddresses = <
               captured: current.captured,
               authorization,
               completion,
-              invalidation,
+              ...(invalidation === undefined ? {} : { invalidation }),
             });
 
             const prepare = (
@@ -458,11 +472,18 @@ export const makeEmailAddresses = <
               if (decision === "changed") journal.stage(event);
 
               return journal.prepare<Result>({
-                value: decision === "changed" ? { invalidation } : { _tag: "Rejected" },
+                value:
+                  decision === "changed"
+                    ? invalidation === undefined
+                      ? {}
+                      : { invalidation }
+                    : { _tag: "Rejected" },
                 credentialCommands:
                   decision === "changed"
                     ? [
-                        { _tag: "Clear", slot: "session" },
+                        ...(invalidation === undefined
+                          ? []
+                          : [{ _tag: "Clear" as const, slot: "session" as const }]),
                         { _tag: "Clear", slot: "pending-proof" },
                         { _tag: "Clear", slot: "proof-continuation" },
                         { _tag: "Clear", slot: "request-binding" },
@@ -572,7 +593,7 @@ export const makeEmailAddresses = <
           const receipt = yield* plan.commit;
           const result = yield* receipt.read.pipe(Effect.mapError(() => EmailUnavailable.make({})));
 
-          if (!("invalidation" in result.value)) return yield* EmailRejected.make({});
+          if ("_tag" in result.value) return yield* EmailRejected.make({});
 
           return { value: result.value, credentialCommands: result.credentialCommands };
         }),

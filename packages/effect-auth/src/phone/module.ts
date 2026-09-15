@@ -318,6 +318,7 @@ export const makePhoneOtp = <
   );
 
   return Object.freeze({
+    persistence: { kind: "phone" as const, moduleId, lifecycle: false as const },
     ClaimsForPhone,
     binding,
     proof,

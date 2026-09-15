@@ -257,10 +257,18 @@ export const makePasskeyMethod = <
   };
 
   const management = (policy: PasskeyManagementPolicy) => {
-    const module = makePasskeyManagement(moduleId, source, policy, sessions);
+    const configured = Object.freeze({ ...policy });
+    const module = makePasskeyManagement(moduleId, source, configured, sessions);
 
     return Object.freeze({
       ...module,
+      persistence: {
+        kind: "passkey" as const,
+        moduleId,
+        policy: source,
+        management: true as const,
+        managementPolicy: configured,
+      },
       strategy: makeAuthStrategy(
         {
           enrollPasskey: module.operations.Begin.invoke,
@@ -321,6 +329,7 @@ export const makePasskeyMethod = <
   });
 
   return Object.freeze({
+    persistence: { kind: "passkey" as const, moduleId, policy: source },
     strategy: makeAuthStrategy(
       { signIn: Begin.invoke, completeSignIn: Complete.invoke },
       strategyLayer,

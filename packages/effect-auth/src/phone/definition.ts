@@ -119,6 +119,7 @@ const bindLifecycle = <
 
   return Object.freeze({
     ...phone,
+    persistence: { ...phone.persistence, lifecycle: true as const },
     lifecycle,
     operations: { ...phone.operations, ...lifecycle.operations },
     group: operationGroup(

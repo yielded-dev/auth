@@ -25,6 +25,7 @@
     "@effect/sql-sqlite-node": "catalog:",
     "@effect/sql-sqlite-wasm": "catalog:",
     "@yielded/auth": "workspace:*",
+    "@yielded/auth-persistence": "workspace:*",
     "drizzle-orm": "catalog:",
     "effect": "catalog:",
     "react": "catalog:",

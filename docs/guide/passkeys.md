@@ -170,3 +170,16 @@ The method supplies its default policy, Web Crypto, and empty hooks.
 These require explicit application authority. A registration ceremony must not
 silently become a login ceremony or link an existing account. See
 [passkey persistence](../reference/adapters#passkeys) for transaction ownership.
+
+`PasskeyActionEvidence` supplies authorization for enrollment and removal. The
+application chooses its freshness requirement; `management.maximumEvidenceAgeMillis`
+sets an upper bound, and individual action requirements can be stricter. Adding a
+passkey preserves existing sessions without refreshing their authentication time or
+adding assurance. Removal still invalidates authentication and protects the last
+usable sign-in method.
+
+The [managed example](https://github.com/yielded-dev/auth/tree/main/examples/persistence-drizzle-managed)
+shows enrollment from a signed-in account, a saved-key list, and passkey sign-in with
+Effect Atom. Its Drizzle persistence layer derives the passkey tables from the Auth
+definition. Its application policy accepts the existing valid session for enrollment;
+the browser's passkey prompt is the only confirmation step.

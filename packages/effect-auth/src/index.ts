@@ -24,3 +24,5 @@ export * as PasskeyContract from "./PasskeyContract.ts";
 export * as TotpContract from "./TotpContract.ts";
 
 export * as SmsDelivery from "./SmsDelivery.ts";
+
+export * as Persistence from "./Persistence.ts";

@@ -3,7 +3,8 @@
   "tag": "beta",
   "initialVersions": {
     "@yielded/auth": "0.0.0",
-    "@yielded/example-auth": "0.0.0"
+    "@yielded/example-auth": "0.0.0",
+    "@yielded/auth-persistence": "0.0.0"
   },
   "changesets": [
     "bright-oauth-callbacks",

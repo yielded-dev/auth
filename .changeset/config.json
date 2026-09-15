@@ -7,7 +7,7 @@
     }
   ],
   "commit": false,
-  "fixed": [["@yielded/auth"]],
+  "fixed": [["@yielded/auth", "@yielded/auth-persistence"]],
   "linked": [],
   "access": "public",
   "baseBranch": "main",

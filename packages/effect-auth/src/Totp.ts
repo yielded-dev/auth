@@ -26,3 +26,15 @@ export {
   TotpDecision,
   TotpMutation,
 } from "./totp/models";
+
+export {
+  base32,
+  codeAt,
+  decryptSecret,
+  digest,
+  encryptSecret,
+  generateSecret,
+  matchCode,
+  newRecoveryCodes,
+  randomId,
+} from "./totp/crypto";

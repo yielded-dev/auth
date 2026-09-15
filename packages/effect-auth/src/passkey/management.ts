@@ -374,7 +374,6 @@ export const makePasskeyManagement = <
                   verified,
                   authorization,
                   management: policy,
-                  invalidation,
                   nowMillis: timestamp,
                 },
                 (value, journal) => {
@@ -393,7 +392,7 @@ export const makePasskeyManagement = <
             if (result._tag !== "Enrolled") return yield* PasskeyRejected.make({});
 
             return {
-              value: { credential: result.credential, invalidation },
+              value: { credential: result.credential },
               credentialCommands: [runtime.clear],
             };
           },

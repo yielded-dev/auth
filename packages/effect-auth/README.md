@@ -11,7 +11,8 @@ The package owns security-sensitive workflow contracts. Applications own identit
 persistence, protocol verification, and delivery adapters. Resources live in the
 caller’s Scope; credentials stay outside public results and telemetry.
 
-Optional database, platform, browser, and OAuth adapters have separate exports.
+SQL adapters and managed storage live in the companion `@yielded/auth-persistence`
+package. Both packages release at the same version. Platform, browser, and OAuth adapters have separate exports.
 The root import does not load their peer dependencies. Effect is supplied by the host.
 
 See the [authentication guide](https://github.com/yielded-dev/auth/blob/main/docs/guide/authentication.md)

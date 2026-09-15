@@ -902,6 +902,7 @@ const makePasswordWithManagement = <
   };
 
   return Object.freeze({
+    persistence: Object.freeze({ kind: "password" as const, moduleId, management: true as const }),
     strategy: makeAuthStrategy(
       {
         signIn: Effect.fn("Passwords.signInRequest")(function* (

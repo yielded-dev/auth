@@ -16,7 +16,9 @@ export interface EmailActionAuthorization {
  * Consume replay-sensitive factors in their own authority before returning; later
  * identity CAS failure does not refund them. Counter advancement preserves semantic
  * factor revision, while revocation/replacement changes it and wins final CAS.
- * Request/change and completion are separate calls requiring fresh authorization;
+ * Request and completion each require authorization. Existing-identifier confirmation
+ * may use a valid session under application policy; adding or replacing an identifier
+ * requires fresh authorization bounded by EmailAddressPolicy.
  * no promise that a consumed one-time factor can be resubmitted at completion.
  */
 export class EmailActionEvidence extends Context.Service<

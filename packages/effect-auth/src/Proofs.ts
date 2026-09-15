@@ -39,7 +39,14 @@ export {
   readProofCommit,
 } from "./proofs/dispatch";
 
-export { ProofAbusePolicy, ProofBudget, ProofPolicy, validateProofPolicy } from "./proofs/policy";
+export {
+  defaultProofPolicy,
+  ProofAbusePolicy,
+  ProofBudget,
+  ProofPolicy,
+  validateProofPolicy,
+} from "./proofs/policy";
+
 export { type ProofAbuseScope, proofAbuseScope } from "./proofs/abuse";
 
 export {

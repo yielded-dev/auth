@@ -1,11 +1,139 @@
 ---
-description: Connect Drizzle storage to your authentication service.
+description: Choose managed storage, your own SQL schema, or custom Effect services.
 ---
 
 # Adapters and persistence
 
-Choose the adapter for your database and runtime. You own the tables and migrations;
-the adapter maps them to Yielded Auth's storage services.
+`@yielded/auth` owns workflows and service contracts. `@yielded/auth-persistence`
+supplies SQL algorithms, Drizzle bindings, and optional managed tables and migrations.
+Both packages release at the same version. Applications own customer provisioning,
+policy, claims, and delivery.
+
+## Runnable examples
+
+| Example                                                                                               | Schema and migration owner                 | Backend                          |
+| ----------------------------------------------------------------------------------------------------- | ------------------------------------------ | -------------------------------- |
+| [Managed Drizzle](https://github.com/yielded-dev/auth/tree/main/examples/persistence-drizzle-managed) | Application customers; library auth tables | SQLite                           |
+| [Custom Drizzle](https://github.com/yielded-dev/auth/tree/main/examples/persistence-drizzle-custom)   | Application                                | SQLite                           |
+| [Effect SQL](https://github.com/yielded-dev/auth/tree/main/examples/persistence-sql)                  | Application                                | SQLite or PostgreSQL, no Drizzle |
+| [Custom services](https://github.com/yielded-dev/auth/tree/main/examples/persistence-custom)          | Application implementations                | Local file store, no SQL         |
+
+All four examples are account apps with registration,
+email verification, passkey enrollment and sign-in, password recovery, and Cloudflare
+delivery. They keep separate data across restarts, on ports 4181–4184 respectively.
+All use application-owned subjects and custom hashing. The custom-service example
+also replaces registration planning and implements username-or-email sign-in.
+Its single-writer file store provides the public persistence services directly;
+see its [Layer wiring](https://github.com/yielded-dev/auth/blob/main/examples/persistence-custom/src/live.ts)
+and [method replacement](https://github.com/yielded-dev/auth/blob/main/examples/persistence-custom/src/password-methods.ts).
+
+## Compose persistence once
+
+Choose a named facade for your backend:
+
+```ts
+import { AuthPersistence } from "@yielded/auth-persistence/drizzle/sqlite-bun";
+// Direct Effect SQL: import { AuthPersistence } from "@yielded/auth-persistence";
+```
+
+Bind it to the Auth definition and map the existing customer table:
+
+```ts [storage.ts]
+import { AuthPersistence } from "@yielded/auth-persistence/drizzle/sqlite-bun";
+import { SubjectId } from "@yielded/auth/Schema";
+import { Effect } from "effect";
+import { AppAuth, requirement } from "./auth";
+import { customers } from "./schema";
+
+export const Persistence = AuthPersistence.make(AppAuth);
+export const storage = Persistence.managed({
+  subjects: {
+    table: customers,
+    id: "id",
+    status: "enabled",
+    activeValue: true,
+    securityRevision: "securityRevision",
+    idCodec: SubjectId,
+    requirements: () => Effect.succeed(requirement),
+  },
+});
+export const authSchema = storage.schema;
+```
+
+`authSchema` contains ordinary Drizzle tables before any Layer starts. Only enabled
+capabilities allocate storage; shared proof storage is configured once. Use
+`Persistence.map({ subjects, tables })` when your application declares all tables.
+`managed` also accepts table overrides and leaves those tables to your migrations.
+
+```ts [auth-live.ts]
+import * as SqliteClient from "@effect/sql-sqlite-bun/SqliteClient";
+import { Layer } from "effect";
+import { AppAuth } from "./auth";
+import { ApplicationLive } from "./application"; // claims, keys, delivery, hashing
+import { Persistence, storage } from "./storage";
+
+const DatabaseLive = SqliteClient.layer({ filename: "auth.sqlite" });
+const ConfigLive = Persistence.Config.layer(storage);
+const DatabaseReady = Persistence.migrationsLayer.pipe(
+  Layer.provideMerge(ConfigLive),
+  Layer.provideMerge(DatabaseLive),
+);
+export const AuthLive = AppAuth.layer.pipe(
+  Layer.provide(Persistence.layer),
+  Layer.provide(ApplicationLive),
+  Layer.provide(DatabaseReady),
+);
+```
+
+The application must migrate its customer table first. Managed migrations install
+the current auth schema transactionally and record its fingerprint. Re-running
+them is safe; an unrecognized schema change requires an explicit versioned migration.
+They never adopt an unrecorded existing table or drop a disabled capability's data.
+The persistence Layer checks physical columns and unique keys before serving auth.
+
+The composed API supports password sign-in and management, email address verification
+and changes, phone sign-in, and stateful sessions. Email storage permits one verified
+address per subject and email module; changing it retires the source address.
+It uses canonical logical column names and text auth IDs;
+subject ID codecs and order-preserving timestamp codecs remain application-owned.
+Other workflows and specialized layouts use the explicit adapters below or the
+core service contracts. Those contracts do not require Effect SQL or particular
+physical tables. The default schema is one implementation of the storage roles.
+
+Direct SQL and Drizzle composition support passkey sign-in and management on PostgreSQL
+and SQLite.
+Enabling these strategies adds their storage and a `PasskeyConfig` requirement; the
+application still supplies action authorization, claims, and the protocol verifier.
+Composed passkey tables use integer milliseconds. Custom passkey timestamps use
+the explicit adapters or core service ports.
+The layer initializes module policy and admission records. Increment the strategy's
+`policy.generation` when changing a stored passkey policy; disabled modules stay disabled.
+Removal preserves a remaining password or user-verified passkey that independently
+meets current sign-in requirements. More involved factor combinations use an explicit
+`write.policy.remainingSignIn` predicate, returned in Effect from the captured subject row.
+
+With password registration enabled, also supply `Persistence.Provisioning`:
+
+```ts
+const ProvisioningLive = Layer.succeed(Persistence.Provisioning, {
+  password: createCustomer, // ({ registration, identifier }) => Effect<SubjectId, PasswordUnavailable>
+});
+const PersistenceLive = Persistence.layer.pipe(Layer.provide(ProvisioningLive));
+```
+
+`createCustomer` inserts only the application subject, allocating its ID and initial
+security revision. It runs inside the library's SQL transaction: use the same Effect
+SQL client, including Drizzle over it. Identifier, password, and receipt writes commit
+with that insert. Do not send email or open a separate transaction in this callback.
+Replays suppress creation and never overwrite or recover another request's password.
+See the [managed example's wiring](https://github.com/yielded-dev/auth/blob/main/examples/persistence-drizzle-managed/src/live.ts).
+`subjects.actionRequirements` can supply a distinct recovery or credential-change
+policy; it defaults to `subjects.requirements`.
+
+Standalone operations retain their transaction, revision, proof-consumption,
+and receipt checks. They reject unrelated ambient transactions. Combine protected
+application writes through an explicit transaction adapter; an unknown commit
+outcome does not authorize issuing another credential or repeating delivery.
 
 ## Connect password storage
 
@@ -15,7 +143,7 @@ For SQLite on Bun, create the Drizzle client and provide the resulting service:
 import * as SqliteClient from "@effect/sql-sqlite-bun/SqliteClient";
 import * as Drizzle from "drizzle-orm/effect-sqlite-bun";
 import { Effect, Layer } from "effect";
-import { makePasswordPersistenceServices } from "@yielded/auth/DrizzleSqliteBun";
+import { makePasswordPersistenceServices } from "@yielded/auth-persistence/drizzle/sqlite-bun";
 import { PasswordPersistence } from "@yielded/auth/Password";
 
 import { passwordMapping } from "./schema";
@@ -31,7 +159,7 @@ export const PasswordPersistenceLive = Layer.unwrap(
 ```
 
 `passwordMapping` maps your account, identifier, credential, revision, attempt,
-and receipt tables. It is a `PasswordPersistenceMapping` from `@yielded/auth/Drizzle`.
+and receipt tables. It is a `PasswordPersistenceMapping` from `@yielded/auth-persistence/drizzle`.
 Supply `LifecycleHooks` and your other account/session Layers at the composition root.
 
 ## Compose the application Layer
@@ -99,20 +227,20 @@ secret keys. Adapters provide implementations; they are not installed automatica
 
 ## Choose a driver
 
-| Database / runtime    | Direct import                     |
-| --------------------- | --------------------------------- |
-| PostgreSQL            | `@yielded/auth/DrizzlePostgres`   |
-| PGlite                | `@yielded/auth/DrizzlePglite`     |
-| MySQL                 | `@yielded/auth/DrizzleMysql2`     |
-| libSQL                | `@yielded/auth/DrizzleLibsql`     |
-| SQLite on Bun         | `@yielded/auth/DrizzleSqliteBun`  |
-| SQLite on Node        | `@yielded/auth/DrizzleSqliteNode` |
-| SQLite WASM           | `@yielded/auth/DrizzleSqliteWasm` |
-| Cloudflare D1         | `@yielded/auth/DrizzleD1`         |
-| Durable Object SQLite | `@yielded/auth/DrizzleSqliteDo`   |
+| Database / runtime    | Direct import                                   |
+| --------------------- | ----------------------------------------------- |
+| PostgreSQL            | `@yielded/auth-persistence/drizzle/postgres`    |
+| PGlite                | `@yielded/auth-persistence/drizzle/pglite`      |
+| MySQL                 | `@yielded/auth-persistence/drizzle/mysql2`      |
+| libSQL                | `@yielded/auth-persistence/drizzle/libsql`      |
+| SQLite on Bun         | `@yielded/auth-persistence/drizzle/sqlite-bun`  |
+| SQLite on Node        | `@yielded/auth-persistence/drizzle/sqlite-node` |
+| SQLite WASM           | `@yielded/auth-persistence/drizzle/sqlite-wasm` |
+| Cloudflare D1         | `@yielded/auth-persistence/drizzle/d1`          |
+| Durable Object SQLite | `@yielded/auth-persistence/drizzle/sqlite-do`   |
 
 Install the selected driver's Effect SQL and Drizzle peers. Import it directly to
-avoid loading unrelated adapters. Shared mapping types live in `@yielded/auth/Drizzle`.
+avoid loading unrelated adapters. Shared mapping types live in `@yielded/auth-persistence/drizzle`.
 
 ## Passwords
 
@@ -137,6 +265,12 @@ Prepared intents retain admission charges even after sensitive material is erase
 `makeEmailSignInServices` performs lookup. `makeEmailRegistrationServices` and
 `makeEmailAddressServices` own account creation and address changes. Address changes
 consume their proof and advance security revisions in the same transaction.
+Confirming an existing unverified address bound to the same subject preserves its
+security revision and sessions; the completion result omits `invalidation`. The
+adapter captures and rechecks the identifier's binding revision. Application policy
+may authorize this confirmation with a valid session; adding or replacing an address
+still requires recent authentication. Reload mutable application claims on session
+reads when the UI needs to reflect verification immediately.
 Notifications run after commit; durable delivery needs an outbox.
 
 ## OAuth
@@ -151,22 +285,26 @@ a fresh flow after an uncertain exchange.
 `makePasskeyPersistenceServices` stores ceremonies; credential, enrollment,
 registration, and management services have separate factories. Completion rechecks
 the challenge, relying party, account revision, and credential revision before
-committing its result.
+committing its result. Enrollment inserts the credential and shared factor atomically
+while preserving the subject security revision and existing sessions. Removal bumps
+the revision and applies the configured session invalidation in the same transaction.
 
 ## Phone
 
-Wrap the adapter's phone services in one Layer:
+For sign-in with managed or mapped storage, the composed Layer above supplies
+phone and proof services together. For number lifecycle operations or specialized
+row mappings, wrap the explicit adapter services:
 
 <!-- #region phone-layers -->
 
 ```ts [auth-persistence.ts]
 import * as Drizzle from "drizzle-orm/effect-sqlite-bun";
 import { Effect, Layer } from "effect";
-import { phonePersistenceLayer } from "@yielded/auth/Drizzle";
+import { phonePersistenceLayer } from "@yielded/auth-persistence/drizzle";
 import {
   makePhonePersistenceServices,
   makeProofPersistenceServices,
-} from "@yielded/auth/DrizzleSqliteBun";
+} from "@yielded/auth-persistence/drizzle/sqlite-bun";
 import { ProofPersistence } from "@yielded/auth/Proofs";
 
 import * as SqliteClient from "@effect/sql-sqlite-bun/SqliteClient";

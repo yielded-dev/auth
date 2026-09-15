@@ -59,7 +59,9 @@ export class NewPasswordCheck extends Context.Service<
             const value = policy.normalization === "NFC" ? raw.normalize("NFC") : raw;
             const length = [...value].length;
 
-            if (length < (policy.assurance === "single-factor" ? 15 : 8))
+            if (
+              length < (policy.minimumCodePoints ?? (policy.assurance === "single-factor" ? 15 : 8))
+            )
               return yield* NewPasswordRejected.make({ reason: "too-short" });
             if (
               length > policy.maximumCodePoints ||

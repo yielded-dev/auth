@@ -81,3 +81,7 @@ export {
 export { makePasskeyMethod as makeModule } from "./passkey/module";
 
 export { PasskeyConfig } from "./passkey/PasskeyConfig";
+
+export { validatePasskeyPolicy } from "./passkey/policy";
+
+export { snapshotPasskeySync } from "./passkey/snapshot";

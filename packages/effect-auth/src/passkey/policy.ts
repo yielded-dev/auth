@@ -1,7 +1,7 @@
 import { Effect, Schema } from "effect";
 
 import { PasskeyConfigurationError } from "./errors";
-import { PasskeyGeneration, PasskeyProfile } from "./models";
+import { PasskeyGeneration, PasskeyProfile, PasskeyRequirement } from "./models";
 import { snapshotPasskey } from "./snapshot";
 
 const budget = Schema.Struct({
@@ -24,7 +24,9 @@ export type PasskeyMethodPolicy = typeof PasskeyMethodPolicy.Type;
 
 export const PasskeyManagementPolicy = Schema.Struct({
   maximumCredentials: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 64 })),
-  maximumEvidenceAgeMillis: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 300000 })),
+  /** Application-selected age limit; action requirements can impose a shorter one. */
+  maximumEvidenceAgeMillis: PasskeyRequirement.fields.maximumAgeMillis,
+  /** Credential removal must support immediate revocation of existing authentication. */
   requireImmediateInvalidation: Schema.Boolean,
 });
 

@@ -45,8 +45,9 @@ export class PasskeyManagementPersistence extends Context.Service<
     ) => Effect.Effect<PreparedCommit<A>, PasskeyUnavailable>;
     /** Repeat original+current requirements and all revisions/freshness at final
      * clock, exact claim/key/handle/RP/global uniqueness and count. Join credential,
-     * shared factor, subject revision, session/pending invalidation + terminal event.
-     * Enrollment never creates AuthenticationEvidence/session. Primary eligibility
+     * shared factor and terminal event atomically. Preserve subject security revision
+     * and existing authentication; enrollment neither issues nor refreshes a session
+     * and never creates AuthenticationEvidence. Primary eligibility
      * requires the persisted enrollment profile AND verified UV, never later promotion. */
     readonly completeEnrollment: <A>(
       input: {
@@ -54,7 +55,6 @@ export class PasskeyManagementPersistence extends Context.Service<
         readonly verified: PasskeyRegistrationVerified;
         readonly authorization: PasskeyActionAuthorization;
         readonly management: PasskeyManagementPolicy;
-        readonly invalidation: SessionInvalidationWindow;
         readonly nowMillis: number;
       },
       prepare: PreparePasskeyCommit<

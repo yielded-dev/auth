@@ -397,7 +397,6 @@ export type PasskeyCleanupResult = typeof PasskeyCleanupResult.Type;
 
 export const PasskeyEnrolled = Schema.Struct({
   credential: PasskeyCredentialSummary,
-  invalidation: SessionInvalidationWindow,
 });
 
 export const PasskeyRemoved = Schema.Struct({

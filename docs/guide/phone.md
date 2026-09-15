@@ -6,6 +6,10 @@ description: Request an SMS code and sign in with a phone number.
 
 Use `PhoneOtp` to sign in existing accounts with an SMS code.
 
+For managed or application-declared SQL storage, the [composed persistence Layer](../reference/adapters#compose-persistence-once)
+supplies phone and proof services together. The explicit mappings below also cover
+number lifecycle operations and specialized storage layouts.
+
 The snippets below are local calls inside existing Effect request handlers, with
 `AppAuth` and the HTTP request boundary provided. Publish selected methods through
 a [shared contract](./http-and-client#expose-another-method) for browser clients.

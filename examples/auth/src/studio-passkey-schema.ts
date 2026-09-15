@@ -7,12 +7,12 @@ import {
   type PasskeyManagementMapping,
   type PasskeyRegistrationMapping,
   type PasskeyWriteTables,
-} from "@yielded/auth/Drizzle";
+} from "@yielded/auth-persistence/drizzle";
 import { PasskeyCredential, PasskeyMethodPolicy, PasskeyProfile } from "@yielded/auth/Passkey";
 import { SubjectId } from "@yielded/auth/Schema";
 import { sql } from "drizzle-orm";
 import { bigint, boolean, pgTable, text, timestamp, uuid, uniqueIndex } from "drizzle-orm/pg-core";
-import { Schema } from "effect";
+import { Effect, Schema } from "effect";
 
 export const subject = pgTable("studio_passkey_subject", {
   id: uuid().primaryKey(),
@@ -324,12 +324,14 @@ export const write = {
   policy: {
     subjectColumns: ["name", "organization", "totpEnabled"],
     management: () => management,
-    requirement: () => requirement,
+    requirement: () => Effect.succeed(requirement),
     metadata: (id) =>
       sql`exists(select 1 from ${subject} where ${subject.id} = ${id} and ${subject.status} = 'active')`,
     action: () => sql`1 = 1`,
     remainingSignIn: (id, excluded) =>
-      sql`exists(select 1 from ${credential} where ${credential.subjectId} = ${id} and ${credential.credentialId} <> ${excluded} and ${credential.status} = 'active' and ${credential.primarySignIn} = true and ${credential.enrollmentUserVerified} = true)`,
+      Effect.succeed(
+        sql`exists(select 1 from ${credential} where ${credential.subjectId} = ${id} and ${credential.credentialId} <> ${excluded} and ${credential.status} = 'active' and ${credential.primarySignIn} = true and ${credential.enrollmentUserVerified} = true)`,
+      ),
   },
 } satisfies PasskeyWriteTables<
   typeof subject,

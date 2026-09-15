@@ -37,6 +37,8 @@ export const EmailActionChallenge = Schema.Struct({
   commandId: EmailCommandId,
   revision: AuthenticationRevision,
   sourceCredentialId: Schema.optionalKey(Schema.NonEmptyString),
+  /** Existing unverified identifier already bound to this subject. */
+  targetIdentifierRevision: Schema.optionalKey(SecurityRevision),
   target: LoginIdentifier,
   bindingDigest: TokenDigest,
 });

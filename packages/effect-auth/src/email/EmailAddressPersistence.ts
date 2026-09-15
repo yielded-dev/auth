@@ -6,7 +6,7 @@ import type { ProofCompletionPlan } from "../proofs/completion";
 import type { ProofCompletionInput } from "../proofs/ProofPersistence";
 import type { SubjectId } from "../Schema";
 import type { SessionInvalidationWindow } from "../sessions/invalidation";
-import type { AuthenticationRevision } from "../sessions/models";
+import type { AuthenticationRevision, SecurityRevision } from "../sessions/models";
 import type { EmailActionAuthorization } from "./EmailActionEvidence";
 import type { EmailUnavailable } from "./errors";
 import type { EmailAddressDecision, EmailCommandId, EmailCredentialSnapshot } from "./models";
@@ -16,6 +16,8 @@ export type PrepareEmailCommit<V, A> = (value: V, journal: CommitJournal) => Pre
 export interface EmailAddressTarget {
   readonly revision: AuthenticationRevision;
   readonly source?: EmailCredentialSnapshot;
+  /** Set only for an existing, same-subject unverified identifier. */
+  readonly targetIdentifierRevision?: SecurityRevision;
   /** Target absent or same-subject unverified. Conflicts remain privately suppressed. */
   readonly eligible: boolean;
 }
@@ -27,7 +29,8 @@ export interface EmailAddressMutation {
   readonly captured: EmailAddressTarget;
   readonly authorization: EmailActionAuthorization;
   readonly completion: ProofCompletionPlan;
-  readonly invalidation: SessionInvalidationWindow;
+  /** Absent only when confirming an existing identifier without replacing authentication. */
+  readonly invalidation?: SessionInvalidationWindow;
 }
 
 /** Same-authority identity mutations, never generic CRUD. Preparation/crypto/hooks
@@ -36,8 +39,10 @@ export interface EmailAddressMutation {
  * Root implementations reject ambient ownership they cannot join before writes.
  * Verify/change consume the exact continuation, enforce current subject/source and
  * factor-policy/fresh-clock predicates, global target uniqueness, write verified
- * identifier + email credential, bump binding/credential/security revisions, and
- * invalidate pending/sessions in ONE physical transaction/batch. A zero-row protected
+ * identifier + email credential, and bump binding/credential revisions in ONE physical
+ * transaction/batch. Confirming an existing bound identifier preserves the subject's
+ * security revision and sessions. Adding/replacing an identifier also bumps security
+ * revision and invalidates pending/sessions. A zero-row protected
  * write cannot burn the proof. D1 preplans receipts before its guarded batch; exact
  * guard loss discards that journal before a separate rejected owner. Unknown outcome
  * is unavailable. Generic IdentityMutation remains unmounted without this same join.

@@ -319,6 +319,7 @@ const bind = <
 
   return Object.freeze({
     claims: options.claims,
+    sessionMode: options.sessions?.mode,
     contract,
     namespace,
     sessions,

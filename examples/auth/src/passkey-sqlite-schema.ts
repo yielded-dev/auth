@@ -8,7 +8,7 @@ import {
   type PasskeyManagementMapping,
   type PasskeyRegistrationMapping,
   type PasskeyWriteTables,
-} from "@yielded/auth/Drizzle";
+} from "@yielded/auth-persistence/drizzle";
 import {
   PasskeyCredential,
   PasskeyManagementPolicy,
@@ -388,12 +388,14 @@ export const write = {
   policy: {
     subjectColumns: ["name"],
     management: () => management,
-    requirement: () => requirement,
+    requirement: () => Effect.succeed(requirement),
     metadata: (id) =>
       sql`exists(select 1 from ${subject} where ${subject.id} = ${id} and ${subject.status} = 'active')`,
     action: () => sql`1 = 1`,
     remainingSignIn: (id, excluded) =>
-      sql`exists(select 1 from ${credential} where ${credential.subjectId} = ${id} and ${credential.credentialId} <> ${excluded} and ${credential.status} = 'active' and ${credential.primarySignIn} = 1 and ${credential.enrollmentUserVerified} = 1)`,
+      Effect.succeed(
+        sql`exists(select 1 from ${credential} where ${credential.subjectId} = ${id} and ${credential.credentialId} <> ${excluded} and ${credential.status} = 'active' and ${credential.primarySignIn} = 1 and ${credential.enrollmentUserVerified} = 1)`,
+      ),
   },
 } satisfies PasskeyWriteTables<
   typeof subject,

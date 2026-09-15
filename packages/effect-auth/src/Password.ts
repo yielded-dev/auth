@@ -111,3 +111,9 @@ export {
   type PasswordManagementOptions,
   make,
 } from "./password/methods/definition";
+
+export {
+  snapshotPasswordCredential,
+  snapshotPasswordRequirement,
+  snapshotPasswordRevision,
+} from "./password/methods/snapshot";

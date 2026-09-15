@@ -6,7 +6,9 @@ import type { PasskeyActionRequired, PasskeyUnavailable } from "./errors";
 import type { PasskeyActionChallenge } from "./models";
 
 /** Independent current action authority. Consume replay-sensitive input in its
- * own authority; later enrollment/removal failure never refunds it. No default. */
+ * own authority; later enrollment/removal failure never refunds it. Applications
+ * may authorize enrollment from a valid session under their freshness policy,
+ * preserving its original proof times and factors. No default. */
 export class PasskeyActionEvidence extends Context.Service<
   PasskeyActionEvidence,
   {

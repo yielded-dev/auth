@@ -111,6 +111,7 @@ export const makePasswordSignIn = <
   const layer = handlersLayer.pipe(Layer.provide(hashingLayer), Layer.provide(cryptoLayer));
 
   return Object.freeze({
+    persistence: { kind: "password" as const, moduleId, management: false as const },
     ClaimsForPassword,
     layer,
     handlersLayer,
