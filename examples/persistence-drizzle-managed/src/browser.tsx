@@ -1,8 +1,8 @@
 import { KeyValueStore } from "effect/unstable/persistence";
 
 import { mountAccountApp } from "../../shared/account/browser";
+import { minimumPasswordLength } from "../../shared/account/contract";
 import { makeClient } from "./client";
-import { minimumPasswordLength } from "./contract";
 
 const client = makeClient(
   { baseUrl: window.location.origin },

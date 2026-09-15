@@ -5,8 +5,8 @@ import { EmailProofDelivery, type ProofDeliveryMessage } from "@yielded/auth/Pro
 import { Config, ConfigProvider, Effect, FileSystem, Layer, Redacted } from "effect";
 import { HttpRouter } from "effect/unstable/http";
 
-import { AppAuth } from "../src/auth";
-import { AuthApi } from "../src/contract";
+import { AppAuth } from "../../shared/account/auth";
+import { AuthApi } from "../../shared/account/contract";
 import { DatabaseLive, KeysLive } from "../src/data";
 import { AuthLive } from "../src/live";
 

@@ -5,7 +5,8 @@ import type { Layer } from "effect";
 import type { KeyValueStore } from "effect/unstable/persistence";
 
 import { makeAccountClient } from "../../shared/account/client";
-import { AuthApi, emailProofPolicy } from "./contract";
+import { emailProofPolicy } from "../../shared/account/contract";
+import { AuthApi } from "./contract";
 
 export const makeClient = (
   options: Client.ClientOptions,

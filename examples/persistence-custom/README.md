@@ -21,8 +21,8 @@ or `.env`. `AUTH_EMAIL_FROM` defaults to `hello@effect-agent.com`.
   service. Its sign-in implementation accepts username or email, charges shared
   attempt limits, verifies a password, and completes authentication through the
   library's session authority. Registration reuses the library's password planning.
-- [hashing.ts](src/hashing.ts), [policy.ts](src/policy.ts), and
-  [delivery.ts](src/delivery.ts) supply hashing functions, action authorization,
+- [hashing.ts](../shared/account/hashing.ts), [policy.ts](src/policy.ts), and
+  [delivery.ts](../shared/account/delivery.ts) supply hashing functions, action authorization,
   and private email delivery through their public services.
 - [live.ts](src/live.ts) assembles these Layers; [model.ts](src/model.ts) owns
   persisted schemas and incrementing identifiers.
@@ -59,5 +59,10 @@ replication, backups, and storage limits belong to the application. The example
 implements its declared account flows; additional password creation, address
 replacement, and passkey removal are unexposed and fail closed.
 
-The [shared account UI](../shared/account) owns forms, styles, and Atom workflows.
-[client.ts](src/client.ts) maps registration and sign-in to this app’s username contract.
+[contract.ts](src/contract.ts) extends the [common account contract](../shared/account/contract.ts)
+with username fields and two method bindings. [auth.ts](src/auth.ts) reuses the shared
+strategies and session configuration. The other examples use the common `AuthApi`
+and `AppAuth` directly.
+
+Hashing, Cloudflare delivery, forms, and Atom workflows live in [shared/account](../shared/account).
+[client.ts](src/client.ts) supplies the two username payload mappings.

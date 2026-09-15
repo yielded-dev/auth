@@ -2,7 +2,12 @@ import { AuthPersistence } from "@yielded/auth-persistence/drizzle/sqlite-bun";
 import { SubjectId } from "@yielded/auth/Schema";
 import { Effect } from "effect";
 
-import { AppAuth, requirement, recoveryRequirement, sessionRequirement } from "./auth";
+import {
+  AppAuth,
+  requirement,
+  recoveryRequirement,
+  sessionRequirement,
+} from "../../shared/account/auth";
 import * as passkeys from "./passkey-tables";
 import * as tables from "./tables";
 export { customers } from "./tables";

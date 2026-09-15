@@ -22,6 +22,7 @@ import { TokenDigest, type SubjectId } from "@yielded/auth/Schema";
 import { SecurityRevision } from "@yielded/auth/Sessions";
 import { Context, Crypto, Effect, Encoding, Layer, Schema } from "effect";
 
+import { requirement, sessionRequirement } from "../../shared/account/auth";
 import {
   claims,
   credentials,
@@ -31,7 +32,7 @@ import {
   revision,
   satisfies,
 } from "./accounts";
-import { AppAuth, requirement, sessionRequirement } from "./auth";
+import { AppAuth } from "./auth";
 import { charge, nextId, type State } from "./model";
 import { AccountStore } from "./store";
 

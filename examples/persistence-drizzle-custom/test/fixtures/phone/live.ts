@@ -5,7 +5,7 @@ import { eq } from "drizzle-orm";
 import * as Drizzle from "drizzle-orm/effect-sqlite-bun";
 import { Effect, Layer } from "effect";
 
-import { HashingLive } from "../../../src/hashing";
+import { HashingLive } from "../../../../shared/account/hashing";
 import { AppAuth } from "./auth";
 import { DeliveryLive } from "./delivery";
 import { MigrationsLive } from "./migrations";

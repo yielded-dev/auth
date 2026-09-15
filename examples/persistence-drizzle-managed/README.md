@@ -51,7 +51,7 @@ those files with Drizzle before auth starts, recording them in `__drizzle_migrat
 Run `vp -C examples/persistence-drizzle-managed run db:migrate` to apply them separately.
 Startup never generates or pushes schema changes.
 
-[Layers](src/live.ts) provide subject creation, claims, and [custom hashing](src/hashing.ts). The library commits customer creation,
+[Layers](src/live.ts) provide subject creation, claims, and [custom hashing](../shared/account/hashing.ts). The library commits customer creation,
 identifier binding, password storage, and the registration receipt together. Existing
 account registration and exact request replays never overwrite a password.
 `Passkey.make()` and `Passkey.makeManagement()` enable the managed passkey tables.
@@ -64,5 +64,8 @@ accounts, sessions, proofs, and keys. It does not affect the other examples.
 `vp -C examples/persistence-drizzle-managed run test` exercises the HTTP flow against
 a temporary database with isolated email delivery; it never sends real email.
 
-Forms, styles, Atom workflows, and the common account contract live in the
-[shared account UI](../shared/account). Persistence and server wiring stay in this app.
+All three SQL examples import the same [AuthApi](../shared/account/contract.ts),
+[AppAuth](../shared/account/auth.ts), and [client](../shared/account/email-client.ts).
+This app's [live.ts](src/live.ts) supplies its persistence and account Layers.
+Hashing, Cloudflare delivery, forms, and Atom workflows also live in
+[shared/account](../shared/account).

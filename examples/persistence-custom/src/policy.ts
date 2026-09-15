@@ -17,12 +17,12 @@ import { layerWebCrypto } from "@yielded/auth/WebCrypto";
 import { DateTime, Effect, Layer, Option, Schema } from "effect";
 
 import {
-  AppAuth,
   recoveryRequirement,
   requirement,
   sessionConfiguration,
   sessionRequirement,
-} from "./auth";
+} from "../../shared/account/auth";
+import { AppAuth } from "./auth";
 import { AccountStore } from "./store";
 
 const SessionReader = AppAuth.sessions

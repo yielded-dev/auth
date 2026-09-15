@@ -3,7 +3,12 @@ import { SubjectId } from "@yielded/auth/Schema";
 import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
 import { Effect } from "effect";
 
-import { AppAuth, requirement, recoveryRequirement, sessionRequirement } from "./auth";
+import {
+  AppAuth,
+  requirement,
+  recoveryRequirement,
+  sessionRequirement,
+} from "../../shared/account/auth";
 
 // Existing application table. The application owns its schema and customer IDs.
 export const customers = sqliteTable("customers", {

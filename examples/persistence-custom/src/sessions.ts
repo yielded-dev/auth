@@ -9,6 +9,7 @@ import {
 } from "@yielded/auth/Sessions";
 import { Context, DateTime, Effect, Layer } from "effect";
 
+import { requirement } from "../../shared/account/auth";
 import {
   claims,
   credentials,
@@ -19,7 +20,7 @@ import {
   revision,
   satisfies,
 } from "./accounts";
-import { AppAuth, requirement } from "./auth";
+import { AppAuth } from "./auth";
 import { nextId, type Session, type State } from "./model";
 import { AccountStore } from "./store";
 

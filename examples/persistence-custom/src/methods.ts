@@ -2,7 +2,8 @@ import { makeStrategy } from "@yielded/auth/Auth";
 import { makeOperation, type AuthOperationResult } from "@yielded/auth/Operations";
 import { Context, Effect, Layer } from "effect";
 
-import { AuthApi, PasswordFailure, RegisterInput, RegisterResult, SignInInput } from "./contract";
+import { PasswordFailure, RegisterResult } from "../../shared/account/contract";
+import { AuthApi, RegisterInput, SignInInput } from "./contract";
 
 /** The application's public workflows. Replace either function by providing this service. */
 export class AccountMethods extends Context.Service<

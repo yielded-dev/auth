@@ -24,5 +24,8 @@ and [passkey-tables.ts](src/passkey-tables.ts). [migrations.ts](src/migrations.t
 owns versioned DDL for both dialects. [live.ts](src/live.ts) shows subject provisioning
 joining the auth transaction through the same SQL client.
 
-Forms, styles, Atom workflows, and the common account contract live in the
-[shared account UI](../shared/account). Persistence and server wiring stay in this app.
+All three SQL examples import the same [AuthApi](../shared/account/contract.ts),
+[AppAuth](../shared/account/auth.ts), and [client](../shared/account/email-client.ts).
+This app's [live.ts](src/live.ts) supplies its persistence and account Layers.
+Hashing, Cloudflare delivery, forms, and Atom workflows also live in
+[shared/account](../shared/account).

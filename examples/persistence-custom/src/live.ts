@@ -5,10 +5,11 @@ import { defaultPasswordPolicy, NewPasswordCheck } from "@yielded/auth/Password"
 import { layerWebCrypto } from "@yielded/auth/WebCrypto";
 import { Layer } from "effect";
 
-import { AppAuth, sessionConfiguration } from "./auth";
-import { minimumPasswordLength } from "./contract";
+import { sessionConfiguration } from "../../shared/account/auth";
+import { minimumPasswordLength } from "../../shared/account/contract";
+import { HashingLive } from "../../shared/account/hashing";
+import { AppAuth } from "./auth";
 import { EmailLive } from "./email";
-import { HashingLive } from "./hashing";
 import { AccountMethodsLive } from "./methods-live";
 import { PasskeysLive } from "./passkeys";
 import { PasswordMethodsLive } from "./password-methods";

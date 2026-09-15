@@ -27,7 +27,7 @@ import {
   requirement,
   sessionConfiguration,
   sessionRequirement,
-} from "./auth";
+} from "../../shared/account/auth";
 
 const SessionReader = AppAuth.sessions
   .statefulLayer(sessionConfiguration.policy(AppAuth.sessions.moduleId))

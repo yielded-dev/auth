@@ -4,7 +4,7 @@ import { guest, type AuthCredentialCommand } from "@yielded/auth/Operations";
 import { PhoneRequestContext } from "@yielded/auth/PhoneOtp";
 import { Effect, Layer, Redacted } from "effect";
 
-import { HashingStats } from "../src/hashing";
+import { HashingStats } from "../../shared/account/hashing";
 import { AppAuth } from "./fixtures/phone/auth";
 import { Inbox } from "./fixtures/phone/delivery";
 import { AuthLive, disableCustomer } from "./fixtures/phone/live";

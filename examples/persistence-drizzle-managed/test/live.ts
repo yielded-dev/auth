@@ -20,9 +20,9 @@ import type { Atom } from "effect/unstable/reactivity";
 import { AtomRegistry } from "effect/unstable/reactivity";
 import { SqlClient } from "effect/unstable/sql";
 
-import { AppAuth } from "../src/auth";
+import { AppAuth } from "../../shared/account/auth";
+import { AuthApi } from "../../shared/account/contract";
 import { makeClient } from "../src/client";
-import { AuthApi } from "../src/contract";
 import { DatabaseLive, KeysLive } from "../src/data";
 import { AuthLive } from "../src/live";
 import { makePasskeyBrowser } from "./fixtures/passkey-browser";

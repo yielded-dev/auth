@@ -23,10 +23,16 @@ email verification, passkey enrollment and sign-in, password recovery, and Cloud
 delivery. They keep separate data across restarts, on ports 4181–4184 respectively.
 All use application-owned subjects and custom hashing. The custom-service example
 also replaces registration planning and implements username-or-email sign-in.
-Forms, styles, and Atom workflows are shared in
+The three SQL examples import the same
+[`AuthApi`](https://github.com/yielded-dev/auth/blob/main/examples/shared/account/contract.ts)
+and [`AppAuth`](https://github.com/yielded-dev/auth/blob/main/examples/shared/account/auth.ts).
+Their `live.ts` files provide different persistence and account Layers to that definition.
+The custom-service example extends the shared fields and actions with username inputs
+and binds registration and sign-in to its `AccountMethods` service. Email, recovery,
+passkey, and session contracts retain the common definitions.
+Hashing, Cloudflare delivery, forms, styles, and Atom workflows also live in
 [`examples/shared/account`](https://github.com/yielded-dev/auth/tree/main/examples/shared/account).
-Each app creates its own client and runtime; the custom client maps its username
-payloads to its own contract.
+Each app creates its own client and runtime.
 The custom app's single-writer file store provides the public persistence services directly;
 see its [Layer wiring](https://github.com/yielded-dev/auth/blob/main/examples/persistence-custom/src/live.ts)
 and [method replacement](https://github.com/yielded-dev/auth/blob/main/examples/persistence-custom/src/password-methods.ts).

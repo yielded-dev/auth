@@ -28,7 +28,7 @@ import {
   requirement,
   sessionConfiguration,
   sessionRequirement,
-} from "./auth";
+} from "../../shared/account/auth";
 import { authSchema } from "./schema";
 
 const SessionReader = AppAuth.sessions

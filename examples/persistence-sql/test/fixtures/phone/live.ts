@@ -5,7 +5,7 @@ import { PhoneOtpUnavailable } from "@yielded/auth/PhoneOtp";
 import { Config, Effect, Layer, Schema } from "effect";
 import { SqlClient, type SqlError } from "effect/unstable/sql";
 
-import { HashingLive } from "../../../src/hashing";
+import { HashingLive } from "../../../../shared/account/hashing";
 import { AppAuth, Claims } from "./auth";
 import { DeliveryLive } from "./delivery";
 import { MigrationsLive } from "./migrations";

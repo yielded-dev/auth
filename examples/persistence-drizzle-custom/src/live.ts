@@ -13,9 +13,9 @@ import { eq } from "drizzle-orm";
 import * as Drizzle from "drizzle-orm/effect-sqlite-bun";
 import { Crypto, Effect, Layer, Option, Schema } from "effect";
 
-import { AppAuth } from "./auth";
-import { Claims, minimumPasswordLength } from "./contract";
-import { HashingLive } from "./hashing";
+import { AppAuth } from "../../shared/account/auth";
+import { Claims, minimumPasswordLength } from "../../shared/account/contract";
+import { HashingLive } from "../../shared/account/hashing";
 import { MigrationsLive } from "./migrations";
 import { ActionPoliciesLive } from "./policy";
 import { customers, Persistence, storage } from "./schema";

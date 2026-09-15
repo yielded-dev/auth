@@ -9,26 +9,28 @@ const sessionLifetimeMillis = sessionConfiguration.policy(
   AuthApi.sessions.moduleId,
 ).absoluteLifetimeMillis;
 
+export const accountStrategies = {
+  password: Password.make({
+    registration: Registration,
+    reset: { secret: { _tag: "NumericCode", digits: 6 }, policy: emailProofPolicy },
+  }),
+  email: Email.makeAddresses({
+    policy: emailProofPolicy,
+    addresses: { maximumEvidenceAgeMillis: 300_000, requireImmediateInvalidation: true },
+  }),
+  passkey: Passkey.make(),
+  passkeys: Passkey.makeManagement({
+    policy: { generation: 2 },
+    management: {
+      maximumCredentials: 5,
+      maximumEvidenceAgeMillis: sessionLifetimeMillis,
+      requireImmediateInvalidation: true,
+    },
+  }),
+};
+
 export const AppAuth = Auth.make(AuthApi, {
-  strategies: {
-    password: Password.make({
-      registration: Registration,
-      reset: { secret: { _tag: "NumericCode", digits: 6 }, policy: emailProofPolicy },
-    }),
-    email: Email.makeAddresses({
-      policy: emailProofPolicy,
-      addresses: { maximumEvidenceAgeMillis: 300_000, requireImmediateInvalidation: true },
-    }),
-    passkey: Passkey.make(),
-    passkeys: Passkey.makeManagement({
-      policy: { generation: 2 },
-      management: {
-        maximumCredentials: 5,
-        maximumEvidenceAgeMillis: sessionLifetimeMillis,
-        requireImmediateInvalidation: true,
-      },
-    }),
-  },
+  strategies: accountStrategies,
   sessions: sessionConfiguration,
 });
 
