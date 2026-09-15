@@ -50,3 +50,6 @@ accounts, sessions, proofs, and keys. It does not affect the other examples.
 
 `vp -C examples/persistence-drizzle-managed run test` exercises the HTTP flow against
 a temporary database with isolated email delivery; it never sends real email.
+
+Forms, styles, Atom workflows, and the common account contract live in the
+[shared account UI](../shared/account). Persistence and server wiring stay in this app.

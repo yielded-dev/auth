@@ -31,3 +31,6 @@ enrollment preserve the existing session. Use `localhost:4182` consistently for 
 
 `AUTH_DATA_DIR` selects another data directory. Removing this example's `.data`
 resets only its accounts, sessions, credentials, and keys.
+
+Forms, styles, Atom workflows, and the common account contract live in the
+[shared account UI](../shared/account). Persistence and server wiring stay in this app.

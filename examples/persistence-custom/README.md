@@ -58,3 +58,6 @@ This store supports one process on a local filesystem. After a crash, remove
 replication, backups, and storage limits belong to the application. The example
 implements its declared account flows; additional password creation, address
 replacement, and passkey removal are unexposed and fail closed.
+
+The [shared account UI](../shared/account) owns forms, styles, and Atom workflows.
+[client.ts](src/client.ts) maps registration and sign-in to this app’s username contract.

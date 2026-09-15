@@ -23,7 +23,11 @@ email verification, passkey enrollment and sign-in, password recovery, and Cloud
 delivery. They keep separate data across restarts, on ports 4181–4184 respectively.
 All use application-owned subjects and custom hashing. The custom-service example
 also replaces registration planning and implements username-or-email sign-in.
-Its single-writer file store provides the public persistence services directly;
+Forms, styles, and Atom workflows are shared in
+[`examples/shared/account`](https://github.com/yielded-dev/auth/tree/main/examples/shared/account).
+Each app creates its own client and runtime; the custom client maps its username
+payloads to its own contract.
+The custom app's single-writer file store provides the public persistence services directly;
 see its [Layer wiring](https://github.com/yielded-dev/auth/blob/main/examples/persistence-custom/src/live.ts)
 and [method replacement](https://github.com/yielded-dev/auth/blob/main/examples/persistence-custom/src/password-methods.ts).
 

@@ -4,7 +4,7 @@ import type { PasskeyBrowser } from "@yielded/auth/PasskeyBrowser";
 import type { Layer } from "effect";
 import type { KeyValueStore } from "effect/unstable/persistence";
 
-import { makeAccountClient } from "../../shared/account/client";
+import { makeAccountClient } from "./client";
 import { AuthApi, emailProofPolicy } from "./contract";
 
 export const makeClient = (
@@ -23,12 +23,10 @@ export const makeClient = (
             requestId: input.requestId,
             email: input.email,
             newPassword: input.password,
-            registration: {
-              displayName: input.displayName,
-              username: input.username ?? "",
-            },
+            registration: { displayName: input.displayName.trim() },
           }),
-        signIn: (input, get) => get.setResult(auth.passwordSignIn, input),
+        signIn: ({ login, password }, get) =>
+          get.setResult(auth.passwordSignIn, { email: login, password }),
       };
     },
     emailProofPolicy,

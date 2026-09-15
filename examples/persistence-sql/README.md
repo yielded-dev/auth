@@ -23,3 +23,6 @@ Effect SQLite client through the same `SqlClient` service.
 and [passkey-tables.ts](src/passkey-tables.ts). [migrations.ts](src/migrations.ts)
 owns versioned DDL for both dialects. [live.ts](src/live.ts) shows subject provisioning
 joining the auth transaction through the same SQL client.
+
+Forms, styles, Atom workflows, and the common account contract live in the
+[shared account UI](../shared/account). Persistence and server wiring stay in this app.

@@ -520,7 +520,7 @@ const program = Effect.gen(function* () {
         "Password reset left the old challenge",
       );
       assert(registry.get(ui.notice)?.startsWith("Password updated."), "Reset notice was lost");
-      yield* dispatch(ui.signIn, { email, password: replacement });
+      yield* dispatch(ui.signIn, { login: email, password: replacement });
       assert((yield* session)?.claims.emailVerified, "Recovered UI could not sign in");
       yield* dispatch(ui.signOut, undefined);
 
