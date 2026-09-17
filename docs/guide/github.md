@@ -6,6 +6,9 @@ description: Set up GitHub sign-in with Yielded Auth.
 
 Sign in with a GitHub OAuth App. Start with [OAuth setup](./oauth).
 
+For managed sessions and retained API access, use the [GitHub app example](./oauth#sign-in-and-connect-provider-access).
+The setup below adds GitHub to a shared auth service.
+
 ## Get your credentials
 
 Create an OAuth App in [GitHub developer settings](https://github.com/settings/developers).

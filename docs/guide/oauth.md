@@ -4,7 +4,7 @@ description: Understand OAuth sign-in, application sessions, and provider API ac
 
 # OAuth
 
-OAuth lets a user authorize your app through a provider such as Strava or GitHub.
+OAuth lets a user authorize your app through a provider such as GitHub or Google.
 Two things can come from that authorization: an **app session** identifies the
 signed-in user; a **provider grant** lets your app call the provider's API.
 
@@ -36,12 +36,11 @@ in one auth table; provider tokens refresh when your app needs them.
 ```ts [auth.ts]
 import { OAuthAppPersistence } from "@yielded/auth-persistence";
 import * as OAuthApp from "@yielded/auth/OAuthApp";
-import * as Strava from "@yielded/auth/Strava";
+import * as GitHub from "@yielded/auth/GitHub";
 import { Layer, Schema } from "effect";
-import { FetchHttpClient } from "effect/unstable/http";
 import { config, keys, resolveAccount, DatabaseLive } from "./app-services";
 
-export const app = OAuthApp.make("strava", {
+export const app = OAuthApp.make("github", {
   claims: Schema.Struct({ role: Schema.Literals(["owner", "member"]) }),
   returnTargets: ["/account"],
 });
@@ -50,17 +49,16 @@ const live = app
   .layer({
     origin: config.origin,
     ...keys,
-    provider: Strava.provider({
+    provider: GitHub.appProvider({
       clientId: config.clientId,
       clientSecret: config.clientSecret,
-      scopes: ["activity:read_all"],
+      scopes: ["read:user"],
     }),
   })
   .pipe(
     Layer.provide(Layer.succeed(app.Accounts, { resolve: resolveAccount })),
     Layer.provide(OAuthAppPersistence.layer),
     Layer.provide(DatabaseLive),
-    Layer.provide(FetchHttpClient.layer),
   );
 
 export const AuthRoutes = app.routes.pipe(Layer.provide(live));
@@ -69,11 +67,11 @@ export const AuthRoutes = app.routes.pipe(Layer.provide(live));
 `app-services` is your application code: `resolveAccount` maps a verified provider
 identity to `{ subjectId, claims }`; `keys` supplies the three keyrings;
 `DatabaseLive` supplies a migrated SQL connection. The
-[runnable Strava example](https://github.com/yielded-dev/auth/blob/main/examples/auth/src/strava-app.ts)
-shows that setup, including an athlete allowlist.
+[runnable GitHub example](https://github.com/yielded-dev/auth/blob/main/examples/auth/src/github-app.ts)
+shows that setup, including an account allowlist.
 
-Mount `AuthRoutes`, register `/auth/strava/callback` with Strava at your app's
-origin, and link to `/auth/strava/sign-in`. Successful sign-in redirects to `/account`.
+Install `openid-client`, mount `AuthRoutes`, and register `/auth/github/callback` at your app's
+origin in your GitHub OAuth App. Link to `/auth/github/sign-in`. Successful sign-in redirects to `/account`.
 See the [setup reference](../reference/oauth#managed-app-setup) for keys, storage,
 and callback tracing.
 
@@ -86,7 +84,7 @@ Inside a server Effect, verify the session cookie and use its connection:
 const sessions = yield* app.Sessions;
 const session = yield* sessions.verify(credential); // Redacted cookie value
 const oauth = yield* app.Service;
-yield* oauth.withAccessToken(session, syncActivities); // receives a Redacted token
+yield* oauth.withAccessToken(session, readProfile); // receives a Redacted token
 ```
 
 Background jobs can use a connection reference saved in trusted application storage.

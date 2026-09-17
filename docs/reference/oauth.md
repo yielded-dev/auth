@@ -20,13 +20,13 @@ Start with the [OAuth guide](../guide/oauth) for the flow and choice of API.
 
 Provide these to `app.layer`:
 
-| Dependency                                    | Application supplies                                             |
-| --------------------------------------------- | ---------------------------------------------------------------- |
-| `origin`, `provider`                          | Trusted app origin and configured provider                       |
-| `sessionKeys`, `transactionKeys`, `tokenKeys` | Three distinct keyrings                                          |
-| `app.Accounts`                                | `resolve(verified)` → Effect of `{ subjectId, claims }`          |
-| `OAuthApp.Persistence`                        | Durable flow and encrypted grant storage                         |
-| Provider services                             | For Strava, an Effect `HttpClient` without token-request retries |
+| Dependency                                    | Application supplies                                                                  |
+| --------------------------------------------- | ------------------------------------------------------------------------------------- |
+| `origin`, `provider`                          | Trusted app origin and configured provider                                            |
+| `sessionKeys`, `transactionKeys`, `tokenKeys` | Three distinct keyrings                                                               |
+| `app.Accounts`                                | `resolve(verified)` → Effect of `{ subjectId, claims }`                               |
+| `OAuthApp.Persistence`                        | Durable flow and encrypted grant storage                                              |
+| Provider services                             | GitHub: `openid-client`; Strava: an Effect `HttpClient` without token-request retries |
 
 `Accounts.resolve` checks invitations/status and owns provisioning. Reject with
 `OAuthRejected`; map infrastructure failures to `OAuthUnavailable`.
@@ -43,21 +43,26 @@ transactions. A custom store implements the
 
 Exclude callback queries, tokens, and cookies from telemetry. Effect's server
 tracer records query strings; the
-[Strava example](https://github.com/yielded-dev/auth/blob/main/examples/auth/src/strava-app.ts)
+[GitHub example](https://github.com/yielded-dev/auth/blob/main/examples/auth/src/github-app.ts)
 uses `HttpMiddleware.TracerDisabledWhen` on the outer server Layer to omit callback
 spans. Application mutations need their own CSRF protection.
+
+Run the GitHub example with `vp run @yielded/example-auth#example:github`. Set
+`GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, `GITHUB_USER_ID`, `SESSION_KEY`,
+`OAUTH_TRANSACTION_KEY`, and `OAUTH_TOKEN_KEY`. It listens at `http://localhost:3000`
+and owns `github-auth.sqlite`; `APP_ORIGIN` overrides the origin.
 
 ## Managed routes
 
 Mount `app.routes`, or pass native requests to the provided service's `handle`.
-Paths below use the app ID `strava`.
+Paths below use the app ID `github`.
 
 | Request                                      | Behavior                                                                         |
 | -------------------------------------------- | -------------------------------------------------------------------------------- |
-| `GET /auth/strava/sign-in?returnTo=/account` | Sets a browser binding and redirects to the provider; `returnTo` must be allowed |
-| `GET /auth/strava/callback`                  | Completes authorization, sets the session cookie, and redirects                  |
-| `GET /auth/strava/session`                   | Returns public session data; 401 for missing/invalid credentials                 |
-| `POST /auth/strava/sign-out`                 | Requires the same Origin; clears the cookie and returns 204                      |
+| `GET /auth/github/sign-in?returnTo=/account` | Sets a browser binding and redirects to the provider; `returnTo` must be allowed |
+| `GET /auth/github/callback`                  | Completes authorization, sets the session cookie, and redirects                  |
+| `GET /auth/github/session`                   | Returns public session data; 401 for missing/invalid credentials                 |
+| `POST /auth/github/sign-out`                 | Requires the same Origin; clears the cookie and returns 204                      |
 
 Rejected flows return 400; unavailable dependencies return 503. Responses use
 `Cache-Control: no-store`. Cookies are HttpOnly, SameSite=Lax, and Secure on HTTPS.
@@ -141,7 +146,9 @@ Flows default to five minutes; the strategy's `policy` overrides this.
 ## Customize callbacks
 
 Shared auth derives `/auth/{provider}/callback` from `origin` and the contract's
-base path. Override a provider's path through `Http.layer`:
+base path. Callbacks require HTTPS, except HTTP on `localhost`, `127.0.0.1`, or
+`[::1]` for local development. Provider endpoints always require HTTPS.
+Override a provider's path through `Http.layer`:
 
 ```ts
 const AuthRoutes = Http.layer(AppAuth, {
@@ -171,6 +178,7 @@ mapping. See the [registration example](https://github.com/yielded-dev/auth/blob
 
 | Integration                  | Configure                                                                            |
 | ---------------------------- | ------------------------------------------------------------------------------------ |
+| Managed GitHub app           | `GitHub.appProvider({ clientId, clientSecret, scopes })`                             |
 | Managed Strava app           | `Strava.provider({ clientId, clientSecret, scopes })`                                |
 | Other managed provider       | Implement `OAuthApp.Provider.configure(callbackUrl)`                                 |
 | Shared auth with GitHub      | [`GitHub.provider`](../guide/github)                                                 |
@@ -180,6 +188,11 @@ mapping. See the [registration example](https://github.com/yielded-dev/auth/blob
 A managed provider returns a permission profile and `OAuthConnectedProtocol` service.
 It owns response verification, accepted permissions, identity checks, and token exchange.
 Keep required services and configuration failures in the configure Effect's types.
+
+`GitHub.appProvider` uses a GitHub.com OAuth App, defaults to `read:user`, and requests
+`offline_access` for rotating tokens. Local refresh retention defaults to thirty days;
+set `maximumRefreshLifetimeMillis` to shorten it. Install `openid-client`.
+See [GitHub's OAuth flow](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/authorizing-oauth-apps).
 
 The Strava adapter uses confidential-client authorization without PKCE. It checks
 accepted scopes from the token response or bound callback and rechecks athlete

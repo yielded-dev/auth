@@ -1,5 +1,6 @@
 import * as SqliteClient from "@effect/sql-sqlite-node/SqliteClient";
 import { it } from "@effect/vitest";
+import * as GitHub from "@yielded/auth/GitHub";
 import { OAuthRejected, OAuthUnavailable } from "@yielded/auth/OAuth";
 import * as OAuthApp from "@yielded/auth/OAuthApp";
 import { SubjectId } from "@yielded/auth/Schema";
@@ -27,6 +28,123 @@ const keys = (byte: number) => ({
 });
 
 const sessionConfig = { origin, sessionKeys: keys(1) };
+
+it.effect(
+  "the managed GitHub example signs in with PKCE and retains refreshable API access",
+  () => {
+    const origin = "http://localhost:3000";
+
+    const github = OAuthApp.make("github", {
+      claims: Schema.Struct({ name: Schema.String }),
+      returnTargets: ["/account"],
+    });
+
+    const exchanges: Array<URLSearchParams> = [];
+
+    const storage = Layer.effectDiscard(
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+
+        yield* sql.unsafe(OAuthAppPersistence.migration);
+      }),
+    ).pipe(Layer.provideMerge(SqliteClient.layer({ filename: ":memory:" })));
+
+    const live = github
+      .layer({
+        ...sessionConfig,
+        origin,
+        transactionKeys: keys(2),
+        tokenKeys: keys(3),
+        provider: GitHub.appProvider({
+          clientId: "github-example",
+          clientSecret: Redacted.make("github-example-secret"),
+          fetch: async (url, init) => {
+            if (url === "https://api.github.com/user")
+              return Response.json({ id: 123, login: "example", name: "Example User" });
+            if (url !== "https://github.com/login/oauth/access_token")
+              throw new Error("Unexpected provider request");
+            const form = init.body instanceof URLSearchParams ? init.body : new URLSearchParams();
+
+            exchanges.push(new URLSearchParams(form));
+            const refreshing = form.get("grant_type") === "refresh_token";
+
+            return Response.json({
+              access_token: refreshing ? "github-second-access" : "github-first-access",
+              refresh_token: refreshing ? "github-second-refresh" : "github-first-refresh",
+              expires_in: 28800,
+              refresh_token_expires_in: 15897600,
+              token_type: "bearer",
+              scope: "read:user",
+            });
+          },
+        }),
+      })
+      .pipe(
+        Layer.provide(OAuthAppPersistence.layer.pipe(Layer.provide(storage))),
+        Layer.provide(
+          Layer.succeed(github.Accounts, {
+            resolve: (verified) =>
+              Effect.succeed({
+                subjectId: SubjectId.make(`github:${verified.identity.subject}`),
+                claims: { name: verified.profile?.displayName ?? "" },
+              }),
+          }),
+        ),
+      );
+
+    return Effect.gen(function* () {
+      const service = yield* github.Service;
+      const start = yield* service.handle(new Request(`${origin}${github.paths.signIn}`));
+
+      expect(start.status).toBe(302);
+      const authorization = new URL(start.headers.get("location")!);
+
+      expect(authorization.searchParams.get("scope")).toBe("read:user offline_access");
+      expect(authorization.searchParams.get("code_challenge_method")).toBe("S256");
+      expect(authorization.searchParams.get("redirect_uri")).toBe(
+        `${origin}${github.paths.callback}`,
+      );
+
+      const query = new URLSearchParams({
+        code: "github-code",
+        state: authorization.searchParams.get("state")!,
+        iss: "https://github.com/login/oauth",
+      });
+
+      const callback = new Request(`${origin}${github.paths.callback}?${query}`, {
+        headers: { cookie: start.headers.getSetCookie()[0].split(";")[0] },
+      });
+
+      const completed = yield* service.handle(callback);
+
+      expect(completed.status).toBe(302);
+
+      const cookie = completed.headers
+        .getSetCookie()
+        .find((value) => value.startsWith(`${github.cookieName}=`))!;
+
+      const credential = Redacted.make(cookie.split(";")[0].slice(github.cookieName.length + 1));
+      const session = yield* (yield* github.Sessions).verify(credential);
+
+      expect(session.subjectId).toBe("github:123");
+      expect(session.claims.name).toBe("Example User");
+      expect(exchanges[0].get("code_verifier")).toMatch(/^[A-Za-z0-9_-]{43,128}$/);
+      expect((yield* service.handle(callback)).status).toBe(400);
+      yield* TestClock.adjust("8 hours");
+
+      const token = yield* service.withAccessToken(session, (token) =>
+        Effect.succeed(Redacted.value(token)),
+      );
+
+      expect(token).toBe("github-second-access");
+      expect(exchanges.map((form) => form.get("grant_type"))).toEqual([
+        "authorization_code",
+        "refresh_token",
+      ]);
+      expect(exchanges[1].get("refresh_token")).toBe("github-first-refresh");
+    }).pipe(Effect.provide(live));
+  },
+);
 
 const harness = (
   settings: {
