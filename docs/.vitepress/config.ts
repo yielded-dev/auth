@@ -58,7 +58,10 @@ export default defineConfig({
       },
       {
         text: "Reference",
-        items: [{ text: "Public modules", link: "/reference/modules" }],
+        items: [
+          { text: "Public modules", link: "/reference/modules" },
+          { text: "OAuth", link: "/reference/oauth" },
+        ],
       },
     ],
     socialLinks: [{ icon: "github", link: "https://github.com/yielded-dev/auth" }],

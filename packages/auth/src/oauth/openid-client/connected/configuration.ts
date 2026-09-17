@@ -12,7 +12,7 @@ import {
 } from "../../signInModels";
 import { freezeOAuth, snapshotOAuthSync } from "../../signInSnapshot";
 import type { ConnectedOptions, ProviderConnectedOAuth } from "../compatibility";
-import { clientAuthentication, endpoint } from "../configuration";
+import { callbackEndpoint, clientAuthentication, endpoint } from "../configuration";
 import { OpenIdClientConfigurationError, type OpenIdClientAuthentication } from "../models";
 import { boundedFetch } from "../transport";
 import type {
@@ -347,7 +347,7 @@ export const installConnectedConfigurations = Effect.fn(
         const callbacks = new Set<string>();
 
         for (const callback of provider.callbacks) {
-          const url = endpoint(callback.redirectUri);
+          const url = callbackEndpoint(callback.redirectUri);
 
           if (
             callbacks.has(callback.callbackId) ||

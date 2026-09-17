@@ -6,6 +6,9 @@ description: Set up GitHub sign-in with Yielded Auth.
 
 Sign in with a GitHub OAuth App. Start with [OAuth setup](./oauth).
 
+For managed sessions and retained API access, use the [GitHub app example](./oauth#sign-in-and-connect-provider-access).
+The setup below adds GitHub to a shared auth service.
+
 ## Get your credentials
 
 Create an OAuth App in [GitHub developer settings](https://github.com/settings/developers).
@@ -34,9 +37,9 @@ export const AuthRoutes = Http.layer(AppAuth, {
 });
 ```
 
-Install `openid-client` and [supply your services](./oauth#supply-the-services).
+Install `openid-client` and [supply your services](../reference/oauth#supply-the-services).
 `AuthRoutes` serves the callback URL derived from `origin`.
-[Customize callbacks →](./oauth#customize-callbacks)
+[Customize callbacks →](../reference/oauth#customize-callbacks)
 
 GitHub sign-in requests `read:user`; no email address or repository access is required.
 
