@@ -34,9 +34,9 @@ export const AuthRoutes = Http.layer(AppAuth, {
 });
 ```
 
-Install `openid-client` and [supply your services](./oauth#supply-the-services).
+Install `openid-client` and [supply your services](../reference/oauth#supply-the-services).
 `AuthRoutes` serves the callback URL derived from `origin`.
-[Customize callbacks →](./oauth#customize-callbacks)
+[Customize callbacks →](../reference/oauth#customize-callbacks)
 
 GitHub sign-in requests `read:user`; no email address or repository access is required.
 

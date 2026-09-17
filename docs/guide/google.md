@@ -37,9 +37,9 @@ export const AuthRoutes = Http.layer(AppAuth, {
 });
 ```
 
-Install `openid-client` and [supply your services](./oauth#supply-the-services).
+Install `openid-client` and [supply your services](../reference/oauth#supply-the-services).
 `AuthRoutes` serves the callback URL derived from `origin`.
-[Customize callbacks →](./oauth#customize-callbacks)
+[Customize callbacks →](../reference/oauth#customize-callbacks)
 
 The default `openid` scope is enough for sign-in.
 
