@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "check": "tsc --noEmit -p tsconfig.json",
+    "example:strava": "bun src/strava-app.ts",
     "example:drizzle-sqlite-bun": "bun src/drizzle-sqlite-bun.ts",
     "example:drizzle-sqlite-wasm": "bun src/drizzle-sqlite-wasm.ts",
     "example:hooks": "bun src/lifecycle-hooks.ts",

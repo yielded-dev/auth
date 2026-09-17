@@ -4,6 +4,142 @@ description: Connect OAuth providers to your auth service and handle sign-in cal
 
 # OAuth setup
 
+## Sign in and connect provider access
+
+For a Strava-style application, `OAuthApp` handles one authorization that both
+signs the user in and retains provider API access. It mounts sign-in, callback,
+session, and sign-out routes, delivers an HttpOnly session cookie, and encrypts
+provider tokens. It does not require `Auth.make`, password/passkey services, or a
+session repository. MCP authorization servers are a separate concern.
+
+```ts
+import { OAuthAppPersistence } from "@yielded/auth-persistence";
+import * as OAuthApp from "@yielded/auth/OAuthApp";
+import * as Strava from "@yielded/auth/Strava";
+import { Layer, Schema } from "effect";
+import { FetchHttpClient } from "effect/unstable/http";
+
+const app = OAuthApp.make("strava", {
+  claims: Schema.Struct({ role: Schema.Literals(["owner", "member"]) }),
+  returnTargets: ["/account"],
+});
+
+const live = app
+  .layer({
+    origin,
+    sessionKeys,
+    transactionKeys,
+    tokenKeys,
+    provider: Strava.provider({
+      clientId,
+      clientSecret,
+      scopes: ["activity:read_all"],
+    }),
+  })
+  .pipe(
+    Layer.provide(Layer.succeed(app.Accounts, { resolve: resolveAccount })),
+    Layer.provide(OAuthAppPersistence.layer),
+    Layer.provide(FetchHttpClient.layer),
+  );
+
+const routes = app.routes.pipe(Layer.provide(live));
+```
+
+`resolveAccount` receives verified provider identity and profile, and returns
+`{ subjectId, claims }` as an Effect. The application checks invitations or active
+account status here and owns provisioning. Reject with `OAuthRejected`; translate
+infrastructure failures to `OAuthUnavailable`. The library never links by email.
+The returned claims are the authorization snapshot for this session.
+
+Supply an Effect `SqlClient` to `OAuthAppPersistence.layer` and apply
+`OAuthAppPersistence.migration` through your migration system. It creates one
+`yielded_oauth_app` table for pending flows and encrypted grants. SQLite, D1, and
+PostgreSQL use single-statement conditional transitions. No session rows are
+stored. This storage is independent of the broader authentication schema;
+applications can also implement the `OAuthApp.Persistence` port themselves.
+
+Each keyring has `{ activeKeyId, keys: [{ id, material }] }`; `material` is a
+redacted base64url encoding of 32 random bytes. Supply three distinct keyrings
+for sessions, pending transactions, and provider tokens. Retain old session keys
+through session expiry, transaction keys through pending-flow completion, and
+token keys while any retained connection references them.
+
+For the example above, register `/auth/strava/callback` at your trusted origin
+with Strava. Link to `/auth/strava/sign-in` to start. An optional `returnTo` must
+exactly match one of `returnTargets`. The callback sets the session cookie and
+redirects without putting session credentials in the URL. GET
+`/auth/strava/session` returns public session data; POST
+`/auth/strava/sign-out` requires the same Origin and clears the browser cookie.
+The default flow lifetime is five minutes, exchange timeout thirty seconds,
+and session lifetime thirty days; configure their `*Millis` options in `make`.
+
+Session verification is offline: `app.sessionLayer({ origin, sessionKeys })`
+supplies `app.Sessions` without a provider, database, or account-policy service.
+Call its `verify(redactedCredential)` method in application authentication
+middleware. Sessions use Yielded Auth's signed envelope, not JWT serialization.
+They have a fixed expiry and no renewal or individual revocation. Signing out,
+removing an invitation, changing a role, or disconnecting Strava does not invalidate
+an already issued session; choose the session lifetime to match application policy.
+Claims are signed but readable; keep credentials and other private data out of them.
+Browser application mutations must enforce their own CSRF protection. The library's
+session endpoint returns 401 for missing/invalid credentials; auth routes return
+400 for a rejected flow and 503 for unavailable dependencies, without error details.
+
+For ingestion, call `app.Service.withAccessToken({ subjectId, grantId }, use)`
+inside an Effect. Obtain that connection reference from a verified session or
+trusted application storage. `use` receives a redacted token, and the library
+refreshes and saves rotated tokens before invoking it. The callback is never
+retried. This server-only capability does not itself authenticate arbitrary
+caller-supplied connection references. `disconnect(reference)` disables local
+provider access; it does not remotely revoke the provider's grant.
+
+Only one callback can claim a flow. Failed or uncertain exchanges require a new
+sign-in. Refresh claims are durable across workers. Concurrent callers receive
+`OAuthConnectedBusy` while a refresh is within its deadline; a failed, timed-out, or
+interrupted refresh cannot be retried with the same credential. A fresh user
+authorization can replace that connection. An uncertain storage commit never
+authorizes repeating the provider exchange. The adapter retains terminal flow
+records and disconnected grant identities; do not delete grant identities or
+reset refresh claims as a recovery mechanism.
+Applications may prune expired flow records after their deadline; flow IDs must
+never be reused. Disconnect blocks subsequent token acquisition, but cannot cancel
+application work that already obtained a token.
+
+Strava uses its confidential-client web flow and does not advertise PKCE support.
+The library checks a separate browser binding, one-use state, exact callback,
+verified athlete identity, and accepted scopes. It uses the token response's
+scope receipt when present, otherwise the bound callback receipt. A refresh
+rechecks athlete identity; the provider adapter's HttpClient must not install
+automatic token-request retries. Provider configuration and grant authority are
+isolated per application ID; use one managed owner for each client registration.
+The default Strava refresh retention is thirty days from the last successful token
+exchange. This is library retention policy, not a Strava token-expiry guarantee.
+See [Strava's authorization contract](https://developers.strava.com/docs/authentication/).
+
+For another provider, implement `OAuthApp.Provider`: `configure(callbackUrl)`
+returns a permission profile and the public `OAuthConnectedProtocol` service.
+The protocol verifies the provider response and returns verified identity, accepted
+permissions, token material, and expiry. It must bind the exact configuration and
+callback, validate identity on refresh, and perform each token exchange once.
+Required services remain in the configure Effect's environment; return configuration
+failures through its typed error channel. Application policy still runs through
+`Accounts`, independently of the provider adapter. Public results and library spans
+do not contain credentials; keep token bodies, callback queries, and cookies out of
+application HTTP access logs and custom HttpClient tracing. Effect's server tracer
+records query strings, so the runnable example disables server tracing for the
+callback using `HttpMiddleware.TracerDisabledWhen` on the outer server Layer.
+Apply an equivalent tracing policy when mounting these routes in your server.
+
+The [runnable Strava example](https://github.com/yielded-dev/auth/blob/main/examples/auth/src/strava-app.ts)
+uses SQLite and an application-owned athlete allowlist. Set `STRAVA_CLIENT_ID`,
+`STRAVA_CLIENT_SECRET`, `STRAVA_ATHLETE_ID`, `SESSION_KEY`,
+`OAUTH_TRANSACTION_KEY`, and `OAUTH_TOKEN_KEY`, then run
+`vp run @yielded/example-auth#example:strava`. It listens at
+`http://localhost:3000`; set `APP_ORIGIN` for your deployment. The example owns
+`strava-auth.sqlite`; real applications keep their migrations and data policy.
+
+## Use the shared authentication service
+
 Set up the auth service once, then add [GitHub](./github), [Google](./google), or
 [another OAuth/OIDC provider](#other-providers).
 

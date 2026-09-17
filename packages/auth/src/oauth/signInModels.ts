@@ -229,6 +229,8 @@ export const OAuthCodeResponse = Schema.TaggedStruct("Code", {
   code: Schema.RedactedFromValue(
     Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(4096)),
   ),
+  /** Provider callback scope receipt; adapters must validate before trusting it. */
+  scope: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(16384))),
   error: Schema.optionalKey(Schema.Never),
 });
 

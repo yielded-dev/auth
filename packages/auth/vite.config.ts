@@ -21,6 +21,8 @@ export default defineConfig({
       "src/Hooks.ts",
       "src/Identity.ts",
       "src/OAuth.ts",
+      "src/OAuthApp.ts",
+      "src/Strava.ts",
       "src/Operations.ts",
       "src/Rpc.ts",
       "src/Schema.ts",

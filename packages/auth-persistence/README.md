@@ -8,6 +8,11 @@ or from `@yielded/auth-persistence/drizzle/<driver>` for Drizzle. The raw entry 
 does not require Drizzle. Core workflows and replaceable service contracts remain
 in `@yielded/auth`.
 
+`OAuthAppPersistence` separately supplies the single-table store for
+[`OAuthApp`](../../docs/guide/oauth.md#sign-in-and-connect-provider-access).
+It has no dependency on the broader auth schema or a session repository. Apply its
+exported migration with the application's runner and provide an Effect SQL client.
+
 Applications own subject provisioning, policy, claims, delivery, and their database
 connection. Drizzle Kit generates migrations from managed or application-declared
 Drizzle tables. Install `AuthPersistence.migrationsLayer({ migrationsFolder })`
