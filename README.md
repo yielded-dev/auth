@@ -18,7 +18,7 @@ managed Drizzle, application-owned Drizzle, raw SQL, and custom service implemen
 Install the beta release with Effect v4:
 
 ```sh
-vp add @yielded/auth@beta effect@4.0.0-rc.112
+vp add @yielded/auth@beta effect@4.0.0-rc.117
 ```
 
 ## One API, server and client

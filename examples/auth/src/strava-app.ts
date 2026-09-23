@@ -22,16 +22,16 @@ const app = OAuthApp.make("strava", {
 
 const runtime = Layer.unwrap(
   Effect.gen(function* () {
-    const origin = yield* Config.string("APP_ORIGIN").pipe(
+    const origin = yield* Config.String("APP_ORIGIN").pipe(
       Config.withDefault("http://localhost:3000"),
     );
 
-    const clientId = yield* Config.string("STRAVA_CLIENT_ID");
-    const clientSecret = yield* Config.redacted("STRAVA_CLIENT_SECRET");
-    const athleteId = yield* Config.string("STRAVA_ATHLETE_ID");
-    const sessionKey = yield* Config.redacted("SESSION_KEY");
-    const transactionKey = yield* Config.redacted("OAUTH_TRANSACTION_KEY");
-    const tokenKey = yield* Config.redacted("OAUTH_TOKEN_KEY");
+    const clientId = yield* Config.String("STRAVA_CLIENT_ID");
+    const clientSecret = yield* Config.Redacted("STRAVA_CLIENT_SECRET");
+    const athleteId = yield* Config.String("STRAVA_ATHLETE_ID");
+    const sessionKey = yield* Config.Redacted("SESSION_KEY");
+    const transactionKey = yield* Config.Redacted("OAUTH_TRANSACTION_KEY");
+    const tokenKey = yield* Config.Redacted("OAUTH_TOKEN_KEY");
 
     const keyring = (material: Redacted.Redacted<string>) => ({
       activeKeyId: "v1",

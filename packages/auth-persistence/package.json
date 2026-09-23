@@ -63,17 +63,17 @@
     "vite-plus": "catalog:"
   },
   "peerDependencies": {
-    "@effect/sql-d1": ">=4.0.0-rc.112",
-    "@effect/sql-libsql": ">=4.0.0-rc.112",
-    "@effect/sql-mysql2": ">=4.0.0-rc.112",
-    "@effect/sql-pg": ">=4.0.0-rc.112",
-    "@effect/sql-pglite": ">=4.0.0-rc.112",
-    "@effect/sql-sqlite-bun": ">=4.0.0-rc.112",
-    "@effect/sql-sqlite-do": ">=4.0.0-rc.112",
-    "@effect/sql-sqlite-node": ">=4.0.0-rc.112",
-    "@effect/sql-sqlite-wasm": ">=4.0.0-rc.112",
+    "@effect/sql-d1": ">=4.0.0-rc.117",
+    "@effect/sql-libsql": ">=4.0.0-rc.117",
+    "@effect/sql-mysql2": ">=4.0.0-rc.117",
+    "@effect/sql-pg": ">=4.0.0-rc.117",
+    "@effect/sql-pglite": ">=4.0.0-rc.117",
+    "@effect/sql-sqlite-bun": ">=4.0.0-rc.117",
+    "@effect/sql-sqlite-do": ">=4.0.0-rc.117",
+    "@effect/sql-sqlite-node": ">=4.0.0-rc.117",
+    "@effect/sql-sqlite-wasm": ">=4.0.0-rc.117",
     "drizzle-orm": ">=1.0.0-rc.5-ab785fc",
-    "effect": "^4.0.0-rc.112"
+    "effect": "^4.0.0-rc.117"
   },
   "peerDependenciesMeta": {
     "@effect/sql-d1": {

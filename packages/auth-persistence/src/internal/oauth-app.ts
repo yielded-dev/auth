@@ -1,7 +1,9 @@
 import { OAuthUnavailable } from "@yielded/auth/OAuth";
 import { Persistence, Record } from "@yielded/auth/OAuthApp";
-import { Effect, Layer, Option, Schema } from "effect";
+import { Effect, Layer, Schema } from "effect";
 import { SqlClient } from "effect/unstable/sql";
+
+import { requireStandalone } from "./standalone";
 
 const codec = Schema.fromJsonString(Record);
 const Row = Schema.Struct({ payload: Schema.String, version: Schema.String });
@@ -26,10 +28,7 @@ const layer = Layer.effect(
     if (!sql.onDialectOrElse({ sqlite: () => true, pg: () => true, orElse: () => false }))
       return yield* OAuthUnavailable.make({});
 
-    const noTransaction = Effect.gen(function* () {
-      if (Option.isSome(yield* Effect.serviceOption(sql.transactionService)))
-        return yield* OAuthUnavailable.make({});
-    });
+    const noTransaction = requireStandalone(() => OAuthUnavailable.make({}), sql);
 
     const failure = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
       effect.pipe(Effect.mapError(() => OAuthUnavailable.make({})));

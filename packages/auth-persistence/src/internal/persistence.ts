@@ -7,7 +7,7 @@ import { PhoneAdmission, PhoneSignInTargets, PhoneOtpUnavailable } from "@yielde
 import { ProofPersistence, ProofUnavailable } from "@yielded/auth/Proofs";
 import { AuthenticationAuthority, SessionUnavailable } from "@yielded/auth/Sessions";
 import type { Table } from "drizzle-orm";
-import { Context, Effect, Layer, Option, Schema } from "effect";
+import { Context, Effect, Layer, Schema } from "effect";
 import { SqlClient } from "effect/unstable/sql";
 
 import {
@@ -35,6 +35,7 @@ import { makeProofKernel, type ProofSqlDatabase, type ProofSqlQuery } from "./pr
 import type { QueryOperations } from "./query-operations";
 import { makeRegistrationAuthority, type CreateSubject } from "./registration";
 import { makeSessionKernel, type SessionSqlDatabase } from "./session-kernel";
+import { requireStandalone } from "./standalone";
 import { makeMappings } from "./storage-mapping";
 import {
   tableDefinition,
@@ -323,10 +324,7 @@ export const createPersistence = <T extends object, R>(
         ]);
         const mappings = makeMappings(storage);
 
-        const standalone = <E>(error: () => E) =>
-          Effect.serviceOption(client.transactionService).pipe(
-            Effect.flatMap((value) => (Option.isNone(value) ? Effect.void : Effect.fail(error()))),
-          );
+        const standalone = <E>(error: () => E) => requireStandalone(error, client);
 
         // Backend validation owns the foreign query-builder shape, never the decoded rows.
         const native = database as ProofSqlDatabase &

@@ -1,5 +1,7 @@
-import { Context, Effect, Option, Predicate } from "effect";
+import { Context, Effect, Predicate } from "effect";
 import type * as SqlClient from "effect/unstable/sql/SqlClient";
+
+import { requireStandalone } from "../internal/standalone";
 
 type TransactionService = Context.Key<
   SqlClient.TransactionConnection,
@@ -27,12 +29,5 @@ export const sqlClientStandaloneGuard = <Failure>(
 
   if (service === undefined) return Effect.suspend(() => Effect.fail(unavailable()));
 
-  return Effect.serviceOption(service).pipe(
-    Effect.flatMap(
-      Option.match({
-        onNone: () => Effect.void,
-        onSome: () => Effect.fail(unavailable()),
-      }),
-    ),
-  );
+  return requireStandalone(unavailable, { transactionService: service });
 };

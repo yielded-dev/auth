@@ -1,3 +1,4 @@
+import * as LibsqlClient from "@effect/sql-libsql/LibsqlClient";
 import * as SqliteClient from "@effect/sql-sqlite-node/SqliteClient";
 import { it } from "@effect/vitest";
 import * as GitHub from "@yielded/auth/GitHub";
@@ -446,20 +447,29 @@ it.effect(
   },
 );
 
-it.effect("persistence rejects ambient transactions", () =>
-  Effect.gen(function* () {
-    const persistence = yield* OAuthApp.Persistence;
-    // The normal storage contract rejects ambient transactions, so a caller
-    // cannot obtain a session from a grant write it later rolls back.
-    const sql = yield* SqlClient.SqlClient;
+for (const [name, client] of [
+  ["SQLite", SqliteClient.layer({ filename: ":memory:" })],
+  ["libSQL", LibsqlClient.layer({ url: "file::memory:" })],
+] as const) {
+  it.effect(`${name} persistence rejects ambient transactions`, () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
 
-    const outcome = yield* Effect.exit(
-      sql.withTransaction(persistence.get("strava-test", "missing")),
-    );
+      yield* sql.unsafe(OAuthAppPersistence.migration);
+      const persistence = yield* OAuthApp.Persistence;
 
-    expect(Exit.isFailure(outcome)).toBe(true);
-  }).pipe(Effect.provide(durable)),
-);
+      expect(yield* persistence.get("strava-test", "missing")).toBeUndefined();
+
+      // Never expose a successful storage result before an outer owner's commit.
+      const error = yield* sql
+        .withTransaction(persistence.get("strava-test", "missing"))
+        .pipe(Effect.flip);
+
+      expect(error._tag).toBe("OAuthUnavailable");
+      expect(yield* persistence.get("strava-test", "missing")).toBeUndefined();
+    }).pipe(Effect.provide(OAuthAppPersistence.layer), Effect.provide(client)),
+  );
+}
 
 it.effect(
   "a lost grant-commit response issues no session and cannot repeat the authorization code",

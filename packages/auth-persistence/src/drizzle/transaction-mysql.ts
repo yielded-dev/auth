@@ -65,6 +65,8 @@ export const mysqlTransaction = <A, E, R, Failure>(
         commit: () => statement("COMMIT"),
         rollback: () => statement("ROLLBACK"),
         savepoint: (_connection, id) => statement(`SAVEPOINT effect_auth_oauth_${id}`),
+        releaseSavepoint: (_connection, id) =>
+          statement(`RELEASE SAVEPOINT effect_auth_oauth_${id}`),
         rollbackSavepoint: (_connection, id) =>
           statement(`ROLLBACK TO SAVEPOINT effect_auth_oauth_${id}`),
       });

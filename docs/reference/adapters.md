@@ -272,6 +272,16 @@ secret keys. Adapters provide implementations; they are not installed automatica
 Install the selected driver's Effect SQL and Drizzle peers. Import it directly to
 avoid loading unrelated adapters. Shared mapping types live in `@yielded/auth-persistence/drizzle`.
 
+Effect SQL peers must be rc.117 or newer. The native PostgreSQL driver accepts one
+statement per query, decodes `int8` as `bigint`, timestamps as `Date`, and `bytea`
+as `Uint8Array`. Match application-owned column codecs to these values; use
+`sql.json` for JSON parameters. Set `prepare: false` for poolers that cannot retain
+prepared statements between queries.
+
+Standalone libSQL operations reject any ambient libSQL transaction, including one
+belonging to another client. Use the explicit transaction coordinators when
+application writes and auth changes must share a commit.
+
 ## Passwords
 
 Use `makePasswordPersistenceServices` for verification and mutation storage;

@@ -21,16 +21,16 @@ const app = OAuthApp.make("github", {
 
 const runtime = Layer.unwrap(
   Effect.gen(function* () {
-    const origin = yield* Config.string("APP_ORIGIN").pipe(
+    const origin = yield* Config.String("APP_ORIGIN").pipe(
       Config.withDefault("http://localhost:3000"),
     );
 
-    const clientId = yield* Config.string("GITHUB_CLIENT_ID");
-    const clientSecret = yield* Config.redacted("GITHUB_CLIENT_SECRET");
-    const githubUserId = yield* Config.string("GITHUB_USER_ID");
-    const sessionKey = yield* Config.redacted("SESSION_KEY");
-    const transactionKey = yield* Config.redacted("OAUTH_TRANSACTION_KEY");
-    const tokenKey = yield* Config.redacted("OAUTH_TOKEN_KEY");
+    const clientId = yield* Config.String("GITHUB_CLIENT_ID");
+    const clientSecret = yield* Config.Redacted("GITHUB_CLIENT_SECRET");
+    const githubUserId = yield* Config.String("GITHUB_USER_ID");
+    const sessionKey = yield* Config.Redacted("SESSION_KEY");
+    const transactionKey = yield* Config.Redacted("OAUTH_TRANSACTION_KEY");
+    const tokenKey = yield* Config.Redacted("OAUTH_TOKEN_KEY");
 
     const keyring = (material: Redacted.Redacted<string>) => ({
       activeKeyId: "v1",

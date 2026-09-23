@@ -20,10 +20,10 @@ const SendResponse = Schema.Struct({
 // Cloudflare REST sending works with the local Bun server; no Worker binding is needed.
 export const DeliveryLive = Layer.unwrap(
   Effect.gen(function* () {
-    const accountId = yield* Config.string("CLOUDFLARE_ACCOUNT_ID");
-    const token = yield* Config.redacted("CLOUDFLARE_API_TOKEN");
+    const accountId = yield* Config.String("CLOUDFLARE_ACCOUNT_ID");
+    const token = yield* Config.Redacted("CLOUDFLARE_API_TOKEN");
 
-    const from = yield* Config.string("AUTH_EMAIL_FROM").pipe(
+    const from = yield* Config.String("AUTH_EMAIL_FROM").pipe(
       Config.withDefault("hello@effect-agent.com"),
     );
 

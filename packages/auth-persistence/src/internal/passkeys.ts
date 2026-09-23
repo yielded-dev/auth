@@ -36,6 +36,7 @@ import type { PasskeyTargetConfiguration } from "./passkey/target";
 import type { Backend } from "./persistence";
 import type { ProofSqlDatabase } from "./proof-kernel";
 import type { QueryOperations } from "./query-operations";
+import { requireStandalone } from "./standalone";
 import { storageTables, type StorageRole } from "./storage-tables";
 
 const profileJson = Schema.fromJsonString(PasskeyProfile);
@@ -395,12 +396,7 @@ export const makeComposedPasskeys = (
         mode: "interactive",
         dialect,
         locking: dialect === "pg",
-        standaloneGuard: () =>
-          Effect.serviceOption(client.transactionService).pipe(
-            Effect.flatMap((value) =>
-              value._tag === "None" ? Effect.void : Effect.fail(unavailable()),
-            ),
-          ),
+        standaloneGuard: () => requireStandalone(unavailable, client),
       };
 
       // The backend has already checked the native query builder; schemas check stored values.
