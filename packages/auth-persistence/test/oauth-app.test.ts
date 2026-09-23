@@ -31,6 +31,14 @@ const keys = (byte: number) => ({
 
 const sessionConfig = { origin, sessionKeys: keys(1) };
 
+const database = Layer.effectDiscard(
+  Effect.gen(function* () {
+    yield* (yield* SqlClient.SqlClient).unsafe(OAuthAppPersistence.migration);
+  }),
+).pipe(Layer.provideMerge(SqliteClient.layer({ filename: ":memory:" })));
+
+const durable = OAuthAppPersistence.layer.pipe(Layer.provideMerge(database));
+
 it.effect(
   "the managed GitHub example signs in with PKCE and retains refreshable API access",
   () => {
@@ -42,14 +50,6 @@ it.effect(
     });
 
     const exchanges: Array<URLSearchParams> = [];
-
-    const storage = Layer.effectDiscard(
-      Effect.gen(function* () {
-        const sql = yield* SqlClient.SqlClient;
-
-        yield* sql.unsafe(OAuthAppPersistence.migration);
-      }),
-    ).pipe(Layer.provideMerge(SqliteClient.layer({ filename: ":memory:" })));
 
     const live = github
       .layer({
@@ -82,7 +82,7 @@ it.effect(
         }),
       })
       .pipe(
-        Layer.provide(OAuthAppPersistence.layer.pipe(Layer.provide(storage))),
+        Layer.provide(durable),
         Layer.provide(
           Layer.succeed(github.Accounts, {
             resolve: (verified) =>
@@ -193,18 +193,6 @@ const harness = (
       );
     }),
   );
-
-  const database = SqliteClient.layer({ filename: ":memory:" });
-
-  const migrated = Layer.effectDiscard(
-    Effect.gen(function* () {
-      const sql = yield* SqlClient.SqlClient;
-
-      yield* sql.unsafe(OAuthAppPersistence.migration);
-    }),
-  ).pipe(Layer.provideMerge(database));
-
-  const durable = OAuthAppPersistence.layer.pipe(Layer.provideMerge(migrated));
 
   const storage = settings.unknownGrantCommit
     ? Layer.effect(
@@ -448,16 +436,19 @@ it.effect(
       expect(replay.status).toBe(400);
       expect(h.requests.filter((value) => value === "authorization_code")).toHaveLength(1);
       expect(h.signals.every((signal) => signal.aborted)).toBe(true);
+
+      const flowId = started.cookie.slice(started.cookie.indexOf("=") + 1).split(".")[0];
+      const flow = yield* (yield* OAuthApp.Persistence).get("strava-test", `flow/${flowId}`);
+
+      expect(flow).toMatchObject({ _tag: "Flow", status: "Claimed" });
+      expect(flow).not.toHaveProperty("sealed");
     }).pipe(Effect.provide(h.live));
   },
 );
 
-it.effect("persistence rejects ambient transactions before any provider exchange", () => {
-  const h = harness();
-
-  return Effect.gen(function* () {
+it.effect("persistence rejects ambient transactions", () =>
+  Effect.gen(function* () {
     const persistence = yield* OAuthApp.Persistence;
-    const started = yield* start;
     // The normal storage contract rejects ambient transactions, so a caller
     // cannot obtain a session from a grant write it later rolls back.
     const sql = yield* SqlClient.SqlClient;
@@ -467,10 +458,8 @@ it.effect("persistence rejects ambient transactions before any provider exchange
     );
 
     expect(Exit.isFailure(outcome)).toBe(true);
-    expect(h.requests).toHaveLength(0);
-    expect(started.callback).toContain("state=");
-  }).pipe(Effect.provide(h.live));
-});
+  }).pipe(Effect.provide(durable)),
+);
 
 it.effect(
   "a lost grant-commit response issues no session and cannot repeat the authorization code",
@@ -675,16 +664,10 @@ it.effect("a confidential provider retains its unchanged refresh token", () => {
     }),
   };
 
-  const database = Layer.effectDiscard(
-    Effect.gen(function* () {
-      yield* (yield* SqlClient.SqlClient).unsafe(OAuthAppPersistence.migration);
-    }),
-  ).pipe(Layer.provideMerge(SqliteClient.layer({ filename: ":memory:" })));
-
   const live = app
     .layer({ origin, provider, sessionKeys: keys(1), transactionKeys: keys(2), tokenKeys: keys(3) })
     .pipe(
-      Layer.provide(OAuthAppPersistence.layer.pipe(Layer.provide(database))),
+      Layer.provide(durable),
       Layer.provide(
         Layer.succeed(app.Accounts, {
           resolve: () => Effect.succeed({ subjectId: SubjectId.make("user-123"), claims: {} }),
@@ -760,12 +743,6 @@ it.effect("the Strava token transport refuses redirects", () => {
     returnTargets: ["/account"],
   });
 
-  const database = Layer.effectDiscard(
-    Effect.gen(function* () {
-      yield* (yield* SqlClient.SqlClient).unsafe(OAuthAppPersistence.migration);
-    }),
-  ).pipe(Layer.provideMerge(SqliteClient.layer({ filename: ":memory:" })));
-
   const origin = "https://app.example.com";
 
   const live = app
@@ -781,7 +758,7 @@ it.effect("the Strava token transport refuses redirects", () => {
       }),
     })
     .pipe(
-      Layer.provide(OAuthAppPersistence.layer.pipe(Layer.provide(database))),
+      Layer.provide(durable),
       Layer.provide(
         Layer.succeed(app.Accounts, {
           resolve: () => Effect.succeed({ subjectId: SubjectId.make("user-123"), claims: {} }),

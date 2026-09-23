@@ -42,13 +42,6 @@ export interface Options<E, R> extends SessionOptions {
   readonly tokenKeys: OAuthTransactionKeyring;
 }
 
-export type Failure =
-  | OAuthRejected
-  | OAuthUnavailable
-  | OAuthConnectedBusy
-  | OAuthConnectedReauthorizationRequired
-  | SessionInvalid;
-
 export type ConnectionReference = Pick<OAuthConnectedTokenContext, "subjectId" | "grantId">;
 
 export interface Workflow<Session extends ConnectionReference> {
@@ -56,14 +49,14 @@ export interface Workflow<Session extends ConnectionReference> {
     returnTarget?: string,
   ) => Effect.Effect<
     AuthOperationResult<{ readonly authorizationUrl: Redacted.Redacted<string> }>,
-    Failure
+    OAuthRejected | OAuthUnavailable
   >;
   readonly complete: (
     binding: Redacted.Redacted<string>,
     response: URLSearchParams,
   ) => Effect.Effect<
     AuthOperationResult<{ readonly session: Session; readonly returnTarget: string }>,
-    Failure
+    OAuthRejected | OAuthUnavailable | OAuthConnectedBusy
   >;
   /** Server-only capability. Obtain this reference from a verified session or
    * trusted application storage; never forward arbitrary caller-supplied IDs.
@@ -72,11 +65,19 @@ export interface Workflow<Session extends ConnectionReference> {
   readonly withAccessToken: <A, E, R>(
     connection: Pick<Session, "subjectId" | "grantId">,
     use: (token: Redacted.Redacted<string>) => Effect.Effect<A, E, R>,
-  ) => Effect.Effect<A, E | Failure, R>;
+  ) => Effect.Effect<
+    A,
+    | E
+    | OAuthRejected
+    | OAuthUnavailable
+    | OAuthConnectedBusy
+    | OAuthConnectedReauthorizationRequired,
+    R
+  >;
   /** Disable local API access. App sessions retain their original expiry. */
   readonly disconnect: (
     connection: Pick<Session, "subjectId" | "grantId">,
-  ) => Effect.Effect<void, Failure>;
+  ) => Effect.Effect<void, OAuthRejected | OAuthUnavailable | OAuthConnectedBusy>;
 }
 
 export interface SessionVerifier<Session> {
@@ -89,11 +90,11 @@ const Version = Schema.String.check(Schema.isPattern(/^[A-Za-z0-9_-]{43}$/));
 
 export const FlowRecord = Schema.TaggedStruct("Flow", {
   version: Version,
-  status: Schema.Literals(["Pending", "Claimed", "Finished"]),
+  /** Claiming permanently consumes the flow and discards its encrypted secrets. */
+  status: Schema.Literals(["Pending", "Claimed"]),
   context: OAuthSignInTransactionContext,
   configuration: OAuthConnectedConfiguration,
   sealed: Schema.optionalKey(OAuthSealedTransaction),
-  deadlineMillis: Schema.Natural,
 });
 
 export const GrantRecord = Schema.TaggedStruct("Grant", {

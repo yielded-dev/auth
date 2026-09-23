@@ -384,7 +384,6 @@ export const make = <
             context,
             configuration,
             sealed: yield* transactions.seal({ context, secrets: prepared.secrets }),
-            deadlineMillis: context.expiresAtMillis,
           });
 
           if (!(yield* store.insert(id, `flow/${flowId}`, row)))
@@ -424,7 +423,6 @@ export const make = <
             row.context.flowId !== flowId ||
             row.context.redirectUri !== callbackUrl ||
             row.context.expiresAtMillis <= time ||
-            row.deadlineMillis <= time ||
             row.context.requestBindingVerifier !== (yield* digest(secret))
           )
             return yield* OAuthRejected.make({});
@@ -449,30 +447,20 @@ export const make = <
           )
             return yield* OAuthRejected.make({});
 
-          const owned = FlowRecord.make({
-            ...row,
+          const deadlineMillis = time + configured.exchangeTimeoutMillis;
+
+          const claimed = FlowRecord.make({
+            _tag: "Flow",
             status: "Claimed",
             version: yield* random,
-            deadlineMillis: time + configured.exchangeTimeoutMillis,
+            context: row.context,
+            configuration: row.configuration,
           });
 
-          if (!(yield* cas(key, row, owned))) return yield* OAuthRejected.make({});
+          // The winning claim discards stored secrets before the sole exchange.
+          if (!(yield* cas(key, row, claimed))) return yield* OAuthRejected.make({});
 
-          const finish = store.compareAndSet(
-            id,
-            key,
-            owned.version,
-            FlowRecord.make({
-              _tag: "Flow",
-              status: "Finished",
-              version: yield* random,
-              context: owned.context,
-              configuration: owned.configuration,
-              deadlineMillis: owned.deadlineMillis,
-            }),
-          );
-
-          const result = yield* bounded(
+          return yield* bounded(
             Effect.gen(function* () {
               const code = query.get("code");
               const scope = query.get("scope");
@@ -551,7 +539,7 @@ export const make = <
                 .encode(session)
                 .pipe(Effect.mapError(() => OAuthUnavailable.make({})));
 
-              if (issuedAtMillis >= owned.deadlineMillis) return yield* OAuthUnavailable.make({});
+              if (issuedAtMillis >= deadlineMillis) return yield* OAuthUnavailable.make({});
 
               const saved =
                 existing === undefined
@@ -559,7 +547,7 @@ export const make = <
                   : yield* cas(grantKey, existing, next);
 
               if (!saved) return yield* OAuthConnectedBusy.make({});
-              if ((yield* now) >= owned.deadlineMillis) return yield* OAuthUnavailable.make({});
+              if ((yield* now) >= deadlineMillis) return yield* OAuthUnavailable.make({});
 
               return {
                 value: { session, returnTarget: row.context.returnTarget },
@@ -574,9 +562,7 @@ export const make = <
                 ],
               };
             }),
-          ).pipe(Effect.ensuring(bounded(finish).pipe(Effect.ignore)));
-
-          return result;
+          );
         }, safe);
 
         const connection = Effect.fn("OAuthApp.connection")(function* (
