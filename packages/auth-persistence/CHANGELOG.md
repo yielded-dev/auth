@@ -1,5 +1,17 @@
 # @yielded/auth-persistence
 
+## 0.1.0-beta.8
+
+### Minor Changes
+
+- [#28](https://github.com/yielded-dev/auth/pull/28) [`9f88281`](https://github.com/yielded-dev/auth/commit/9f8828130424b45f8f74d462a4aac524e22511f2) Thanks [@danieljvdm](https://github.com/danieljvdm)! - Add managed OAuth sign-in that retains provider access and issues stateless application sessions, with GitHub and Strava adapters and SQL storage.
+  Allow HTTP loopback callbacks for local OAuth development while requiring HTTPS for provider endpoints.
+
+### Patch Changes
+
+- Updated dependencies [[`9f88281`](https://github.com/yielded-dev/auth/commit/9f8828130424b45f8f74d462a4aac524e22511f2)]:
+  - @yielded/auth@0.1.0-beta.8
+
 ## 0.1.0-beta.7
 
 ### Minor Changes

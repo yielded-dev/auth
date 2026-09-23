@@ -19,6 +19,7 @@
     "github-response-issuer",
     "keep-session-on-email-confirmation",
     "keep-session-on-passkey-enrollment",
+    "managed-oauth-app",
     "managed-passkey-storage",
     "modular-auth-persistence",
     "phone-sign-in-layers",
