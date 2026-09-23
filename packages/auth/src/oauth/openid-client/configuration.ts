@@ -148,11 +148,16 @@ const forbiddenHeaders = new Set([
 const configError = (reason: OpenIdClientConfigurationError["reason"]) =>
   OpenIdClientConfigurationError.make({ reason });
 
-export const endpoint = (value: string): URL => {
+const protocolUrl = (value: string, allowLoopback: boolean): URL => {
   const url = new URL(value);
 
   if (
-    url.protocol !== "https:" ||
+    (url.protocol !== "https:" &&
+      !(
+        allowLoopback &&
+        url.protocol === "http:" &&
+        ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname)
+      )) ||
     url.username !== "" ||
     url.password !== "" ||
     value.includes("#") ||
@@ -163,6 +168,12 @@ export const endpoint = (value: string): URL => {
 
   return url;
 };
+
+/** Provider endpoints always require HTTPS. */
+export const endpoint = (value: string): URL => protocolUrl(value, false);
+
+/** Local development callbacks may use HTTP on an exact loopback host. */
+export const callbackEndpoint = (value: string): URL => protocolUrl(value, true);
 
 const checkParameters = (parameters: Readonly<Record<string, string>> | undefined) => {
   for (const key of Object.keys(parameters ?? {})) {
@@ -305,7 +316,7 @@ export const installConfigurations = Effect.fn("OpenIdClient.installConfiguratio
         const callbacks = new Set<string>();
 
         for (const callback of provider.callbacks) {
-          const url = endpoint(callback.redirectUri);
+          const url = callbackEndpoint(callback.redirectUri);
 
           if (
             url.href !== callback.redirectUri ||

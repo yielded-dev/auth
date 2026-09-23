@@ -23,6 +23,7 @@ import {
 import { AuthenticationRequired } from "../operations/errors";
 import { SecurityRevision } from "../sessions/models";
 import * as M from "./connectedModels";
+import { retainGrantTokens } from "./grantTokens";
 import { OAuthConnectedPersistence } from "./OAuthConnectedPersistence";
 import { OAuthConnectedProtocol } from "./OAuthConnectedProtocol";
 import { OAuthConnectedTokenProtector } from "./OAuthConnectedTokenProtector";
@@ -240,38 +241,14 @@ export const connectedGrantResponse = Effect.fn("OAuthConnected.grantResponse")(
   )
     return yield* OAuthUnavailable.make({});
 
-  const retainedRefresh =
-    profile.retention === "access-and-refresh"
-      ? (response.material.refreshToken ?? previous?.material.refreshToken)
-      : undefined;
-
-  const material = snapshotOAuthSync(M.OAuthConnectedTokenMaterial, {
-    namespace: response.material.namespace,
-    accessToken: response.material.accessToken,
-    continuation: response.material.continuation,
-    ...(retainedRefresh === undefined
-      ? {}
-      : { refreshToken: Redacted.make(Redacted.value(retainedRefresh)) }),
-  });
-
-  const oldRefreshRetained =
-    previous !== undefined &&
-    (response.material.refreshToken === undefined ||
-      (previous.material.refreshToken !== undefined &&
-        Redacted.value(response.material.refreshToken) ===
-          Redacted.value(previous.material.refreshToken)));
-
-  const oldExpiry = oldRefreshRetained
-    ? previous?.context.metadata.refreshExpiresAtMillis
-    : undefined;
-
-  const refreshExpires =
-    oldExpiry === undefined
-      ? response.refreshExpiresAtMillis
-      : Math.min(oldExpiry, response.refreshExpiresAtMillis ?? Number.MAX_SAFE_INTEGER);
+  const { material, refreshExpiresAtMillis: refreshExpires } = yield* retainGrantTokens(
+    profile,
+    response,
+    previous,
+  );
 
   const refreshUseUntil =
-    retainedRefresh === undefined
+    material.refreshToken === undefined
       ? undefined
       : Math.min(
           previous?.context.metadata.refreshUseUntilMillis ??
@@ -295,7 +272,7 @@ export const connectedGrantResponse = Effect.fn("OAuthConnected.grantResponse")(
     ...(response.accessExpiresAtMillis === undefined
       ? {}
       : { accessExpiresAtMillis: response.accessExpiresAtMillis }),
-    ...(retainedRefresh === undefined || refreshExpires === undefined
+    ...(material.refreshToken === undefined || refreshExpires === undefined
       ? {}
       : { refreshExpiresAtMillis: refreshExpires }),
     ...(refreshUseUntil === undefined ? {} : { refreshUseUntilMillis: refreshUseUntil }),

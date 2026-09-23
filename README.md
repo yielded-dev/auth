@@ -7,6 +7,11 @@ identity authority, persistence, protocol verification, and credential delivery.
 `@yielded/auth-persistence` supplies direct Effect SQL, Drizzle bindings, and opt-in
 managed storage. Optional adapters also support Cloudflare, OAuth/OIDC, and WebAuthn.
 
+For an app using GitHub, [managed OAuth](docs/guide/oauth.md#sign-in-and-connect-provider-access)
+handles sign-in, encrypted provider tokens, refresh, and stateless session cookies
+without a session repository. Supply your provider configuration, account policy,
+keys, and SQL connection; see the [runnable example](examples/auth/src/github-app.ts).
+
 See the [persistence examples](docs/reference/adapters.md#runnable-examples) for
 managed Drizzle, application-owned Drizzle, raw SQL, and custom service implementations.
 

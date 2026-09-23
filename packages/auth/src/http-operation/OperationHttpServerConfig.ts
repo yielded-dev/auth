@@ -1,8 +1,9 @@
 import { Context, Effect, Layer, Schema } from "effect";
 import { Cookies } from "effect/unstable/http";
 
+import { origin } from "../internal/origin";
 import type { CredentialSlot } from "../operations/credentials";
-import { headerName, origin } from "./configuration-schema";
+import { headerName } from "./configuration-schema";
 import { OperationHttpConfigurationError } from "./errors";
 import { credentialSlots, type OperationCookie, type OperationHttpConfiguration } from "./models";
 

@@ -9,6 +9,7 @@ type FailureStage =
   | "private-output"
   | "after-hook"
   | "proof-delivery"
+  | "oauth-app"
   | "oauth-sign-in"
   | "oauth-accounts"
   | "oauth-exchange"

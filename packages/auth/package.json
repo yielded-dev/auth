@@ -41,6 +41,8 @@
     "./Hooks": "./src/Hooks.ts",
     "./Identity": "./src/Identity.ts",
     "./OAuth": "./src/OAuth.ts",
+    "./OAuthApp": "./src/OAuthApp.ts",
+    "./Strava": "./src/Strava.ts",
     "./Operations": "./src/Operations.ts",
     "./Rpc": "./src/Rpc.ts",
     "./Schema": "./src/Schema.ts",

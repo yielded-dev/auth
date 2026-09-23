@@ -450,6 +450,47 @@ describe("GitHub OAuth App and Google OIDC composition", () => {
       }),
   );
 
+  it.live("allows HTTP loopback callbacks while keeping provider endpoints HTTPS-only", () =>
+    Effect.gen(function* () {
+      const transport = makeTransport();
+
+      const credentials = {
+        clientId: "local-example",
+        clientSecret: Redacted.make("local-secret"),
+      };
+
+      for (const host of ["localhost", "127.0.0.1", "[::1]"]) {
+        const redirectUri = `http://${host}:3000/auth/github/callback`;
+
+        const protocol = yield* loadGitHubProtocol({
+          ...credentials,
+          redirectUri,
+          fetch: transport.fetch,
+        });
+
+        expect((yield* begin(protocol, "github")).configuration.redirectUri).toBe(redirectUri);
+      }
+      for (const redirectUri of [
+        "http://app.example.com/auth/github/callback",
+        "http://localhost.example.com/auth/github/callback",
+        "http://user@localhost:3000/auth/github/callback",
+      ]) {
+        yield* expectTag(
+          loadGitHubProtocol({ ...credentials, redirectUri, fetch: transport.fetch }),
+          "OpenIdClientConfigurationError",
+        );
+      }
+      yield* expectTag(
+        loadProtocol({
+          providers: [{ ...github(), authorizationEndpoint: "http://localhost:9000/authorize" }],
+          fetch: transport.fetch,
+        }),
+        "OpenIdClientConfigurationError",
+      );
+      expect(transport.requests).toHaveLength(0);
+    }),
+  );
+
   for (const claims of [
     { name: undefined },
     { email: "unverified@example.test", email_verified: false },

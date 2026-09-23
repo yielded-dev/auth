@@ -1,10 +1,10 @@
 import { Effect, Layer, Result, Schema } from "effect";
 
 import { cryptoLayer } from "../auth/defaults";
-import { origin as Origin } from "../http-operation/configuration-schema";
 import type { AnyRoute } from "../http-operation/contract";
 import { OperationHttpConfigurationError, OperationHttpError } from "../http-operation/errors";
 import { oauthCallback, type OAuthHttpCallback } from "../http-operation/server";
+import { origin as Origin } from "../internal/origin";
 import { selectCallback } from "../oauth/callback";
 import { OAuthProtocol } from "../oauth/OAuthProtocol";
 import type { ProviderDefinition } from "../oauth/providerDefinition";

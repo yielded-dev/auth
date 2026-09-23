@@ -1,5 +1,7 @@
 import { Effect, Layer } from "effect";
 
+import type { Provider as AppProvider } from "../app/models";
+import { OAuthConnectedProfile, OAuthPermissionProfileKey } from "../connectedModels";
 import { OAuthConnectedProtocol } from "../OAuthConnectedProtocol";
 import { OAuthProtocol } from "../OAuthProtocol";
 import type { OpenIdClientConfigurationError } from "../openid-client/models";
@@ -11,6 +13,7 @@ import {
 import { makeOpenIdClientOAuthProtocol } from "../openid-client/protocol";
 import type { ProviderDefinition } from "../providerDefinition";
 import type { OAuthUnavailable } from "../signInErrors";
+import { gitHubOAuthAppProviderKey } from "./identity";
 import type {
   GitHubOAuthAppConnectedProtocolOptions,
   GitHubOAuthAppGeneration,
@@ -52,6 +55,56 @@ export type ProviderRegistration = Pick<GitHubOAuthAppGeneration, "clientId" | "
 
 export type ProviderOptions = Transport &
   (ProviderRegistration | { readonly registrations: ReadonlyArray<ProviderRegistration> });
+
+export type AppProviderOptions = Transport &
+  Pick<ProviderRegistration, "clientId" | "clientSecret"> & {
+    /** API permissions; defaults to read:user. Refresh access is requested separately. */
+    readonly scopes?: ReadonlyArray<string>;
+    /** Local refresh retention; defaults to 30 days from the latest exchange. */
+    readonly maximumRefreshLifetimeMillis?: number;
+  };
+
+/** GitHub.com OAuth App sign-in and API access through OAuthApp. Reuses the
+ * GitHub verifier, S256 PKCE, issuer validation and rotating-token protocol.
+ * Requests offline_access for expiring tokens; does not configure a GitHub App.
+ */
+export const appProvider = (
+  options: AppProviderOptions,
+): AppProvider<OpenIdClientConfigurationError | OAuthUnavailable> => ({
+  configure: Effect.fn("GitHub.appProvider.configure")(function* (redirectUri) {
+    const configured = yield* resolveOptions(() => {
+      const profile = OAuthConnectedProfile.make({
+        key: OAuthPermissionProfileKey.make("github"),
+        generation: 1,
+        issuance: "active",
+        provider: gitHubOAuthAppProviderKey,
+        clientRegistrationId: options.clientId,
+        scopes: options.scopes ?? ["read:user"],
+        resources: [],
+        retention: "access-and-refresh",
+        maximumAccessLifetimeMillis: 8 * 60 * 60 * 1000,
+        maximumRefreshLifetimeMillis:
+          options.maximumRefreshLifetimeMillis ?? 30 * 24 * 60 * 60 * 1000,
+        refreshAheadMillis: 60_000,
+        refresh: "rotating",
+        revocation: "cohort",
+      });
+
+      return {
+        profile,
+        registration: { ...registration({ ...options, redirectUri }), profiles: [profile] },
+      };
+    });
+
+    const protocol = yield* makeGitHubOAuthAppConnectedProtocol({
+      registrations: [configured.registration],
+      timeoutSeconds: options.timeoutSeconds ?? 10,
+      ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
+    });
+
+    return { profile: configured.profile, protocol };
+  }),
+});
 
 /** Declare GitHub for Http.layer. The host supplies its provider key and
  * callback destinations. Retired registrations remain available to finish flows. */

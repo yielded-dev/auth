@@ -2,6 +2,8 @@ export {
   layer,
   layerConnected,
   provider,
+  appProvider,
+  type AppProviderOptions,
   type Options,
   type ProviderOptions,
   type ProviderRegistration,
