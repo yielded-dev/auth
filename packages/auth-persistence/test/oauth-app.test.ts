@@ -408,7 +408,7 @@ it.effect("an uncertain refresh is never repeated, including after the attempt d
     expect(logs).toHaveLength(1);
     expect(logs[0]).toContain("Auth oauth-app failed");
     expect(logs[0]).not.toContain("provider disconnected after consuming refresh token");
-  }).pipe(Effect.provide(h.live), Effect.provide(Logger.layer([logger])));
+  }).pipe(Effect.provide([h.live, Logger.layer([logger])]));
 });
 
 it.effect(
