@@ -1,13 +1,15 @@
 import * as SqliteClient from "@effect/sql-sqlite-node/SqliteClient";
 import { it } from "@effect/vitest";
 import * as GitHub from "@yielded/auth/GitHub";
+import * as OAuth from "@yielded/auth/OAuth";
 import { OAuthRejected, OAuthUnavailable } from "@yielded/auth/OAuth";
 import * as OAuthApp from "@yielded/auth/OAuthApp";
+import * as OpenIdClientConnected from "@yielded/auth/OpenIdClientConnected";
 import { SubjectId } from "@yielded/auth/Schema";
 import * as Strava from "@yielded/auth/Strava";
-import { Deferred, Effect, Encoding, Exit, Fiber, Layer, Redacted, Schema } from "effect";
+import { Deferred, Effect, Encoding, Exit, Fiber, Layer, Logger, Redacted, Schema } from "effect";
 import { TestClock } from "effect/testing";
-import { HttpClient, HttpClientResponse } from "effect/unstable/http";
+import { FetchHttpClient, HttpClient, HttpClientResponse } from "effect/unstable/http";
 import { SqlClient } from "effect/unstable/sql";
 import { expect } from "vite-plus/test";
 
@@ -391,6 +393,11 @@ it.effect("an application denial never installs a connection or issues a session
 
 it.effect("an uncertain refresh is never repeated, including after the attempt deadline", () => {
   const h = harness({ failedRefresh: true });
+  const logs: Array<string> = [];
+
+  const logger = Logger.make((entry) =>
+    logs.push(JSON.stringify(Logger.formatStructured.log(entry))),
+  );
 
   return Effect.gen(function* () {
     const signedIn = yield* signIn;
@@ -410,7 +417,10 @@ it.effect("an uncertain refresh is never repeated, including after the attempt d
 
     expect(Exit.isFailure(second)).toBe(true);
     expect(h.requests.filter((value) => value === "refresh_token")).toHaveLength(1);
-  }).pipe(Effect.provide(h.live));
+    expect(logs).toHaveLength(1);
+    expect(logs[0]).toContain("Auth oauth-app failed");
+    expect(logs[0]).not.toContain("provider disconnected after consuming refresh token");
+  }).pipe(Effect.provide(h.live), Effect.provide(Logger.layer([logger])));
 });
 
 it.effect(
@@ -574,3 +584,236 @@ it.effect(
       }).pipe(Effect.provide(h.live));
     }),
 );
+
+it.effect("a confidential provider retains its unchanged refresh token", () => {
+  const app = OAuthApp.make("confidential-refresh", {
+    claims: Schema.Struct({}),
+    returnTargets: ["/account"],
+  });
+
+  const origin = "https://app.example.com";
+  const providerKey = OAuth.OAuthProviderKey.make("generic");
+
+  const profile = OAuth.OAuthConnectedProfile.make({
+    key: OAuth.OAuthPermissionProfileKey.make("generic"),
+    generation: 1,
+    issuance: "active",
+    provider: providerKey,
+    clientRegistrationId: "test-client",
+    scopes: ["read"],
+    resources: [],
+    retention: "access-and-refresh",
+    maximumAccessLifetimeMillis: 60_000,
+    maximumRefreshLifetimeMillis: 86_400_000,
+    refreshAheadMillis: 0,
+    refresh: "confidential",
+    revocation: "unsupported",
+  });
+
+  let refreshes = 0;
+  const refreshTokens: Array<string | null> = [];
+
+  const provider = {
+    configure: Effect.fn(function* (callback: string) {
+      const protocol = yield* OpenIdClientConnected.makeOpenIdClientConnectedProtocol({
+        timeoutSeconds: 10,
+        providers: [
+          {
+            provider: providerKey,
+            configurationGeneration: 1,
+            issuance: "active",
+            issuer: OAuth.OAuthIssuer.make("https://provider.example"),
+            responseIssuerMode: "unsupported",
+            protocol: "oauth",
+            clientId: "test-client",
+            authentication: { method: "client_secret_post", secret: Redacted.make("dummy-secret") },
+            callbacks: [
+              {
+                callbackId: OAuth.OAuthCallbackId.make("generic"),
+                redirectUri: OAuth.OAuthRedirectUri.make(callback),
+              },
+            ],
+            clientRegistrationId: "test-client",
+            profiles: [profile],
+            resourceIndicators: "unsupported",
+            refreshExpiry: { field: "refresh_expires_in", zero: "expired" },
+            revocation: { mode: "unsupported" },
+            authorizationEndpoint: "https://provider.example/authorize",
+            tokenEndpoint: "https://provider.example/token",
+            pkceS256: true,
+            identitySource: {
+              url: "https://provider.example/user",
+              decodeIdentity: (body) =>
+                Schema.decodeUnknownEffect(Schema.Struct({ subject: Schema.String }))(body).pipe(
+                  Effect.mapError(() => OAuth.OAuthProtocolRejected.make({})),
+                ),
+            },
+          },
+        ],
+        fetch: async (url, init) => {
+          if (url === "https://provider.example/user") return Response.json({ subject: "123" });
+          if (url !== "https://provider.example/token") throw new Error("Unexpected request");
+          const params = init.body instanceof URLSearchParams ? init.body : new URLSearchParams();
+          const refresh = params.get("grant_type") === "refresh_token";
+
+          if (refresh) {
+            refreshes++;
+            refreshTokens.push(params.get("refresh_token"));
+          }
+
+          return Response.json({
+            token_type: "bearer",
+            access_token: `access-${refreshes}`,
+            scope: "read",
+            expires_in: 60,
+            ...(refresh ? {} : { refresh_token: "stable-refresh", refresh_expires_in: 180 }),
+          });
+        },
+      });
+
+      return { profile, protocol };
+    }),
+  };
+
+  const database = Layer.effectDiscard(
+    Effect.gen(function* () {
+      yield* (yield* SqlClient.SqlClient).unsafe(OAuthAppPersistence.migration);
+    }),
+  ).pipe(Layer.provideMerge(SqliteClient.layer({ filename: ":memory:" })));
+
+  const live = app
+    .layer({ origin, provider, sessionKeys: keys(1), transactionKeys: keys(2), tokenKeys: keys(3) })
+    .pipe(
+      Layer.provide(OAuthAppPersistence.layer.pipe(Layer.provide(database))),
+      Layer.provide(
+        Layer.succeed(app.Accounts, {
+          resolve: () => Effect.succeed({ subjectId: SubjectId.make("user-123"), claims: {} }),
+        }),
+      ),
+    );
+
+  return Effect.gen(function* () {
+    const service = yield* app.Service;
+    const start = yield* service.handle(new Request(`${origin}${app.paths.signIn}`));
+
+    expect(start.status).toBe(302);
+    const authorization = new URL(start.headers.get("location")!);
+
+    const query = new URLSearchParams({
+      state: authorization.searchParams.get("state")!,
+      code: "dummy-code",
+    });
+
+    const completed = yield* service.handle(
+      new Request(`${origin}${app.paths.callback}?${query}`, {
+        headers: { cookie: start.headers.getSetCookie()[0].split(";")[0] },
+      }),
+    );
+
+    expect(completed.status).toBe(302);
+
+    const cookie = completed.headers
+      .getSetCookie()
+      .find((value) => value.startsWith(`${app.cookieName}=`))!;
+
+    const session = yield* (yield* app.Sessions).verify(
+      Redacted.make(cookie.split(";")[0].slice(app.cookieName.length + 1)),
+    );
+
+    yield* TestClock.adjust("61 seconds");
+    expect(
+      yield* service.withAccessToken(session, (token) => Effect.succeed(Redacted.value(token))),
+    ).toBe("access-1");
+    yield* TestClock.adjust("61 seconds");
+
+    const second = yield* Effect.exit(
+      service.withAccessToken(session, (token) => Effect.succeed(Redacted.value(token))),
+    );
+
+    expect(second).toEqual(Exit.succeed("access-2"));
+    expect(refreshTokens).toEqual(["stable-refresh", "stable-refresh"]);
+    yield* TestClock.adjust("61 seconds");
+    const expired = yield* Effect.result(service.withAccessToken(session, () => Effect.void));
+
+    expect(expired).toMatchObject({
+      _tag: "Failure",
+      failure: { _tag: "OAuthConnectedReauthorizationRequired" },
+    });
+    expect(refreshes).toBe(2);
+  }).pipe(Effect.provide(live));
+});
+
+it.effect("the Strava token transport refuses redirects", () => {
+  const requests: Array<Request> = [];
+
+  const transport: typeof fetch = async (url, init) => {
+    requests.push(new Request(url, init));
+
+    return new Response(null, {
+      status: 307,
+      headers: { location: "https://elsewhere.example/token" },
+    });
+  };
+
+  const app = OAuthApp.make("redirect-audit", {
+    claims: Schema.Struct({}),
+    returnTargets: ["/account"],
+  });
+
+  const database = Layer.effectDiscard(
+    Effect.gen(function* () {
+      yield* (yield* SqlClient.SqlClient).unsafe(OAuthAppPersistence.migration);
+    }),
+  ).pipe(Layer.provideMerge(SqliteClient.layer({ filename: ":memory:" })));
+
+  const origin = "https://app.example.com";
+
+  const live = app
+    .layer({
+      origin,
+      sessionKeys: keys(1),
+      transactionKeys: keys(2),
+      tokenKeys: keys(3),
+      provider: Strava.provider({
+        clientId: "123",
+        clientSecret: Redacted.make("dummy-secret"),
+        scopes: ["activity:read_all"],
+      }),
+    })
+    .pipe(
+      Layer.provide(OAuthAppPersistence.layer.pipe(Layer.provide(database))),
+      Layer.provide(
+        Layer.succeed(app.Accounts, {
+          resolve: () => Effect.succeed({ subjectId: SubjectId.make("user-123"), claims: {} }),
+        }),
+      ),
+      Layer.provide(
+        FetchHttpClient.layer.pipe(Layer.provide(Layer.succeed(FetchHttpClient.Fetch, transport))),
+      ),
+    );
+
+  return Effect.gen(function* () {
+    const service = yield* app.Service;
+    const start = yield* service.handle(new Request(`${origin}${app.paths.signIn}`));
+    const authorization = new URL(start.headers.get("location")!);
+
+    const query = new URLSearchParams({
+      state: authorization.searchParams.get("state")!,
+      code: "dummy-code",
+      scope: "activity:read_all",
+    });
+
+    const completed = yield* service.handle(
+      new Request(`${origin}${app.paths.callback}?${query}`, {
+        headers: { cookie: start.headers.getSetCookie()[0].split(";")[0] },
+      }),
+    );
+
+    expect(completed.status).toBe(503);
+    expect(completed.headers.getSetCookie()).toHaveLength(0);
+    expect(requests).toHaveLength(1);
+    expect(requests[0].url).toBe("https://www.strava.com/oauth/token");
+    expect(requests[0].signal.aborted).toBe(true);
+    expect(requests[0].redirect).toBe("manual");
+  }).pipe(Effect.provide(live));
+});

@@ -20,13 +20,13 @@ Start with the [OAuth guide](../guide/oauth) for the flow and choice of API.
 
 Provide these to `app.layer`:
 
-| Dependency                                    | Application supplies                                                                  |
-| --------------------------------------------- | ------------------------------------------------------------------------------------- |
-| `origin`, `provider`                          | Trusted app origin and configured provider                                            |
-| `sessionKeys`, `transactionKeys`, `tokenKeys` | Three distinct keyrings                                                               |
-| `app.Accounts`                                | `resolve(verified)` → Effect of `{ subjectId, claims }`                               |
-| `OAuthApp.Persistence`                        | Durable flow and encrypted grant storage                                              |
-| Provider services                             | GitHub: `openid-client`; Strava: an Effect `HttpClient` without token-request retries |
+| Dependency                                    | Application supplies                                                                         |
+| --------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| `origin`, `provider`                          | Trusted app origin and configured provider                                                   |
+| `sessionKeys`, `transactionKeys`, `tokenKeys` | Three distinct keyrings                                                                      |
+| `app.Accounts`                                | `resolve(verified)` → Effect of `{ subjectId, claims }`                                      |
+| `OAuthApp.Persistence`                        | Durable flow and encrypted grant storage                                                     |
+| Provider services                             | GitHub: `openid-client`; Strava: an Effect `HttpClient` without retry or redirect middleware |
 
 `Accounts.resolve` checks invitations/status and owns provisioning. Reject with
 `OAuthRejected`; map infrastructure failures to `OAuthUnavailable`.
@@ -86,7 +86,7 @@ issued credential. Choose a lifetime that fits your authorization policy.
 
 These methods are server capabilities. Obtain the connection reference from a
 verified session or trusted storage. Disconnect cannot cancel work that already
-obtained a token.
+obtained a token. An omitted refresh token preserves the existing token and its provider expiry.
 
 | Failure                                 | Recovery                                                  |
 | --------------------------------------- | --------------------------------------------------------- |
@@ -198,7 +198,8 @@ The Strava adapter uses confidential-client authorization without PKCE. It check
 accepted scopes from the token response or bound callback and rechecks athlete
 identity on refresh. Its refresh retention is thirty days from the last successful
 exchange; this is library policy, not provider expiry. Use one managed owner per
-client registration. See [Strava's contract](https://developers.strava.com/docs/authentication/).
+client registration. Fetch redirects are disabled; custom HTTP clients must also reject redirects.
+See [Strava's contract](https://developers.strava.com/docs/authentication/).
 
 For plain OAuth with `OpenIdClient`, provide `authorizationEndpoint`, `tokenEndpoint`,
 `identitySource.url`, and `identitySource.decodeIdentity`. The decoder returns an

@@ -1,7 +1,12 @@
 import { Crypto, DateTime, Effect, Encoding, Redacted, Schema } from "effect";
-import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
+import {
+  FetchHttpClient,
+  HttpClient,
+  HttpClientRequest,
+  HttpClientResponse,
+} from "effect/unstable/http";
 
-import type { Provider } from "./app/application";
+import type { Provider } from "./app/models";
 import {
   OAuthConnectedConfiguration,
   OAuthConnectedGrantResponse,
@@ -51,7 +56,8 @@ const issuer = OAuthIssuer.make("https://www.strava.com");
 
 /** Confidential Strava web authorization. Strava does not advertise S256 PKCE;
  * the managed application supplies a distinct, single-use browser binding.
- * Tokens are exchanged once through the supplied HttpClient (no retry middleware).
+ * Tokens are exchanged once through a trusted HttpClient without retry or redirect
+ * middleware. Fetch requests explicitly disable redirects before sending credentials.
  * Retain this client registration while stored connections reference it.
  */
 export const provider = (input: {
@@ -69,7 +75,14 @@ export const provider = (input: {
 
       if (!/^[0-9]+$/.test(options.clientId) || Redacted.value(options.clientSecret).length === 0)
         return yield* OAuthConfigurationError.make({ reason: "policy" });
-      const http = (yield* HttpClient.HttpClient).pipe(HttpClient.withScope);
+
+      const http = (yield* HttpClient.HttpClient).pipe(
+        HttpClient.withScope,
+        HttpClient.transformResponse(
+          Effect.provideService(FetchHttpClient.RequestInit, { redirect: "manual" }),
+        ),
+      );
+
       const crypto = yield* Crypto.Crypto;
 
       const profile = OAuthConnectedProfile.make({

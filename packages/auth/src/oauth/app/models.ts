@@ -1,12 +1,89 @@
-import { Context, type Effect, Schema } from "effect";
+import { Context, type Effect, type Redacted, Schema } from "effect";
 
+import type { AuthOperationResult } from "../../operations/credentials";
+import type { SessionSigningKeyring } from "../../sessions/crypto";
+import type { SessionInvalid } from "../../sessions/errors";
 import {
+  type OAuthConnectedBusy,
+  type OAuthConnectedReauthorizationRequired,
   OAuthConnectedConfiguration,
+  type OAuthConnectedProfile,
   OAuthConnectedSealedTokens,
   OAuthConnectedTokenContext,
 } from "../connectedModels";
-import type { OAuthUnavailable } from "../signInErrors";
+import type { OAuthConnectedProtocol } from "../OAuthConnectedProtocol";
+import type { OAuthRejected, OAuthUnavailable } from "../signInErrors";
 import { OAuthSealedTransaction, OAuthSignInTransactionContext } from "../signInModels";
+import type { OAuthTransactionKeyring } from "../transactionEncryption";
+
+/** Provider adapters bind to the exact callback owned by this application.
+ * The existing connected protocol owns provider verification and token handling.
+ * Secrets remain in the adapter Layer, never in the shared application contract.
+ */
+export interface Provider<E = never, R = never> {
+  readonly configure: (callbackUrl: string) => Effect.Effect<
+    {
+      readonly profile: OAuthConnectedProfile;
+      readonly protocol: OAuthConnectedProtocol["Service"];
+    },
+    E,
+    R
+  >;
+}
+
+export interface SessionOptions {
+  readonly origin: string;
+  readonly sessionKeys: SessionSigningKeyring;
+}
+
+export interface Options<E, R> extends SessionOptions {
+  readonly provider: Provider<E, R>;
+  readonly transactionKeys: OAuthTransactionKeyring;
+  readonly tokenKeys: OAuthTransactionKeyring;
+}
+
+export type Failure =
+  | OAuthRejected
+  | OAuthUnavailable
+  | OAuthConnectedBusy
+  | OAuthConnectedReauthorizationRequired
+  | SessionInvalid;
+
+export type ConnectionReference = Pick<OAuthConnectedTokenContext, "subjectId" | "grantId">;
+
+export interface Workflow<Session extends ConnectionReference> {
+  readonly begin: (
+    returnTarget?: string,
+  ) => Effect.Effect<
+    AuthOperationResult<{ readonly authorizationUrl: Redacted.Redacted<string> }>,
+    Failure
+  >;
+  readonly complete: (
+    binding: Redacted.Redacted<string>,
+    response: URLSearchParams,
+  ) => Effect.Effect<
+    AuthOperationResult<{ readonly session: Session; readonly returnTarget: string }>,
+    Failure
+  >;
+  /** Server-only capability. Obtain this reference from a verified session or
+   * trusted application storage; never forward arbitrary caller-supplied IDs.
+   * The callback runs once, with no automatic retry of its external work.
+   */
+  readonly withAccessToken: <A, E, R>(
+    connection: Pick<Session, "subjectId" | "grantId">,
+    use: (token: Redacted.Redacted<string>) => Effect.Effect<A, E, R>,
+  ) => Effect.Effect<A, E | Failure, R>;
+  /** Disable local API access. App sessions retain their original expiry. */
+  readonly disconnect: (
+    connection: Pick<Session, "subjectId" | "grantId">,
+  ) => Effect.Effect<void, Failure>;
+}
+
+export interface SessionVerifier<Session> {
+  readonly verify: (
+    credential: Redacted.Redacted<string>,
+  ) => Effect.Effect<Session, SessionInvalid | OAuthUnavailable>;
+}
 
 const Version = Schema.String.check(Schema.isPattern(/^[A-Za-z0-9_-]{43}$/));
 

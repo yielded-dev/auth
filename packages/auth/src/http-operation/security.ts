@@ -1,8 +1,8 @@
 import { Effect, Redacted, Schema } from "effect";
 import { Cookies } from "effect/unstable/http";
 
+import { origin } from "../internal/origin";
 import type { CredentialSlot } from "../operations/credentials";
-import { origin } from "./configuration-schema";
 import { OperationHttpError } from "./errors";
 import { credentialSlots } from "./models";
 import { OperationHttpServerConfig } from "./OperationHttpServerConfig";

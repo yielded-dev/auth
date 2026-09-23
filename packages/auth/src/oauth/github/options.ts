@@ -1,6 +1,6 @@
 import { Effect, Layer } from "effect";
 
-import type { Provider as AppProvider } from "../app/application";
+import type { Provider as AppProvider } from "../app/models";
 import { OAuthConnectedProfile, OAuthPermissionProfileKey } from "../connectedModels";
 import { OAuthConnectedProtocol } from "../OAuthConnectedProtocol";
 import { OAuthProtocol } from "../OAuthProtocol";
