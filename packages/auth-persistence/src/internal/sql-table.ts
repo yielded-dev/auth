@@ -1,4 +1,19 @@
+import { Option, Schema, SchemaGetter } from "effect";
+
 import { PersistenceMappingError } from "./mapping-error";
+
+const SqlInteger = Schema.Union([
+  Schema.Int,
+  Schema.BigInt,
+  Schema.String.check(Schema.isPattern(/^-?\d+$/)),
+]).pipe(
+  Schema.decodeTo(Schema.Int, {
+    decode: SchemaGetter.transform(Number),
+    encode: SchemaGetter.passthrough(),
+  }),
+);
+
+const decodeInteger = Schema.decodeUnknownOption(SqlInteger);
 
 export type Dialect = "pg" | "sqlite";
 export type Row = Readonly<Record<string, unknown>>;
@@ -52,9 +67,9 @@ export class Column extends Fragment {
           throw PersistenceMappingError.make({ operation: "decode", cause: "Invalid SQL boolean" });
         }
         if (options.type === "integer") {
-          const number = typeof value === "string" && /^-?\d+$/.test(value) ? Number(value) : value;
+          const number = decodeInteger(value);
 
-          if (typeof number === "number" && Number.isSafeInteger(number)) return number;
+          if (Option.isSome(number)) return number.value;
           throw PersistenceMappingError.make({
             operation: "decode",
             cause: "SQL integer is outside the safe range",

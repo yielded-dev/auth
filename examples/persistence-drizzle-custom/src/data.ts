@@ -20,7 +20,7 @@ class AppData extends Context.Service<AppData, string>()("customers/AppData") {}
 const DataLive = Layer.effect(
   AppData,
   Effect.gen(function* () {
-    const directory = yield* Config.string("AUTH_DATA_DIR").pipe(
+    const directory = yield* Config.String("AUTH_DATA_DIR").pipe(
       Config.withDefault(new URL("../.data/", import.meta.url).pathname),
     );
 

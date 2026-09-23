@@ -6,7 +6,7 @@ import { SessionUnavailable } from "@yielded/auth/Sessions";
 import type { AnyRelations } from "drizzle-orm";
 import { type EffectLibsqlDatabase, makeWithDefaults } from "drizzle-orm/effect-libsql";
 import type { AnySQLiteTable } from "drizzle-orm/sqlite-core";
-import { Context, Effect, Option } from "effect";
+import { Effect } from "effect";
 
 import type {
   AuthStoreTables,
@@ -24,6 +24,7 @@ import {
   makeSqliteAuthStoreServices,
   makeSqliteOAuthStateServices,
 } from "./drizzle/sqlite";
+import { requireStandalone as standalone } from "./internal/standalone";
 
 export {
   coordinateSqliteAuthStoreTransaction as coordinateAuthStoreTransaction,
@@ -41,61 +42,16 @@ import { makeSqlitePasswordTarget, sqlitePasswordConfiguration } from "./drizzle
 import { makeSqliteProofTarget, sqliteProofConfiguration } from "./drizzle/sqlite-proofs";
 import { makeSqliteSessionTarget, sqliteSessionConfiguration } from "./drizzle/sqlite-sessions";
 
-// @effect/sql-libsql owns a driver-specific transaction context rather than
-// SqlClient.transactionService. This tag name is an upstream private detail
-// verified against 4.0.0-rc.112 and must be rechecked on driver upgrades;
-// Context's string-key identity makes the installed-version guard possible.
-const LibsqlTransaction = Context.Service<unknown>(
-  "@effect/sql-libsql/LibsqlClient/LibsqlTransaction",
+const requireStandalone = standalone(() =>
+  AuthStoreError.make({
+    message: "Use the decision consume API inside an outer database transaction",
+  }),
 );
 
-const requireStandalone = Effect.serviceOption(LibsqlTransaction).pipe(
-  Effect.flatMap(
-    Option.match({
-      onNone: () => Effect.void,
-      onSome: () =>
-        AuthStoreError.make({
-          message: "Use the decision consume API inside an outer database transaction",
-        }),
-    }),
-  ),
-);
-
-const requireStandaloneSession = Effect.serviceOption(LibsqlTransaction).pipe(
-  Effect.flatMap(
-    Option.match({
-      onNone: () => Effect.void,
-      onSome: () => SessionUnavailable.make({}),
-    }),
-  ),
-);
-
-const requireStandaloneProof = Effect.serviceOption(LibsqlTransaction).pipe(
-  Effect.flatMap(
-    Option.match({
-      onNone: () => Effect.void,
-      onSome: () => ProofUnavailable.make({}),
-    }),
-  ),
-);
-
-const requireStandalonePassword = Effect.serviceOption(LibsqlTransaction).pipe(
-  Effect.flatMap(
-    Option.match({
-      onNone: () => Effect.void,
-      onSome: () => PasswordUnavailable.make({}),
-    }),
-  ),
-);
-
-const requireStandaloneEmail = Effect.serviceOption(LibsqlTransaction).pipe(
-  Effect.flatMap(
-    Option.match({
-      onNone: () => Effect.void,
-      onSome: () => EmailUnavailable.make({}),
-    }),
-  ),
-);
+const requireStandaloneSession = standalone(() => SessionUnavailable.make({}));
+const requireStandaloneProof = standalone(() => ProofUnavailable.make({}));
+const requireStandalonePassword = standalone(() => PasswordUnavailable.make({}));
+const requireStandaloneEmail = standalone(() => EmailUnavailable.make({}));
 
 const sessionTarget = makeSqliteSessionTarget<EffectLibsqlDatabase<AnyRelations>>(
   sqliteSessionConfiguration("interactive", requireStandaloneSession),

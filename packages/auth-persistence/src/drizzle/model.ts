@@ -22,8 +22,10 @@ import {
   type InferSelectModel,
   type Table,
 } from "drizzle-orm";
-import { Context, DateTime, Effect, Layer, Option } from "effect";
+import { Context, DateTime, Effect, Layer } from "effect";
 import type * as SqlClient from "effect/unstable/sql/SqlClient";
+
+import { requireStandalone } from "../internal/standalone";
 
 export type CommitMode = "interactive" | "synchronous" | "batch";
 
@@ -39,16 +41,12 @@ export interface SqlClientTransactionDatabase {
 export const requireStandaloneConsume = (
   database: SqlClientTransactionDatabase,
 ): Effect.Effect<void, AuthStoreError> =>
-  Effect.serviceOption(database.$client.transactionService).pipe(
-    Effect.flatMap(
-      Option.match({
-        onNone: () => Effect.void,
-        onSome: () =>
-          AuthStoreError.make({
-            message: "Use the decision consume API inside an outer database transaction",
-          }),
+  requireStandalone(
+    () =>
+      AuthStoreError.make({
+        message: "Use the decision consume API inside an outer database transaction",
       }),
-    ),
+    database.$client,
   );
 
 export type { ChallengeConsumeDecision } from "@yielded/auth/Persistence";

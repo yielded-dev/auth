@@ -15,8 +15,9 @@ when investigating toolchain failures.
 
 Shared strict compiler settings live in `tsconfig.base.json`. Public packages
 use Effect as a peer and the exact catalog pin for development. Upgrade the
-Effect family together and rerun installation and the handoff gate. The
-`preferTypedSchemaDecoder` diagnostic follows the reference repository's disabled
+Effect family together and rerun installation and the handoff gate. Effect's test
+integration requires Vitest 5; keep Vite+ and its bundled Vitest version aligned
+with the catalog. The `preferTypedSchemaDecoder` diagnostic follows the reference repository's disabled
 setting until the upstream TypeScript-Go panic is resolved.
 
 Library code lives in `packages/*`; public consumer examples are leaf workspaces

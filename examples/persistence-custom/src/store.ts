@@ -38,7 +38,7 @@ export class DataDirectory extends Context.Service<DataDirectory, string>()(
   static readonly layer = Layer.effect(
     DataDirectory,
     Effect.gen(function* () {
-      const directory = yield* Config.string("AUTH_DATA_DIR").pipe(
+      const directory = yield* Config.String("AUTH_DATA_DIR").pipe(
         Config.withDefault(new URL("../.data/", import.meta.url).pathname),
       );
 

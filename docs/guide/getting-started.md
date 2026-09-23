@@ -10,7 +10,7 @@ application. The contract also supplies your HTTP endpoints and browser client.
 ## Install
 
 ```sh
-vp add @yielded/auth@beta effect@4.0.0-rc.112
+vp add @yielded/auth@beta effect@4.0.0-rc.117
 ```
 
 Yielded Auth is currently in beta and targets Effect v4. Install additional peer

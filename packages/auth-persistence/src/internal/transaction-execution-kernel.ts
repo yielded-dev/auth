@@ -7,11 +7,12 @@ import {
 } from "@yielded/auth/Hooks";
 /* oxlint-disable no-explicit-any -- existing storage kernels erase foreign table shapes; domain errors remain typed. */
 /* oxlint-disable no-explicit-any -- private execution bridge retains exact public driver wrappers. */
-import { Context, Effect, Option } from "effect";
+import { Context, Effect } from "effect";
 import type * as SqlClient from "effect/unstable/sql/SqlClient";
 import type * as SqlError from "effect/unstable/sql/SqlError";
 import type { Statement } from "effect/unstable/sql/Statement";
 
+import { requireStandalone } from "./standalone";
 import {
   type TransactionNativeDatabase,
   type TransactionOwner,
@@ -67,12 +68,7 @@ export const makeTransactionExecutionKernel = (
     database: {
       readonly $client: Pick<SqlClient.SqlClient, "transactionService">;
     },
-  ) =>
-    Effect.serviceOption(database.$client.transactionService).pipe(
-      Effect.flatMap(
-        Option.match({ onNone: () => Effect.void, onSome: () => Effect.fail(unavailable()) }),
-      ),
-    );
+  ) => requireStandalone(unavailable, database.$client);
 
   const makeTransactionExecution = <Failure, OwnerId>(
     ownerTag: Context.Key<OwnerId, TransactionOwner<Failure>>,

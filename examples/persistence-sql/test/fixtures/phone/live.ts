@@ -16,7 +16,7 @@ import { customerId, seed } from "./seed";
 // dialect. Swap this Layer for SqliteClient (Node) or PgClient in a real service.
 const DatabaseLive = Layer.unwrap(
   Effect.gen(function* () {
-    const dialect = yield* Config.literals(["sqlite", "pg"], "PERSISTENCE_DIALECT").pipe(
+    const dialect = yield* Config.Literals(["sqlite", "pg"], "PERSISTENCE_DIALECT").pipe(
       Config.withDefault("sqlite"),
     );
 

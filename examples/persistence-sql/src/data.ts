@@ -22,7 +22,7 @@ class AppData extends Context.Service<AppData, string>()("customers/AppData") {}
 const DataLive = Layer.effect(
   AppData,
   Effect.gen(function* () {
-    const directory = yield* Config.string("AUTH_DATA_DIR").pipe(
+    const directory = yield* Config.String("AUTH_DATA_DIR").pipe(
       Config.withDefault(new URL("../.data/", import.meta.url).pathname),
     );
 
@@ -39,14 +39,18 @@ export const DatabaseLive = Layer.unwrap(
     const directory = yield* AppData;
     const path = yield* Path.Path;
 
-    const dialect = yield* Config.literals(["sqlite", "pg"], "PERSISTENCE_DIALECT").pipe(
+    const dialect = yield* Config.Literals(["sqlite", "pg"], "PERSISTENCE_DIALECT").pipe(
       Config.withDefault("sqlite"),
     );
 
     // Both clients expose SqlClient; the auth adapter uses its dialect and transaction authority.
     const database: Layer.Layer<SqlClient.SqlClient, SqlError.SqlError> =
       dialect === "pg"
-        ? PgliteClient.layer({ dataDir: path.join(directory, "postgres") })
+        ? PgliteClient.layer({
+            dataDir: path.join(directory, "postgres"),
+            // Match the native PostgreSQL driver's int8 representation.
+            parsers: { 20: BigInt },
+          })
         : SqliteClient.layer({ filename: path.join(directory, "auth.sqlite") });
 
     return database;

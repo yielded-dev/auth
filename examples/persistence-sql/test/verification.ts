@@ -21,7 +21,7 @@ const program = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const directory = yield* fs.makeTempDirectoryScoped();
 
-  const dialect = yield* Config.literals(["sqlite", "pg"], "PERSISTENCE_DIALECT").pipe(
+  const dialect = yield* Config.Literals(["sqlite", "pg"], "PERSISTENCE_DIALECT").pipe(
     Config.withDefault("sqlite"),
   );
 
