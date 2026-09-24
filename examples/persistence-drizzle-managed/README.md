@@ -61,8 +61,8 @@ the app supplies session authorization and claims.
 `AUTH_DATA_DIR` changes the data directory. Removing `.data` resets this example's
 accounts, sessions, proofs, and keys. It does not affect the other examples.
 
-`vp -C examples/persistence-drizzle-managed run test` exercises the HTTP flow against
-a temporary database with isolated email delivery; it never sends real email.
+`vp -C examples/persistence-drizzle-managed run test` checks registration rollback
+after credential storage fails, through HTTP against a temporary database. It sends no email.
 
 All three SQL examples import the same [AuthApi](../shared/account/contract.ts),
 [AppAuth](../shared/account/auth.ts), and [client](../shared/account/email-client.ts).

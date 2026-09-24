@@ -22,8 +22,8 @@ setting until the upstream TypeScript-Go panic is resolved.
 
 Library code lives in `packages/*`; public consumer examples are leaf workspaces
 under `examples/*`. Internal adapter fixtures belong to the package's `test/fixtures`.
-Every workspace and repository script is typechecked. Tests retain their existing
-regression coverage; new tests follow the repository's testing policy.
+Every workspace and repository script is typechecked. Add, retain, and remove
+tests according to the repository's testing policy; existing coverage is not a quota.
 
 The Drizzle examples run generation through `scripts/db-generate.ts`. It forwards
 Drizzle Kit arguments and compacts JSON snapshots to one line. Snapshots are excluded
@@ -63,8 +63,8 @@ implementations and cryptography. Keep direct paths for lazy imports and narrow 
 
 ## Contributor skills
 
-Repository-owned skills under `.agents/skills` have individual `.dev-kit-origin.json`
-receipts and are linked from `.claude/skills`. Use the `dev-kit` skill for catalog
+Repository-owned skills under `.agents/skills` are linked from `.claude/skills`;
+Dev Kit copies have individual `.dev-kit-origin.json` receipts. Use the `dev-kit` skill for catalog
 updates. Dev Kit is not a runtime dependency or repository lifecycle manager.
 
 ## Releases

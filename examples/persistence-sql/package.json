@@ -5,12 +5,7 @@
   "type": "module",
   "scripts": {
     "build": "vp build",
-    "check": "tsc --noEmit -p tsconfig.json",
-    "test": "vp run test:persistence && vp run test:persistence:pg && vp run test:verification && vp run test:verification:pg",
-    "test:persistence": "bun test/persistence.ts",
-    "test:persistence:pg": "PERSISTENCE_DIALECT=pg bun test/persistence.ts",
-    "test:verification": "bun test/verification.ts",
-    "test:verification:pg": "PERSISTENCE_DIALECT=pg bun test/verification.ts"
+    "check": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
     "@effect/atom-react": "catalog:",

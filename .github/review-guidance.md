@@ -8,7 +8,7 @@ Review this Effect v4 framework for concrete defects, not style.
 - Never claim exactly-once external effects or retry an ambiguous credential issuance or OAuth exchange. Durable receipts and original command identities own safe replay.
 - Bound concurrency and use structured Effect concurrency. Security decisions fail closed; caller payloads and provider claims are untrusted.
 - Flag a new abstraction only when deleting it would remove real ownership, policy, or behavior.
-- Tests must cover a concrete regression. Do not request speculative cleanup or unrelated hardening.
+- Default to no new test automation. Require a concrete uncovered failure and a reason existing checks or direct workflow evidence are insufficient before accepting new tests, fixtures, assertions or matrix growth. A current incident, provenance link or authentication-library label alone is insufficient. Never request post-implementation unit tests or a larger integration/E2E substitute for unnecessary tests. Read `.agents/skills/testing/SKILL.md`; do not request speculative cleanup or unrelated hardening.
 
 ## Dependencies passed as parameters
 
