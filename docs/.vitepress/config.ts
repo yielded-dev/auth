@@ -51,6 +51,7 @@ export default defineConfig({
         text: "Integration",
         items: [
           { text: "OAuth setup", link: "/guide/oauth" },
+          { text: "MCP authorization", link: "/guide/oauth#authorize-mcp-clients" },
           { text: "HTTP & client state", link: "/guide/http-and-client" },
           { text: "Adapters & persistence", link: "/reference/adapters" },
           { text: "Examples", link: "/guide/examples" },

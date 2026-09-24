@@ -8,10 +8,11 @@ OAuth lets a user authorize your app through a provider such as GitHub or Google
 Two things can come from that authorization: an **app session** identifies the
 signed-in user; a **provider grant** lets your app call the provider's API.
 
-| Your app needs                                                | Start with                 |
-| ------------------------------------------------------------- | -------------------------- |
-| Provider sign-in, retained API access, and stateless sessions | `OAuthApp`                 |
-| OAuth alongside passwords, email, or other sign-in methods    | `OAuth` inside `Auth.make` |
+| Your app needs                                                | Start with                              |
+| ------------------------------------------------------------- | --------------------------------------- |
+| Provider sign-in, retained API access, and stateless sessions | `OAuthApp`                              |
+| OAuth alongside passwords, email, or other sign-in methods    | `OAuth` inside `Auth.make`              |
+| Let an MCP client access your application                     | `OAuthServer` with Effect's `McpServer` |
 
 ## Sign in and connect provider access
 
@@ -93,6 +94,56 @@ The library refreshes tokens before calling your function and never retries its 
 These sessions have a fixed expiry. Sign-out clears the cookie; it does not revoke
 an already issued session. Disconnect stops local provider access. See
 [session and connection behavior](../reference/oauth#sessions-and-connections).
+
+## Authorize MCP clients
+
+`OAuthServer` lets a signed-in user grant a registered MCP client access to your
+application. `OAuthApp` can supply the login session; it continues to own any
+upstream provider credentials. The two grants stay separate:
+
+```text
+Browser → Application login → OAuthServer consent → MCP client
+                                                      ↓ MCP token
+                                                Effect McpServer
+                                                      ↓ Private provider token
+                                                  Provider API
+```
+
+Define supported scopes, supply an identity service that verifies your existing
+session, and mount the authorization routes beside Effect's MCP routes:
+
+```ts
+const oauth = OAuthServer.make("mcp", { scopes: ["athlete:read"] });
+
+const protectedMcp = McpServer.toolkit(toolkit).pipe(
+  Layer.provide(handlers),
+  Layer.provide(
+    McpServer.layerHttp({
+      name: "Athlete tools",
+      version: "1.0.0",
+      path: "/mcp",
+      protocols: [McpProtocol.v2026_07_28],
+    }),
+  ),
+  Layer.provide(oauth.middleware(["athlete:read"]).layer),
+);
+```
+
+The [runnable Strava MCP example](https://github.com/yielded-dev/auth/blob/main/examples/auth/src/strava-mcp.ts)
+provides the login, SQL migration, signing keys, client registration, CORS, and
+server. It uses the built-in consent page and a single allowlisted athlete.
+
+Inside a tool handler, read `OAuthServer.CurrentAccess`; reject `undefined`.
+The value contains the authenticated `subjectId`, `clientId`, resource, scopes,
+and grant ID. Your application still decides which accounts and operations that
+subject may access. Resolve provider connections from trusted storage, then use
+`OAuthApp.withAccessToken`; MCP clients never receive provider tokens.
+
+This initial server supports explicitly registered public clients. Clients must
+support supplying their registered client ID; there is no dynamic registration
+or Client ID Metadata Document endpoint. See the
+[authorization server reference](../reference/oauth#authorization-server) for
+the setup and token lifecycle.
 
 ## OAuth in a shared auth service
 

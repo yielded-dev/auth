@@ -13,6 +13,10 @@ in `@yielded/auth`.
 It has no dependency on the broader auth schema or a session repository. Apply its
 exported migration with the application's runner and provide an Effect SQL client.
 
+`OAuthServerPersistence` supplies independent, single-table consent and grant
+storage for [MCP authorization](../../docs/guide/oauth.md#authorize-mcp-clients).
+Its conditional writes and monotonic revocation require standalone commits.
+
 Applications own subject provisioning, policy, claims, delivery, and their database
 connection. Drizzle Kit generates migrations from managed or application-declared
 Drizzle tables. Install `AuthPersistence.migrationsLayer({ migrationsFolder })`
