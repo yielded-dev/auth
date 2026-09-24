@@ -89,8 +89,7 @@
   "scripts": {
     "build": "vp pack",
     "check": "tsc --noEmit -p tsconfig.json",
-    "test": "vp test --passWithNoTests",
-    "e2e": "bun test/e2e/harness.ts"
+    "test": "vp test --passWithNoTests"
   },
   "dependencies": {
     "@noble/ciphers": "catalog:",
