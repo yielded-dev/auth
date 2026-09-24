@@ -42,6 +42,7 @@
     "./Identity": "./src/Identity.ts",
     "./OAuth": "./src/OAuth.ts",
     "./OAuthApp": "./src/OAuthApp.ts",
+    "./OAuthServer": "./src/OAuthServer.ts",
     "./Strava": "./src/Strava.ts",
     "./Operations": "./src/Operations.ts",
     "./Rpc": "./src/Rpc.ts",

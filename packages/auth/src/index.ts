@@ -7,6 +7,7 @@ export * as Hooks from "./Hooks.ts";
 export * as Identity from "./Identity.ts";
 export * as OAuth from "./OAuth.ts";
 export * as OAuthApp from "./OAuthApp.ts";
+export * as OAuthServer from "./OAuthServer.ts";
 export * as Operations from "./Operations.ts";
 export * as Passkey from "./Passkey.ts";
 export * as Password from "./Password.ts";

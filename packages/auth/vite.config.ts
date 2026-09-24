@@ -22,6 +22,7 @@ export default defineConfig({
       "src/Identity.ts",
       "src/OAuth.ts",
       "src/OAuthApp.ts",
+      "src/OAuthServer.ts",
       "src/Strava.ts",
       "src/Operations.ts",
       "src/Rpc.ts",

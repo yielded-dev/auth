@@ -6,6 +6,93 @@ description: OAuth configuration, routes, sessions, and provider adapters.
 
 Start with the [OAuth guide](../guide/oauth) for the flow and choice of API.
 
+## Authorization server
+
+`OAuthServer.make(id, { scopes })` supplies `Identity`, `Service`, `routes`,
+`middleware(requiredScopes)`, `paths`, and `cookieName`. It implements authorization
+code with S256 PKCE for registered public clients. It issues MCP bearer tokens;
+it does not issue OIDC ID tokens or implement the MCP transport.
+
+Provide these to `oauth.layer`:
+
+| Input                     | Purpose                                                                                                                            |
+| ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `origin`                  | Authorization server issuer; one server per origin                                                                                 |
+| `resource`                | Exact MCP resource URL on that origin, with a non-root path and no query or fragment                                               |
+| `clients`                 | `{ clientId, name, redirectUris }[]`; redirect URIs match exactly, including loopback ports                                        |
+| `loginPath`               | Local login route that returns to `oauth.paths.authorize`                                                                          |
+| `keys`                    | Signing keyring in the same format as session keys; use separate random key material                                               |
+| `oauth.Identity`          | `current`: an Effect that verifies the application session and returns `SubjectId` or `undefined`; may require `HttpServerRequest` |
+| `OAuthServer.Persistence` | Durable grant storage; use `OAuthServerPersistence.layer` with SQLite, D1, or PostgreSQL                                           |
+
+`Identity.current` runs on every consent GET and POST. Return `undefined` for an
+absent or invalid session and fail with `OAuthServer.Unavailable` for an unavailable
+dependency. The built-in consent page names the client, subject, resource, scopes,
+and redirect host. Approval requires the bound cookie, form token, same Origin,
+and the same subject that saw the page. Switching accounts invalidates previously
+rendered consent forms. Pending authorization survives the login
+redirect in the cookie; do not put it into a login URL.
+
+With `OAuthApp`, put `oauth.paths.authorize` first in `returnTargets` and use the
+app's sign-in route as `loginPath`. Keep provider grants and MCP grants separate.
+
+| Route (ID `mcp`, resource `/mcp`)               | Behavior                                                                  |
+| ----------------------------------------------- | ------------------------------------------------------------------------- |
+| `GET /.well-known/oauth-authorization-server`   | Issuer, endpoints, scopes, public-client authentication and PKCE metadata |
+| `GET /.well-known/oauth-protected-resource/mcp` | Resource and authorization server metadata                                |
+| `GET /oauth/mcp/authorize`                      | Validate the authorization request, sign in if needed, and show consent   |
+| `POST /oauth/mcp/authorize`                     | Approve or deny the browser-bound request                                 |
+| `POST /oauth/mcp/token`                         | Redeem a code or rotate a refresh token                                   |
+| `POST /oauth/mcp/revoke`                        | Revoke a token's entire grant; unknown tokens also return 200             |
+
+Authorization requires `response_type=code`, `client_id`, `redirect_uri`, `resource`,
+`scope`, `code_challenge`, and `code_challenge_method=S256`. Optional `state` is echoed
+with the issuer (`iss`) in the callback. Token requests are form-encoded and require
+`client_id` and `resource`. Code redemption also requires the original `redirect_uri`
+and `code_verifier`. Refresh can retain or reduce scopes; it cannot expand them.
+Malformed or rejected requests return 400; dependency failures return 503.
+
+Attach `oauth.middleware(scopes).layer` only to protected routes. It extracts Bearer
+credentials with Effect's HTTP APIs, verifies the grant, checks scopes, and supplies
+`CurrentAccess` for that request. Missing/invalid tokens return a 401 discovery
+challenge; insufficient scope returns 403; unavailable storage returns 503.
+`CurrentAccess` defaults to `undefined` outside those requests. Never install a
+principal at server startup. Use Effect's existing Origin checks and CORS middleware;
+expose `WWW-Authenticate` to browser MCP clients.
+
+### Token lifecycle and storage
+
+Consent expires after five minutes, authorization codes after one minute, access
+tokens after ten minutes, and grants after thirty days. Refresh does not extend
+the grant's lifetime. Signing keys must remain available through the lifetimes of
+the credentials they signed. Tokens are opaque to clients and use Yielded's signed
+envelope rather than JWT serialization.
+
+Each grant occupies one row in `yielded_oauth_server`. Apply
+`OAuthServerPersistence.migration` through your application's migrations. The adapter
+rejects ambient transactions and uses a conditional write for every transition;
+revocation cannot be overwritten by a concurrent refresh. It stores no bearer or
+provider tokens. Expired rows can be deleted using `expires_at_millis`.
+
+Verification checks storage on every request. Refresh immediately invalidates the
+previous access token. Reusing a consumed code or refresh token revokes the entire
+grant, including after concurrent refresh attempts. Clients must serialize refresh
+and replace their stored token pair. Revocation stops subsequent requests, but does
+not cancel work already authorized. Application logout does not revoke MCP grants;
+trusted application code can call `Service.revoke(grantId)` when policy requires it.
+
+Issuance returns credentials only after a confirmed commit. An uncertain commit
+returns no credentials and is never retried by the server; start a new authorization.
+HTTP operations time out after thirty seconds and preserve caller interruption.
+Form bodies are limited to 16 KiB. Applications own ingress rate limits and database
+cleanup. Exclude OAuth query strings, bodies, cookies, and credentials from access
+logs and tracing; the runnable example disables request logging and tracing.
+
+Run `vp run @yielded/example-auth#example:strava-mcp` with the Strava example's
+variables plus `MCP_SIGNING_KEY`, `MCP_CLIENT_ID`, and `MCP_REDIRECT_URI`. Configure
+that exact client ID and redirect URI in your MCP client. The example listens on
+port 3000 and owns `strava-mcp.sqlite`; use HTTPS outside loopback development.
+
 ## Managed app setup
 
 `OAuthApp.make(id, options)` defines an app's services and routes.
