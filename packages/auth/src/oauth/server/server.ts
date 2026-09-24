@@ -120,7 +120,7 @@ const TokenRequest = Schema.Union([
   }),
 ]);
 
-const Decision = Schema.Struct({ csrf: Text, decision: Schema.Literals(["approve", "deny"]) });
+const Decision = Schema.Struct({ csrf: Random, decision: Schema.Literals(["approve", "deny"]) });
 
 const Revocation = Schema.Struct({
   client_id: Text,
@@ -491,7 +491,6 @@ export const make = <const Id extends string>(
                   !(yield* store.insert(namespace, grantId, {
                     status: "Pending",
                     version,
-                    binding: version,
                     authorization,
                     expiresAtMillis,
                   }))
@@ -511,7 +510,6 @@ export const make = <const Id extends string>(
 
               if (
                 token.kind !== "consent" ||
-                token.version !== record.binding ||
                 (record.status !== "Pending" && record.status !== "Consent")
               )
                 return yield* reject();
@@ -542,7 +540,7 @@ export const make = <const Id extends string>(
                 const client = yield* clientFor(record.authorization.clientId);
 
                 return new Response(
-                  `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Authorize access</title><main><h1>Allow ${escape(client.name)}?</h1><p>Access to ${escape(config.resource)} as ${escape(subjectId)}.</p><ul>${record.authorization.scopes.map((scope) => `<li>${escape(scope)}</li>`).join("")}</ul><p>Return to ${escape(new URL(record.authorization.redirectUri).host)}.</p><form method="post" action="${paths.authorize}"><input type="hidden" name="csrf" value="${escape(credential)}"><button name="decision" value="approve">Allow</button><button name="decision" value="deny">Deny</button></form></main></html>`,
+                  `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Authorize access</title><main><h1>Allow ${escape(client.name)}?</h1><p>Access to ${escape(config.resource)} as ${escape(subjectId)}.</p><ul>${record.authorization.scopes.map((scope) => `<li>${escape(scope)}</li>`).join("")}</ul><p>Return to ${escape(new URL(record.authorization.redirectUri).host)}.</p><form method="post" action="${paths.authorize}"><input type="hidden" name="csrf" value="${record.version}"><button name="decision" value="approve">Allow</button><button name="decision" value="deny">Deny</button></form></main></html>`,
                   {
                     headers: {
                       ...noStore,
@@ -570,7 +568,8 @@ export const make = <const Id extends string>(
                 Effect.mapError(() => reject()),
               );
 
-              if (decision.csrf !== credential) return yield* reject("access_denied");
+              // An account switch invalidates forms rendered for the previous subject.
+              if (decision.csrf !== record.version) return yield* reject("access_denied");
               if (decision.decision === "deny") {
                 yield* store.revoke(namespace, token.grantId);
 

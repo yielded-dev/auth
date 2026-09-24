@@ -127,6 +127,14 @@ const Tokens = Schema.Struct({
   expires_in: Schema.Int,
 });
 
+const consentToken = (html: string) => {
+  const csrf = html.match(/name="csrf" value="([^"]+)"/)?.[1] ?? "";
+
+  expect(csrf).not.toBe("");
+
+  return csrf;
+};
+
 const start = (user = "alice", scope = "read") =>
   Effect.gen(function* () {
     const service = yield* server.Service;
@@ -150,13 +158,14 @@ const start = (user = "alice", scope = "read") =>
     const cookie = response.headers.getSetCookie()[0].split(";")[0];
 
     expect(response.headers.getSetCookie()[0]).toContain("Max-Age=300");
-    const csrf = cookie.slice(cookie.indexOf("=") + 1);
     const consent = yield* service.handle(get(server.paths.authorize, cookie, user));
 
     expect(consent.status).toBe(200);
-    expect(yield* Effect.promise(() => consent.text())).toContain("Example &lt;client&gt;");
+    const html = yield* Effect.promise(() => consent.text());
 
-    return { service, cookie, csrf, user };
+    expect(html).toContain("Example &lt;client&gt;");
+
+    return { service, cookie, csrf: consentToken(html), user };
   });
 
 const authorize = (user = "alice", scope = "read") =>
@@ -308,6 +317,34 @@ it.effect("browser consent is bound to the request, origin and authenticated sub
 
     yield* TestClock.adjust("61 seconds");
     expect((yield* expired.service.handle(exchange(expired.code))).status).toBe(400);
+  }).pipe(Effect.provide(harness())),
+);
+
+it.effect("switching accounts invalidates previously rendered consent", () =>
+  Effect.gen(function* () {
+    const flow = yield* start("alice");
+    const consent = yield* flow.service.handle(get(server.paths.authorize, flow.cookie, "bob"));
+
+    expect(consent.status).toBe(200);
+    const csrf = consentToken(yield* Effect.promise(() => consent.text()));
+
+    const stale = yield* flow.service.handle(
+      post(server.paths.authorize, { csrf: flow.csrf, decision: "approve" }, flow.cookie, "bob"),
+    );
+
+    expect(stale.status).toBe(400);
+    expect(stale.headers.has("location")).toBe(false);
+
+    const approved = yield* flow.service.handle(
+      post(server.paths.authorize, { csrf, decision: "approve" }, flow.cookie, "bob"),
+    );
+
+    expect(approved.status).toBe(303);
+    const code = new URL(approved.headers.get("location")!).searchParams.get("code")!;
+    const tokens = yield* body(yield* flow.service.handle(exchange(code)), Tokens);
+    const access = yield* flow.service.verify(Redacted.make(tokens.access_token));
+
+    expect(access.subjectId).toBe("bob");
   }).pipe(Effect.provide(harness())),
 );
 

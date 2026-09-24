@@ -88,8 +88,9 @@ const oauth = yield* app.Service;
 yield* oauth.withAccessToken(session, readProfile); // receives a Redacted token
 ```
 
-Background jobs can use a connection reference saved in trusted application storage.
-The library refreshes tokens before calling your function and never retries its work.
+For background jobs, save `{ subjectId, grantId }` from a verified session in your
+application's storage. The library refreshes tokens before calling your function
+and never retries its work.
 
 These sessions have a fixed expiry. Sign-out clears the cookie; it does not revoke
 an already issued session. Disconnect stops local provider access. See
@@ -105,8 +106,10 @@ upstream provider credentials. The two grants stay separate:
 Browser → Application login → OAuthServer consent → MCP client
                                                       ↓ MCP token
                                                 Effect McpServer
-                                                      ↓ Private provider token
-                                                  Provider API
+                                                      ↓ Authenticated subject
+                                             Your handler and policy
+                                                      ↓ Optional provider access
+                                             OAuthApp → Provider API
 ```
 
 Define supported scopes, supply an identity service that verifies your existing
@@ -131,13 +134,15 @@ const protectedMcp = McpServer.toolkit(toolkit).pipe(
 
 The [runnable Strava MCP example](https://github.com/yielded-dev/auth/blob/main/examples/auth/src/strava-mcp.ts)
 provides the login, SQL migration, signing keys, client registration, CORS, and
-server. It uses the built-in consent page and a single allowlisted athlete.
+server. It uses the built-in consent page and a single allowlisted athlete; its
+tool returns the authenticated subject without calling Strava's API.
 
 Inside a tool handler, read `OAuthServer.CurrentAccess`; reject `undefined`.
 The value contains the authenticated `subjectId`, `clientId`, resource, scopes,
 and grant ID. Your application still decides which accounts and operations that
-subject may access. Resolve provider connections from trusted storage, then use
-`OAuthApp.withAccessToken`; MCP clients never receive provider tokens.
+subject may access. Your application owns the subject-to-provider connection
+mapping. Resolve that connection from trusted storage, then call `withAccessToken`
+on the service obtained from `app.Service`; MCP clients never receive provider tokens.
 
 This initial server supports explicitly registered public clients. Clients must
 support supplying their registered client ID; there is no dynamic registration

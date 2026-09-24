@@ -29,7 +29,8 @@ Provide these to `oauth.layer`:
 absent or invalid session and fail with `OAuthServer.Unavailable` for an unavailable
 dependency. The built-in consent page names the client, subject, resource, scopes,
 and redirect host. Approval requires the bound cookie, form token, same Origin,
-and the same subject that saw the page. Pending authorization survives the login
+and the same subject that saw the page. Switching accounts invalidates previously
+rendered consent forms. Pending authorization survives the login
 redirect in the cookie; do not put it into a login URL.
 
 With `OAuthApp`, put `oauth.paths.authorize` first in `returnTargets` and use the

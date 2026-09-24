@@ -38,7 +38,7 @@ const handlers = toolkit.toLayer({
     if (access === undefined) return yield* OAuthServer.InvalidToken.make({});
 
     // Applications resolve this subject's permitted connection from trusted storage
-    // before calling OAuthApp.withAccessToken. Never take a grant ID from tool input.
+    // before calling the app service's withAccessToken. Never take a grant ID from tool input.
     return { subjectId: access.subjectId };
   }),
 });

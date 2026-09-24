@@ -74,7 +74,6 @@ export type Authorization = typeof Authorization.Type;
 export const Record = Schema.Struct({
   version: Random,
   status: Schema.Literals(["Pending", "Consent", "Code", "Active", "Revoked"]),
-  binding: Random,
   authorization: Authorization,
   subjectId: Schema.optionalKey(SubjectId),
   expiresAtMillis: Schema.Natural,
@@ -104,7 +103,8 @@ export const CurrentAccess = Context.Reference<Access | undefined>(
 
 /** Linearizable, standalone commits. Never retry an ambiguous insert or CAS.
  * Revoke must atomically disable the record, including against concurrent CAS.
- * Retain records through expiresAtMillis; only then may they be deleted.
+ * Grant IDs must never be reused. Retain records through expiresAtMillis;
+ * only then may they be deleted.
  */
 export class Persistence extends Context.Service<
   Persistence,
