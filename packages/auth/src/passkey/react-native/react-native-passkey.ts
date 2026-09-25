@@ -220,7 +220,7 @@ const decodeResponse = <S extends Schema.Codec<unknown, unknown, never, never>>(
   Schema.decodeUnknownEffect(schema)(value).pipe(Effect.mapError(invalid), redactDefects(invalid));
 
 /** Creates the iOS adapter. Ceremonies own their scopes; construction performs no native I/O. */
-export const makeReactNativePasskey = (): Effect.Effect<Native> =>
+export const make = (): Effect.Effect<Native> =>
   Effect.sync(() => {
     const register = Effect.fnUntraced(function* (input: Parameters<Native["register"]>[0]) {
       const started = yield* snapshotPasskey(registrationInput, input).pipe(
@@ -328,7 +328,4 @@ export const makeReactNativePasskey = (): Effect.Effect<Native> =>
     });
   });
 
-export const layerReactNativePasskey: Layer.Layer<PasskeyReactNative> = Layer.effect(
-  PasskeyReactNative,
-  makeReactNativePasskey(),
-);
+export const layer: Layer.Layer<PasskeyReactNative> = Layer.effect(PasskeyReactNative, make());

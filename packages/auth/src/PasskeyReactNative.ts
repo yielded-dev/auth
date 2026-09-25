@@ -13,7 +13,4 @@ export {
   PasskeyReactNativeUnsupported,
 } from "./passkey/react-native/models";
 
-export {
-  makeReactNativePasskey,
-  layerReactNativePasskey,
-} from "./passkey/react-native/react-native-passkey";
+export { make, layer } from "./passkey/react-native/react-native-passkey";

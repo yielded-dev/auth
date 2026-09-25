@@ -106,16 +106,17 @@ the peer can forward exclusions. Android and conditional mediation return
 
 <!-- prettier-ignore -->
 ```ts
-import { makeReactNativePasskey } from "@yielded/auth/PasskeyReactNative";
+import * as ReactNativePasskey from "@yielded/auth/PasskeyReactNative";
 
-const native = yield* makeReactNativePasskey();
+const native = yield* ReactNativePasskey.make();
 const capabilities = yield* native.capabilities;
 const assertion = yield* native.authenticate({ started, mediation: "required" });
 // For registration or enrollment: yield* native.register(registrationStarted).
 ```
 
-Alternatively, provide `layerReactNativePasskey` and yield the `PasskeyReactNative`
-service. Both methods take the same started values as the browser adapter and return
+Alternatively, provide `ReactNativePasskey.layer` and yield the
+`ReactNativePasskey.PasskeyReactNative` service. Both methods take the same started
+values as the browser adapter and return
 `{ flowId, response }`, with `response` redacted. Keep begin → prompt → complete in
 one Effect Atom workflow; React only dispatches it. Choose the platform adapter at
 the native/browser entrypoint, keeping native imports out of shared contracts and

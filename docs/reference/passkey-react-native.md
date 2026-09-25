@@ -4,9 +4,9 @@ description: iOS passkey capabilities, local outcomes, and prompt lifecycle.
 
 # iOS passkey adapter
 
-Import from `@yielded/auth/PasskeyReactNative` in the native entrypoint only.
-`makeReactNativePasskey()` returns an Effect of the service implementation;
-`layerReactNativePasskey` provides the `PasskeyReactNative` service. Construction
+Import `* as ReactNativePasskey` from `@yielded/auth/PasskeyReactNative` in the native
+entrypoint only. `ReactNativePasskey.make()` returns an Effect of the service
+implementation; `ReactNativePasskey.layer` provides the `PasskeyReactNative` service. Construction
 performs no native I/O. Each ceremony owns an internal Effect Scope.
 
 | Member                                 | Input                                                           | Effect success                     |
