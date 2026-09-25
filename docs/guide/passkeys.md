@@ -1,11 +1,13 @@
 ---
-description: Begin a passkey ceremony, call the browser, and verify the response.
+description: Begin a passkey ceremony, prompt in a browser or iOS app, and verify the response.
 ---
 
 # Passkeys
 
 Passkey sign-in has three steps: create the challenge on your server, ask the
-browser to authenticate, and verify the response on your server.
+browser or iOS app to authenticate, and verify the response on your server.
+The client adapter owns only the local prompt. Your application owns transport,
+request binding, single-use challenges, credential storage, and session issuance.
 
 ## Define the shared actions
 
@@ -88,6 +90,78 @@ const assertion = yield* browser.authenticate({ started, mediation: "required" }
 Keep the Effect's Scope open for the ceremony. Interrupting it cancels that
 ceremony. Import `PasskeyBrowser` only in the browser; it requires
 `@simplewebauthn/browser`.
+
+## Prompt in an iOS React Native app
+
+Install `@yielded/auth-react-native` and `react-native-passkey@~3.6.2` only in the
+native workspace of a React Native 0.81+ application. The core `@yielded/auth`
+package has no React Native dependency. Install the peer's CocoaPods and rebuild the native app. Expo apps need a development or production
+native build; Expo Go cannot load this module. The adapter supports iOS 16+ only.
+Initialize the application's Effect runtime prerequisites, including `TextEncoder`
+and `TextDecoder` when absent in Hermes, before importing Effect or this adapter.
+The adapter does not install global polyfills.
+
+Registration creates platform passkeys and requires ES256 (`alg: -7`) in
+`pubKeyCredParams`. Authentication also supports existing security-key credentials.
+Registration with a nonempty `excludeCredentials` list requires iOS 17.4+, where
+the peer can forward exclusions. Unsupported registration algorithms, Android,
+and conditional mediation return `PasskeyReactNativeUnsupported` before prompting.
+
+<!-- prettier-ignore -->
+```ts
+import * as ReactNativePasskey from "@yielded/auth-react-native";
+
+const native = yield* ReactNativePasskey.make();
+const capabilities = yield* native.capabilities;
+const assertion = yield* native.authenticate({ started, mediation: "required" });
+// For registration or enrollment: yield* native.register(registrationStarted).
+```
+
+Alternatively, provide `ReactNativePasskey.layer` and yield the
+`ReactNativePasskey.PasskeyReactNative` service. Both methods take the same started
+values as the browser adapter and return `{ flowId, response }`, with `response`
+redacted. Keep begin → prompt → complete in
+one Effect Atom workflow; React only dispatches it. Choose the platform adapter at
+the native/browser entrypoint, keeping native imports out of shared contracts and
+server modules. These adapters work with application-owned endpoints as well as
+the named Auth client.
+
+Interruption stops response delivery but **cannot dismiss the system prompt**.
+The adapter stays busy until the native request settles, including after timeout.
+Do not automatically retry registration: a local failure does not prove that no
+credential was created. See the [iOS adapter reference](../reference/passkey-react-native)
+for capabilities, typed failures, and concurrency limits.
+
+### Associate the signed app with the relying party
+
+1. Enable **Associated Domains** for the iOS app ID, provisioning profile, and app
+   target. Add `webcredentials:app.example.com` to the entitlement, using the exact
+   relying-party domain from your server configuration.
+2. Serve the following JSON at
+   `https://app.example.com/.well-known/apple-app-site-association`, with a valid
+   TLS certificate and no redirect. Replace the identifier with the signed app's
+   application-identifier prefix (usually the Team ID) and bundle ID.
+
+   ```json
+   { "webcredentials": { "apps": ["ABCDE12345.com.example.app"] } }
+   ```
+
+3. Rebuild/install the signed app after changing entitlements. Account for Apple's
+   association caching. Enable iCloud Keychain and a device passcode for the
+   platform passkey journey. See Apple's [associated-domain setup](https://developer.apple.com/documentation/xcode/supporting-associated-domains)
+   and [passkey requirements](https://developer.apple.com/documentation/authenticationservices/supporting-passkeys).
+
+Keep the verifier's exact origin allowlist and UV/resident-key requirements. The
+adapter forwards server policy and leaves native `clientDataJSON` unchanged;
+the server remains authoritative for challenge, origin, RP ID, UV, and signatures.
+An HTTPS API host alone does not establish the app's domain association.
+
+Before shipping, prove registration and authentication from the signed app against
+the real associated domain and verifier, including the actual client-data origin.
+Also dismiss a prompt and interrupt a pending workflow to verify the UI's recovery
+behavior. A capability check, simulator, or successful package build does not prove
+signed-device/domain configuration. HTTP, entitlements, AASA hosting, and UI remain
+application-owned.
 
 ## Complete sign-in on the server
 

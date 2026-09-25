@@ -30,7 +30,7 @@ Native ESM loads the root's static dependencies. Direct paths also keep that
 module-loading boundary narrow when running without a bundler.
 
 Optional adapters are direct imports, for example `@yielded/auth-persistence/drizzle/postgres`,
-`@yielded/auth/OpenIdClient`, `@yielded/auth/PasskeyBrowser`, or
+`@yielded/auth/OpenIdClient`, `@yielded/auth/PasskeyBrowser`, `@yielded/auth-react-native`, or
 `@yielded/auth/adapters/Twilio`. Install only the peers
 required by the selected adapters. `@yielded/auth/Testing` remains test-only.
 
@@ -68,7 +68,7 @@ helpers separately from server verifiers and persistence adapters.
 Use `@yielded/auth/contracts` for shared definitions. Browser helpers use direct
 `@yielded/auth/Client` and `@yielded/auth/Atom` imports.
 React applications use `@effect/atom-react` with the same importable atoms;
-Yielded Auth has no React-specific export.
+native passkey prompts use the separate iOS adapter below.
 
 See [HTTP and client state](../guide/http-and-client) for contract sharing and
 client workflow composition.
@@ -85,6 +85,11 @@ These are available through direct subpaths only:
 | `PasskeySimpleWebAuthn`, `PasskeyBrowser` | Server verification and browser WebAuthn ceremonies.       |
 | `PasskeyPassword`                         | Password-backed authority for passkey workflows.           |
 | `Cloudflare`                              | Cloudflare platform integration.                           |
+
+The iOS adapter lives in `@yielded/auth-react-native`. Import it as a namespace
+and use `ReactNativePasskey.make()` or `ReactNativePasskey.layer`. Its React Native
+and `react-native-passkey` peers belong only in the native application; core has
+no native SDK dependency. See the [iOS reference](./passkey-react-native).
 
 Database adapters live in `@yielded/auth-persistence`. Its root exports the named
 `AuthPersistence` facade for direct Effect SQL; `drizzle/<driver>` exports the same
