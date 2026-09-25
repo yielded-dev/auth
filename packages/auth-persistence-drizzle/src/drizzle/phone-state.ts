@@ -4,6 +4,8 @@ import { drizzleQueryOperations } from "./query-operations";
 import { both, makeTransactionRows } from "./transaction-owner";
 export { CurrentPhoneTransaction } from "@yielded/auth-persistence/Adapter";
 
+const kernel = makePhoneKernel(drizzleQueryOperations, { both, makeTransactionRows });
+
 export const {
   unavailable,
   equal,
@@ -14,9 +16,6 @@ export const {
   admitPhone,
   preparePhoneMutation,
   cleanupPhoneAdmission,
-} = makePhoneKernel(drizzleQueryOperations, { both, makeTransactionRows });
+} = kernel;
 
-export const invariant: (value: unknown) => asserts value = makePhoneKernel(
-  drizzleQueryOperations,
-  { both, makeTransactionRows },
-).invariant;
+export const invariant: (value: unknown) => asserts value = kernel.invariant;
