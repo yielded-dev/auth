@@ -93,20 +93,23 @@ ceremony. Import `PasskeyBrowser` only in the browser; it requires
 
 ## Prompt in an iOS React Native app
 
-Use the isolated `@yielded/auth/PasskeyReactNative` import in your native entrypoint.
-Install `react-native-passkey@~3.6.2` in a React Native 0.81+ application, install
-its CocoaPods, and rebuild the native app. Expo apps need a development or production
+Install `@yielded/auth-react-native` and `react-native-passkey@~3.6.2` only in the
+native workspace of a React Native 0.81+ application. The core `@yielded/auth`
+package has no React Native dependency. Install the peer's CocoaPods and rebuild the native app. Expo apps need a development or production
 native build; Expo Go cannot load this module. The adapter supports iOS 16+ only.
 Initialize the application's Effect runtime prerequisites, including `TextEncoder`
 and `TextDecoder` when absent in Hermes, before importing Effect or this adapter.
 The adapter does not install global polyfills.
+
+Registration creates platform passkeys and requires ES256 (`alg: -7`) in
+`pubKeyCredParams`. Authentication also supports existing security-key credentials.
 Registration with a nonempty `excludeCredentials` list requires iOS 17.4+, where
-the peer can forward exclusions. Android and conditional mediation return
-`PasskeyReactNativeUnsupported`.
+the peer can forward exclusions. Unsupported registration algorithms, Android,
+and conditional mediation return `PasskeyReactNativeUnsupported` before prompting.
 
 <!-- prettier-ignore -->
 ```ts
-import * as ReactNativePasskey from "@yielded/auth/PasskeyReactNative";
+import * as ReactNativePasskey from "@yielded/auth-react-native";
 
 const native = yield* ReactNativePasskey.make();
 const capabilities = yield* native.capabilities;
@@ -116,8 +119,8 @@ const assertion = yield* native.authenticate({ started, mediation: "required" })
 
 Alternatively, provide `ReactNativePasskey.layer` and yield the
 `ReactNativePasskey.PasskeyReactNative` service. Both methods take the same started
-values as the browser adapter and return
-`{ flowId, response }`, with `response` redacted. Keep begin → prompt → complete in
+values as the browser adapter and return `{ flowId, response }`, with `response`
+redacted. Keep begin → prompt → complete in
 one Effect Atom workflow; React only dispatches it. Choose the platform adapter at
 the native/browser entrypoint, keeping native imports out of shared contracts and
 server modules. These adapters work with application-owned endpoints as well as

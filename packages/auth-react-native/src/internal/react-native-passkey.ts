@@ -1,10 +1,14 @@
+import {
+  PasskeyAuthenticationStarted,
+  PasskeyRegistrationStarted,
+  PasskeyUnavailable,
+  snapshotPasskeySync,
+} from "@yielded/auth/Passkey";
+import { reportAuthFailure } from "@yielded/auth/Persistence";
 import { Cause, DateTime, Effect, Layer, Predicate, Redacted, Schema } from "effect";
 import { Platform } from "react-native";
 import { Passkey, type PasskeyCreateRequest, type PasskeyGetRequest } from "react-native-passkey";
 
-import { reportAuthFailure } from "../../internal/diagnostics";
-import { PasskeyAuthenticationStarted, PasskeyRegistrationStarted } from "../models";
-import { snapshotPasskey } from "../snapshot";
 import {
   PasskeyReactNativeAuthentication,
   PasskeyReactNativeBusy,
@@ -23,6 +27,15 @@ import {
   nativeRegistration,
   registrationWire,
 } from "./wire";
+
+const snapshotPasskey = <S extends Schema.Codec<unknown, unknown, never, never>>(
+  schema: S,
+  value: S["Type"],
+) =>
+  Effect.try({
+    try: () => snapshotPasskeySync(schema, value),
+    catch: () => PasskeyUnavailable.make({}),
+  });
 
 type Native = PasskeyReactNative["Service"];
 const unavailable = () => new PasskeyReactNativeUnavailable({});
@@ -229,7 +242,11 @@ export const make = (): Effect.Effect<Native> =>
 
       const env = yield* environment;
 
-      if (!env.supported || (started.options.excludeCredentials.length > 0 && !env.exclusions))
+      if (
+        !env.supported ||
+        !started.options.pubKeyCredParams.some(({ alg }) => alg === -7) ||
+        (started.options.excludeCredentials.length > 0 && !env.exclusions)
+      )
         return yield* new PasskeyReactNativeUnsupported({});
 
       return yield* runCeremony(started, (lease, deadline) =>
@@ -246,9 +263,10 @@ export const make = (): Effect.Effect<Native> =>
             timeout: yield* remaining(deadline),
           };
 
+          // The platform path preserves the required attestation: "none" policy.
           const credential = yield* decodeResponse(
             nativeRegistration,
-            yield* native(lease, () => Passkey.create(request)),
+            yield* native(lease, () => Passkey.createPlatformKey(request)),
           );
 
           const response = yield* Schema.encodeEffect(registrationWire)({

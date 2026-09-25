@@ -30,7 +30,7 @@ Native ESM loads the root's static dependencies. Direct paths also keep that
 module-loading boundary narrow when running without a bundler.
 
 Optional adapters are direct imports, for example `@yielded/auth-persistence/drizzle/postgres`,
-`@yielded/auth/OpenIdClient`, `@yielded/auth/PasskeyBrowser`, `@yielded/auth/PasskeyReactNative`, or
+`@yielded/auth/OpenIdClient`, `@yielded/auth/PasskeyBrowser`, `@yielded/auth-react-native`, or
 `@yielded/auth/adapters/Twilio`. Install only the peers
 required by the selected adapters. `@yielded/auth/Testing` remains test-only.
 
@@ -77,15 +77,19 @@ client workflow composition.
 
 These are available through direct subpaths only:
 
-| Modules                                   | Integration                                                                                   |
-| ----------------------------------------- | --------------------------------------------------------------------------------------------- |
-| `OpenIdClient`, `OpenIdClientConnected`   | OAuth/OIDC verification and connected grant management.                                       |
-| `GitHub`                                  | GitHub provider configuration and operations.                                                 |
-| `adapters/Twilio`                         | SMS delivery through Effect HTTP; requires `TwilioConfig`.                                    |
-| `PasskeySimpleWebAuthn`, `PasskeyBrowser` | Server verification and browser WebAuthn ceremonies.                                          |
-| `PasskeyReactNative`                      | iOS client-local ceremonies through optional `react-native` and `react-native-passkey` peers. |
-| `PasskeyPassword`                         | Password-backed authority for passkey workflows.                                              |
-| `Cloudflare`                              | Cloudflare platform integration.                                                              |
+| Modules                                   | Integration                                                |
+| ----------------------------------------- | ---------------------------------------------------------- |
+| `OpenIdClient`, `OpenIdClientConnected`   | OAuth/OIDC verification and connected grant management.    |
+| `GitHub`                                  | GitHub provider configuration and operations.              |
+| `adapters/Twilio`                         | SMS delivery through Effect HTTP; requires `TwilioConfig`. |
+| `PasskeySimpleWebAuthn`, `PasskeyBrowser` | Server verification and browser WebAuthn ceremonies.       |
+| `PasskeyPassword`                         | Password-backed authority for passkey workflows.           |
+| `Cloudflare`                              | Cloudflare platform integration.                           |
+
+The iOS adapter lives in `@yielded/auth-react-native`. Import it as a namespace
+and use `ReactNativePasskey.make()` or `ReactNativePasskey.layer`. Its React Native
+and `react-native-passkey` peers belong only in the native application; core has
+no native SDK dependency. See the [iOS reference](./passkey-react-native).
 
 Database adapters live in `@yielded/auth-persistence`. Its root exports the named
 `AuthPersistence` facade for direct Effect SQL; `drizzle/<driver>` exports the same

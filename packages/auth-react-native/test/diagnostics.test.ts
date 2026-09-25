@@ -1,6 +1,6 @@
 import { it } from "@effect/vitest";
+import * as ReactNativePasskey from "@yielded/auth-react-native";
 import { PasskeyAuthenticationStarted } from "@yielded/auth/Passkey";
-import * as ReactNativePasskey from "@yielded/auth/PasskeyReactNative";
 import { Cause, Effect, Exit, Fiber, Logger } from "effect";
 import { Platform } from "react-native";
 import { Passkey } from "react-native-passkey";

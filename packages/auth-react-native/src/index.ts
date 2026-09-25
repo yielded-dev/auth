@@ -1,4 +1,4 @@
-export { PasskeyReactNative } from "./passkey/react-native/PasskeyReactNative";
+export { PasskeyReactNative } from "./internal/PasskeyReactNative";
 
 export {
   PasskeyReactNativeAuthentication,
@@ -11,6 +11,6 @@ export {
   PasskeyReactNativeRegistration,
   PasskeyReactNativeUnavailable,
   PasskeyReactNativeUnsupported,
-} from "./passkey/react-native/models";
+} from "./internal/models";
 
-export { make, layer } from "./passkey/react-native/react-native-passkey";
+export { make, layer } from "./internal/react-native-passkey";

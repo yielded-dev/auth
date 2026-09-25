@@ -1,7 +1,9 @@
+import {
+  PasskeyAssertion,
+  PasskeyAttestation,
+  PasskeyAuthenticationStarted,
+} from "@yielded/auth/Passkey";
 import { Schema } from "effect";
-
-import { RequestBindingFlowId } from "../../operations/requestBindingModels";
-import { PasskeyAssertion, PasskeyAttestation } from "../models";
 
 /** OS availability only; does not attest to entitlements, linking, or a saved key. */
 export const PasskeyReactNativeCapabilities = Schema.Struct({
@@ -13,14 +15,14 @@ export const PasskeyReactNativeCapabilities = Schema.Struct({
 export type PasskeyReactNativeCapabilities = typeof PasskeyReactNativeCapabilities.Type;
 
 export const PasskeyReactNativeRegistration = Schema.Struct({
-  flowId: RequestBindingFlowId,
+  flowId: PasskeyAuthenticationStarted.fields.flowId,
   response: PasskeyAttestation,
 });
 
 export type PasskeyReactNativeRegistration = typeof PasskeyReactNativeRegistration.Type;
 
 export const PasskeyReactNativeAuthentication = Schema.Struct({
-  flowId: RequestBindingFlowId,
+  flowId: PasskeyAuthenticationStarted.fields.flowId,
   response: PasskeyAssertion,
 });
 

@@ -6,6 +6,8 @@ Yielded Auth owns security-sensitive authentication behavior. Applications provi
 identity authority, persistence, protocol verification, and credential delivery.
 `@yielded/auth-persistence` supplies direct Effect SQL, Drizzle bindings, and opt-in
 managed storage. Optional adapters also support Cloudflare, OAuth/OIDC, and WebAuthn.
+`@yielded/auth-react-native` provides iOS passkey ceremonies separately, keeping
+React Native dependencies out of the core package.
 
 For an app using GitHub, [managed OAuth](docs/guide/oauth.md#sign-in-and-connect-provider-access)
 handles sign-in, encrypted provider tokens, refresh, and stateless session cookies

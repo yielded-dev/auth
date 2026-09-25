@@ -174,8 +174,6 @@
         "effect": "catalog:",
         "effect-cf": "catalog:",
         "openid-client": "catalog:",
-        "react-native": "catalog:",
-        "react-native-passkey": "catalog:",
         "tldts": "catalog:",
         "typescript": "catalog:",
         "vite-plus": "catalog:",
@@ -186,8 +184,6 @@
         "effect": "^4.0.0-rc.117",
         "effect-cf": "^0.49.0",
         "openid-client": ">=6.8.8 <7",
-        "react-native": ">=0.81 <1",
-        "react-native-passkey": "~3.6.2",
         "tldts": ">=7.4.11 <8",
       },
       "optionalPeers": [
@@ -195,8 +191,6 @@
         "@simplewebauthn/server",
         "effect-cf",
         "openid-client",
-        "react-native",
-        "react-native-passkey",
         "tldts",
       ],
     },
@@ -250,6 +244,25 @@
         "@effect/sql-sqlite-wasm",
         "drizzle-orm",
       ],
+    },
+    "packages/auth-react-native": {
+      "name": "@yielded/auth-react-native",
+      "version": "0.0.0",
+      "devDependencies": {
+        "@effect/vitest": "catalog:",
+        "@yielded/auth": "workspace:*",
+        "effect": "catalog:",
+        "react-native": "catalog:",
+        "react-native-passkey": "catalog:",
+        "typescript": "catalog:",
+        "vite-plus": "catalog:",
+      },
+      "peerDependencies": {
+        "@yielded/auth": ">=0.1.0-beta.9 <0.2.0",
+        "effect": "^4.0.0-rc.117",
+        "react-native": ">=0.81 <1",
+        "react-native-passkey": "~3.6.2",
+      },
     },
   },
   "overrides": {
@@ -1239,6 +1252,8 @@
     "@yielded/auth": ["@yielded/auth@workspace:packages/auth"],
 
     "@yielded/auth-persistence": ["@yielded/auth-persistence@workspace:packages/auth-persistence"],
+
+    "@yielded/auth-react-native": ["@yielded/auth-react-native@workspace:packages/auth-react-native"],
 
     "@yielded/example-auth": ["@yielded/example-auth@workspace:examples/auth"],
 

@@ -1,6 +1,5 @@
+import { PasskeyProtocolCredentialId, PasskeyUserHandle } from "@yielded/auth/Passkey";
 import { Encoding, Schema } from "effect";
-
-import { PasskeyProtocolCredentialId, PasskeyUserHandle } from "../models";
 
 const bytes = (minimum: number, maximum: number) =>
   Schema.String.check(

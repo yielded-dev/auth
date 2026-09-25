@@ -40,7 +40,6 @@ export default defineConfig({
       "src/PasskeyPassword.ts",
       "src/PasskeySimpleWebAuthn.ts",
       "src/PasskeyBrowser.ts",
-      "src/PasskeyReactNative.ts",
       "src/GitHub.ts",
       "src/AuthSession.ts",
       "src/Errors.ts",

@@ -4,16 +4,21 @@ description: iOS passkey capabilities, local outcomes, and prompt lifecycle.
 
 # iOS passkey adapter
 
-Import `* as ReactNativePasskey` from `@yielded/auth/PasskeyReactNative` in the native
+Import `* as ReactNativePasskey` from `@yielded/auth-react-native` in the native
 entrypoint only. `ReactNativePasskey.make()` returns an Effect of the service
-implementation; `ReactNativePasskey.layer` provides the `PasskeyReactNative` service. Construction
-performs no native I/O. Each ceremony owns an internal Effect Scope.
+implementation; `ReactNativePasskey.layer` provides the `PasskeyReactNative` service.
+Construction performs no native I/O. Each ceremony owns an internal Effect Scope.
 
 | Member                                 | Input                                                           | Effect success                     |
 | -------------------------------------- | --------------------------------------------------------------- | ---------------------------------- |
 | `capabilities`                         | None                                                            | `PasskeyReactNativeCapabilities`   |
 | `register(started)`                    | `PasskeyRegistrationStarted`                                    | `PasskeyReactNativeRegistration`   |
 | `authenticate({ started, mediation })` | `PasskeyAuthenticationStarted`, `"required"` or `"conditional"` | `PasskeyReactNativeAuthentication` |
+
+Registration uses platform passkeys with `attestation: "none"`; `pubKeyCredParams`
+must include ES256 (`alg: -7`). A request without ES256 fails before opening a
+native prompt. Security-key registration is unsupported; authentication can use
+existing platform or security-key credentials.
 
 Registration and authentication return the original `flowId` and a redacted JSON
 `response` for the server's Complete call. Inputs are snapshotted and validated;
@@ -36,7 +41,7 @@ cannot participate in the guard.
 | Failure                             | Meaning                                                                                                                  |
 | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
 | `PasskeyReactNativeInputRejected`   | Invalid or expired input.                                                                                                |
-| `PasskeyReactNativeUnsupported`     | Unsupported OS or mediation, or exclusions unavailable on this iOS version.                                              |
+| `PasskeyReactNativeUnsupported`     | Unsupported OS, mediation, or registration algorithms; exclusions unavailable on this iOS version.                       |
 | `PasskeyReactNativeBusy`            | Another native request has not settled.                                                                                  |
 | `PasskeyReactNativeNotCompleted`    | Sanitized `reason`: `cancelled`, `no-credentials`, `credential-exists`, `interrupted`, `timed-out`, or `request-failed`. |
 | `PasskeyReactNativeInvalidResponse` | Malformed, oversized, or inconsistent native credential JSON.                                                            |

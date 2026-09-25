@@ -1,6 +1,9 @@
+import type {
+  PasskeyAuthenticationStarted,
+  PasskeyRegistrationStarted,
+} from "@yielded/auth/Passkey";
 import { Context, type Effect } from "effect";
 
-import type { PasskeyAuthenticationStarted, PasskeyRegistrationStarted } from "../models";
 import type {
   PasskeyReactNativeAuthentication,
   PasskeyReactNativeCapabilities,
@@ -20,6 +23,7 @@ export class PasskeyReactNative extends Context.Service<
       PasskeyReactNativeCapabilities,
       PasskeyReactNativeUnavailable
     >;
+    /** Registers a platform passkey; requested algorithms must include ES256 (-7). */
     readonly register: (
       started: typeof PasskeyRegistrationStarted.Type,
     ) => Effect.Effect<PasskeyReactNativeRegistration, PasskeyReactNativeFailure>;
