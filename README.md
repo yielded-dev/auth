@@ -9,12 +9,12 @@ identity authority, persistence, protocol verification, and credential delivery.
 Companion packages provide Cloudflare, OAuth/OIDC, WebAuthn, and maintained cryptography.
 Core has only Effect as a runtime peer; applications supply adapter Layers.
 
-For an app using GitHub, [managed OAuth](docs/guide/oauth.md#sign-in-and-connect-provider-access)
+For an app using GitHub, [managed OAuth](docs/src/content/docs/guide/oauth.md#sign-in-and-connect-provider-access)
 handles sign-in, encrypted provider tokens, refresh, and stateless session cookies
 without a session repository. Supply your provider configuration, account policy,
 keys, and SQL connection; see the [runnable example](examples/auth/src/github-app.ts).
 
-See the [persistence examples](docs/reference/adapters.md#runnable-examples) for
+See the [persistence examples](docs/src/content/docs/reference/adapters.md#runnable-examples) for
 managed Drizzle, application-owned Drizzle, raw SQL, and custom service implementations.
 
 Install the beta release with Effect v4:
@@ -64,7 +64,7 @@ export const AuthRoutes = Http.layer(AppAuth, { origin: "https://app.example.com
 
 Supply your persistence and account Layers to `AuthRoutes`, then merge it with
 your router. For application routes that call auth, use the middleware shown in the
-[router composition](docs/guide/http-and-client.md#configure-the-server).
+[router composition](docs/src/content/docs/guide/http-and-client.md#configure-the-server).
 Inside an existing Effect handler, call the service directly:
 
 <!-- prettier-ignore -->
@@ -106,8 +106,8 @@ const result = yield* client.auth.signIn({ email, password });
 Both calls return Effects; the remote client handles HTTP and schema decoding.
 Use `auth.runtime` for client workflows that share the atoms' instance, or provide
 `AppClient.layer` at a standalone program boundary. The
-[getting-started guide](docs/guide/getting-started.md) and
-[HTTP and client guide](docs/guide/http-and-client.md) show the full composition.
+[getting-started guide](docs/src/content/docs/guide/getting-started.md) and
+[HTTP and client guide](docs/src/content/docs/guide/http-and-client.md) show the full composition.
 
 Start with the [documentation](https://yielded.dev/auth/) and
 [consumer examples](examples/auth). The public library lives in

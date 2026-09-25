@@ -1,8 +1,7 @@
 ---
+title: Google
 description: Set up Google sign-in with Yielded Auth.
 ---
-
-# Google
 
 Sign in with Google's OpenID Connect provider. Start with [OAuth setup](./oauth).
 
@@ -13,7 +12,7 @@ Add `https://app.example.com/auth/google/callback` as an authorized redirect URI
 
 ## Configure the provider
 
-```ts [google.ts]
+```ts title="google.ts"
 import { Redacted } from "effect";
 import { Http } from "@yielded/auth";
 import * as OpenIdClient from "@yielded/auth-openid-client";

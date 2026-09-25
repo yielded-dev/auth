@@ -1,0 +1,65 @@
+---
+title: Yielded Auth
+description: Composable authentication, sessions, and identity workflows for Effect.
+template: splash
+hero:
+  title: Authentication, composed with Effect.
+  tagline: Keep your identity model. Choose your methods.
+  actions:
+    - text: Get started
+      link: /auth/guide/getting-started/
+      icon: right-arrow
+      variant: primary
+    - text: How it fits together
+      link: /auth/guide/authentication/
+      variant: secondary
+---
+
+import { LinkCard, CardGrid, TabItem, Tabs } from "@astrojs/starlight/components";
+import { Snippet } from "@yielded/starlight-theme/components";
+
+<Tabs>
+  <TabItem label="auth-contract.ts">
+    <Snippet src="../README.md" region="auth-contract" title={false} />
+  </TabItem>
+  <TabItem label="auth.ts">
+    <Snippet src="../README.md" region="auth-server" title={false} />
+  </TabItem>
+  <TabItem label="auth-client.ts">
+    <Snippet src="../README.md" region="auth-client" title={false} />
+  </TabItem>
+</Tabs>
+
+One shared contract. Call `auth.signIn` in a server Effect, `client.auth.signIn` in a client
+Effect, or use the generated `auth.signIn` atom. Supply your account and persistence Layers at
+the server boundary.
+
+## Guides
+
+<CardGrid>
+  <LinkCard
+    title="Sessions"
+    description="Configure session lifetimes, read a session, and sign out."
+    href="/auth/guide/sessions/"
+  />
+  <LinkCard
+    title="Passkeys"
+    description="Begin a passkey ceremony, call the browser, and verify the response."
+    href="/auth/guide/passkeys/"
+  />
+  <LinkCard
+    title="OAuth"
+    description="Understand OAuth sign-in, application sessions, and provider API access."
+    href="/auth/guide/oauth/"
+  />
+  <LinkCard
+    title="HTTP & client state"
+    description="Mount a shared auth API, configure cookies, and compose Effect Atom workflows."
+    href="/auth/guide/http-and-client/"
+  />
+  <LinkCard
+    title="Examples"
+    description="Application compositions for authentication, persistence, and HTTP clients."
+    href="/auth/guide/examples/"
+  />
+</CardGrid>

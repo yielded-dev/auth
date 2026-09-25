@@ -1,8 +1,7 @@
 ---
+title: Two-factor authentication
 description: Enroll an authenticator and complete sign-in with a second factor.
 ---
-
-# Two-factor authentication
 
 Add `Totp` alongside a primary method. It supports authenticator codes and
 single-use recovery codes. The local calls below belong inside existing Effect
@@ -10,7 +9,7 @@ request handlers, with `AppAuth` and the HTTP request boundary provided.
 
 ## Enable the authenticator
 
-```ts [auth.ts]
+```ts title="auth.ts"
 import { Schema } from "effect";
 import { Auth } from "@yielded/auth";
 import { Password, Totp } from "@yielded/auth/strategies";
@@ -37,7 +36,7 @@ pending-authentication support. Storage, secret keys, and action authorization
 have no automatic defaults. This definition omits `sessions`
 so you can supply the custom completion Layer below to `AppAuth.layer`.
 
-```ts [sessions.ts]
+```ts title="sessions.ts"
 import { Layer } from "effect";
 
 import { AppAuth } from "./auth";
@@ -111,7 +110,7 @@ code. Each code is consumed once. A replay or exhausted attempt budget fails clo
 
 Use the pure TOTP contracts to add named actions:
 
-```ts [totp-contract.ts]
+```ts title="totp-contract.ts"
 import { Schema } from "effect";
 import { AuthContract, TotpContract } from "@yielded/auth/contracts";
 

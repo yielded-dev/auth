@@ -1,8 +1,7 @@
 ---
+title: GitHub
 description: Set up GitHub sign-in with Yielded Auth.
 ---
-
-# GitHub
 
 Sign in with a GitHub OAuth App. Start with [OAuth setup](./oauth).
 
@@ -16,7 +15,7 @@ Set its callback URL to `https://app.example.com/auth/github/callback`.
 
 ## Configure the provider
 
-```ts [github.ts]
+```ts title="github.ts"
 import { Redacted } from "effect";
 import * as GitHub from "@yielded/auth-openid-client/GitHub";
 import { Http } from "@yielded/auth";

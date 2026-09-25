@@ -1,8 +1,7 @@
 ---
+title: OAuth
 description: Understand OAuth sign-in, application sessions, and provider API access.
 ---
-
-# OAuth
 
 OAuth lets a user authorize your app through a provider such as GitHub or Google.
 Two things can come from that authorization: an **app session** identifies the
@@ -34,7 +33,7 @@ Your app / jobs → OAuthApp → Provider API
 Sessions verify without a database lookup. Pending flows and provider grants live
 in one auth table; provider tokens refresh when your app needs them.
 
-```ts [auth.ts]
+```ts title="auth.ts"
 import { OAuthAppPersistence } from "@yielded/auth-persistence";
 import * as OAuthApp from "@yielded/auth/OAuthApp";
 import * as GitHub from "@yielded/auth-openid-client/GitHub";
@@ -161,7 +160,7 @@ the setup and token lifecycle.
 
 Add an OAuth strategy when users share sessions across several sign-in methods:
 
-```ts [auth.ts]
+```ts title="auth.ts"
 import { Auth, Sessions } from "@yielded/auth";
 import { OAuth } from "@yielded/auth/strategies";
 import { AuthApi } from "./auth-contract";

@@ -1,8 +1,7 @@
 ---
+title: Phone codes
 description: Request an SMS code and sign in with a phone number.
 ---
-
-# Phone codes
 
 Use `PhoneOtp` to sign in existing accounts with an SMS code.
 
@@ -16,7 +15,7 @@ a [shared contract](./http-and-client#expose-another-method) for browser clients
 
 ## Enable phone sign-in
 
-```ts [auth.ts]
+```ts title="auth.ts"
 import { Schema } from "effect";
 import { Auth, Sessions } from "@yielded/auth";
 import { PhoneOtp } from "@yielded/auth/strategies";
@@ -109,7 +108,7 @@ supply your table mappings and migrations.
 
 Wire those Layers with a sending policy and session claims:
 
-```ts [phone-live.ts]
+```ts title="phone-live.ts"
 import { Config, Effect, Layer } from "effect";
 import { PhoneOtp } from "@yielded/auth/strategies";
 import * as Twilio from "@yielded/auth/adapters/Twilio";

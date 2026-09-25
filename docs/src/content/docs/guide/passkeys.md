@@ -1,8 +1,7 @@
 ---
+title: Passkeys
 description: Begin a passkey ceremony, call the browser, and verify the response.
 ---
-
-# Passkeys
 
 Passkey sign-in has three steps: create the challenge on your server, ask the
 browser to authenticate, and verify the response on your server.
@@ -11,7 +10,7 @@ browser to authenticate, and verify the response on your server.
 
 <!-- #region passkey-contract -->
 
-```ts [passkey-contract.ts]
+```ts title="passkey-contract.ts"
 import { Schema } from "effect";
 import { AuthContract, PasskeyContract } from "@yielded/auth/contracts";
 
@@ -43,7 +42,7 @@ the named server call nor the browser payload includes that credential. The
 
 ## Enable passkeys
 
-```ts [auth.ts]
+```ts title="auth.ts"
 import { Auth, Sessions } from "@yielded/auth";
 import { Passkey } from "@yielded/auth/strategies";
 
@@ -109,7 +108,7 @@ The client exposes the same calls as `client.auth.signIn(...)` and
 
 ## Install the server verifier
 
-```ts [passkey-protocol.ts]
+```ts title="passkey-protocol.ts"
 import { Layer } from "effect";
 import { PasskeyConfig } from "@yielded/auth/Passkey";
 import * as PasskeyServer from "@yielded/auth-simplewebauthn/Server";
@@ -131,7 +130,7 @@ ID and exact allowed origins; changing them can make existing passkeys unusable.
 
 The verifier is an optional adapter; storage and claims have no automatic defaults:
 
-```ts [passkey-live.ts]
+```ts title="passkey-live.ts"
 import { Layer } from "effect";
 
 import { AppAuth } from "./auth";

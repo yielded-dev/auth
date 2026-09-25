@@ -1,8 +1,7 @@
 ---
+title: Email codes and magic links
 description: Send email codes, verify them, and finish sign-in.
 ---
-
-# Email codes and magic links
 
 Email sign-in is a short flow: bind the request, send a proof, verify it, then
 complete sign-in.
@@ -13,7 +12,7 @@ actions in a [shared contract](./http-and-client#expose-another-method).
 
 ## Enable email codes
 
-```ts [auth.ts]
+```ts title="auth.ts"
 import { Schema } from "effect";
 import { Auth, Sessions } from "@yielded/auth";
 import { Email } from "@yielded/auth/strategies";
@@ -102,7 +101,7 @@ to cookies so they stay out of ordinary browser payloads.
 
 ## Use a magic link instead
 
-```ts [magic-link.ts]
+```ts title="magic-link.ts"
 import { Email } from "@yielded/auth/strategies";
 
 export const magicLink = Email.makeLink();
@@ -116,7 +115,7 @@ history, and complete from the originating client.
 <details>
 <summary>Proof expiry and rate limits</summary>
 
-```ts [proof-policy.ts]
+```ts title="proof-policy.ts"
 import type { ProofPolicy } from "@yielded/auth/Proofs";
 
 export const proofPolicy: ProofPolicy = {
@@ -149,7 +148,7 @@ flow IDs must not reset account-level attempt budgets.
 Lookup, claims, storage, and delivery are application-supplied. The library provides
 an exact-route allowlist helper, Web Crypto, and empty lifecycle hooks:
 
-```ts [email-live.ts]
+```ts title="email-live.ts"
 import { Layer } from "effect";
 import { Email } from "@yielded/auth/strategies";
 import { EmailProofDelivery } from "@yielded/auth/Proofs";
