@@ -1,8 +1,7 @@
 ---
+title: Getting started
 description: Define your authentication service and call it from your application.
 ---
-
-# Getting started
 
 Define a shared contract, choose your server methods, and call them from your
 application. The contract also supplies your HTTP endpoints and browser client.
@@ -18,7 +17,7 @@ dependencies only for the [adapters](../reference/adapters) you use.
 
 ## Define the shared contract
 
-<!--@include: ../../README.md#auth-contract-->
+<!--@include: @/../README.md#auth-contract-->
 
 The contract includes `getSession`, `requireSession`, `signOut`, and
 `renewSession`. The `actions` callback explicitly adds password sign-in.
@@ -26,7 +25,7 @@ Keep this module free of server configuration, keys, and persistence.
 
 ## Define your auth service
 
-<!--@include: ../../README.md#auth-server-->
+<!--@include: @/../README.md#auth-server-->
 
 `claims` defines the data your application puts in each session. The password
 method verifies credentials; your account service supplies `displayName`.
@@ -52,7 +51,7 @@ Errors stay in the Effect error channel; see
 
 ## Use the same API on the client
 
-<!--@include: ../../README.md#auth-client-->
+<!--@include: @/../README.md#auth-client-->
 
 Use `auth.session`, `auth.signIn`, and `auth.signOut` directly as queries and
 mutations in your application Atom registry. For a direct call inside a client
@@ -96,7 +95,7 @@ For local composition, you can pass an identifier and claims directly to
 `Auth.make`. Each strategy gets a name. Pass that name when calling a non-default
 strategy:
 
-```ts [auth-with-passkeys.ts]
+```ts title="auth-with-passkeys.ts"
 import { Schema } from "effect";
 import { Auth, Sessions } from "@yielded/auth";
 import { Passkey, Password } from "@yielded/auth/strategies";

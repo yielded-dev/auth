@@ -1,8 +1,7 @@
 ---
+title: Public modules
 description: Public imports, browser-safe contracts, and optional adapters.
 ---
-
-# Public modules
 
 Start with `Auth.make` to compose authentication for an application. Choose
 individual modules for your methods, session strategy, and integration boundaries.

@@ -24,7 +24,7 @@ export default Alchemy.Stack(
     yield* Cloudflare.Website.StaticSite("Docs", {
       name: "effect-auth-docs",
       command: "vp run docs:build",
-      outdir: "docs/.vitepress/dist",
+      outdir: "docs/dist",
       domain: "effect-auth.com",
       routes: [{ pattern: "yielded.dev/auth*", zoneName: "yielded.dev" }],
       workersDev: false,

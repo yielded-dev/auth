@@ -119,15 +119,20 @@ comments. Both execute trusted default-branch code, never PR-head code.
 
 ## Documentation
 
-Docs use the same VitePress theme, typography, and syntax colors as Effect Agent.
+The `docs/` workspace is an Astro Starlight site using the shared yielded.dev theme,
+`@yielded/starlight-theme` (`yielded-dev/site`). Public pages live in
+`docs/src/content/docs/` and the sidebar in `docs/astro.config.ts`.
 Run `vp run docs:dev` to edit locally. `vp run docs:build` checks local links and
-produces the static site; `vp run docs:preview` serves that build. The home page
-includes the root README's shared contract, server, and client examples. Guides show feature setup and usage.
-This contributor guide stays in the repository and is excluded from the public site.
+anchors and produces the static site; `vp run docs:preview` serves that build. Link
+pages with relative Markdown paths such as `./sessions.md`. The home page and quick
+start include the root README's shared contract, server, and client examples:
+Markdown pages use `<!--@include: @/../README.md#region-->` and the MDX home page
+uses `<Snippet>`. Guides show feature setup and usage.
+This contributor guide stays at the top of `docs/` and is excluded from the public site.
 
 `alchemy.run.ts` deploys the site to `https://yielded.dev/auth/` through the
 `effect-auth-docs` Cloudflare Worker at stage `prod`. It uses the account-wide
-Cloudflare state store, matching Effect Agent. The VitePress base and Worker asset
+Cloudflare state store, matching Effect Agent. The Astro base and Worker asset
 base both use `/auth/`. The Worker route covers the `/auth` prefix;
 other paths on `yielded.dev` remain available for sibling projects. The stack
 owns the proxied apex DNS placeholder until a shared Yielded site provides an origin.

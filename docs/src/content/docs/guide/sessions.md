@@ -1,15 +1,14 @@
 ---
+title: Sessions
 description: Configure session lifetimes, read a session, and sign out.
 ---
-
-# Sessions
 
 Configure sessions on `Auth.make`. Request-aware methods handle credential lookup
 and delivery through the [HTTP boundary](./http-and-client).
 
 ## Configure sessions
 
-```ts [auth.ts]
+```ts title="auth.ts"
 import { Schema } from "effect";
 import { Auth, Sessions } from "@yielded/auth";
 

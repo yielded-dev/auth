@@ -1,8 +1,7 @@
 ---
+title: How it fits together
 description: See how methods, sessions, and application services connect.
 ---
-
-# How it fits together
 
 Your app owns users and storage. Yielded Auth verifies authentication methods and
 issues sessions through those services.

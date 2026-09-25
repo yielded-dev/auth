@@ -1,8 +1,7 @@
 ---
+title: Examples
 description: Application compositions for authentication, persistence, and HTTP clients.
 ---
-
-# Examples
 
 Use these source references to connect Yielded Auth to your application's accounts,
 database, and request handlers. Each composition uses the package's public API.

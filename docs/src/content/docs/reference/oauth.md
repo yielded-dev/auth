@@ -1,8 +1,7 @@
 ---
+title: OAuth reference
 description: OAuth configuration, routes, sessions, and provider adapters.
 ---
-
-# OAuth reference
 
 Start with the [OAuth guide](../guide/oauth) for the flow and choice of API.
 
@@ -190,7 +189,7 @@ records may be pruned, and flow IDs must never be reused.
 
 Declare the actions for `OAuth` inside `Auth.make`:
 
-```ts [auth-contract.ts]
+```ts title="auth-contract.ts"
 import { Schema } from "effect";
 import { AuthContract } from "@yielded/auth/contracts";
 
@@ -207,7 +206,7 @@ export const AuthApi = AuthContract.make("app/Auth", {
 
 With `AppAuth` from the guide and `AuthRoutes` from a provider page:
 
-```ts [oauth-live.ts]
+```ts title="oauth-live.ts"
 import { Layer } from "effect";
 import { OAuth } from "@yielded/auth/strategies";
 import * as OAuthCrypto from "@yielded/auth-crypto/OAuth";

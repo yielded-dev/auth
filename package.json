@@ -4,7 +4,8 @@
   "private": true,
   "workspaces": [
     "packages/*",
-    "examples/*"
+    "examples/*",
+    "docs"
   ],
   "type": "module",
   "scripts": {
@@ -19,11 +20,11 @@
     "verify:package-purity": "bun scripts/verify-package-purity.ts",
     "check:package-consumers": "bun scripts/verify-package-consumers.ts",
     "test": "vp run -r --parallel --concurrency-limit 4 test",
-    "build": "vp run -r build && vp run check:package-consumers && vp run docs:build",
+    "build": "vp run -r build && vp run check:package-consumers",
     "ready": "vp run check && vp run test && vp run build",
-    "docs:dev": "vitepress dev docs",
-    "docs:build": "vitepress build docs",
-    "docs:preview": "vitepress preview docs",
+    "docs:dev": "vp run @yielded/auth-docs#dev",
+    "docs:build": "vp run @yielded/auth-docs#build",
+    "docs:preview": "vp run @yielded/auth-docs#preview",
     "release:checked-publish": "vp run --no-cache release:publish --check-ready"
   },
   "devDependencies": {
@@ -34,8 +35,6 @@
     "@effect/platform-node": "catalog:",
     "@effect/sql-sqlite-node": "catalog:",
     "@effect/tsgo": "catalog:",
-    "@fontsource-variable/ibm-plex-sans": "catalog:",
-    "@fontsource/ibm-plex-mono": "catalog:",
     "@stylistic/eslint-plugin": "5.10.0",
     "@types/node": "catalog:",
     "@types/react": "catalog:",
@@ -58,9 +57,7 @@
     "typescript": "catalog:",
     "typescript-twoslash": "catalog:",
     "vite": "catalog:",
-    "vite-plus": "catalog:",
-    "vitepress": "catalog:",
-    "vue": "catalog:"
+    "vite-plus": "catalog:"
   },
   "overrides": {
     "@effect/platform-node": "catalog:",
@@ -79,8 +76,6 @@
     "@effect/platform-node": "4.0.0-rc.117",
     "@effect/tsgo": "0.33.0",
     "@effect/vitest": "4.0.0-rc.117",
-    "@fontsource-variable/ibm-plex-sans": "5.3.0",
-    "@fontsource/ibm-plex-mono": "5.3.0",
     "@types/node": "26.1.2",
     "effect": "4.0.0-rc.117",
     "effect-cf": "0.49.0",
@@ -89,9 +84,7 @@
     "typescript-twoslash": "npm:typescript@6.0.3",
     "vite": "npm:@voidzero-dev/vite-plus-core@0.3.3",
     "vite-plus": "0.3.3",
-    "vitepress": "2.0.0-alpha.18",
     "vitest": "4.1.11",
-    "vue": "3.5.40",
     "@noble/ciphers": "2.1.1",
     "@noble/hashes": "2.3.0",
     "@effect/sql-d1": "4.0.0-rc.117",
@@ -116,6 +109,10 @@
     "react-dom": "19.3.0",
     "@types/react": "19.3.0",
     "@types/react-dom": "19.2.4",
-    "scheduler": "0.27.0"
+    "scheduler": "0.27.0",
+    "@astrojs/starlight": "0.42.4",
+    "astro": "7.3.5",
+    "starlight-links-validator": "0.26.0",
+    "@yielded/starlight-theme": "0.1.0"
   }
 }

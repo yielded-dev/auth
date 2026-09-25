@@ -1,8 +1,7 @@
 ---
+title: HTTP and client state
 description: Mount a shared auth API, configure cookies, and compose Effect Atom workflows.
 ---
-
-# HTTP and client state
 
 One shared contract supplies local server methods, HTTP endpoints, and a named
 client. Effect Atom owns client queries, mutations, and workflows.
@@ -16,7 +15,7 @@ AuthApi ──→ Auth.make ──→ local Effects + HTTP handlers
 
 Keep the contract safe to import in both the browser and server:
 
-```ts [auth-contract.ts]
+```ts title="auth-contract.ts"
 import { Schema } from "effect";
 import { AuthContract } from "@yielded/auth/contracts";
 
@@ -43,7 +42,7 @@ and client use the same descriptors.
 
 Bind the contract to your methods and session configuration:
 
-```ts [auth.ts]
+```ts title="auth.ts"
 import { Auth, Http, Sessions } from "@yielded/auth";
 import { Password } from "@yielded/auth/strategies";
 
@@ -66,7 +65,7 @@ The [adapter guide](../reference/adapters#compose-the-application-layer) shows t
 For an existing raw `HttpRouter`, merge the auth route Layer with your application
 routes:
 
-```ts [routes.ts]
+```ts title="routes.ts"
 import { Layer } from "effect";
 
 import { ApplicationRoutes } from "./application-routes";
@@ -82,7 +81,7 @@ export const Routes = Layer.mergeAll(AuthRoutes, ApplicationRoutes).pipe(
 
 For application routes that call auth, build the middleware with `Http.make`:
 
-```ts [auth-http.ts]
+```ts title="auth-http.ts"
 import { Http } from "@yielded/auth";
 
 import { AppAuth } from "./auth";
@@ -103,7 +102,7 @@ or require a headers argument.
 
 Add the native auth group beside your application groups in the shared API:
 
-```ts [api.ts]
+```ts title="api.ts"
 import { AuthContract } from "@yielded/auth/contracts";
 import { HttpApi } from "effect/unstable/httpapi";
 
@@ -113,7 +112,7 @@ import { Projects } from "./projects-contract";
 export const Api = HttpApi.make("app").add(Projects, AuthContract.httpGroup(AuthApi));
 ```
 
-```ts [api-server.ts]
+```ts title="api-server.ts"
 import { Layer } from "effect";
 import { HttpApiBuilder } from "effect/unstable/httpapi";
 
@@ -203,7 +202,7 @@ example and [TOTP](./totp#expose-private-reveals-over-http) for private reveals.
 
 ## Call the client directly
 
-```ts [client-service.ts]
+```ts title="client-service.ts"
 import * as Client from "@yielded/auth/Client";
 
 import { AuthApi } from "./auth-contract";
@@ -231,7 +230,7 @@ reveal handling, or account transition coordination.
 
 ## Connect client state
 
-```ts [auth-client.ts]
+```ts title="auth-client.ts"
 import * as AuthAtom from "@yielded/auth/Atom";
 
 import { AppClient } from "./client-service";
@@ -247,7 +246,7 @@ including setup errors.
 
 Compose application queries with the same scoped client:
 
-```ts [member-name.ts]
+```ts title="member-name.ts"
 import { Effect } from "effect";
 
 import { auth } from "./auth-client";
@@ -274,7 +273,7 @@ shares its Layer memo map.
 Use the standard `@effect/atom-react` adapter and the application's ordinary
 `RegistryProvider`. Yielded Auth has no React-specific provider or hooks:
 
-```tsx [account.tsx]
+```tsx title="account.tsx"
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
 
 import { auth } from "./auth-client";
@@ -303,7 +302,7 @@ Auth mutations refresh auth queries automatically. Extra reactivity keys describ
 application data that must also refresh. Use the same runtime factory as the
 queries subscribed to those keys:
 
-```ts [shared-runtime.ts]
+```ts title="shared-runtime.ts"
 import * as AuthAtom from "@yielded/auth/Atom";
 import { Atom } from "effect/unstable/reactivity";
 
@@ -360,7 +359,7 @@ the public schema and injects them from request credentials during execution.
 Neither local nor HTTP callers can supply those private fields. For new contracts,
 `AuthContract.action` also accepts explicit input, success, and error schemas.
 
-```ts [passkey-workflow.ts]
+```ts title="passkey-workflow.ts"
 import { Effect, Redacted } from "effect";
 import * as AuthAtom from "@yielded/auth/Atom";
 import * as Client from "@yielded/auth/Client";

@@ -1,15 +1,14 @@
 ---
+title: Passwords
 description: Register accounts, sign in, and change passwords.
 ---
-
-# Passwords
 
 Use `Password.make()` for existing-account sign-in. Configure registration and
 recovery to enable full password management.
 
 ## Enable passwords
 
-```ts [auth.ts]
+```ts title="auth.ts"
 import { Schema } from "effect";
 import { Auth, Sessions } from "@yielded/auth";
 import { Password } from "@yielded/auth/strategies";
@@ -90,7 +89,7 @@ Supply `PasswordHashing` explicitly. The maintained Argon2id adapter lives in
 Web Crypto. Storage, claims, account creation, screening, and change authorization
 remain application-owned:
 
-```ts [password-live.ts]
+```ts title="password-live.ts"
 import { Layer } from "effect";
 import { Password } from "@yielded/auth/strategies";
 import * as PasswordCrypto from "@yielded/auth-crypto/Password";

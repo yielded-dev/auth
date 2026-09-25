@@ -6,9 +6,6 @@
     },
     {
       "path": "./examples/auth"
-    },
-    {
-      "path": "./docs/.vitepress"
     }
   ]
 }

@@ -4,8 +4,7 @@ dist
 coverage
 .vite
 .playwright-cli/
-docs/.vitepress/cache
-docs/.vitepress/dist
+.astro/
 *.tsbuildinfo
 .DS_Store
 .env
