@@ -51,8 +51,8 @@
     "effect": "catalog:",
     "effect-cf": "catalog:",
     "esbuild": "catalog:",
-    "oxfmt": "0.70.0",
-    "oxlint": "1.85.0",
+    "oxfmt": "0.68.0",
+    "oxlint": "1.83.0",
     "react": "catalog:",
     "react-dom": "catalog:",
     "typescript": "catalog:",
@@ -65,13 +65,14 @@
   "overrides": {
     "@effect/platform-node": "catalog:",
     "@effect/platform-node-shared": "catalog:",
+    "@effect/vitest": "catalog:",
     "effect": "catalog:",
     "vitest": "catalog:"
   },
   "engines": {
     "node": "^22.18.0 || ^24.11.0 || >=26.0.0"
   },
-  "packageManager": "bun@1.4.0",
+  "packageManager": "bun@1.4.2",
   "catalog": {
     "@cloudflare/workers-types": "5.20260825.1",
     "@effect/platform-bun": "4.0.0-rc.117",
@@ -86,10 +87,10 @@
     "esbuild": "0.28.1",
     "typescript": "7.0.2",
     "typescript-twoslash": "npm:typescript@6.0.3",
-    "vite": "npm:@voidzero-dev/vite-plus-core@1.0.0-rc.0",
-    "vite-plus": "1.0.0-rc.0",
+    "vite": "npm:@voidzero-dev/vite-plus-core@0.3.3",
+    "vite-plus": "0.3.3",
     "vitepress": "2.0.0-alpha.18",
-    "vitest": "5.0.1",
+    "vitest": "4.1.11",
     "vue": "3.5.40",
     "@noble/ciphers": "2.1.1",
     "@noble/hashes": "2.3.0",
