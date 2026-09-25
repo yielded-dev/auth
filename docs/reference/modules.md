@@ -75,8 +75,8 @@ client workflow composition.
 
 ## Optional adapters
 
-SDK integrations live in companion packages. Import only the platform entrypoint
-you use; the SimpleWebAuthn root groups both browser and server modules.
+SDK integrations live in companion packages. Import the platform entrypoint
+you use.
 
 | Package or import                       | Integration                                                |
 | --------------------------------------- | ---------------------------------------------------------- |

@@ -142,7 +142,10 @@ export const verifyPackageExports = Effect.fn("verifyPackageExports")(
             );
           }
         }
-        if (manifest.exports["."] !== "./src/index.ts")
+        if (
+          (manifest.name === "@yielded/auth" || manifest.exports["."] !== undefined) &&
+          manifest.exports["."] !== "./src/index.ts"
+        )
           report(pkg.file, "Root must target ./src/index.ts");
         if (new Set(targets).size !== targets.length)
           report(pkg.file, "Export targets must be unique");

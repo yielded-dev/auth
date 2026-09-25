@@ -19,7 +19,6 @@
   "type": "module",
   "sideEffects": [],
   "exports": {
-    ".": "./src/index.ts",
     "./Browser": "./src/Browser.ts",
     "./Server": "./src/Server.ts"
   },
