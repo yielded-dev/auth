@@ -42,6 +42,7 @@
     "@types/react-dom": "catalog:",
     "@yielded/auth": "workspace:*",
     "@yielded/auth-cloudflare": "workspace:*",
+    "@yielded/auth-crypto": "workspace:*",
     "@yielded/auth-openid-client": "workspace:*",
     "@yielded/auth-persistence": "workspace:*",
     "@yielded/auth-simplewebauthn": "workspace:*",

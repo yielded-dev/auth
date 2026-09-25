@@ -1,3 +1,4 @@
+import { digest } from "@yielded/auth-crypto";
 import {
   PasskeyCredentials,
   PasskeyCredential,
@@ -10,7 +11,6 @@ import {
   PasskeyRequirement,
   PasskeyUnavailable,
 } from "@yielded/auth/Passkey";
-import { digest } from "@yielded/auth/Persistence";
 import type { SQL, Table } from "drizzle-orm";
 import { Context, Effect, Schema } from "effect";
 import { SqlClient } from "effect/unstable/sql";

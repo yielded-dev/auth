@@ -693,11 +693,7 @@ export const make = <
           Context.add(Sessions, { verify: codec.verify }),
         );
       }),
-    ).pipe(
-      Layer.provide(OAuthTransactionProtector.xchacha20poly1305(config.transactionKeys)),
-      Layer.provide(OAuthConnectedTokenProtector.xchacha20poly1305(config.tokenKeys)),
-      Layer.provide(cryptoLayer),
-    );
+    ).pipe(Layer.provide(cryptoLayer));
   };
 
   return {

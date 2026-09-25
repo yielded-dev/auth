@@ -4,7 +4,8 @@ import * as Http from "../../http/oauth-app";
 import type { Options } from "./models";
 import { make as makeWorkflow } from "./workflow";
 
-/** Compose the managed workflow and its HTTP adapter without extra application services. */
+/** Compose the managed workflow and HTTP adapter. Supply protocol, persistence,
+ * account authority, and transaction/token protector services at the application boundary. */
 export const make = <
   const Id extends string,
   Claims extends Schema.Codec<unknown, unknown, never, never>,

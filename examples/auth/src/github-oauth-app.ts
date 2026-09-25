@@ -1,13 +1,11 @@
 import { Auth } from "@yielded/auth";
+import * as OAuthCrypto from "@yielded/auth-crypto/OAuth";
 import * as GitHub from "@yielded/auth-openid-client/GitHub";
 import {
   makeConnectedModule,
   OAuthConnectedProfile,
-  OAuthConnectedTokenProtector,
-  OAuthConnectedTransactionProtector,
   OAuthPermissionProfileKey,
   OAuthReturnTargets,
-  OAuthTransactionProtector,
   OAuthUnavailable,
   type OAuthGrantId,
   type OAuthTransactionKeyring,
@@ -96,7 +94,7 @@ export const githubSignInLayer = (input: {
       lifetimeMillis: 120_000,
       keyring: input.bindingKeys,
     }),
-    OAuthTransactionProtector.xchacha20poly1305(input.transactionKeys),
+    OAuthCrypto.transactionLayer(input.transactionKeys),
     OAuthReturnTargets.exactRoutes(["/account"]),
     claimsLayer,
     githubSessions.statelessLayer(
@@ -189,8 +187,8 @@ export const githubProfileConnection = (input: {
       lifetimeMillis: 120_000,
       keyring: input.bindingKeys,
     }),
-    OAuthConnectedTransactionProtector.xchacha20poly1305(input.transactionKeys),
-    OAuthConnectedTokenProtector.xchacha20poly1305(input.tokenKeys),
+    OAuthCrypto.connectedTransactionLayer(input.transactionKeys),
+    OAuthCrypto.connectedTokenLayer(input.tokenKeys),
     OAuthReturnTargets.exactRoutes(["/account/connections"]),
   );
 

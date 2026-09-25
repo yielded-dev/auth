@@ -85,10 +85,6 @@
     "check": "tsc --noEmit -p tsconfig.json",
     "test": "vp test --passWithNoTests"
   },
-  "dependencies": {
-    "@noble/ciphers": "catalog:",
-    "@noble/hashes": "catalog:"
-  },
   "devDependencies": {
     "@effect/platform-bun": "catalog:",
     "@effect/platform-node": "catalog:",

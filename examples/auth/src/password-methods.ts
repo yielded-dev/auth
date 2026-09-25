@@ -1,8 +1,9 @@
 import { BunRuntime } from "@effect/platform-bun";
+import * as PasswordCrypto from "@yielded/auth-crypto/Password";
 import { AuthRequest } from "@yielded/auth/Auth";
 import { LifecycleHooks } from "@yielded/auth/Hooks";
 import { guest, type AuthCredentialCommand } from "@yielded/auth/Operations";
-import { CompromisedPasswords } from "@yielded/auth/Password";
+import { CompromisedPasswords, PasswordKdfAdmission } from "@yielded/auth/Password";
 import { EmailProofDelivery, type ProofDeliveryMessage } from "@yielded/auth/Proofs";
 import { layerWebCrypto } from "@yielded/auth/WebCrypto";
 import { DateTime, Effect, Encoding, Layer, Redacted } from "effect";
@@ -14,7 +15,12 @@ import {
   sessionPolicy,
 } from "./password-method-consumer";
 
-const base = Layer.mergeAll(layerWebCrypto, LifecycleHooks.empty);
+const hashing = PasswordCrypto.layer().pipe(
+  Layer.provide(PasswordKdfAdmission.layer()),
+  Layer.provide(layerWebCrypto),
+);
+
+const base = Layer.mergeAll(layerWebCrypto, LifecycleHooks.empty, hashing);
 
 const screening = Layer.succeed(CompromisedPasswords, {
   // Public local fixture only; production must supply a maintained corpus/checker.

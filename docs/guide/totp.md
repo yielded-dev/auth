@@ -30,7 +30,8 @@ attempt, and recovery policies have defaults. Recovery for lost factors is denie
 unless explicitly enabled.
 
 Your `AuthenticationAuthority` decides which accounts require two factors.
-Provide `TotpPersistence`, `TotpSecretKeys`, `TotpActionEvidence`, and stateful
+Provide `TotpCryptography` with `layer` from `@yielded/auth-crypto/Totp`, alongside
+`TotpPersistence`, `TotpSecretKeys`, `TotpActionEvidence`, and stateful
 sessions with pending-authentication support. Storage, secret keys, and action
 authorization have no automatic defaults. This definition omits `sessions`
 so you can supply the custom completion Layer below to `AppAuth.layer`.

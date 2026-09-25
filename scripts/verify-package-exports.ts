@@ -2,7 +2,7 @@ import { NodeRuntime, NodeServices } from "@effect/platform-node";
 import { Console, Effect, FileSystem, Path, Schema } from "effect";
 import ts from "typescript-twoslash";
 
-const coreDependencies = new Set(["effect", "@noble/ciphers", "@noble/hashes"]);
+const coreDependencies = new Set(["effect"]);
 
 const Dependencies = Schema.Record(Schema.String, Schema.String);
 

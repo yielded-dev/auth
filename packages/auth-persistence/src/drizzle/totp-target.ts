@@ -1,5 +1,5 @@
+import { randomId } from "@yielded/auth-crypto";
 import { LifecycleHooks } from "@yielded/auth/Hooks";
-import { randomId } from "@yielded/auth/Persistence";
 import {
   TotpConfigurationError,
   type TotpUnavailable,

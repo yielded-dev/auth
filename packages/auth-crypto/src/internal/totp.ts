@@ -6,48 +6,26 @@ import { equalBytes } from "@noble/ciphers/utils.js";
 import { hmac } from "@noble/hashes/hmac.js";
 // oxlint-disable-next-line import/extensions -- RFC 6238 interoperable SHA-1 HMAC, not password hashing.
 import { sha1 } from "@noble/hashes/legacy.js";
-// oxlint-disable-next-line import/extensions -- Noble public ESM entrypoint.
-import { sha256 } from "@noble/hashes/sha2.js";
 // oxlint-disable-next-line import/extensions -- Constant-time comparison and secure entropy.
 import { randomBytes } from "@noble/hashes/utils.js";
-import { Effect, Encoding, Redacted, Schema } from "effect";
+import {
+  TotpCryptography,
+  TotpUnavailable,
+  TotpSecretBinding,
+  TotpSecretEnvelope,
+  TotpSecretKeys,
+} from "@yielded/auth/Totp";
+import { Effect, Encoding, Layer, Redacted, Schema } from "effect";
 
-import { TokenDigest } from "../Schema";
-import { TotpUnavailable } from "./errors";
-import { TotpSecretBinding, TotpSecretEnvelope } from "./models";
-import { TotpSecretKeys } from "./TotpSecretKeys";
+import { digest, randomId } from "./primitives";
+
 const encoder = new TextEncoder();
 const bindingCodec = Schema.fromJsonString(TotpSecretBinding);
-
-export const randomId = () => Encoding.encodeBase64Url(randomBytes(32));
-
-export const digest = (value: string) =>
-  TokenDigest.make(Encoding.encodeBase64Url(sha256(encoder.encode(value))));
 
 export const recoveryDigest = (moduleId: string, subjectId: string, value: string) =>
   digest(
     `effect-auth/totp/recovery/v1/${moduleId.length}:${moduleId}/${subjectId.length}:${subjectId}/${value}`,
   );
-
-export const base32 = (bytes: Uint8Array): string => {
-  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
-
-  let bits = 0,
-    value = 0,
-    output = "";
-
-  for (const byte of bytes) {
-    value = (value << 8) | byte;
-    bits += 8;
-    while (bits >= 5) {
-      bits -= 5;
-      output += alphabet[(value >>> bits) & 31];
-    }
-  }
-  if (bits > 0) output += alphabet[(value << (5 - bits)) & 31];
-
-  return output;
-};
 
 /** RFC 6238 counter uses big endian unsigned 64 bits and six displayed digits. */
 export const codeAt = (secret: Uint8Array, step: number, digits = 6): string => {
@@ -158,3 +136,14 @@ export const decryptSecret = Effect.fn("Totp.decryptSecret")(function* (
 });
 
 export const generateSecret = () => randomBytes(20);
+
+export const layer = Layer.succeed(TotpCryptography, {
+  randomId,
+  digest,
+  recoveryDigest,
+  generateSecret,
+  matchCode,
+  newRecoveryCodes,
+  encryptSecret,
+  decryptSecret,
+});

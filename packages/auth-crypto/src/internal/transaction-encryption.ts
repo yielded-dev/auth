@@ -1,22 +1,15 @@
 // oxlint-disable-next-line import/extensions -- Noble exposes only its explicit .js subpath.
 import { xchacha20poly1305 } from "@noble/ciphers/chacha.js";
-import { Crypto, Effect, Encoding, Redacted, Result, Schema } from "effect";
-
-import { OAuthConfigurationError, OAuthUnavailable } from "./signInErrors";
 import {
+  type OAuthTransactionKeyring,
+  OAuthConfigurationError,
+  OAuthUnavailable,
   OAuthEncryptionKeyId,
   OAuthSealedTransaction,
   OAuthTransactionSecrets,
-} from "./signInModels";
-import { snapshotOAuthSync } from "./signInSnapshot";
-
-export interface OAuthTransactionKeyring {
-  readonly activeKeyId: string;
-  readonly keys: ReadonlyArray<{
-    readonly id: string;
-    readonly material: Redacted.Redacted<string>;
-  }>;
-}
+  snapshotOAuthSync,
+} from "@yielded/auth/OAuth";
+import { Crypto, Effect, Encoding, Redacted, Result, Schema } from "effect";
 
 const keyringSchema = Schema.Struct({
   activeKeyId: OAuthEncryptionKeyId,

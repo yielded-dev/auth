@@ -1,3 +1,4 @@
+import * as TotpCrypto from "@yielded/auth-crypto/Totp";
 import * as Mapping from "@yielded/auth-persistence/drizzle";
 import * as Native from "@yielded/auth-persistence/drizzle/postgres";
 import * as PasskeyProtocol from "@yielded/auth-simplewebauthn/Server";
@@ -534,6 +535,7 @@ export const makeStudioLive = Effect.fn("Studio.live")(function* (
     layerWebCrypto,
     Auth.RequestBindingConfig.layer(binding),
     Layer.succeed(Totp.TotpSecretKeys, keys),
+    TotpCrypto.layer,
   );
 
   const strategy = sessions.statefulLayer(sessionPolicy).pipe(Layer.provide(base));

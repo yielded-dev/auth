@@ -250,7 +250,8 @@ for each request or use [the HTTP adapter](../guide/http-and-client).
 ### Defaults and required configuration
 
 `Auth.make` wires the selected methods, session implementation, Web Crypto, and
-empty lifecycle hooks. Password hashing also has a bounded default implementation.
+empty lifecycle hooks. Supply `PasswordHashing` explicitly, for example with the
+bounded [`@yielded/auth-crypto/Password` Layer](../guide/passwords#supply-the-services).
 Adapter factories expose their crypto and hook requirements; supply them as above
 or use a Layer helper that installs defaults. You supply storage mappings, account authority, claims, delivery, and
 secret keys. Adapters provide implementations; they are not installed automatically.

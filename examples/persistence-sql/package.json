@@ -15,6 +15,7 @@
     "@simplewebauthn/browser": "catalog:",
     "@simplewebauthn/server": "catalog:",
     "@yielded/auth": "workspace:*",
+    "@yielded/auth-crypto": "workspace:*",
     "@yielded/auth-persistence": "workspace:*",
     "@yielded/auth-simplewebauthn": "workspace:*",
     "effect": "catalog:",

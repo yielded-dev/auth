@@ -1,10 +1,12 @@
 import { BunHttpServer, BunRuntime } from "@effect/platform-bun";
 import * as SqliteClient from "@effect/sql-sqlite-bun/SqliteClient";
+import * as OAuthCrypto from "@yielded/auth-crypto/OAuth";
 import { OAuthAppPersistence } from "@yielded/auth-persistence";
 import { OAuthRejected } from "@yielded/auth/OAuth";
 import * as OAuthApp from "@yielded/auth/OAuthApp";
 import { SubjectId } from "@yielded/auth/Schema";
 import * as Strava from "@yielded/auth/Strava";
+import { layerWebCrypto } from "@yielded/auth/WebCrypto";
 import { Config, Effect, Layer, Redacted, Schema } from "effect";
 import {
   FetchHttpClient,
@@ -67,11 +69,13 @@ const runtime = Layer.unwrap(
       .layer({
         origin,
         sessionKeys: keyring(sessionKey),
-        transactionKeys: keyring(transactionKey),
-        tokenKeys: keyring(tokenKey),
+
         provider: Strava.provider({ clientId, clientSecret, scopes: ["activity:read_all"] }),
       })
       .pipe(
+        Layer.provide(OAuthCrypto.transactionLayer(keyring(transactionKey))),
+        Layer.provide(OAuthCrypto.connectedTokenLayer(keyring(tokenKey))),
+        Layer.provide(layerWebCrypto),
         Layer.provide(accounts),
         Layer.provide(OAuthAppPersistence.layer.pipe(Layer.provide(migrated))),
         Layer.provide(FetchHttpClient.layer),

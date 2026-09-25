@@ -1,4 +1,5 @@
 import { Auth, Http, Sessions } from "@yielded/auth";
+import * as OAuthCrypto from "@yielded/auth-crypto/OAuth";
 import * as OpenIdClient from "@yielded/auth-openid-client";
 import * as GitHub from "@yielded/auth-openid-client/GitHub";
 import type { SessionSigningKeyring } from "@yielded/auth/Sessions";
@@ -113,7 +114,7 @@ export const makeServer = (config: {
           lifetimeMillis: 600_000,
           keyring: config.binding,
         }),
-        OAuth.OAuthTransactionProtector.xchacha20poly1305(config.transactions),
+        OAuthCrypto.transactionLayer(config.transactions),
         OAuth.OAuthReturnTargets.exactRoutes(["/account"]),
         Email.EmailReturnTargets.exactRoutes(["/account"]),
       ),

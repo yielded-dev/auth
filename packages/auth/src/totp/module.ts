@@ -26,17 +26,7 @@ import {
   RecoveryInput,
   StepUpInput,
 } from "../TotpContract";
-import {
-  base32,
-  decryptSecret,
-  digest,
-  encryptSecret,
-  generateSecret,
-  matchCode,
-  newRecoveryCodes,
-  randomId,
-  recoveryDigest,
-} from "./crypto";
+import { base32 } from "./encoding";
 import type { TotpFailure } from "./errors";
 import {
   TotpActionRequired,
@@ -54,6 +44,7 @@ import {
   type TotpSnapshot,
 } from "./models";
 import { TotpActionEvidence } from "./TotpActionEvidence";
+import { TotpCryptography } from "./TotpCryptography";
 import { TotpPersistence } from "./TotpPersistence";
 import { TotpSecretKeys } from "./TotpSecretKeys";
 
@@ -122,6 +113,17 @@ export const makeTotpModule = <
       strategy = yield* sessions.SessionStrategy,
       keys = yield* TotpSecretKeys,
       hooks = yield* LifecycleHooks;
+
+    const {
+      decryptSecret,
+      digest,
+      encryptSecret,
+      generateSecret,
+      matchCode,
+      newRecoveryCodes,
+      randomId,
+      recoveryDigest,
+    } = yield* TotpCryptography;
 
     if (
       policy.requireImmediateInvalidation &&

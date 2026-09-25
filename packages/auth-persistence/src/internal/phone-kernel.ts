@@ -1,4 +1,4 @@
-import { digest, randomId } from "@yielded/auth/Persistence";
+import { digest, randomId } from "@yielded/auth-crypto";
 import {
   PhoneCustody,
   PhoneCommandId,

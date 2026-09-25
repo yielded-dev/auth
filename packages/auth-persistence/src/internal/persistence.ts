@@ -1,8 +1,9 @@
+import { digest, randomId } from "@yielded/auth-crypto";
 import { EmailAddressPersistence, EmailUnavailable } from "@yielded/auth/Email";
 import { LifecycleHooks } from "@yielded/auth/Hooks";
 import type { PasskeyConfig } from "@yielded/auth/Passkey";
 import { PasswordPersistence, PasswordUnavailable } from "@yielded/auth/Password";
-import { digest, hooksLayer, randomId } from "@yielded/auth/Persistence";
+import { hooksLayer } from "@yielded/auth/Persistence";
 import { PhoneAdmission, PhoneSignInTargets, PhoneOtpUnavailable } from "@yielded/auth/PhoneOtp";
 import { ProofPersistence, ProofUnavailable } from "@yielded/auth/Proofs";
 import { AuthenticationAuthority, SessionUnavailable } from "@yielded/auth/Sessions";
