@@ -242,4 +242,7 @@ export {
 
 export { OAuthStateDecisions } from "./oauth/OAuthStateDecisions";
 
-export { snapshotOAuthSync } from "./oauth/signInSnapshot";
+export { freezeOAuth, snapshotOAuth, snapshotOAuthSync } from "./oauth/signInSnapshot";
+
+export { selectCallback } from "./oauth/callback";
+export type { ProviderDefinition } from "./oauth/providerDefinition";

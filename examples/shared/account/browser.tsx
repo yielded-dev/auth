@@ -1,11 +1,13 @@
+/// <reference types="vite/client" />
+
 import { RegistryProvider, useAtom, useAtomValue } from "@effect/atom-react";
-import { EmailActionRequired, EmailRejected } from "@yielded/auth/Email";
-import { PasskeyActionRequired, PasskeyRejected } from "@yielded/auth/Passkey";
 import {
   PasskeyBrowserNotCompleted,
   PasskeyBrowserUnsupported,
   PasskeyBrowserBusy,
-} from "@yielded/auth/PasskeyBrowser";
+} from "@yielded/auth-simplewebauthn/Browser";
+import { EmailActionRequired, EmailRejected } from "@yielded/auth/Email";
+import { PasskeyActionRequired, PasskeyRejected } from "@yielded/auth/Passkey";
 import {
   NewPasswordRejected,
   PasswordActionRequired,

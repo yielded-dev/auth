@@ -1,0 +1,46 @@
+{
+  "name": "@yielded/auth-cloudflare",
+  "version": "0.0.0",
+  "description": "Cloudflare Durable Object storage and email delivery for Yielded Auth.",
+  "homepage": "https://yielded.dev/auth/",
+  "bugs": {
+    "url": "https://github.com/yielded-dev/auth/issues"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yielded-dev/auth.git",
+    "directory": "packages/auth-cloudflare"
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "type": "module",
+  "sideEffects": [],
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "vp pack",
+    "check": "tsc --noEmit -p tsconfig.json",
+    "test": "vp test --passWithNoTests"
+  },
+  "dependencies": {
+    "@yielded/auth": "workspace:*"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "catalog:",
+    "effect": "catalog:",
+    "effect-cf": "catalog:",
+    "typescript": "catalog:",
+    "vite-plus": "catalog:"
+  },
+  "peerDependencies": {
+    "effect": "^4.0.0-rc.117",
+    "effect-cf": "^0.49.0"
+  }
+}

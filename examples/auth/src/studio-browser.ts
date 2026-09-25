@@ -1,6 +1,6 @@
+import * as PasskeyBrowser from "@yielded/auth-simplewebauthn/Browser";
 import * as AuthAtom from "@yielded/auth/Atom";
 import * as Fetch from "@yielded/auth/OperationHttpClient";
-import * as PasskeyBrowser from "@yielded/auth/PasskeyBrowser";
 import { Effect, Layer, Redacted } from "effect";
 import { Atom } from "effect/unstable/reactivity";
 
@@ -15,7 +15,7 @@ export const makeStudioBrowser = Effect.fn("Studio.browser")(function* (
 ) {
   const client = yield* Fetch.make(options);
   const lifetime = yield* AuthAtom.makeLifetime(client, { initialSubject });
-  const browser = yield* PasskeyBrowser.makeSimpleWebAuthnPasskeyBrowser();
+  const browser = yield* PasskeyBrowser.make();
   const runtime = Atom.context()(Layer.succeed(AuthAtom.AuthAtomLifetime, lifetime));
   const accountKeys = ["studio/member", "studio/keys", "studio/session"];
 

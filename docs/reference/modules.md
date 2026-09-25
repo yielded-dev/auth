@@ -30,7 +30,7 @@ Native ESM loads the root's static dependencies. Direct paths also keep that
 module-loading boundary narrow when running without a bundler.
 
 Optional adapters are direct imports, for example `@yielded/auth-persistence/drizzle/postgres`,
-`@yielded/auth/OpenIdClient`, `@yielded/auth/PasskeyBrowser`, or
+`@yielded/auth-openid-client`, `@yielded/auth-simplewebauthn/Browser`, or
 `@yielded/auth/adapters/Twilio`. Install only the peers
 required by the selected adapters. `@yielded/auth/Testing` remains test-only.
 
@@ -75,16 +75,23 @@ client workflow composition.
 
 ## Optional adapters
 
-These are available through direct subpaths only:
+SDK integrations live in companion packages. Import only the platform entrypoint
+you use; the SimpleWebAuthn root groups both browser and server modules.
 
-| Modules                                   | Integration                                                |
-| ----------------------------------------- | ---------------------------------------------------------- |
-| `OpenIdClient`, `OpenIdClientConnected`   | OAuth/OIDC verification and connected grant management.    |
-| `GitHub`                                  | GitHub provider configuration and operations.              |
-| `adapters/Twilio`                         | SMS delivery through Effect HTTP; requires `TwilioConfig`. |
-| `PasskeySimpleWebAuthn`, `PasskeyBrowser` | Server verification and browser WebAuthn ceremonies.       |
-| `PasskeyPassword`                         | Password-backed authority for passkey workflows.           |
-| `Cloudflare`                              | Cloudflare platform integration.                           |
+| Package or import                       | Integration                                                |
+| --------------------------------------- | ---------------------------------------------------------- |
+| `@yielded/auth-simplewebauthn/Browser`  | Browser WebAuthn ceremonies through `make()` or `layer`.   |
+| `@yielded/auth-simplewebauthn/Server`   | Server verification through `make(options)` or `layer`.    |
+| `@yielded/auth-openid-client`           | OAuth/OIDC verification and provider configuration.        |
+| `@yielded/auth-openid-client/Connected` | Connected grant management.                                |
+| `@yielded/auth-openid-client/GitHub`    | GitHub configuration and operations using OpenID Client.   |
+| `@yielded/auth-cloudflare`              | Durable Object storage and email bindings.                 |
+| `@yielded/auth/adapters/Twilio`         | SMS delivery through Effect HTTP; requires `TwilioConfig`. |
+| `@yielded/auth/PasskeyPassword`         | Password-backed authority for passkey workflows.           |
+
+Core owns schemas, workflows, and service contracts. Adapters depend on those
+public contracts; core never imports or re-exports an SDK adapter. An application
+chooses the adapter Layer and supplies storage, policy, and delivery authority.
 
 Database adapters live in `@yielded/auth-persistence`. Its root exports the named
 `AuthPersistence` facade for direct Effect SQL; `drizzle/<driver>` exports the same

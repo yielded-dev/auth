@@ -1,5 +1,5 @@
 import { Auth } from "@yielded/auth";
-import * as GitHub from "@yielded/auth/GitHub";
+import * as GitHub from "@yielded/auth-openid-client/GitHub";
 import {
   makeConnectedModule,
   OAuthConnectedProfile,

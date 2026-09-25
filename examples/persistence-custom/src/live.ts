@@ -1,6 +1,6 @@
+import { layer as layerSimpleWebAuthnPasskeyProtocol } from "@yielded/auth-simplewebauthn/Server";
 import { LifecycleHooks } from "@yielded/auth/Hooks";
 import { PasskeyConfig } from "@yielded/auth/Passkey";
-import { layerSimpleWebAuthnPasskeyProtocol } from "@yielded/auth/PasskeySimpleWebAuthn";
 import { defaultPasswordPolicy, NewPasswordCheck } from "@yielded/auth/Password";
 import { layerWebCrypto } from "@yielded/auth/WebCrypto";
 import { Layer } from "effect";

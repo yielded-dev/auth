@@ -1,6 +1,9 @@
+import {
+  PasskeyBrowser,
+  layer as layerSimpleWebAuthnPasskeyBrowser,
+} from "@yielded/auth-simplewebauthn/Browser";
 import type * as AuthAtom from "@yielded/auth/Atom";
 import { PasskeyActionRequired } from "@yielded/auth/Passkey";
-import { PasskeyBrowser, layerSimpleWebAuthnPasskeyBrowser } from "@yielded/auth/PasskeyBrowser";
 import { ProofContinuation, ProofRequestReceipt } from "@yielded/auth/Proofs";
 import { Email } from "@yielded/auth/Schema";
 import { DateTime, Effect, Layer, Redacted, Schema } from "effect";

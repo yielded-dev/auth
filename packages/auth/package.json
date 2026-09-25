@@ -31,7 +31,6 @@
     "./contracts": "./src/Contracts.ts",
     "./strategies": "./src/Strategies.ts",
     "./Auth": "./src/Auth.ts",
-    "./Cloudflare": "./src/Cloudflare.ts",
     "./Http": "./src/Http.ts",
     "./HttpServer": "./src/HttpServer.ts",
     "./OperationHttp": "./src/OperationHttp.ts",
@@ -54,13 +53,8 @@
     "./Proofs": "./src/Proofs.ts",
     "./Password": "./src/Password.ts",
     "./Email": "./src/Email.ts",
-    "./OpenIdClient": "./src/OpenIdClient.ts",
-    "./OpenIdClientConnected": "./src/OpenIdClientConnected.ts",
     "./Passkey": "./src/Passkey.ts",
     "./PasskeyPassword": "./src/PasskeyPassword.ts",
-    "./PasskeySimpleWebAuthn": "./src/PasskeySimpleWebAuthn.ts",
-    "./PasskeyBrowser": "./src/PasskeyBrowser.ts",
-    "./GitHub": "./src/GitHub.ts",
     "./AuthSession": "./src/AuthSession.ts",
     "./Errors": "./src/Errors.ts",
     "./Workflows": "./src/Workflows.ts",
@@ -96,42 +90,14 @@
     "@noble/hashes": "catalog:"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "catalog:",
     "@effect/platform-bun": "catalog:",
     "@effect/platform-node": "catalog:",
     "@effect/vitest": "catalog:",
-    "@simplewebauthn/browser": "catalog:",
-    "@simplewebauthn/server": "catalog:",
     "effect": "catalog:",
-    "effect-cf": "catalog:",
-    "openid-client": "catalog:",
-    "tldts": "catalog:",
     "typescript": "catalog:",
     "vite-plus": "catalog:"
   },
   "peerDependencies": {
-    "@simplewebauthn/browser": ">=14.0.0 <15",
-    "@simplewebauthn/server": ">=14.0.1 <15",
-    "effect": "^4.0.0-rc.117",
-    "effect-cf": "^0.49.0",
-    "openid-client": ">=6.8.8 <7",
-    "tldts": ">=7.4.11 <8"
-  },
-  "peerDependenciesMeta": {
-    "@simplewebauthn/browser": {
-      "optional": true
-    },
-    "@simplewebauthn/server": {
-      "optional": true
-    },
-    "effect-cf": {
-      "optional": true
-    },
-    "openid-client": {
-      "optional": true
-    },
-    "tldts": {
-      "optional": true
-    }
+    "effect": "^4.0.0-rc.117"
   }
 }

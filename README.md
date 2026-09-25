@@ -5,7 +5,7 @@ Composable authentication, sessions, and identity workflows for Effect.
 Yielded Auth owns security-sensitive authentication behavior. Applications provide
 identity authority, persistence, protocol verification, and credential delivery.
 `@yielded/auth-persistence` supplies direct Effect SQL, Drizzle bindings, and opt-in
-managed storage. Optional adapters also support Cloudflare, OAuth/OIDC, and WebAuthn.
+managed storage. Companion packages provide Cloudflare, OAuth/OIDC, and WebAuthn integrations.
 
 For an app using GitHub, [managed OAuth](docs/guide/oauth.md#sign-in-and-connect-provider-access)
 handles sign-in, encrypted provider tokens, refresh, and stateless session cookies

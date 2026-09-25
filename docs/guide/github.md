@@ -18,7 +18,7 @@ Set its callback URL to `https://app.example.com/auth/github/callback`.
 
 ```ts [github.ts]
 import { Redacted } from "effect";
-import * as GitHub from "@yielded/auth/GitHub";
+import * as GitHub from "@yielded/auth-openid-client/GitHub";
 import { Http } from "@yielded/auth";
 
 import { AppAuth } from "./auth";

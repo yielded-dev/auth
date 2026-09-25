@@ -2,6 +2,8 @@ import { NodeRuntime, NodeServices } from "@effect/platform-node";
 import { Console, Effect, FileSystem, Path, Schema } from "effect";
 import ts from "typescript-twoslash";
 
+const coreDependencies = new Set(["effect", "@noble/ciphers", "@noble/hashes"]);
+
 const Dependencies = Schema.Record(Schema.String, Schema.String);
 
 const Manifest = Schema.Struct({
@@ -96,6 +98,18 @@ export const verifyPackageExports = Effect.fn("verifyPackageExports")(
         return { directory, file, manifest };
       }),
     );
+
+    for (const pkg of packages) {
+      if (pkg.manifest.name !== "@yielded/auth") continue;
+      for (const dependency of Object.keys({
+        ...pkg.manifest.dependencies,
+        ...pkg.manifest.optionalDependencies,
+        ...pkg.manifest.peerDependencies,
+      })) {
+        if (!coreDependencies.has(dependency))
+          report(pkg.file, `Core dependency ${dependency} belongs in a companion package`);
+      }
+    }
 
     const byName = new Map(packages.map((pkg) => [pkg.manifest.name, pkg]));
     let entries = 0;
@@ -334,6 +348,15 @@ export const verifyPackageExports = Effect.fn("verifyPackageExports")(
             const name = specifier.startsWith("@")
               ? specifier.split("/").slice(0, 2).join("/")
               : specifier.split("/")[0];
+
+            if (
+              manifest.name === "@yielded/auth" &&
+              !testOnly &&
+              name !== undefined &&
+              name !== manifest.name &&
+              !coreDependencies.has(name)
+            )
+              report(file, `Core import ${specifier} belongs in a companion package`);
 
             const owner = name === undefined ? undefined : byName.get(name);
 
