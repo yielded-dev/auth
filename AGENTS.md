@@ -115,7 +115,7 @@ framework package only for a new concern agreed with the repository owner.
 
 ## Toolchain rules
 
-- Bun `1.4.0` is the package manager. Use `catalog:` for shared dependencies and `workspace:*`
+- Bun `1.4.2` is the package manager. Use `catalog:` for shared dependencies and `workspace:*`
   for repository packages.
 - The root catalog is the single source for the exact Effect v4 version. Do not pin Effect
   independently in a package.
