@@ -3,7 +3,6 @@ import { Context, type Effect } from "effect";
 import type { TokenDigest } from "../Schema";
 import type { TotpUnavailable } from "./errors";
 import type { TotpSecretBinding, TotpSecretEnvelope } from "./models";
-import type { TotpSecretKeys } from "./TotpSecretKeys";
 
 /** TOTP primitives supplied by the application. Preserve RFC 6238 SHA-1, six
  * digits and 30-second steps, and the existing AES-GCM envelope/AAD and recovery
@@ -28,10 +27,10 @@ export class TotpCryptography extends Context.Service<
     readonly encryptSecret: (
       binding: TotpSecretBinding,
       secret: Uint8Array,
-    ) => Effect.Effect<TotpSecretEnvelope, TotpUnavailable, TotpSecretKeys>;
+    ) => Effect.Effect<TotpSecretEnvelope, TotpUnavailable>;
     readonly decryptSecret: (
       binding: TotpSecretBinding,
       envelope: TotpSecretEnvelope,
-    ) => Effect.Effect<Uint8Array, TotpUnavailable, TotpSecretKeys>;
+    ) => Effect.Effect<Uint8Array, TotpUnavailable>;
   }
 >()("effect-auth/TotpCryptography") {}

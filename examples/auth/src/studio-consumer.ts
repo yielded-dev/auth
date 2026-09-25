@@ -534,8 +534,7 @@ export const makeStudioLive = Effect.fn("Studio.live")(function* (
     hookLayer,
     layerWebCrypto,
     Auth.RequestBindingConfig.layer(binding),
-    Layer.succeed(Totp.TotpSecretKeys, keys),
-    TotpCrypto.layer,
+    TotpCrypto.layer.pipe(Layer.provide(Layer.succeed(Totp.TotpSecretKeys, keys))),
   );
 
   const strategy = sessions.statefulLayer(sessionPolicy).pipe(Layer.provide(base));

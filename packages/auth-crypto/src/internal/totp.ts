@@ -137,13 +137,22 @@ export const decryptSecret = Effect.fn("Totp.decryptSecret")(function* (
 
 export const generateSecret = () => randomBytes(20);
 
-export const layer = Layer.succeed(TotpCryptography, {
-  randomId,
-  digest,
-  recoveryDigest,
-  generateSecret,
-  matchCode,
-  newRecoveryCodes,
-  encryptSecret,
-  decryptSecret,
-});
+export const layer = Layer.effect(
+  TotpCryptography,
+  Effect.gen(function* () {
+    const keys = yield* TotpSecretKeys;
+
+    return TotpCryptography.of({
+      randomId,
+      digest,
+      recoveryDigest,
+      generateSecret,
+      matchCode,
+      newRecoveryCodes,
+      encryptSecret: (binding, secret) =>
+        encryptSecret(binding, secret).pipe(Effect.provideService(TotpSecretKeys, keys)),
+      decryptSecret: (binding, envelope) =>
+        decryptSecret(binding, envelope).pipe(Effect.provideService(TotpSecretKeys, keys)),
+    });
+  }),
+);

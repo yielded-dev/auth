@@ -117,5 +117,3 @@ export {
   snapshotPasswordRequirement,
   snapshotPasswordRevision,
 } from "./password/methods/snapshot";
-
-export { parsePasswordHash, phcBase64, type ParsedPasswordHash } from "./password/encoding";

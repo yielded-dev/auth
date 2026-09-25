@@ -46,7 +46,6 @@ import {
 import { TotpActionEvidence } from "./TotpActionEvidence";
 import { TotpCryptography } from "./TotpCryptography";
 import { TotpPersistence } from "./TotpPersistence";
-import { TotpSecretKeys } from "./TotpSecretKeys";
 
 const mapFailure = (error: { _tag: string }) =>
   error._tag === "HookDenied"
@@ -111,7 +110,6 @@ export const makeTotpModule = <
       completion = yield* sessions.AuthenticationCompletion,
       stepUp = yield* sessions.SessionStepUp,
       strategy = yield* sessions.SessionStrategy,
-      keys = yield* TotpSecretKeys,
       hooks = yield* LifecycleHooks;
 
     const {
@@ -274,7 +272,7 @@ export const makeTotpModule = <
             revision: pending ? record.pending!.revision : record.revision,
           },
           envelope,
-        ).pipe(Effect.provideService(TotpSecretKeys, keys)),
+        ),
         (secret) => Effect.sync(() => matchCode(secret, code, nowMillis, policy.clockSkewSteps)),
         (secret) => Effect.sync(() => secret.fill(0)),
       );
@@ -365,10 +363,7 @@ export const makeTotpModule = <
         const envelope = yield* encryptSecret(
           { moduleId, subjectId: captured.revision.subjectId, credentialId, revision },
           secret,
-        ).pipe(
-          Effect.provideService(TotpSecretKeys, keys),
-          Effect.ensuring(Effect.sync(() => secret.fill(0))),
-        );
+        ).pipe(Effect.ensuring(Effect.sync(() => secret.fill(0))));
 
         const expiresAtMillis = now + policy.enrollmentLifetimeMillis;
 

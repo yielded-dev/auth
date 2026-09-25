@@ -7,8 +7,6 @@ import {
   defaultPasswordHashingConfig,
   validatePasswordHashingConfig,
   type PasswordHashingConfig,
-  parsePasswordHash,
-  phcBase64,
   PasswordHashingUnavailable,
   PasswordInputInvalid,
   EncodedPasswordHash,
@@ -16,6 +14,8 @@ import {
   PasswordHashing,
 } from "@yielded/auth/Password";
 import { Crypto, Effect, Layer, Redacted, Schema } from "effect";
+
+import { parsePasswordHash, phcBase64 } from "./password-encoding";
 
 const encoder = new TextEncoder();
 

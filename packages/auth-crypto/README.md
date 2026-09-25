@@ -5,8 +5,8 @@ Applications choose and provide the implementation Layer:
 
 - `/Password`: `layer(config?)` supplies `PasswordHashing`; provide
   `PasswordKdfAdmission` and Effect `Crypto` for bounded work and entropy.
-- `/Totp`: `layer` supplies `TotpCryptography`; the workflow also requires
-  application-owned `TotpSecretKeys`.
+- `/Totp`: `layer` supplies `TotpCryptography` and requires application-owned
+  `TotpSecretKeys`.
 - `/OAuth`: `transactionLayer`, `linkTransactionLayer`,
   `connectedTransactionLayer`, and `connectedTokenLayer` each take their purpose's
   keyring and require Effect `Crypto`.
@@ -16,6 +16,7 @@ references them. The adapters preserve Argon2id/legacy PBKDF2 verification, RFC 
 TOTP, AES-GCM envelopes, XChaCha20-Poly1305 envelopes, and their existing authenticated
 context and recovery-digest formats. No credential or data reset is required.
 
-The root exports `digest` and `randomId` for persistence adapters; use direct
-platform modules to keep imports narrow. Portable async KDFs are not off-thread
-workers, and JavaScript cannot guarantee zeroization or constant-time execution.
+The root exports `digest` and `randomId` for persistence adapters; use the direct
+`/Password`, `/Totp`, or `/OAuth` modules for the corresponding adapters. Portable
+async KDFs are not off-thread workers, and JavaScript cannot guarantee zeroization
+or constant-time execution.
