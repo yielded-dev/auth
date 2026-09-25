@@ -6,7 +6,8 @@ Yielded Auth owns security-sensitive authentication behavior. Applications provi
 identity authority, persistence, protocol verification, and credential delivery.
 `@yielded/auth-persistence` supplies direct Effect SQL and shared storage contracts.
 `@yielded/auth-persistence-drizzle` supplies Drizzle bindings and migration helpers.
-Companion packages provide Cloudflare, OAuth/OIDC, WebAuthn, and maintained cryptography.
+Companion packages provide Cloudflare, OAuth/OIDC, WebAuthn, iOS React Native passkeys,
+and maintained cryptography.
 Core has only Effect as a runtime peer; applications supply adapter Layers.
 
 Use generated auth tables and migrations, bring your own schema, or replace

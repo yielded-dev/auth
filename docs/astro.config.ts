@@ -55,6 +55,7 @@ export default defineConfig({
           items: [
             { label: "Public modules", slug: "reference/modules" },
             { label: "OAuth", slug: "reference/oauth" },
+            { label: "iOS passkeys", slug: "reference/passkey-react-native" },
           ],
         },
       ],

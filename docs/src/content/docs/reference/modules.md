@@ -94,6 +94,7 @@ you use.
 | --------------------------------------- | ----------------------------------------------------------------------------------------------- |
 | `@yielded/auth-simplewebauthn/Browser`  | Browser WebAuthn ceremonies through `make()` or `layer`.                                        |
 | `@yielded/auth-simplewebauthn/Server`   | Server verification through `make(options)` or `layer`.                                         |
+| `@yielded/auth-react-native`            | iOS passkey ceremonies through `make()` or `layer`; import only in the native entrypoint.       |
 | `@yielded/auth-openid-client`           | OAuth/OIDC verification and provider configuration.                                             |
 | `@yielded/auth-openid-client/Connected` | Connected grant management.                                                                     |
 | `@yielded/auth-openid-client/GitHub`    | GitHub configuration and operations using OpenID Client.                                        |
