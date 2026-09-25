@@ -224,7 +224,7 @@ export {
 export { OAuthReturnTargets } from "./oauth/OAuthReturnTargets";
 export { OAuthSignInPersistence, type PrepareOAuthCommit } from "./oauth/OAuthSignInPersistence";
 export { OAuthStateStore } from "./oauth/OAuthStateStore";
-export { type OAuthTransactionKeyring } from "./oauth/transactionEncryption";
+export { type OAuthTransactionKeyring } from "./oauth/transactionKeyring";
 export { OAuthTransactionProtector } from "./oauth/OAuthTransactionProtector";
 export { makeOAuthConnected as makeConnectedModule } from "./oauth/connected";
 export { makeOAuthMethod as makeModule } from "./oauth/signInModule";

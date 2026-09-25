@@ -14,7 +14,6 @@ import {
 import type { OAuthConnectedProtocol } from "../OAuthConnectedProtocol";
 import type { OAuthRejected, OAuthUnavailable } from "../signInErrors";
 import { OAuthSealedTransaction, OAuthSignInTransactionContext } from "../signInModels";
-import type { OAuthTransactionKeyring } from "../transactionEncryption";
 
 /** Provider adapters bind to the exact callback owned by this application.
  * The existing connected protocol owns provider verification and token handling.
@@ -38,8 +37,6 @@ export interface SessionOptions {
 
 export interface Options<E, R> extends SessionOptions {
   readonly provider: Provider<E, R>;
-  readonly transactionKeys: OAuthTransactionKeyring;
-  readonly tokenKeys: OAuthTransactionKeyring;
 }
 
 export type ConnectionReference = Pick<OAuthConnectedTokenContext, "subjectId" | "grantId">;

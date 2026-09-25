@@ -1,3 +1,13 @@
+import {
+  codeAt,
+  decryptSecret,
+  digest,
+  encryptSecret,
+  generateSecret,
+  matchCode,
+  newRecoveryCodes,
+  randomId,
+} from "@yielded/auth-crypto/Totp";
 import { SubjectId } from "@yielded/auth/Schema";
 import {
   AuthenticationEvidence,
@@ -7,14 +17,6 @@ import {
 } from "@yielded/auth/Sessions";
 import {
   base32,
-  codeAt,
-  decryptSecret,
-  digest,
-  encryptSecret,
-  generateSecret,
-  matchCode,
-  newRecoveryCodes,
-  randomId,
   TotpActionChallenge,
   TotpPolicy,
   type TotpRecord,

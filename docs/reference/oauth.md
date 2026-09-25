@@ -107,13 +107,14 @@ port 3000 and owns `strava-mcp.sqlite`; use HTTPS outside loopback development.
 
 Provide these to `app.layer`:
 
-| Dependency                                    | Application supplies                                                                         |
-| --------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| `origin`, `provider`                          | Trusted app origin and configured provider                                                   |
-| `sessionKeys`, `transactionKeys`, `tokenKeys` | Three distinct keyrings                                                                      |
-| `app.Accounts`                                | `resolve(verified)` → Effect of `{ subjectId, claims }`                                      |
-| `OAuthApp.Persistence`                        | Durable flow and encrypted grant storage                                                     |
-| Provider services                             | GitHub: `openid-client`; Strava: an Effect `HttpClient` without retry or redirect middleware |
+| Dependency                                                  | Application supplies                                                                         |
+| ----------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| `origin`, `provider`                                        | Trusted app origin and configured provider                                                   |
+| `sessionKeys`                                               | Session signing keyring                                                                      |
+| `OAuthTransactionProtector`, `OAuthConnectedTokenProtector` | Explicit Layers from `@yielded/auth-crypto/OAuth`, each with a distinct keyring              |
+| `app.Accounts`                                              | `resolve(verified)` → Effect of `{ subjectId, claims }`                                      |
+| `OAuthApp.Persistence`                                      | Durable flow and encrypted grant storage                                                     |
+| Provider services                                           | GitHub: `openid-client`; Strava: an Effect `HttpClient` without retry or redirect middleware |
 
 `Accounts.resolve` checks invitations/status and owns provisioning. Reject with
 `OAuthRejected`; map infrastructure failures to `OAuthUnavailable`.
@@ -209,6 +210,7 @@ With `AppAuth` from the guide and `AuthRoutes` from a provider page:
 ```ts [oauth-live.ts]
 import { Layer } from "effect";
 import { OAuth } from "@yielded/auth/strategies";
+import * as OAuthCrypto from "@yielded/auth-crypto/OAuth";
 import { AppAuth } from "./auth";
 import { AuthDependencies } from "./auth-dependencies";
 import { resolveOAuthClaims } from "./auth-accounts";
@@ -219,7 +221,7 @@ import { AuthRoutes } from "./github";
 const OAuthLive = Layer.mergeAll(
   OAuthPersistenceLive,
   Layer.succeed(AppAuth.strategies.social.ClaimsForOAuth, { resolve: resolveOAuthClaims }),
-  OAuth.OAuthTransactionProtector.xchacha20poly1305(transactionKeys),
+  OAuthCrypto.transactionLayer(transactionKeys),
   OAuth.OAuthReturnTargets.exactRoutes(["/account"]),
 );
 

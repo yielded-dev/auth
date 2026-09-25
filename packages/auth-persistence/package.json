@@ -42,7 +42,8 @@
   },
   "dependencies": {
     "@noble/hashes": "catalog:",
-    "@yielded/auth": "workspace:*"
+    "@yielded/auth": "workspace:*",
+    "@yielded/auth-crypto": "workspace:*"
   },
   "devDependencies": {
     "@effect/platform-bun": "catalog:",

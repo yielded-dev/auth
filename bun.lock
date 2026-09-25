@@ -20,6 +20,7 @@
         "@types/react-dom": "catalog:",
         "@yielded/auth": "workspace:*",
         "@yielded/auth-cloudflare": "workspace:*",
+        "@yielded/auth-crypto": "workspace:*",
         "@yielded/auth-openid-client": "workspace:*",
         "@yielded/auth-persistence": "workspace:*",
         "@yielded/auth-simplewebauthn": "workspace:*",
@@ -51,6 +52,7 @@
         "@effect/sql-sqlite-node": "catalog:",
         "@effect/sql-sqlite-wasm": "catalog:",
         "@yielded/auth": "workspace:*",
+        "@yielded/auth-crypto": "workspace:*",
         "@yielded/auth-openid-client": "workspace:*",
         "@yielded/auth-persistence": "workspace:*",
         "@yielded/auth-simplewebauthn": "workspace:*",
@@ -76,6 +78,7 @@
         "@simplewebauthn/browser": "catalog:",
         "@simplewebauthn/server": "catalog:",
         "@yielded/auth": "workspace:*",
+        "@yielded/auth-crypto": "workspace:*",
         "@yielded/auth-simplewebauthn": "workspace:*",
         "effect": "catalog:",
         "react": "catalog:",
@@ -99,6 +102,7 @@
         "@simplewebauthn/browser": "catalog:",
         "@simplewebauthn/server": "catalog:",
         "@yielded/auth": "workspace:*",
+        "@yielded/auth-crypto": "workspace:*",
         "@yielded/auth-persistence": "workspace:*",
         "@yielded/auth-simplewebauthn": "workspace:*",
         "drizzle-orm": "catalog:",
@@ -125,6 +129,7 @@
         "@simplewebauthn/browser": "catalog:",
         "@simplewebauthn/server": "catalog:",
         "@yielded/auth": "workspace:*",
+        "@yielded/auth-crypto": "workspace:*",
         "@yielded/auth-persistence": "workspace:*",
         "@yielded/auth-simplewebauthn": "workspace:*",
         "drizzle-orm": "catalog:",
@@ -152,6 +157,7 @@
         "@simplewebauthn/browser": "catalog:",
         "@simplewebauthn/server": "catalog:",
         "@yielded/auth": "workspace:*",
+        "@yielded/auth-crypto": "workspace:*",
         "@yielded/auth-persistence": "workspace:*",
         "@yielded/auth-simplewebauthn": "workspace:*",
         "effect": "catalog:",
@@ -169,10 +175,6 @@
     "packages/auth": {
       "name": "@yielded/auth",
       "version": "0.1.0-beta.9",
-      "dependencies": {
-        "@noble/ciphers": "catalog:",
-        "@noble/hashes": "catalog:",
-      },
       "devDependencies": {
         "@effect/platform-bun": "catalog:",
         "@effect/platform-node": "catalog:",
@@ -203,6 +205,23 @@
         "effect-cf": "^0.49.0",
       },
     },
+    "packages/auth-crypto": {
+      "name": "@yielded/auth-crypto",
+      "version": "0.0.0",
+      "dependencies": {
+        "@noble/ciphers": "catalog:",
+        "@noble/hashes": "catalog:",
+        "@yielded/auth": "workspace:*",
+      },
+      "devDependencies": {
+        "effect": "catalog:",
+        "typescript": "catalog:",
+        "vite-plus": "catalog:",
+      },
+      "peerDependencies": {
+        "effect": "^4.0.0-rc.117",
+      },
+    },
     "packages/auth-openid-client": {
       "name": "@yielded/auth-openid-client",
       "version": "0.0.0",
@@ -227,6 +246,7 @@
       "dependencies": {
         "@noble/hashes": "catalog:",
         "@yielded/auth": "workspace:*",
+        "@yielded/auth-crypto": "workspace:*",
       },
       "devDependencies": {
         "@effect/platform-bun": "catalog:",
@@ -1158,6 +1178,8 @@
     "@yielded/auth": ["@yielded/auth@workspace:packages/auth"],
 
     "@yielded/auth-cloudflare": ["@yielded/auth-cloudflare@workspace:packages/auth-cloudflare"],
+
+    "@yielded/auth-crypto": ["@yielded/auth-crypto@workspace:packages/auth-crypto"],
 
     "@yielded/auth-openid-client": ["@yielded/auth-openid-client@workspace:packages/auth-openid-client"],
 

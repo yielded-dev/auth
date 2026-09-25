@@ -78,18 +78,19 @@ client workflow composition.
 SDK integrations live in companion packages. Import the platform entrypoint
 you use.
 
-| Package or import                       | Integration                                                |
-| --------------------------------------- | ---------------------------------------------------------- |
-| `@yielded/auth-simplewebauthn/Browser`  | Browser WebAuthn ceremonies through `make()` or `layer`.   |
-| `@yielded/auth-simplewebauthn/Server`   | Server verification through `make(options)` or `layer`.    |
-| `@yielded/auth-openid-client`           | OAuth/OIDC verification and provider configuration.        |
-| `@yielded/auth-openid-client/Connected` | Connected grant management.                                |
-| `@yielded/auth-openid-client/GitHub`    | GitHub configuration and operations using OpenID Client.   |
-| `@yielded/auth-cloudflare`              | Durable Object storage and email bindings.                 |
-| `@yielded/auth/adapters/Twilio`         | SMS delivery through Effect HTTP; requires `TwilioConfig`. |
-| `@yielded/auth/PasskeyPassword`         | Password-backed authority for passkey workflows.           |
+| Package or import                       | Integration                                                                                     |
+| --------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `@yielded/auth-simplewebauthn/Browser`  | Browser WebAuthn ceremonies through `make()` or `layer`.                                        |
+| `@yielded/auth-simplewebauthn/Server`   | Server verification through `make(options)` or `layer`.                                         |
+| `@yielded/auth-openid-client`           | OAuth/OIDC verification and provider configuration.                                             |
+| `@yielded/auth-openid-client/Connected` | Connected grant management.                                                                     |
+| `@yielded/auth-openid-client/GitHub`    | GitHub configuration and operations using OpenID Client.                                        |
+| `@yielded/auth-cloudflare`              | Durable Object storage and email bindings.                                                      |
+| `@yielded/auth-crypto`                  | Password hashing, TOTP, and OAuth secret protection through `/Password`, `/Totp`, and `/OAuth`. |
+| `@yielded/auth/adapters/Twilio`         | SMS delivery through Effect HTTP; requires `TwilioConfig`.                                      |
+| `@yielded/auth/PasskeyPassword`         | Password-backed authority for passkey workflows.                                                |
 
-Core owns schemas, workflows, and service contracts. Adapters depend on those
+Core has only Effect as a runtime peer. It owns schemas, workflows, and service contracts. Adapters depend on those
 public contracts; core never imports or re-exports an SDK adapter. An application
 chooses the adapter Layer and supplies storage, policy, and delivery authority.
 

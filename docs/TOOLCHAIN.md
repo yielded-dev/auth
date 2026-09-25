@@ -39,8 +39,8 @@ through self-barrels.
 
 The export check validates casing, namespace targets, build entries, and workspace
 dependencies, including relative imports through the package's own public barrels.
-Core may depend on Effect and the existing Noble crypto implementations; SDK
-dependencies and imports belong in companion packages. The export check enforces
+Core may depend only on Effect; SDK and cryptography implementations belong in
+companion packages. The export check enforces
 this boundary for runtime imports and declarations. The purity check rejects
 production paths that reach test-only code.
 `@yielded/auth/Testing` is an explicit test-only entrypoint. SDK adapters live in
@@ -54,7 +54,8 @@ Do not merge unrelated implementations into shared chunks: consumer bundlers can
 retain their initialization even when only one API is used.
 
 `vp run check:package-consumers` requires built packages and runs during `build`.
-It stages the publisher's manifests and built files with only required dependencies,
+It first loads every core export with only Effect installed, then stages the
+publisher's manifests and built files with the selected adapters' required dependencies,
 compares equivalent root/group/direct consumers through esbuild and Vite/Rolldown,
 checks their declarations, and runs native ESM and bundled consumers. It protects
 narrow identity imports, browser contracts, deferred client loading, and root
@@ -84,7 +85,7 @@ Before enabling automated releases:
 2. Configure `EFFECT_AUTH_APP_ID` and `EFFECT_AUTH_APP_PRIVATE_KEY` repository secrets.
 3. Configure npm trusted publishing for each published package, including
    `@yielded/auth`, `@yielded/auth-persistence`, `@yielded/auth-simplewebauthn`,
-   `@yielded/auth-openid-client`, and `@yielded/auth-cloudflare`, repository
+   `@yielded/auth-openid-client`, `@yielded/auth-cloudflare`, and `@yielded/auth-crypto`, repository
    `yielded-dev/auth`, workflow `release.yml`. The first npm publication may
    require a manually authenticated owner before trusted publishing can be set.
    Enable direct `npm publish` for this trusted publisher; the release workflow

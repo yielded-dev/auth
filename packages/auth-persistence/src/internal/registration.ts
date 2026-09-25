@@ -1,7 +1,8 @@
+import { randomId } from "@yielded/auth-crypto";
 import { coordinateCommit, hasCommitScope, LifecycleHooks } from "@yielded/auth/Hooks";
 import type { LoginIdentifier } from "@yielded/auth/Identity";
 import { PasswordUnavailable } from "@yielded/auth/Password";
-import { randomId, reportPersistenceFailure } from "@yielded/auth/Persistence";
+import { reportPersistenceFailure } from "@yielded/auth/Persistence";
 import type { SubjectId } from "@yielded/auth/Schema";
 import { SecurityRevision } from "@yielded/auth/Sessions";
 import { Effect, Schema } from "effect";

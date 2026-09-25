@@ -1,7 +1,5 @@
+import { type PasswordHashingConfig, PasswordVerifierInvalid } from "@yielded/auth/Password";
 import { Effect, Encoding, Result, Schema } from "effect";
-
-import type { PasswordHashingConfig } from "./configuration";
-import { PasswordVerifierInvalid } from "./errors";
 
 const Decimal = Schema.String.check(Schema.isPattern(/^[1-9][0-9]{0,7}$/)).pipe(
   Schema.decodeTo(Schema.FiniteFromString),

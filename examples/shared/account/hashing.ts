@@ -1,3 +1,4 @@
+import * as PasswordCrypto from "@yielded/auth-crypto/Password";
 import { PasswordHashing, PasswordKdfAdmission } from "@yielded/auth/Password";
 import { layerWebCrypto } from "@yielded/auth/WebCrypto";
 import { Context, Effect, Layer, Ref } from "effect";
@@ -13,7 +14,7 @@ export class HashingStats extends Context.Service<
   }
 >()("example/HashingStats") {}
 
-const PortableHashing = PasswordHashing.portableLayer().pipe(
+const PortableHashing = PasswordCrypto.layer().pipe(
   Layer.provide(PasswordKdfAdmission.layer()),
   Layer.provide(layerWebCrypto),
 );

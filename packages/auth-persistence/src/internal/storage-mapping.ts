@@ -1,3 +1,4 @@
+import { randomId } from "@yielded/auth-crypto";
 import { EmailCredentialSnapshot } from "@yielded/auth/Email";
 import { LoginIdentifier } from "@yielded/auth/Identity";
 import {
@@ -6,7 +7,6 @@ import {
   EncodedPasswordHash,
   type PasswordReplacement,
 } from "@yielded/auth/Password";
-import { randomId } from "@yielded/auth/Persistence";
 import {
   ProofBinding,
   ProofContinuationId,

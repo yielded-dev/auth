@@ -7,7 +7,6 @@ import type { AuthInvocation } from "../../operations/context";
 import { makeOperation, operationGroup } from "../../operations/operation";
 import { AuthenticationFlowId } from "../../sessions/models";
 import type { makeSessionModule } from "../../sessions/module";
-import { hashingLayer } from "../defaults";
 import { PasswordSignInInput } from "./contracts";
 import {
   PasswordMethodConfigurationError,
@@ -108,7 +107,7 @@ export const makePasswordSignIn = <
     }),
   );
 
-  const layer = handlersLayer.pipe(Layer.provide(hashingLayer), Layer.provide(cryptoLayer));
+  const layer = handlersLayer.pipe(Layer.provide(cryptoLayer));
 
   return Object.freeze({
     persistence: { kind: "password" as const, moduleId, management: false as const },

@@ -1,4 +1,5 @@
 import { BunRuntime } from "@effect/platform-bun";
+import * as PasswordCrypto from "@yielded/auth-crypto/Password";
 import {
   CompromisedPasswords,
   EncodedPasswordHash,
@@ -23,7 +24,7 @@ const fixtureScreening = Layer.succeed(
   }),
 );
 
-const hashing = PasswordHashing.portableLayer().pipe(
+const hashing = PasswordCrypto.layer().pipe(
   Layer.provide(PasswordKdfAdmission.layer()),
   Layer.provide(layerWebCrypto),
 );

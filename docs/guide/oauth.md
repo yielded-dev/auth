@@ -38,6 +38,8 @@ in one auth table; provider tokens refresh when your app needs them.
 import { OAuthAppPersistence } from "@yielded/auth-persistence";
 import * as OAuthApp from "@yielded/auth/OAuthApp";
 import * as GitHub from "@yielded/auth-openid-client/GitHub";
+import * as OAuthCrypto from "@yielded/auth-crypto/OAuth";
+import { layerWebCrypto } from "@yielded/auth/WebCrypto";
 import { Layer, Schema } from "effect";
 import { config, keys, resolveAccount, DatabaseLive } from "./app-services";
 
@@ -49,7 +51,7 @@ export const app = OAuthApp.make("github", {
 const live = app
   .layer({
     origin: config.origin,
-    ...keys,
+    sessionKeys: keys.session,
     provider: GitHub.appProvider({
       clientId: config.clientId,
       clientSecret: config.clientSecret,
@@ -57,6 +59,9 @@ const live = app
     }),
   })
   .pipe(
+    Layer.provide(OAuthCrypto.transactionLayer(keys.transaction)),
+    Layer.provide(OAuthCrypto.connectedTokenLayer(keys.token)),
+    Layer.provide(layerWebCrypto),
     Layer.provide(Layer.succeed(app.Accounts, { resolve: resolveAccount })),
     Layer.provide(OAuthAppPersistence.layer),
     Layer.provide(DatabaseLive),
@@ -66,12 +71,14 @@ export const AuthRoutes = app.routes.pipe(Layer.provide(live));
 ```
 
 `app-services` is your application code: `resolveAccount` maps a verified provider
-identity to `{ subjectId, claims }`; `keys` supplies the three keyrings;
-`DatabaseLive` supplies a migrated SQL connection. The
+identity to `{ subjectId, claims }`; `keys` supplies distinct `session`,
+`transaction`, and `token` keyrings; `DatabaseLive` supplies a migrated SQL
+connection. The
 [runnable GitHub example](https://github.com/yielded-dev/auth/blob/main/examples/auth/src/github-app.ts)
 shows that setup, including an account allowlist.
 
-Install `openid-client`, mount `AuthRoutes`, and register `/auth/github/callback` at your app's
+Install `@yielded/auth-openid-client`, `@yielded/auth-crypto`, and `openid-client`.
+Mount `AuthRoutes` and register `/auth/github/callback` at your app's
 origin in your GitHub OAuth App. Link to `/auth/github/sign-in`. Successful sign-in redirects to `/account`.
 See the [setup reference](../reference/oauth#managed-app-setup) for keys, storage,
 and callback tracing.

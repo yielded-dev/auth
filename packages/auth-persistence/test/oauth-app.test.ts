@@ -1,10 +1,12 @@
 import * as LibsqlClient from "@effect/sql-libsql/LibsqlClient";
 import * as SqliteClient from "@effect/sql-sqlite-node/SqliteClient";
 import { it } from "@effect/vitest";
+import * as OAuthCrypto from "@yielded/auth-crypto/OAuth";
 import { OAuthUnavailable } from "@yielded/auth/OAuth";
 import * as OAuthApp from "@yielded/auth/OAuthApp";
 import { SubjectId } from "@yielded/auth/Schema";
 import * as Strava from "@yielded/auth/Strava";
+import { layerWebCrypto } from "@yielded/auth/WebCrypto";
 import { Deferred, Effect, Encoding, Exit, Fiber, Layer, Logger, Redacted, Schema } from "effect";
 import { TestClock } from "effect/testing";
 import { HttpClient, HttpClientResponse } from "effect/unstable/http";
@@ -105,8 +107,7 @@ const harness = (
   const live = app
     .layer({
       ...sessionConfig,
-      transactionKeys: keys(2),
-      tokenKeys: keys(3),
+
       provider: Strava.provider({
         clientId: "1234",
         clientSecret: Redacted.make("client-secret"),
@@ -114,6 +115,9 @@ const harness = (
       }),
     })
     .pipe(
+      Layer.provide(OAuthCrypto.transactionLayer(keys(2))),
+      Layer.provide(OAuthCrypto.connectedTokenLayer(keys(3))),
+      Layer.provide(layerWebCrypto),
       Layer.provide(Layer.succeed(HttpClient.HttpClient, client)),
       Layer.provide(
         Layer.succeed(app.Accounts, {

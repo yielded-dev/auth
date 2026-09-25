@@ -85,7 +85,8 @@ request handler
 [session configuration](./sessions#configure-sessions) and
 [the Layer wiring example](../reference/adapters#compose-the-application-layer) to
 connect storage, accounts, and keys. These services have no automatic defaults;
-the library supplies Web Crypto, empty hooks, and password hashing. For HTTP,
+the library supplies Web Crypto and empty hooks. Supply password hashing with
+[`@yielded/auth-crypto/Password`](./passwords#supply-the-services). For HTTP,
 [the server adapter](./http-and-client#configure-the-server) supplies the request
 boundary and writes credential cookies.
 

@@ -258,6 +258,66 @@ export const verifyPackageConsumers = Effect.fn("verifyPackageConsumers")(functi
   yield* fs.copy(path.join(source, "dist"), path.join(destination, "dist"));
   yield* fs.copy(path.join(source, "test/packaging"), path.join(stage, "fixtures"));
 
+  const exports = manifest.exports;
+
+  if (exports === undefined)
+    return yield* new PackageConsumerError({ message: "Core exports are missing" });
+
+  // Load every published core module with Effect as its only installed dependency.
+  for (const [name, target] of [
+    ["@yielded/auth", destination],
+    ["effect", yield* fs.realPath(path.join(source, "node_modules/effect"))],
+  ] as const) {
+    const link = path.join(stage, "node_modules", name);
+
+    yield* fs.makeDirectory(path.dirname(link), { recursive: true });
+    yield* fs.symlink(target, link);
+  }
+  yield* withPublishManifests(stage, () =>
+    Effect.gen(function* () {
+      const coreExports = Object.keys(exports).map((key) =>
+        key === "." ? "@yielded/auth" : `@yielded/auth${key.slice(1)}`,
+      );
+
+      const child = yield* ChildProcess.make(
+        "node",
+        [
+          "--input-type=module",
+          "--eval",
+          `for (const name of ${JSON.stringify(coreExports)}) await import(name);`,
+        ],
+        { cwd: stage, stdout: "pipe", stderr: "pipe" },
+      );
+
+      const [stderr, code] = yield* Effect.all(
+        [Stream.mkString(Stream.decodeText(child.stderr)), child.exitCode],
+        { concurrency: 2 },
+      );
+
+      if (code !== 0)
+        return yield* new PackageConsumerError({
+          message: `Effect-only core consumer exited ${code}: ${stderr}`,
+        });
+      yield* Console.log(
+        `All ${coreExports.length} published core exports load with only Effect installed.`,
+      );
+    }),
+  );
+
+  const cryptoSource = path.join(repositoryRoot, "packages/auth-crypto");
+  const cryptoDestination = path.join(stage, "packages/auth-crypto");
+
+  const cryptoManifest = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(PublishManifest))(
+    yield* fs.readFileString(path.join(cryptoSource, "package.json")),
+  );
+
+  yield* fs.makeDirectory(cryptoDestination, { recursive: true });
+  yield* fs.copyFile(
+    path.join(cryptoSource, "package.json"),
+    path.join(cryptoDestination, "package.json"),
+  );
+  yield* fs.copy(path.join(cryptoSource, "dist"), path.join(cryptoDestination, "dist"));
+
   const persistenceSource = path.join(repositoryRoot, "packages/auth-persistence");
   const persistenceDestination = path.join(stage, "packages/auth-persistence");
 
@@ -280,19 +340,24 @@ export const verifyPackageConsumers = Effect.fn("verifyPackageConsumers")(functi
   for (const name of new Set([
     "@yielded/auth",
     "@yielded/auth-persistence",
+    "@yielded/auth-crypto",
     "effect",
     ...Object.keys(manifest.dependencies ?? {}),
     ...Object.keys(persistenceManifest.dependencies ?? {}),
+    ...Object.keys(cryptoManifest.dependencies ?? {}),
   ])) {
     const link = path.join(stage, "node_modules", name);
 
+    if (yield* fs.exists(link)) continue;
     yield* fs.makeDirectory(path.dirname(link), { recursive: true });
     yield* fs.symlink(
       name === "@yielded/auth"
         ? destination
         : name === "@yielded/auth-persistence"
           ? persistenceDestination
-          : yield* fs.realPath(path.join(source, "node_modules", name)),
+          : name === "@yielded/auth-crypto"
+            ? cryptoDestination
+            : yield* fs.realPath(path.join(cryptoSource, "node_modules", name)),
       link,
     );
   }

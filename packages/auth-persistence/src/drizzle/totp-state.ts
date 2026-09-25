@@ -1,4 +1,4 @@
-import { randomId, digest } from "@yielded/auth/Persistence";
+import { randomId, digest } from "@yielded/auth-crypto";
 import { AuthenticationRequirement, SecurityRevision } from "@yielded/auth/Sessions";
 import {
   TotpUnavailable,

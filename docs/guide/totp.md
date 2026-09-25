@@ -30,9 +30,11 @@ attempt, and recovery policies have defaults. Recovery for lost factors is denie
 unless explicitly enabled.
 
 Your `AuthenticationAuthority` decides which accounts require two factors.
-Provide `TotpPersistence`, `TotpSecretKeys`, `TotpActionEvidence`, and stateful
-sessions with pending-authentication support. Storage, secret keys, and action
-authorization have no automatic defaults. This definition omits `sessions`
+Provide `TotpCryptography` with `layer` from `@yielded/auth-crypto/Totp`, supplying
+that Layer with application-owned `TotpSecretKeys`. The workflow also needs
+`TotpPersistence`, `TotpActionEvidence`, and stateful sessions with
+pending-authentication support. Storage, secret keys, and action authorization
+have no automatic defaults. This definition omits `sessions`
 so you can supply the custom completion Layer below to `AppAuth.layer`.
 
 ```ts [sessions.ts]

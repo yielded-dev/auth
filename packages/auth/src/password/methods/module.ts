@@ -30,7 +30,7 @@ import { SessionInvalidationWindow, sessionInvalidationWindow } from "../../sess
 import type { AuthenticationEvidence } from "../../sessions/models";
 import { AuthenticationFlowId } from "../../sessions/models";
 import type { makeSessionModule } from "../../sessions/module";
-import { hashingLayer, newPasswordLayer } from "../defaults";
+import { newPasswordLayer } from "../defaults";
 import { NewPasswordRejected, PasswordCheckUnavailable } from "../errors";
 import { NewPasswordCheck } from "../NewPasswordCheck";
 import { PasswordHashing } from "../PasswordHashing";
@@ -928,7 +928,7 @@ const makePasswordWithManagement = <
       handlersLayer.pipe(
         Layer.provide(defaultLayer(Passwords, layer)),
         Layer.provide(defaultLayer(reset.Proofs, reset.emailLayer)),
-        Layer.provide([hashingLayer, newPasswordLayer, hooksLayer]),
+        Layer.provide([newPasswordLayer, hooksLayer]),
         Layer.provideMerge(cryptoLayer),
       ),
       { completion: true },
