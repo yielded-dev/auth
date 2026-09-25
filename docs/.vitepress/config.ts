@@ -62,6 +62,7 @@ export default defineConfig({
         items: [
           { text: "Public modules", link: "/reference/modules" },
           { text: "OAuth", link: "/reference/oauth" },
+          { text: "iOS passkeys", link: "/reference/passkey-react-native" },
         ],
       },
     ],
