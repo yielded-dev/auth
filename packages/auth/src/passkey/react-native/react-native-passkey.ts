@@ -1,7 +1,8 @@
-import { DateTime, Effect, Layer, Predicate, Redacted, Schema } from "effect";
+import { Cause, DateTime, Effect, Layer, Predicate, Redacted, Schema } from "effect";
 import { Platform } from "react-native";
 import { Passkey, type PasskeyCreateRequest, type PasskeyGetRequest } from "react-native-passkey";
 
+import { reportAuthFailure } from "../../internal/diagnostics";
 import { PasskeyAuthenticationStarted, PasskeyRegistrationStarted } from "../models";
 import { snapshotPasskey } from "../snapshot";
 import {
@@ -29,8 +30,20 @@ const rejected = () => new PasskeyReactNativeInputRejected({});
 const invalid = () => new PasskeyReactNativeInvalidResponse({});
 const timedOut = () => new PasskeyReactNativeNotCompleted({ reason: "timed-out" });
 
-const unexpected = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-  effect.pipe(Effect.catchDefect(() => Effect.fail(unavailable())));
+const redactDefects =
+  <Failure>(failure: () => Failure) =>
+  <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+    effect.pipe(
+      Effect.catchCause((cause): Effect.Effect<never, E | Failure> =>
+        Cause.hasDies(cause)
+          ? reportAuthFailure("passkey-react-native", cause).pipe(
+              Effect.andThen(Effect.fail(failure())),
+            )
+          : Effect.failCause(cause),
+      ),
+    );
+
+const unexpected = redactDefects(unavailable);
 
 const timeout = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 300000 }));
 
@@ -47,28 +60,25 @@ const authenticationInput = Schema.Struct({
   mediation: Schema.Literals(["required", "conditional"]),
 });
 
-const environment = Effect.try({
-  try: () => {
-    if (Platform.OS !== "ios") return { supported: false, exclusions: false };
+const environment = Effect.sync(() => {
+  if (Platform.OS !== "ios") return { supported: false, exclusions: false };
 
-    // The maintained helper only checks OS version (and includes iOS 15).
-    // Decode platform metadata before applying this adapter's iOS 16 minimum.
-    // eslint-disable-next-line no-restricted-properties
-    const version = Schema.decodeUnknownSync(
-      Schema.String.check(Schema.isPattern(/^\d+(?:\.\d+){0,2}$/)),
-    )(Platform.Version);
+  // The maintained helper only checks OS version (and includes iOS 15).
+  // Decode platform metadata before applying this adapter's iOS 16 minimum.
+  // eslint-disable-next-line no-restricted-properties
+  const version = Schema.decodeUnknownSync(
+    Schema.String.check(Schema.isPattern(/^\d+(?:\.\d+){0,2}$/)),
+  )(Platform.Version);
 
-    const [major = 0, minor = 0] = version.split(".").map(Number);
-    // eslint-disable-next-line no-restricted-properties
-    const supported = Schema.decodeUnknownSync(Schema.Boolean)(Passkey.isSupported());
+  const [major = 0, minor = 0] = version.split(".").map(Number);
+  // eslint-disable-next-line no-restricted-properties
+  const supported = Schema.decodeUnknownSync(Schema.Boolean)(Passkey.isSupported());
 
-    return {
-      supported: major >= 16 && supported,
-      exclusions: major > 17 || (major === 17 && minor >= 4),
-    };
-  },
-  catch: unavailable,
-});
+  return {
+    supported: major >= 16 && supported,
+    exclusions: major > 17 || (major === 17 && minor >= 4),
+  };
+}).pipe(unexpected);
 
 interface Lease {
   phase: "pre-native" | "native" | "settled";
@@ -99,39 +109,36 @@ const release = (lease: Lease) =>
     if (lease.phase === "pre-native") settle(lease);
   });
 
-const nativeFailure = (value: unknown): PasskeyReactNativeFailure => {
-  try {
-    if (!Predicate.isObject(value)) return unavailable();
+const nativeFailure = (value: unknown): Effect.Effect<never, PasskeyReactNativeFailure> =>
+  Effect.suspend((): Effect.Effect<never, PasskeyReactNativeFailure> => {
+    if (!Predicate.isObject(value)) return Effect.die(value);
     // Inspect only the normalized code; never copy message, native stack, or cause.
     // eslint-disable-next-line no-restricted-properties
     const code = Schema.decodeUnknownOption(Schema.String)(value.error);
 
-    if (code._tag === "None") return unavailable();
+    if (code._tag === "None") return Effect.die(value);
     switch (code.value) {
       case "NotSupported":
-        return new PasskeyReactNativeUnsupported({});
+        return Effect.fail(new PasskeyReactNativeUnsupported({}));
       case "InvalidChallenge":
       case "InvalidUserId":
-        return rejected();
+        return Effect.fail(rejected());
       case "UserCancelled":
-        return new PasskeyReactNativeNotCompleted({ reason: "cancelled" });
+        return Effect.fail(new PasskeyReactNativeNotCompleted({ reason: "cancelled" }));
       case "NoCredentials":
-        return new PasskeyReactNativeNotCompleted({ reason: "no-credentials" });
+        return Effect.fail(new PasskeyReactNativeNotCompleted({ reason: "no-credentials" }));
       case "CredentialAlreadyExists":
-        return new PasskeyReactNativeNotCompleted({ reason: "credential-exists" });
+        return Effect.fail(new PasskeyReactNativeNotCompleted({ reason: "credential-exists" }));
       case "Interrupted":
-        return new PasskeyReactNativeNotCompleted({ reason: "interrupted" });
+        return Effect.fail(new PasskeyReactNativeNotCompleted({ reason: "interrupted" }));
       case "TimedOut":
-        return timedOut();
+        return Effect.fail(timedOut());
       case "RequestFailed":
-        return new PasskeyReactNativeNotCompleted({ reason: "request-failed" });
+        return Effect.fail(new PasskeyReactNativeNotCompleted({ reason: "request-failed" }));
       default:
-        return unavailable();
+        return Effect.die(value);
     }
-  } catch {
-    return unavailable();
-  }
-};
+  });
 
 const native = (lease: Lease, call: () => Promise<unknown>) =>
   Effect.callback<unknown, PasskeyReactNativeFailure>((resume, signal) => {
@@ -141,14 +148,15 @@ const native = (lease: Lease, call: () => Promise<unknown>) =>
       lease.phase !== "pre-native" ||
       activeLease !== lease
     ) {
-      resume(Effect.fail(unavailable()));
+      resume(Effect.die(new Error("Invalid passkey native lease")));
 
       return;
     }
     lease.phase = "native";
     try {
-      // These handlers only settle the guard and deliver to a live Effect. No
-      // daemon fiber, retry, RPC completion, or credential logging after teardown.
+      // The caller owns classification and diagnostic reporting. Callbacks only
+      // settle the guard and resume a live caller. After interruption they discard
+      // the outcome without inspecting it or retaining/running a scoped logger.
       void Promise.resolve(call()).then(
         (value) => {
           try {
@@ -161,15 +169,15 @@ const native = (lease: Lease, call: () => Promise<unknown>) =>
         (error) => {
           try {
             settle(lease);
-            if (!signal.aborted && lease.listening) resume(Effect.fail(nativeFailure(error)));
+            if (!signal.aborted && lease.listening) resume(nativeFailure(error));
           } catch {
             /* A detached handler must not reject. */
           }
         },
       );
-    } catch {
+    } catch (error) {
       settle(lease);
-      resume(Effect.fail(unavailable()));
+      resume(Effect.die(error));
     }
   });
 
@@ -209,10 +217,7 @@ const decodeResponse = <S extends Schema.Codec<unknown, unknown, never, never>>(
   // Peer declarations are not validation. Parse bounded base64url fields and
   // discard unknown fields before constructing the server's JSON envelope.
   // eslint-disable-next-line no-restricted-properties
-  Schema.decodeUnknownEffect(schema)(value).pipe(
-    Effect.mapError(invalid),
-    Effect.catchDefect(() => Effect.fail(invalid())),
-  );
+  Schema.decodeUnknownEffect(schema)(value).pipe(Effect.mapError(invalid), redactDefects(invalid));
 
 /** Creates the iOS adapter. Ceremonies own their scopes; construction performs no native I/O. */
 export const makeReactNativePasskey = (): Effect.Effect<Native> =>

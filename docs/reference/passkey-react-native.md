@@ -49,6 +49,13 @@ single-use/recovery policy and do not automatically repeat credential creation.
 Errors contain no credentials, native messages, or native causes; unwrap the response
 only at your protected transport boundary and keep it out of telemetry.
 
+Unexpected native/configuration failures and defects produce one content-free
+`reportAuthFailure` diagnostic at the `passkey-react-native` stage before redaction.
+Expected rejection, cancellation, and schema validation failures do not produce
+infrastructure diagnostics. The calling fiber owns reporting. After interruption,
+late native callbacks only release the busy guard and discard the outcome; they
+do not inspect it, retain a scoped logger, or launch detached reporting work.
+
 Ceremonies reject expired started values and time out at the earlier of
 `expiresAtMillis` or the start time plus `options.timeout` (1–300,000 ms).
 `capabilities` can fail with `PasskeyReactNativeUnavailable`; ceremony failures

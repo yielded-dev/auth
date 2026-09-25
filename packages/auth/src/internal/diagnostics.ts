@@ -22,6 +22,7 @@ type FailureStage =
   | "password-hashing"
   | "auth-persistence"
   | "passkey-core"
+  | "passkey-react-native"
   | "passkey-protocol";
 
 /** Keep Effect's content-free frames, never failure values or arbitrary annotations. */

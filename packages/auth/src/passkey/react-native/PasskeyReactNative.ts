@@ -11,7 +11,8 @@ import type {
 
 /** Client-local iOS ceremonies. Applications own Begin/Complete and request binding.
  * Interruption stops delivery, but cannot dismiss OS UI. A started native request
- * retains the shared busy guard until its promise settles, even after interruption. */
+ * retains the shared busy guard until its promise settles, even after interruption.
+ * The calling fiber owns failure diagnostics; late settlement only clears the guard. */
 export class PasskeyReactNative extends Context.Service<
   PasskeyReactNative,
   {
