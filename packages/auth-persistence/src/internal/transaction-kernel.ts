@@ -1,20 +1,26 @@
 import { type CommitJournal, type PreparedCommit } from "@yielded/auth/Hooks";
 import { reportAuthFailure } from "@yielded/auth/Persistence";
 /* oxlint-disable no-explicit-any -- existing storage kernels erase foreign table shapes; domain errors remain typed. */
-import type { SQL, Table } from "drizzle-orm";
-import type { EffectDrizzleQueryError } from "drizzle-orm/effect-core";
 import { Cause, Effect } from "effect";
 import type * as SqlClient from "effect/unstable/sql/SqlClient";
 import type { SqlError } from "effect/unstable/sql/SqlError";
 import type { Statement } from "effect/unstable/sql/Statement";
 
-import type { QueryOperations } from "./query-operations";
+import type {
+  SqlExpression as SQL,
+  QueryFailure,
+  QueryOperations,
+  SqlFragment,
+  SqlColumn,
+} from "./query-operations";
+
+type Table = object;
 
 export type Row = Record<string, any>;
 
-/** Only query-builder/table shapes are erased here. Installed Effect Drizzle
+/** Only query-builder/table shapes are erased here. Installed native
  * queries have captured clients, and their error channel remains explicit. */
-type NativeQuery<A> = Effect.Effect<A, EffectDrizzleQueryError | SqlError>;
+type NativeQuery<A> = Effect.Effect<A, QueryFailure | SqlError>;
 
 export interface TransactionNativeDatabase {
   readonly $client: SqlClient.SqlClient & {
@@ -88,7 +94,12 @@ export interface TransactionOwner<Failure> {
   finish(): Effect.Effect<void, Failure>;
 }
 
-export const makeTransactionKernel = (operations: QueryOperations) => {
+export const makeTransactionKernel = <
+  Fragment extends SqlFragment = SqlFragment,
+  Column extends SqlColumn = SqlColumn,
+>(
+  operations: QueryOperations<Fragment, Column>,
+) => {
   const { eq, getTableColumns, isNull, sql, balancedD1And, compactD1GeneratedStatement } =
     operations;
 
@@ -337,7 +348,7 @@ export const makeTransactionKernel = (operations: QueryOperations) => {
     const queryCondition = (condition: SQL) =>
       database
         .select({
-          value: sql<number>`case when ${condition} then 1 else 0 end`.mapWith(Number).as("value"),
+          value: sql`case when ${condition} then 1 else 0 end`.mapWith(Number).as("value"),
         })
         .from(sql`(select 1) as oauth_guard`);
 
@@ -520,7 +531,7 @@ export const makeTransactionKernel = (operations: QueryOperations) => {
 
             const rows: Row[] = yield* database
               .select({
-                value: sql<number>`${clock.engineNowMillis}`.mapWith(Number),
+                value: sql`${clock.engineNowMillis}`.mapWith(Number),
               })
               .from(sql`(select 1) as oauth_clock`) as NativeQuery<Row[]>;
 
@@ -543,7 +554,7 @@ export const makeTransactionKernel = (operations: QueryOperations) => {
 
             // Close registration before any late-bound SQL predicate is materialized.
             // No callback is invoked after the first final write.
-            const conditions = observations.flatMap((observation) =>
+            const conditions: SQL[] = observations.flatMap((observation) =>
               observedConditions(observation.table, observation.where, observation.rows),
             );
 

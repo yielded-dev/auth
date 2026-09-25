@@ -4,10 +4,15 @@ description: Choose managed storage, your own SQL schema, or custom Effect servi
 
 # Adapters and persistence
 
-`@yielded/auth` owns workflows and service contracts. `@yielded/auth-persistence`
-supplies SQL algorithms, Drizzle bindings, and optional managed tables and migrations.
-Both packages release at the same version. Applications own customer provisioning,
-policy, claims, and delivery.
+`@yielded/auth` owns workflows and service contracts and depends only on Effect.
+`@yielded/auth-persistence` supplies direct Effect SQL persistence and shared storage
+contracts. `@yielded/auth-persistence-drizzle` adds Drizzle bindings, managed tables,
+and migration helpers. Applications choose their adapter and own customer
+provisioning, policy, claims, delivery, and database connections.
+
+Install the Drizzle companion, `drizzle-orm`, and an explicit Effect SQL driver when
+using Drizzle. Direct SQL applications need only the default persistence package and
+their driver.
 
 ## Runnable examples
 
@@ -42,14 +47,14 @@ and [method replacement](https://github.com/yielded-dev/auth/blob/main/examples/
 Choose a named facade for your backend:
 
 ```ts
-import { AuthPersistence } from "@yielded/auth-persistence/drizzle/sqlite-bun";
+import { AuthPersistence } from "@yielded/auth-persistence-drizzle/SqliteBun";
 // Direct Effect SQL: import { AuthPersistence } from "@yielded/auth-persistence";
 ```
 
 Bind it to the Auth definition and map the existing customer table:
 
 ```ts [schema.ts]
-import { AuthPersistence } from "@yielded/auth-persistence/drizzle/sqlite-bun";
+import { AuthPersistence } from "@yielded/auth-persistence-drizzle/SqliteBun";
 import { SubjectId } from "@yielded/auth/Schema";
 import { Effect } from "effect";
 import { AppAuth, requirement } from "./auth";
@@ -94,7 +99,7 @@ from their directories. The latter uses the same migration Layer as startup:
 
 ```ts [auth-live.ts]
 import * as SqliteClient from "@effect/sql-sqlite-bun/SqliteClient";
-import { AuthPersistence } from "@yielded/auth-persistence/drizzle/sqlite-bun";
+import { AuthPersistence } from "@yielded/auth-persistence-drizzle/SqliteBun";
 import { Layer } from "effect";
 import { AppAuth } from "./auth";
 import { ApplicationLive } from "./application"; // claims, keys, delivery, hashing
@@ -173,7 +178,7 @@ For SQLite on Bun, create the Drizzle client and provide the resulting service:
 import * as SqliteClient from "@effect/sql-sqlite-bun/SqliteClient";
 import * as Drizzle from "drizzle-orm/effect-sqlite-bun";
 import { Effect, Layer } from "effect";
-import { makePasswordPersistenceServices } from "@yielded/auth-persistence/drizzle/sqlite-bun";
+import { makePasswordPersistenceServices } from "@yielded/auth-persistence-drizzle/SqliteBun";
 import { PasswordPersistence } from "@yielded/auth/Password";
 
 import { passwordMapping } from "./schema";
@@ -189,7 +194,7 @@ export const PasswordPersistenceLive = Layer.unwrap(
 ```
 
 `passwordMapping` maps your account, identifier, credential, revision, attempt,
-and receipt tables. It is a `PasswordPersistenceMapping` from `@yielded/auth-persistence/drizzle`.
+and receipt tables. It is a `PasswordPersistenceMapping` from `@yielded/auth-persistence-drizzle`.
 Supply `LifecycleHooks` and your other account/session Layers at the composition root.
 
 ## Compose the application Layer
@@ -258,20 +263,20 @@ secret keys. Adapters provide implementations; they are not installed automatica
 
 ## Choose a driver
 
-| Database / runtime    | Direct import                                   |
-| --------------------- | ----------------------------------------------- |
-| PostgreSQL            | `@yielded/auth-persistence/drizzle/postgres`    |
-| PGlite                | `@yielded/auth-persistence/drizzle/pglite`      |
-| MySQL                 | `@yielded/auth-persistence/drizzle/mysql2`      |
-| libSQL                | `@yielded/auth-persistence/drizzle/libsql`      |
-| SQLite on Bun         | `@yielded/auth-persistence/drizzle/sqlite-bun`  |
-| SQLite on Node        | `@yielded/auth-persistence/drizzle/sqlite-node` |
-| SQLite WASM           | `@yielded/auth-persistence/drizzle/sqlite-wasm` |
-| Cloudflare D1         | `@yielded/auth-persistence/drizzle/d1`          |
-| Durable Object SQLite | `@yielded/auth-persistence/drizzle/sqlite-do`   |
+| Database / runtime    | Direct import                                  |
+| --------------------- | ---------------------------------------------- |
+| PostgreSQL            | `@yielded/auth-persistence-drizzle/Postgres`   |
+| PGlite                | `@yielded/auth-persistence-drizzle/Pglite`     |
+| MySQL                 | `@yielded/auth-persistence-drizzle/Mysql2`     |
+| libSQL                | `@yielded/auth-persistence-drizzle/Libsql`     |
+| SQLite on Bun         | `@yielded/auth-persistence-drizzle/SqliteBun`  |
+| SQLite on Node        | `@yielded/auth-persistence-drizzle/SqliteNode` |
+| SQLite WASM           | `@yielded/auth-persistence-drizzle/SqliteWasm` |
+| Cloudflare D1         | `@yielded/auth-persistence-drizzle/D1`         |
+| Durable Object SQLite | `@yielded/auth-persistence-drizzle/SqliteDo`   |
 
 Install the selected driver's Effect SQL and Drizzle peers. Import it directly to
-avoid loading unrelated adapters. Shared mapping types live in `@yielded/auth-persistence/drizzle`.
+avoid loading unrelated adapters. Shared mapping types live in `@yielded/auth-persistence-drizzle`.
 
 Effect SQL peers must be rc.117 or newer. The native PostgreSQL driver accepts one
 statement per query, decodes `int8` as `bigint`, timestamps as `Date`, and `bytea`
@@ -341,11 +346,11 @@ row mappings, wrap the explicit adapter services:
 ```ts [auth-persistence.ts]
 import * as Drizzle from "drizzle-orm/effect-sqlite-bun";
 import { Effect, Layer } from "effect";
-import { phonePersistenceLayer } from "@yielded/auth-persistence/drizzle";
+import { phonePersistenceLayer } from "@yielded/auth-persistence-drizzle";
 import {
   makePhonePersistenceServices,
   makeProofPersistenceServices,
-} from "@yielded/auth-persistence/drizzle/sqlite-bun";
+} from "@yielded/auth-persistence-drizzle/SqliteBun";
 import { ProofPersistence } from "@yielded/auth/Proofs";
 
 import * as SqliteClient from "@effect/sql-sqlite-bun/SqliteClient";

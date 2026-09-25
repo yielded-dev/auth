@@ -14,12 +14,12 @@ import { SessionInvalidationWindow } from "@yielded/auth/Sessions";
 import { Effect, Layer, Schema } from "effect";
 import type { Statement } from "effect/unstable/sql/Statement";
 
-import type { PasskeyMappingSource } from "../../drizzle/passkey-model";
+import type { PasskeyMappingSource } from "../models/passkey-model";
 import type {
   PasskeyManagementServices,
   PasskeyRegistrationServices,
   PasskeyRegistrationWriter,
-} from "../../drizzle/passkey-write-model";
+} from "../models/passkey-write-model";
 import type { QueryOperations } from "../query-operations";
 import type { makeTransactionExecutionKernel } from "../transaction-execution-kernel";
 import type { makePasskeyEnrollmentKernel } from "./enrollment";

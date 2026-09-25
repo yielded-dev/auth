@@ -100,6 +100,24 @@ export const verifyPackageExports = Effect.fn("verifyPackageExports")(
     );
 
     for (const pkg of packages) {
+      if (pkg.manifest.name === "@yielded/auth-persistence") {
+        for (const dependency of Object.keys({
+          ...pkg.manifest.dependencies,
+          ...pkg.manifest.optionalDependencies,
+          ...pkg.manifest.peerDependencies,
+          ...pkg.manifest.devDependencies,
+        })) {
+          if (dependency.includes("drizzle"))
+            report(
+              pkg.file,
+              `Drizzle dependency ${dependency} belongs in @yielded/auth-persistence-drizzle`,
+            );
+        }
+        for (const key of Object.keys(pkg.manifest.exports)) {
+          if (/drizzle/i.test(key))
+            report(pkg.file, `Drizzle export ${key} belongs in @yielded/auth-persistence-drizzle`);
+        }
+      }
       if (pkg.manifest.name !== "@yielded/auth") continue;
       for (const dependency of Object.keys({
         ...pkg.manifest.dependencies,
@@ -329,6 +347,11 @@ export const verifyPackageExports = Effect.fn("verifyPackageExports")(
               imports.push({ specifier: node.arguments[0].text, typeOnly: false });
           });
           for (const { specifier, typeOnly } of imports) {
+            if (manifest.name === "@yielded/auth-persistence" && /drizzle/i.test(specifier))
+              report(
+                file,
+                `Drizzle import ${specifier} belongs in @yielded/auth-persistence-drizzle`,
+              );
             if (specifier.startsWith(".")) {
               const resolved = path
                 .relative(root, path.resolve(root, path.dirname(file), specifier))

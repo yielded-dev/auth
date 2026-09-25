@@ -45,6 +45,7 @@
     "@yielded/auth-crypto": "workspace:*",
     "@yielded/auth-openid-client": "workspace:*",
     "@yielded/auth-persistence": "workspace:*",
+    "@yielded/auth-persistence-drizzle": "workspace:*",
     "@yielded/auth-simplewebauthn": "workspace:*",
     "alchemy": "catalog:",
     "effect": "catalog:",

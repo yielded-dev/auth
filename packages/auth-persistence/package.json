@@ -1,7 +1,7 @@
 {
   "name": "@yielded/auth-persistence",
   "version": "0.1.0-beta.9",
-  "description": "SQL persistence, Drizzle bindings, and managed schemas for Yielded Auth.",
+  "description": "Direct Effect SQL persistence and shared storage contracts for Yielded Auth.",
   "homepage": "https://yielded.dev/auth/",
   "bugs": {
     "url": "https://github.com/yielded-dev/auth/issues"
@@ -20,16 +20,7 @@
   "sideEffects": [],
   "exports": {
     ".": "./src/index.ts",
-    "./drizzle": "./src/Drizzle.ts",
-    "./drizzle/d1": "./src/DrizzleD1.ts",
-    "./drizzle/libsql": "./src/DrizzleLibsql.ts",
-    "./drizzle/mysql2": "./src/DrizzleMysql2.ts",
-    "./drizzle/pglite": "./src/DrizzlePglite.ts",
-    "./drizzle/postgres": "./src/DrizzlePostgres.ts",
-    "./drizzle/sqlite-bun": "./src/DrizzleSqliteBun.ts",
-    "./drizzle/sqlite-do": "./src/DrizzleSqliteDo.ts",
-    "./drizzle/sqlite-node": "./src/DrizzleSqliteNode.ts",
-    "./drizzle/sqlite-wasm": "./src/DrizzleSqliteWasm.ts"
+    "./Adapter": "./src/Adapter.ts"
   },
   "publishConfig": {
     "access": "public"
@@ -37,8 +28,7 @@
   "scripts": {
     "build": "vp pack",
     "check": "tsc --noEmit -p tsconfig.json",
-    "test": "vp test --passWithNoTests",
-    "example:totp": "bun test/fixtures/totp-sqlite-bun.ts"
+    "test": "vp test --passWithNoTests"
   },
   "dependencies": {
     "@noble/hashes": "catalog:",
@@ -46,66 +36,15 @@
     "@yielded/auth-crypto": "workspace:*"
   },
   "devDependencies": {
-    "@effect/platform-bun": "catalog:",
     "@effect/platform-node": "catalog:",
-    "@effect/sql-d1": "catalog:",
     "@effect/sql-libsql": "catalog:",
-    "@effect/sql-mysql2": "catalog:",
-    "@effect/sql-pg": "catalog:",
-    "@effect/sql-pglite": "catalog:",
-    "@effect/sql-sqlite-bun": "catalog:",
-    "@effect/sql-sqlite-do": "catalog:",
     "@effect/sql-sqlite-node": "catalog:",
-    "@effect/sql-sqlite-wasm": "catalog:",
     "@effect/vitest": "catalog:",
-    "drizzle-orm": "catalog:",
     "effect": "catalog:",
     "typescript": "catalog:",
     "vite-plus": "catalog:"
   },
   "peerDependencies": {
-    "@effect/sql-d1": ">=4.0.0-rc.117",
-    "@effect/sql-libsql": ">=4.0.0-rc.117",
-    "@effect/sql-mysql2": ">=4.0.0-rc.117",
-    "@effect/sql-pg": ">=4.0.0-rc.117",
-    "@effect/sql-pglite": ">=4.0.0-rc.117",
-    "@effect/sql-sqlite-bun": ">=4.0.0-rc.117",
-    "@effect/sql-sqlite-do": ">=4.0.0-rc.117",
-    "@effect/sql-sqlite-node": ">=4.0.0-rc.117",
-    "@effect/sql-sqlite-wasm": ">=4.0.0-rc.117",
-    "drizzle-orm": ">=1.0.0-rc.5-ab785fc",
     "effect": "^4.0.0-rc.117"
-  },
-  "peerDependenciesMeta": {
-    "@effect/sql-d1": {
-      "optional": true
-    },
-    "@effect/sql-libsql": {
-      "optional": true
-    },
-    "@effect/sql-mysql2": {
-      "optional": true
-    },
-    "@effect/sql-pg": {
-      "optional": true
-    },
-    "@effect/sql-pglite": {
-      "optional": true
-    },
-    "@effect/sql-sqlite-bun": {
-      "optional": true
-    },
-    "@effect/sql-sqlite-do": {
-      "optional": true
-    },
-    "@effect/sql-sqlite-node": {
-      "optional": true
-    },
-    "@effect/sql-sqlite-wasm": {
-      "optional": true
-    },
-    "drizzle-orm": {
-      "optional": true
-    }
   }
 }

@@ -1,6 +1,6 @@
 import * as TotpCrypto from "@yielded/auth-crypto/Totp";
-import * as Mapping from "@yielded/auth-persistence/drizzle";
-import * as Native from "@yielded/auth-persistence/drizzle/postgres";
+import * as Mapping from "@yielded/auth-persistence-drizzle";
+import * as Native from "@yielded/auth-persistence-drizzle/Postgres";
 import * as PasskeyProtocol from "@yielded/auth-simplewebauthn/Server";
 import * as Auth from "@yielded/auth/Auth";
 import * as Hooks from "@yielded/auth/Hooks";

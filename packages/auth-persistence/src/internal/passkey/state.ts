@@ -15,15 +15,14 @@ import {
   PasskeyMethodPolicy,
   snapshotPasskeySync,
 } from "@yielded/auth/Passkey";
-import type { SQL } from "drizzle-orm";
 import { Context, Effect, Encoding, Schema } from "effect";
 
 import {
   requiredPasskeyCredentialConstraints,
   requiredPasskeyPersistenceConstraints,
-} from "../../drizzle/passkey-model";
-import { requiredPasskeyRegistrationCeremonyConstraints } from "../../drizzle/passkey-registration-ceremony-model";
-import type { QueryOperations } from "../query-operations";
+} from "../models/passkey-model";
+import { requiredPasskeyRegistrationCeremonyConstraints } from "../models/passkey-registration-ceremony-model";
+import type { SqlExpression as SQL, QueryOperations } from "../query-operations";
 import type { TransactionOwner, makeTransactionKernel } from "../transaction-kernel";
 
 export type PasskeyOwner = TransactionOwner<PasskeyUnavailable>;

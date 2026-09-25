@@ -1,11 +1,11 @@
 import { BunRuntime } from "@effect/platform-bun";
 import * as SqliteClient from "@effect/sql-sqlite-bun/SqliteClient";
-import { phonePersistenceLayer } from "@yielded/auth-persistence/drizzle";
+import { phonePersistenceLayer } from "@yielded/auth-persistence-drizzle";
 import {
   makeAuthenticationAuthorityServices,
   makePhonePersistenceServices,
   makeProofPersistenceServices,
-} from "@yielded/auth-persistence/drizzle/sqlite-bun";
+} from "@yielded/auth-persistence-drizzle/SqliteBun";
 import { AuthRequest, RequestBindingConfig } from "@yielded/auth/Auth";
 import { LifecycleHooks } from "@yielded/auth/Hooks";
 import { guest, type AuthCredentialCommand, type AuthInvocation } from "@yielded/auth/Operations";

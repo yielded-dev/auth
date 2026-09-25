@@ -1,6 +1,6 @@
 import { BunRuntime } from "@effect/platform-bun";
 import * as SqliteClient from "@effect/sql-sqlite-bun/SqliteClient";
-import { makeAuthServices } from "@yielded/auth-persistence/drizzle/sqlite-bun";
+import { makeAuthServices } from "@yielded/auth-persistence-drizzle/SqliteBun";
 import * as Drizzle from "drizzle-orm/effect-sqlite-bun";
 import { Effect } from "effect";
 

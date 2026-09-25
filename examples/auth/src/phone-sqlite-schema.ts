@@ -5,7 +5,7 @@ import {
   phoneProofCompletionMapping,
   requiredPhoneConstraints,
   type PhoneMapping,
-} from "@yielded/auth-persistence/drizzle";
+} from "@yielded/auth-persistence-drizzle";
 import type { PhoneLifecyclePolicy, PhoneAdmissionPolicy } from "@yielded/auth/PhoneOtp";
 import {
   ProofBinding,

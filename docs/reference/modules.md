@@ -29,7 +29,7 @@ unused members of re-exported namespaces. Both styles support `PasskeyContract.m
 Native ESM loads the root's static dependencies. Direct paths also keep that
 module-loading boundary narrow when running without a bundler.
 
-Optional adapters are direct imports, for example `@yielded/auth-persistence/drizzle/postgres`,
+Optional adapters are direct imports, for example `@yielded/auth-persistence-drizzle/Postgres`,
 `@yielded/auth-openid-client`, `@yielded/auth-simplewebauthn/Browser`, or
 `@yielded/auth/adapters/Twilio`. Install only the peers
 required by the selected adapters. `@yielded/auth/Testing` remains test-only.
@@ -87,6 +87,8 @@ you use.
 | `@yielded/auth-openid-client/GitHub`    | GitHub configuration and operations using OpenID Client.                                        |
 | `@yielded/auth-cloudflare`              | Durable Object storage and email bindings.                                                      |
 | `@yielded/auth-crypto`                  | Password hashing, TOTP, and OAuth secret protection through `/Password`, `/Totp`, and `/OAuth`. |
+| `@yielded/auth-persistence`             | Direct Effect SQL persistence; requires an application-provided SQL client.                     |
+| `@yielded/auth-persistence-drizzle`     | Drizzle mappings and explicit driver modules such as `/Postgres` and `/SqliteBun`.              |
 | `@yielded/auth/adapters/Twilio`         | SMS delivery through Effect HTTP; requires `TwilioConfig`.                                      |
 | `@yielded/auth/PasskeyPassword`         | Password-backed authority for passkey workflows.                                                |
 
@@ -94,9 +96,10 @@ Core has only Effect as a runtime peer. It owns schemas, workflows, and service 
 public contracts; core never imports or re-exports an SDK adapter. An application
 chooses the adapter Layer and supplies storage, policy, and delivery authority.
 
-Database adapters live in `@yielded/auth-persistence`. Its root exports the named
-`AuthPersistence` facade for direct Effect SQL; `drizzle/<driver>` exports the same
-name for that Drizzle runtime. `drizzle` exposes the explicit mapping contracts.
+`@yielded/auth-persistence` exports the named `AuthPersistence` facade for direct
+Effect SQL and has no Drizzle dependency or declarations. The Drizzle companion's
+driver modules export the same facade; its root exposes the Drizzle mapping contracts.
+Adapter authors can use `@yielded/auth-persistence/Adapter` for the shared SQL kernels.
 
 The [adapter guide](./adapters) covers transaction authority, durable receipts,
 and runtime constraints.

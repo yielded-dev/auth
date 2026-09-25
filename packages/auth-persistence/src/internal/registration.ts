@@ -7,9 +7,9 @@ import type { SubjectId } from "@yielded/auth/Schema";
 import { SecurityRevision } from "@yielded/auth/Sessions";
 import { Effect, Schema } from "effect";
 
-import type { PasswordRegistrationAuthority } from "../drizzle/password-registration";
 import type { PasswordSqlDatabase } from "./password-kernel";
 import type { QueryOperations } from "./query-operations";
+import type { PasswordRegistrationAuthority } from "./registration-contract";
 import type { makeMappings } from "./storage-mapping";
 
 class IdentifierTaken extends Schema.TaggedError<IdentifierTaken>()("IdentifierTaken", {}) {}

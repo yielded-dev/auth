@@ -1,4 +1,4 @@
-import { AuthPersistence } from "@yielded/auth-persistence/drizzle/sqlite-bun";
+import { AuthPersistence } from "@yielded/auth-persistence-drizzle/SqliteBun";
 import { SubjectId } from "@yielded/auth/Schema";
 import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
 import { Effect } from "effect";

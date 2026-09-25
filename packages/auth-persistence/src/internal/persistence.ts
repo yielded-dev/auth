@@ -7,7 +7,6 @@ import { hooksLayer } from "@yielded/auth/Persistence";
 import { PhoneAdmission, PhoneSignInTargets, PhoneOtpUnavailable } from "@yielded/auth/PhoneOtp";
 import { ProofPersistence, ProofUnavailable } from "@yielded/auth/Proofs";
 import { AuthenticationAuthority, SessionUnavailable } from "@yielded/auth/Sessions";
-import type { Table } from "drizzle-orm";
 import { Context, Effect, Layer, Schema } from "effect";
 import { SqlClient } from "effect/unstable/sql";
 
@@ -47,6 +46,8 @@ import {
 import { validateStorage } from "./storage-validation";
 import { makeTransactionExecutionKernel } from "./transaction-execution-kernel";
 import { makeTransactionKernel, type TransactionNativeDatabase } from "./transaction-kernel";
+
+type Table = object;
 
 export interface Backend<T extends object, R> {
   readonly makeTable: (definition: StorageTable) => T;

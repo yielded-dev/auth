@@ -1,11 +1,10 @@
 /* oxlint-disable no-explicit-any -- existing mapped-row bridge; public adapters preserve table, ID, and Effect types. */
 
 import type { PasskeyCeremony, PasskeyMethodPolicy } from "@yielded/auth/Passkey";
-import type { SQL } from "drizzle-orm";
 import { Effect } from "effect";
 
-import type { PasskeyChargeKind } from "../../drizzle/passkey-model";
-import type { QueryOperations } from "../query-operations";
+import type { PasskeyChargeKind } from "../models/passkey-model";
+import type { SqlExpression as SQL, QueryOperations } from "../query-operations";
 import type { makeTransactionKernel } from "../transaction-kernel";
 import { CurrentPasskeyTransaction } from "./state";
 import type { makePasskeyStateKernel } from "./state";

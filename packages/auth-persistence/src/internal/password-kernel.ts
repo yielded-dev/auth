@@ -33,32 +33,31 @@ import {
   type AuthenticationRequirement,
   type SecurityRevision,
 } from "@yielded/auth/Sessions";
-/* oxlint-disable no-explicit-any -- existing storage kernels erase foreign table shapes; domain errors remain typed. */
-import type { sql } from "drizzle-orm";
-import type { EffectDrizzleQueryError } from "drizzle-orm/effect-core";
 import { Cause, Context, DateTime, Effect, Option, Redacted, Schema } from "effect";
 import type * as SqlError from "effect/unstable/sql/SqlError";
 
+import { PersistenceMappingError } from "./mapping-error";
 import {
   type AnyPasswordPersistenceMapping,
   type PasswordAttemptAction,
   type PasswordRateScopeKind,
   type PasswordScopeKeys,
   requiredPasswordConstraints,
-} from "../drizzle/password-model";
-import { PersistenceMappingError } from "./mapping-error";
+} from "./models/password-model";
 import {
   CurrentProofSql,
   type ProofSqlConfiguration,
   type ProofSqlDatabase,
   type makeProofKernel,
 } from "./proof-kernel";
-import type { QueryOperations } from "./query-operations";
+/* oxlint-disable no-explicit-any -- existing storage kernels erase foreign table shapes; domain errors remain typed. */
+import type { QueryFailure } from "./query-operations";
+import type { QueryOperations, SqlFragment, SqlColumn } from "./query-operations";
 
-type AdapterFailure = EffectDrizzleQueryError | PersistenceMappingError | SqlError.SqlError;
+type AdapterFailure = QueryFailure | PersistenceMappingError | SqlError.SqlError;
 
 export interface PasswordSqlQuery<A = ReadonlyArray<any>> extends Effect.Effect<A, AdapterFailure> {
-  readonly getSQL: () => ReturnType<typeof sql>;
+  readonly getSQL: () => ReturnType<QueryOperations["sql"]>;
   readonly from: (...args: ReadonlyArray<any>) => PasswordSqlQuery<A>;
   readonly where: (...args: ReadonlyArray<any>) => PasswordSqlQuery<A>;
   readonly limit: (...args: ReadonlyArray<any>) => PasswordSqlQuery<A>;
@@ -104,8 +103,6 @@ export interface PasswordSqlConfiguration {
 
 type Database = PasswordSqlDatabase;
 
-type Mapping = AnyPasswordPersistenceMapping;
-
 interface ScopeEntry {
   readonly kind: PasswordRateScopeKind;
   readonly key: string;
@@ -113,10 +110,15 @@ interface ScopeEntry {
   readonly windowMillis: number;
 }
 
-export const makePasswordKernel = (
-  operations: QueryOperations,
+export const makePasswordKernel = <
+  Fragment extends SqlFragment = SqlFragment,
+  Column extends SqlColumn = SqlColumn,
+>(
+  operations: QueryOperations<Fragment, Column>,
   proofs: Pick<ReturnType<typeof makeProofKernel>, "completeProofPlanIn">,
 ) => {
+  type Mapping = AnyPasswordPersistenceMapping<Fragment>;
+
   const { and, eq, gte, inArray, lte, notExists, sql, column, updateValues } = operations;
   const { completeProofPlanIn } = proofs;
   const unavailable = () => PasswordUnavailable.make({});

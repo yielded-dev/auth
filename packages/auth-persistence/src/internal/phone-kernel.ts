@@ -12,11 +12,11 @@ import {
 } from "@yielded/auth/PhoneOtp";
 import type { SubjectId } from "@yielded/auth/Schema";
 import { AuthenticationRequirement, SecurityRevision } from "@yielded/auth/Sessions";
-/* oxlint-disable no-explicit-any -- existing storage kernels erase foreign table shapes; domain errors remain typed. */
-import type { SQL } from "drizzle-orm";
 import { Context, Effect, Option, Schema } from "effect";
 
-import type { QueryOperations } from "./query-operations";
+/* oxlint-disable no-explicit-any -- existing storage kernels erase foreign table shapes; domain errors remain typed. */
+import type { SqlExpression as SQL } from "./query-operations";
+import type { QueryOperations, SqlFragment, SqlColumn } from "./query-operations";
 import { type TransactionOwner, type makeTransactionKernel } from "./transaction-kernel";
 
 export class CurrentPhoneTransaction extends Context.Service<
@@ -24,8 +24,11 @@ export class CurrentPhoneTransaction extends Context.Service<
   TransactionOwner<PhoneOtpUnavailable>
 >()("effect-auth/drizzle/CurrentPhoneTransaction") {}
 
-export const makePhoneKernel = (
-  operations: QueryOperations,
+export const makePhoneKernel = <
+  Fragment extends SqlFragment = SqlFragment,
+  Column extends SqlColumn = SqlColumn,
+>(
+  operations: QueryOperations<Fragment, Column>,
   transactions: Pick<ReturnType<typeof makeTransactionKernel>, "both" | "makeTransactionRows">,
 ) => {
   const { sql } = operations;
