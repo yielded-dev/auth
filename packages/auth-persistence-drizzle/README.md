@@ -13,5 +13,5 @@ Drizzle Kit generates migrations from managed or application-declared tables.
 Provide `AuthPersistence.migrationsLayer({ migrationsFolder })` explicitly to
 apply those files before starting auth.
 
-See the [adapter guide](../../docs/reference/adapters.md) for transaction ownership,
+See the [adapter guide](../../docs/src/content/docs/reference/adapters.md) for transaction ownership,
 runtime constraints, and runnable examples.

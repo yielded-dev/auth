@@ -19,7 +19,7 @@ fixtures that exercise private implementation helpers live under the library’s
 
 `login-contract.ts`, `login-server.ts`, and `login-client.ts` compose email OTP +
 GitHub with shared sessions, HTTP, and Atom workflows. Google is optional.
-See the [OAuth guide](../../docs/guide/oauth.md) for setup.
+See the [OAuth guide](../../docs/src/content/docs/guide/oauth.md) for setup.
 
 For a later clean-start cutover, reset old accounts, auth/session/proof state,
 per-account trips/conversations/settings/encrypted API keys, and browser caches.
