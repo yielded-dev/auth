@@ -16,6 +16,7 @@
     "@simplewebauthn/server": "catalog:",
     "@yielded/auth": "workspace:*",
     "@yielded/auth-persistence": "workspace:*",
+    "@yielded/auth-simplewebauthn": "workspace:*",
     "effect": "catalog:",
     "react": "catalog:",
     "react-dom": "catalog:",

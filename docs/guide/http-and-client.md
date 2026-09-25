@@ -364,7 +364,7 @@ Neither local nor HTTP callers can supply those private fields. For new contract
 import { Effect, Redacted } from "effect";
 import * as AuthAtom from "@yielded/auth/Atom";
 import * as Client from "@yielded/auth/Client";
-import { makeSimpleWebAuthnPasskeyBrowser } from "@yielded/auth/PasskeyBrowser";
+import * as PasskeyBrowser from "@yielded/auth-simplewebauthn/Browser";
 
 import { PasskeyApi } from "./passkey-contract";
 
@@ -374,7 +374,7 @@ export const passkeys = AuthAtom.make(PasskeyClient);
 export const signIn = passkeys.runtime.fn<{ flowId: string; commandId: string }>()(
   Effect.fn("app.passkeySignIn")(function* (input) {
     const client = yield* PasskeyClient;
-    const browser = yield* makeSimpleWebAuthnPasskeyBrowser();
+    const browser = yield* PasskeyBrowser.make();
     const started = yield* client.auth.signIn({
       ...input,
       profileId: "default",

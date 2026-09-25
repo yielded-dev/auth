@@ -12,8 +12,9 @@ persistence, protocol verification, and delivery adapters. Resources live in the
 caller’s Scope; credentials stay outside public results and telemetry.
 
 SQL adapters and managed storage live in the companion `@yielded/auth-persistence`
-package. Both packages release at the same version. Platform, browser, and OAuth adapters have separate exports.
-The root import does not load their peer dependencies. Effect is supplied by the host.
+package. Both packages release at the same version. SDK integrations live in `@yielded/auth-simplewebauthn`,
+`@yielded/auth-openid-client`, and `@yielded/auth-cloudflare`. Core does not import
+these packages or declare their SDK peers. Effect is supplied by the host.
 
 See the [authentication guide](https://github.com/yielded-dev/auth/blob/main/docs/guide/authentication.md)
 and [consumer examples](https://github.com/yielded-dev/auth/tree/main/examples/auth).

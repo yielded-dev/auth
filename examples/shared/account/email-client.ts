@@ -1,6 +1,6 @@
+import type { PasskeyBrowser } from "@yielded/auth-simplewebauthn/Browser";
 import * as AuthAtom from "@yielded/auth/Atom";
 import * as Client from "@yielded/auth/Client";
-import type { PasskeyBrowser } from "@yielded/auth/PasskeyBrowser";
 import type { Layer } from "effect";
 import type { KeyValueStore } from "effect/unstable/persistence";
 

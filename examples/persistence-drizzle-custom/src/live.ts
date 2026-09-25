@@ -1,5 +1,5 @@
+import { layer as layerSimpleWebAuthnPasskeyProtocol } from "@yielded/auth-simplewebauthn/Server";
 import { PasskeyConfig, PasskeyUnavailable } from "@yielded/auth/Passkey";
-import { layerSimpleWebAuthnPasskeyProtocol } from "@yielded/auth/PasskeySimpleWebAuthn";
 import {
   defaultPasswordPolicy,
   NewPasswordCheck,

@@ -2,8 +2,8 @@ import { DateTime, Effect, Predicate, Schema } from "effect";
 
 import { OAuthUnavailable } from "./signInErrors";
 
-/** Private, bounded codecs only. Project before callbacks, then freeze the entire
- * detached graph; never retain an application's mutable response object. */
+/** Freeze a detached, validated graph before retaining it or passing it to a
+ * callback. This does not validate or copy input; use snapshotOAuth to do both. */
 export const freezeOAuth = (value: unknown): void => {
   if (!Predicate.isObjectOrArray(value) || Object.isFrozen(value)) return;
   if (DateTime.isDateTime(value)) Object.freeze(DateTime.toPartsUtc(value));

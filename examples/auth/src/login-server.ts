@@ -1,6 +1,6 @@
 import { Auth, Http, Sessions } from "@yielded/auth";
-import * as GitHub from "@yielded/auth/GitHub";
-import * as OpenIdClient from "@yielded/auth/OpenIdClient";
+import * as OpenIdClient from "@yielded/auth-openid-client";
+import * as GitHub from "@yielded/auth-openid-client/GitHub";
 import type { SessionSigningKeyring } from "@yielded/auth/Sessions";
 import { Email, OAuth } from "@yielded/auth/strategies";
 import { Effect, Layer, Schema } from "effect";

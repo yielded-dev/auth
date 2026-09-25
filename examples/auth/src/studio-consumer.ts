@@ -1,10 +1,10 @@
 import * as Mapping from "@yielded/auth-persistence/drizzle";
 import * as Native from "@yielded/auth-persistence/drizzle/postgres";
+import * as PasskeyProtocol from "@yielded/auth-simplewebauthn/Server";
 import * as Auth from "@yielded/auth/Auth";
 import * as Hooks from "@yielded/auth/Hooks";
 import type { RequestBindingConfiguration } from "@yielded/auth/Operations";
 import * as Passkey from "@yielded/auth/Passkey";
-import * as PasskeyProtocol from "@yielded/auth/PasskeySimpleWebAuthn";
 import { SubjectId, TokenDigest } from "@yielded/auth/Schema";
 import * as Sessions from "@yielded/auth/Sessions";
 import * as Totp from "@yielded/auth/Totp";
@@ -609,7 +609,7 @@ export const makeStudioLive = Effect.fn("Studio.live")(function* (
         modules.keys.binding.layer,
       ),
     ),
-    Layer.provideMerge(PasskeyProtocol.layerSimpleWebAuthnPasskeyProtocol),
+    Layer.provideMerge(PasskeyProtocol.layer),
   );
 
   return Layer.mergeAll(

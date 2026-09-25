@@ -1,7 +1,7 @@
 import { BunHttpServer, BunRuntime } from "@effect/platform-bun";
 import * as SqliteClient from "@effect/sql-sqlite-bun/SqliteClient";
+import * as GitHub from "@yielded/auth-openid-client/GitHub";
 import { OAuthAppPersistence } from "@yielded/auth-persistence";
-import * as GitHub from "@yielded/auth/GitHub";
 import { OAuthRejected } from "@yielded/auth/OAuth";
 import * as OAuthApp from "@yielded/auth/OAuthApp";
 import { SubjectId } from "@yielded/auth/Schema";

@@ -76,12 +76,13 @@ privately; keep it associated with this flow.
 
 ## Ask the browser to authenticate
 
-Inside a scoped browser Effect, import `makeSimpleWebAuthnPasskeyBrowser` from
-`@yielded/auth/PasskeyBrowser` and use the public `started` result:
+Inside a scoped browser Effect, use the public `started` result:
 
 <!-- prettier-ignore -->
 ```ts
-const browser = yield* makeSimpleWebAuthnPasskeyBrowser();
+import * as PasskeyBrowser from "@yielded/auth-simplewebauthn/Browser";
+
+const browser = yield* PasskeyBrowser.make();
 const assertion = yield* browser.authenticate({ started, mediation: "required" });
 ```
 
@@ -111,7 +112,7 @@ The client exposes the same calls as `client.auth.signIn(...)` and
 ```ts [passkey-protocol.ts]
 import { Layer } from "effect";
 import { PasskeyConfig } from "@yielded/auth/Passkey";
-import { layerSimpleWebAuthnPasskeyProtocol } from "@yielded/auth/PasskeySimpleWebAuthn";
+import * as PasskeyServer from "@yielded/auth-simplewebauthn/Server";
 
 export const PasskeyConfigLive = PasskeyConfig.layer({
   id: "app.example.com",
@@ -119,12 +120,10 @@ export const PasskeyConfigLive = PasskeyConfig.layer({
   origins: ["https://app.example.com"],
 });
 
-export const PasskeyProtocolLive = layerSimpleWebAuthnPasskeyProtocol.pipe(
-  Layer.provide(PasskeyConfigLive),
-);
+export const PasskeyProtocolLive = PasskeyServer.layer.pipe(Layer.provide(PasskeyConfigLive));
 ```
 
-Install its `@simplewebauthn/server` and `tldts` peers.
+Install `@yielded/auth-simplewebauthn` and its `@simplewebauthn/server` peer.
 Both the strategy and verifier require `PasskeyConfig`. Use your actual relying-party
 ID and exact allowed origins; changing them can make existing passkeys unusable.
 

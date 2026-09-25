@@ -37,7 +37,7 @@ in one auth table; provider tokens refresh when your app needs them.
 ```ts [auth.ts]
 import { OAuthAppPersistence } from "@yielded/auth-persistence";
 import * as OAuthApp from "@yielded/auth/OAuthApp";
-import * as GitHub from "@yielded/auth/GitHub";
+import * as GitHub from "@yielded/auth-openid-client/GitHub";
 import { Layer, Schema } from "effect";
 import { config, keys, resolveAccount, DatabaseLive } from "./app-services";
 

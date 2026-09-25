@@ -15,6 +15,7 @@
     "@simplewebauthn/server": "catalog:",
     "@yielded/auth": "workspace:*",
     "@yielded/auth-persistence": "workspace:*",
+    "@yielded/auth-simplewebauthn": "workspace:*",
     "drizzle-orm": "catalog:",
     "effect": "catalog:",
     "react": "catalog:",

@@ -39,9 +39,12 @@ through self-barrels.
 
 The export check validates casing, namespace targets, build entries, and workspace
 dependencies, including relative imports through the package's own public barrels.
-The purity check rejects production paths that reach test-only code.
-`@yielded/auth/Testing` is an explicit test-only entrypoint. Optional adapters remain
-separate exports, and `sideEffects: []` requires import-time code to stay free of I/O.
+Core may depend on Effect and the existing Noble crypto implementations; SDK
+dependencies and imports belong in companion packages. The export check enforces
+this boundary for runtime imports and declarations. The purity check rejects
+production paths that reach test-only code.
+`@yielded/auth/Testing` is an explicit test-only entrypoint. SDK adapters live in
+companion packages, and `sideEffects: []` requires import-time code to stay free of I/O.
 
 The package build preserves implementation modules and native root/group namespaces
 in both JavaScript and declarations. Every namespace target is also an explicit
@@ -79,7 +82,9 @@ Before enabling automated releases:
 
 1. Give the release GitHub App contents and pull-request write access to this repo.
 2. Configure `EFFECT_AUTH_APP_ID` and `EFFECT_AUTH_APP_PRIVATE_KEY` repository secrets.
-3. Configure npm trusted publishing for `@yielded/auth`, repository
+3. Configure npm trusted publishing for each published package, including
+   `@yielded/auth`, `@yielded/auth-persistence`, `@yielded/auth-simplewebauthn`,
+   `@yielded/auth-openid-client`, and `@yielded/auth-cloudflare`, repository
    `yielded-dev/auth`, workflow `release.yml`. The first npm publication may
    require a manually authenticated owner before trusted publishing can be set.
    Enable direct `npm publish` for this trusted publisher; the release workflow

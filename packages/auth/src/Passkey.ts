@@ -84,4 +84,4 @@ export { PasskeyConfig } from "./passkey/PasskeyConfig";
 
 export { validatePasskeyPolicy } from "./passkey/policy";
 
-export { snapshotPasskeySync } from "./passkey/snapshot";
+export { snapshotPasskey, snapshotPasskeySync, samePasskey } from "./passkey/snapshot";
