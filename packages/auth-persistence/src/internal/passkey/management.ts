@@ -5,11 +5,10 @@ import {
   PasskeyRemoved,
   type PasskeyManagementPersistence,
 } from "@yielded/auth/Passkey";
-import type { SQL } from "drizzle-orm";
 import { Effect, Schema } from "effect";
 
 import type { PersistenceMappingError } from "../mapping-error";
-import type { QueryOperations } from "../query-operations";
+import type { SqlExpression as SQL, QueryOperations } from "../query-operations";
 import type { makeTransactionKernel } from "../transaction-kernel";
 import type { makePasskeyAdmissionKernel } from "./admission";
 import type { makePasskeyCredentialsKernel } from "./credentials";

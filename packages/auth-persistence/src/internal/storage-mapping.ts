@@ -26,21 +26,18 @@ import {
   SessionCredentialVersion,
   type StatefulSessionRecord,
 } from "@yielded/auth/Sessions";
-import type { Table } from "drizzle-orm";
 import { DateTime, Effect, Redacted, Schema } from "effect";
 
-import {
-  requiredEmailAddressConstraints,
-  type AnyEmailAddressMapping,
-} from "../drizzle/email-model";
+import type { MappingInput } from "./configuration";
+import { PersistenceMappingError } from "./mapping-error";
+import { requiredEmailAddressConstraints, type AnyEmailAddressMapping } from "./models/email-model";
 import {
   requiredPasswordConstraints,
   type AnyPasswordPersistenceMapping,
-} from "../drizzle/password-model";
-import { requiredProofConstraints, type AnyProofPersistenceMapping } from "../drizzle/proof-model";
-import type { StatefulSessionMapping } from "../drizzle/session-model";
-import type { MappingInput } from "./configuration";
-import { PersistenceMappingError } from "./mapping-error";
+} from "./models/password-model";
+import { requiredProofConstraints, type AnyProofPersistenceMapping } from "./models/proof-model";
+import type { StatefulSessionMapping } from "./models/session-model";
+import type { TableModel, SqlFragment } from "./query-operations";
 import { storageTables, type StorageRole } from "./storage-tables";
 
 const failure = (cause: unknown) => PersistenceMappingError.make({ operation: "decode", cause });
@@ -79,17 +76,13 @@ const ProofContinuation = Schema.Struct({
   version: ProofVersion,
 });
 
-// Only the foreign table/query shape is erased. Persisted values below always
-// pass through the domain schemas before leaving the adapter.
-const foreignTable = (table: object): Table => table as Table;
-
 export const makeMappings = (input: MappingInput) => {
   const table = (role: StorageRole) => {
     const found = input.tables[role];
 
     if (found === undefined) throw failure(`Missing ${role} mapping`);
 
-    return foreignTable(found);
+    return found;
   };
 
   const mapped = (role: StorageRole) => ({
@@ -101,7 +94,7 @@ export const makeMappings = (input: MappingInput) => {
   const subjectId = { toNative: s.toNative, toSubject: s.toSubject, equals: Object.is };
 
   const subject = {
-    table: foreignTable(s.table),
+    table: s.table,
     id: s.id,
     status: s.status,
     securityRevision: s.securityRevision,
@@ -125,7 +118,7 @@ export const makeMappings = (input: MappingInput) => {
 
   const authority = () => ({ subjectId, subject, credential: authorityCredential() });
 
-  const proofs = (): AnyProofPersistenceMapping => ({
+  const proofs = (): AnyProofPersistenceMapping<SqlFragment> => ({
     constraints: requiredProofConstraints,
     encodeInstant: instant,
     decodeInstant: readInstant,
@@ -355,7 +348,7 @@ export const makeMappings = (input: MappingInput) => {
     },
   });
 
-  const passwords = (): AnyPasswordPersistenceMapping => {
+  const passwords = (): AnyPasswordPersistenceMapping<SqlFragment> => {
     const verifier = (replacement: PasswordReplacement) => ({
       verifier: Redacted.value(replacement.verifier),
       normalization: replacement.normalization,
@@ -515,7 +508,7 @@ export const makeMappings = (input: MappingInput) => {
     };
   };
 
-  const emails = (): AnyEmailAddressMapping => ({
+  const emails = (): AnyEmailAddressMapping<SqlFragment> => ({
     subjectId,
     subject,
     constraints: requiredEmailAddressConstraints,
@@ -616,7 +609,16 @@ export const makeMappings = (input: MappingInput) => {
 
   const sessions = <C extends Schema.Codec<unknown, unknown, never, never>>(
     claims: C,
-  ): StatefulSessionMapping<C["Type"], Table, Table, Table, Table, Table, unknown, string> => {
+  ): StatefulSessionMapping<
+    C["Type"],
+    TableModel,
+    TableModel,
+    TableModel,
+    TableModel,
+    TableModel,
+    unknown,
+    string
+  > => {
     const record = Schema.fromJsonString(
       Schema.Struct({
         ...SessionMetadata.fields,

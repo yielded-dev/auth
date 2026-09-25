@@ -21,16 +21,10 @@ import {
   ProofRequestConflict,
   ProofUnavailable,
 } from "@yielded/auth/Proofs";
-/* oxlint-disable no-explicit-any -- existing storage kernels erase foreign table shapes; domain errors remain typed. */
-import type { Table, sql } from "drizzle-orm";
-import type { EffectDrizzleQueryError } from "drizzle-orm/effect-core";
 import { Cause, Context, DateTime, Effect, Option, Schema } from "effect";
 import type * as SqlError from "effect/unstable/sql/SqlError";
 
-import {
-  CurrentPasswordPreparedTransaction,
-  PasswordPreparedPostconditions,
-} from "../drizzle/PasswordPreparedPostconditions";
+import { PersistenceMappingError } from "./mapping-error";
 import {
   type AnyProofPersistenceMapping,
   requiredProofConstraints,
@@ -40,14 +34,20 @@ import {
   type ProofContinuationRecord,
   type ProofScopeKeys,
   type ProofScopeKind,
-} from "../drizzle/proof-model";
-import { PersistenceMappingError } from "./mapping-error";
-import type { QueryOperations } from "./query-operations";
+} from "./models/proof-model";
+import {
+  CurrentPasswordPreparedTransaction,
+  PasswordPreparedPostconditions,
+} from "./PasswordPreparedPostconditions";
+/* oxlint-disable no-explicit-any -- existing storage kernels erase foreign table shapes; domain errors remain typed. */
+import type { TableModel as Table } from "./query-operations";
+import type { QueryFailure } from "./query-operations";
+import type { QueryOperations, SqlFragment, SqlColumn } from "./query-operations";
 
-type AdapterFailure = EffectDrizzleQueryError | PersistenceMappingError | SqlError.SqlError;
+type AdapterFailure = QueryFailure | PersistenceMappingError | SqlError.SqlError;
 
 export interface ProofSqlQuery<A = ReadonlyArray<any>> extends Effect.Effect<A, AdapterFailure> {
-  readonly getSQL: () => ReturnType<typeof sql>;
+  readonly getSQL: () => ReturnType<QueryOperations["sql"]>;
   readonly from: (...args: ReadonlyArray<any>) => ProofSqlQuery<A>;
   readonly where: (...args: ReadonlyArray<any>) => ProofSqlQuery<A>;
   readonly limit: (...args: ReadonlyArray<any>) => ProofSqlQuery<A>;
@@ -88,15 +88,20 @@ export interface ProofSqlConfiguration {
 
 type Database = ProofSqlDatabase;
 
-type Mapping = AnyProofPersistenceMapping;
-
 interface ScopeEntry {
   readonly kind: ProofScopeKind;
   readonly key: string;
   readonly budget: ProofBudget;
 }
 
-export const makeProofKernel = (operations: QueryOperations) => {
+export const makeProofKernel = <
+  Fragment extends SqlFragment = SqlFragment,
+  Column extends SqlColumn = SqlColumn,
+>(
+  operations: QueryOperations<Fragment, Column>,
+) => {
+  type Mapping = AnyProofPersistenceMapping<Fragment>;
+
   const { and, eq, gte, inArray, isNull, lte, notExists, sql, column, updateValues } = operations;
   const unavailable = () => ProofUnavailable.make({});
 
@@ -874,7 +879,7 @@ export const makeProofKernel = (operations: QueryOperations) => {
             if (activeProofId !== null && activeProofId !== undefined)
               yield* transaction
                 .update(mapping.generation.table)
-                .set(updateValues<any>([[mapping.generation.state, "superseded"]]))
+                .set(updateValues([[mapping.generation.state, "superseded"]]))
                 .where(
                   and(
                     eq(generationColumns(mapping).moduleId, input.record.moduleId),
@@ -897,7 +902,7 @@ export const makeProofKernel = (operations: QueryOperations) => {
             yield* transaction
               .update(mapping.series.table)
               .set(
-                updateValues<any>([
+                updateValues([
                   [mapping.series.activeProofId, input.record.proofId],
                   [mapping.series.lastIssueAt, mapping.encodeInstant(now)],
                   [mapping.series.version, nextVersion],
@@ -1147,7 +1152,7 @@ export const makeProofKernel = (operations: QueryOperations) => {
             );
             yield* transaction
               .update(mapping.generation.table)
-              .set(updateValues<any>([[mapping.generation.state, "consumed"]]))
+              .set(updateValues([[mapping.generation.state, "consumed"]]))
               .where(
                 and(
                   eq(gc.moduleId, input.moduleId),
@@ -1227,7 +1232,7 @@ export const makeProofKernel = (operations: QueryOperations) => {
               state = "ambiguous";
               yield* transaction
                 .update(mapping.generation.table)
-                .set(updateValues<any>([[mapping.generation.deliveryState, "ambiguous"]]))
+                .set(updateValues([[mapping.generation.deliveryState, "ambiguous"]]))
                 .where(and(eq(c.moduleId, input.moduleId), eq(c.proofId, input.proofId)));
             }
 
@@ -1250,7 +1255,7 @@ export const makeProofKernel = (operations: QueryOperations) => {
             yield* transaction
               .update(mapping.generation.table)
               .set(
-                updateValues<any>([
+                updateValues([
                   [mapping.generation.sendCount, Number(row[mapping.generation.sendCount]) + 1],
                   [mapping.generation.deliveryState, "claimed"],
                   [mapping.generation.claimVersion, claimVersion],
@@ -1343,14 +1348,14 @@ export const makeProofKernel = (operations: QueryOperations) => {
               values.push([mapping.generation.state, "cancelled"]);
             yield* transaction
               .update(mapping.generation.table)
-              .set(updateValues<any>(values))
+              .set(updateValues(values))
               .where(and(eq(c.moduleId, input.moduleId), eq(c.proofId, input.proofId)));
             if (outcome._tag === "DefiniteFailure") {
               const sc = seriesColumns(mapping);
 
               yield* transaction
                 .update(mapping.series.table)
-                .set(updateValues<any>([[mapping.series.activeProofId, null]]))
+                .set(updateValues([[mapping.series.activeProofId, null]]))
                 .where(
                   and(
                     eq(sc.moduleId, input.moduleId),
@@ -1421,11 +1426,11 @@ export const makeProofKernel = (operations: QueryOperations) => {
 
               yield* transaction
                 .update(mapping.generation.table)
-                .set(updateValues<any>([[mapping.generation.state, "cancelled"]]))
+                .set(updateValues([[mapping.generation.state, "cancelled"]]))
                 .where(and(eq(gc.moduleId, input.moduleId), eq(gc.proofId, active)));
               yield* transaction
                 .update(mapping.series.table)
-                .set(updateValues<any>([[mapping.series.activeProofId, null]]))
+                .set(updateValues([[mapping.series.activeProofId, null]]))
                 .where(
                   and(
                     eq(sc.moduleId, input.moduleId),
@@ -1619,7 +1624,7 @@ export const makeProofKernel = (operations: QueryOperations) => {
             if (generations.length > 0)
               yield* transaction
                 .update(mapping.series.table)
-                .set(updateValues<any>([[mapping.series.activeProofId, null]]))
+                .set(updateValues([[mapping.series.activeProofId, null]]))
                 .where(
                   and(
                     eq(sc.moduleId, input.moduleId),
@@ -1827,7 +1832,7 @@ export const makeProofKernel = (operations: QueryOperations) => {
 
     yield* database
       .update(mapping.continuation.table)
-      .set(updateValues<any>([[mapping.continuation.consumed, true]]))
+      .set(updateValues([[mapping.continuation.consumed, true]]))
       .where(
         and(
           eq(c.moduleId, input.moduleId),

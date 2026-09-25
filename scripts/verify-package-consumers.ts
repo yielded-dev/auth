@@ -12,6 +12,43 @@ class PackageConsumerError extends Schema.TaggedError<PackageConsumerError>()(
   { message: Schema.String, cause: Schema.optionalKey(Schema.Defect()) },
 ) {}
 
+const checkDeclarations = Effect.fn("packageConsumers.declarations")(function* (
+  stage: string,
+  entries: ReadonlyArray<string>,
+) {
+  const program = ts.createProgram(entries, {
+    noEmit: true,
+    strict: true,
+    types: [],
+    target: ts.ScriptTarget.ESNext,
+    module: ts.ModuleKind.ESNext,
+    moduleResolution: ts.ModuleResolutionKind.Bundler,
+  });
+
+  // Check our declarations as well as the consumers. Third-party declaration
+  // diagnostics belong to their owners (e.g. msgpackr assumes Node globals).
+  const diagnostics = [
+    ...program.getOptionsDiagnostics(),
+    ...program.getGlobalDiagnostics(),
+    ...program
+      .getSourceFiles()
+      .filter((file) => file.fileName.startsWith(`${stage}/`))
+      .flatMap((file) => [
+        ...program.getSyntacticDiagnostics(file),
+        ...program.getSemanticDiagnostics(file),
+      ]),
+  ];
+
+  if (diagnostics.length > 0)
+    return yield* new PackageConsumerError({
+      message: ts.formatDiagnostics(diagnostics, {
+        getCanonicalFileName: (file) => file,
+        getCurrentDirectory: () => stage,
+        getNewLine: () => "\n",
+      }),
+    });
+});
+
 const comparisons = [
   ["identity", "identity-root"],
   ["contracts", "contracts-root"],
@@ -279,6 +316,14 @@ export const verifyPackageConsumers = Effect.fn("verifyPackageConsumers")(functi
         key === "." ? "@yielded/auth" : `@yielded/auth${key.slice(1)}`,
       );
 
+      const declarations = path.join(stage, "fixtures/core-exports.ts");
+
+      yield* fs.writeFileString(
+        declarations,
+        coreExports.map((name, index) => `export * as Core${index} from "${name}";`).join("\n"),
+      );
+      yield* checkDeclarations(stage, [declarations]);
+
       const child = yield* ChildProcess.make(
         "node",
         [
@@ -299,7 +344,7 @@ export const verifyPackageConsumers = Effect.fn("verifyPackageConsumers")(functi
           message: `Effect-only core consumer exited ${code}: ${stderr}`,
         });
       yield* Console.log(
-        `All ${coreExports.length} published core exports load with only Effect installed.`,
+        `All ${coreExports.length} published core exports load and type-check with only Effect installed.`,
       );
     }),
   );
@@ -391,40 +436,22 @@ export const verifyPackageConsumers = Effect.fn("verifyPackageConsumers")(functi
         }
       }
 
-      const program = ts.createProgram(
-        probes.map((probe) => path.join(stage, "fixtures", `${probe}.ts`)),
-        {
-          noEmit: true,
-          strict: true,
-          types: [],
-          target: ts.ScriptTarget.ESNext,
-          module: ts.ModuleKind.ESNext,
-          moduleResolution: ts.ModuleResolutionKind.Bundler,
-        },
+      const persistenceExports = Object.keys(persistenceManifest.exports ?? {}).map((key) =>
+        key === "." ? "@yielded/auth-persistence" : `@yielded/auth-persistence${key.slice(1)}`,
       );
 
-      // Check our declarations as well as the consumers. Third-party declaration
-      // diagnostics belong to their owners (e.g. msgpackr assumes Node globals).
-      const diagnostics = [
-        ...program.getOptionsDiagnostics(),
-        ...program.getGlobalDiagnostics(),
-        ...program
-          .getSourceFiles()
-          .filter((file) => file.fileName.startsWith(`${stage}/`))
-          .flatMap((file) => [
-            ...program.getSyntacticDiagnostics(file),
-            ...program.getSemanticDiagnostics(file),
-          ]),
-      ];
+      const persistenceDeclarations = path.join(stage, "fixtures/persistence-exports.ts");
 
-      if (diagnostics.length > 0)
-        return yield* new PackageConsumerError({
-          message: ts.formatDiagnostics(diagnostics, {
-            getCanonicalFileName: (file) => file,
-            getCurrentDirectory: () => stage,
-            getNewLine: () => "\n",
-          }),
-        });
+      yield* fs.writeFileString(
+        persistenceDeclarations,
+        persistenceExports
+          .map((name, index) => `export * as Persistence${index} from "${name}";`)
+          .join("\n"),
+      );
+      yield* checkDeclarations(stage, [
+        persistenceDeclarations,
+        ...probes.map((probe) => path.join(stage, "fixtures", `${probe}.ts`)),
+      ]);
 
       // Native ESM must load without optional peers and expose exactly the direct module.
       // Execute separately so the repository's installed peers cannot mask missing imports.
@@ -435,6 +462,7 @@ export const verifyPackageConsumers = Effect.fn("verifyPackageConsumers")(functi
           "--eval",
           `import assert from "node:assert/strict";
 const root = await import("@yielded/auth");
+for (const name of ${JSON.stringify(persistenceExports)}) await import(name);
 const { AuthPersistence } = await import("@yielded/auth-persistence");
 assert.equal(typeof AuthPersistence.make, "function");
 assert.equal(typeof AuthPersistence.table, "function");

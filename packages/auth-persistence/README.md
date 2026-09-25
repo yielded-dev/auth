@@ -1,12 +1,11 @@
 # @yielded/auth-persistence
 
-SQL algorithms, Drizzle bindings, and opt-in managed schemas for `@yielded/auth`.
-Both packages release together at the same version.
+Direct Effect SQL persistence and shared storage contracts for `@yielded/auth`.
 
-Import the named `AuthPersistence` facade from this package for direct Effect SQL,
-or from `@yielded/auth-persistence/drizzle/<driver>` for Drizzle. The raw entry point
-does not require Drizzle. Core workflows and replaceable service contracts remain
-in `@yielded/auth`.
+Import the named `AuthPersistence` facade and provide an explicit Effect SQL client.
+Drizzle integrations live in `@yielded/auth-persistence-drizzle`; this package has
+no Drizzle dependency or exports. Core workflows and replaceable service contracts
+remain in `@yielded/auth`.
 
 `OAuthAppPersistence` separately supplies the single-table store for
 [`OAuthApp`](../../docs/guide/oauth.md#sign-in-and-connect-provider-access).
@@ -18,13 +17,11 @@ storage for [MCP authorization](../../docs/guide/oauth.md#authorize-mcp-clients)
 Its conditional writes and monotonic revocation require standalone commits.
 
 Applications own subject provisioning, policy, claims, delivery, and their database
-connection. Drizzle Kit generates migrations from managed or application-declared
-Drizzle tables. Install `AuthPersistence.migrationsLayer({ migrationsFolder })`
-explicitly to apply those files before starting auth; direct SQL applications own
-their migration runner.
+connection and migration runner.
 
 The composed Layer covers password sign-in and management, email address verification
 and changes, phone sign-in, and passkey sign-in and management with stateful sessions
-on PostgreSQL and SQLite. Explicit Drizzle adapter factories cover the other workflows.
+on PostgreSQL and SQLite. The `/Adapter` module exposes the shared mapping contracts
+and transaction kernels used by companion adapters.
 See [persistence examples](../../docs/reference/adapters.md#runnable-examples) for all
 four ownership models and their current limits.

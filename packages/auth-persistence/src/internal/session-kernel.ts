@@ -35,11 +35,10 @@ import {
   type SessionStepUpIntent,
   type SessionStepUpPersistence,
 } from "@yielded/auth/Sessions";
-/* oxlint-disable no-explicit-any -- existing storage kernels erase foreign table shapes; domain errors remain typed. */
-import type { EffectDrizzleQueryError } from "drizzle-orm/effect-core";
 import { Cause, Context, DateTime, Effect, Option, Schema } from "effect";
 import type * as SqlError from "effect/unstable/sql/SqlError";
 
+import { PersistenceMappingError, isMappedConstraintConflict } from "./mapping-error";
 import type {
   AuthenticationAuthorityMapping,
   PendingAuthenticationTables,
@@ -49,8 +48,11 @@ import type {
   SessionSubjectTables,
   SignedSessionValidityMapping,
   StatefulSessionMapping,
-} from "../drizzle/session-model";
-import type { SessionStepUpMapping } from "../drizzle/step-up-model";
+} from "./models/session-model";
+import type { SessionStepUpMapping } from "./models/step-up-model";
+/* oxlint-disable no-explicit-any -- existing storage kernels erase foreign table shapes; domain errors remain typed. */
+import type { QueryFailure } from "./query-operations";
+import type { QueryOperations } from "./query-operations";
 import {
   decodeStepUpIntent,
   encodeStepUpIntent,
@@ -58,9 +60,7 @@ import {
   stepUpIntentLive,
   validateStepUpPlan,
   stepUpRotationMatches,
-} from "../drizzle/step-up-state";
-import { PersistenceMappingError, isMappedConstraintConflict } from "./mapping-error";
-import type { QueryOperations } from "./query-operations";
+} from "./step-up-state";
 
 type CommitMode = "interactive" | "synchronous";
 
@@ -78,7 +78,7 @@ type AnyStepUpMapping = SessionStepUpMapping<any, any, any, any, any, any, any, 
 
 interface SessionSqlQuery<A = ReadonlyArray<any>> extends Effect.Effect<
   A,
-  EffectDrizzleQueryError | SqlError.SqlError
+  QueryFailure | SqlError.SqlError
 > {
   readonly from: (...args: ReadonlyArray<any>) => SessionSqlQuery<A>;
   readonly where: (...args: ReadonlyArray<any>) => SessionSqlQuery<A>;
@@ -124,7 +124,7 @@ type SessionDomainError =
   | StaleAuthentication;
 
 type AdapterFailure =
-  | EffectDrizzleQueryError
+  | QueryFailure
   | PersistenceMappingError
   | Schema.SchemaError
   | SqlError.SqlError;
@@ -360,7 +360,7 @@ export const makeSessionKernel = (operations: QueryOperations) => {
       .where(
         and(
           eq(columns.credentialSubjectId, nativeSubjectId),
-          requested.length === 0 ? sql<boolean>`false` : inArray(columns.credentialId, requested),
+          requested.length === 0 ? sql`false` : inArray(columns.credentialId, requested),
         ),
       )
       .orderBy(columns.credentialId);
@@ -579,7 +579,7 @@ export const makeSessionKernel = (operations: QueryOperations) => {
     yield* Effect.all([
       database
         .update(mapping.pending.table)
-        .set(updateValues<any>([[mapping.pending.consumed, true]]))
+        .set(updateValues([[mapping.pending.consumed, true]]))
         .where(
           and(
             eq(pendingColumns(mapping).digest, input.digest),
@@ -591,7 +591,7 @@ export const makeSessionKernel = (operations: QueryOperations) => {
       database
         .update(mapping.flow.table)
         .set(
-          updateValues<any>([
+          updateValues([
             [mapping.flow.state, mapping.flow.establishedStateValue],
             [mapping.flow.pendingDigest, null],
             [mapping.flow.dedupUntil, mapping.flow.encodeInstant(until)],
@@ -629,7 +629,7 @@ export const makeSessionKernel = (operations: QueryOperations) => {
     database: Database,
     mapping: AuthenticationAuthorityMapping<Claims, any, any, any, any, any>,
     options: SessionSqlOptions,
-  ) =>
+  ): Effect.Effect<AuthenticationAuthority["Service"], never, LifecycleHooks> =>
     Effect.map(LifecycleHooks, (hooks) => {
       const service = {
         capture: (subjectId: SubjectId, credentialIds: ReadonlyArray<string>) =>
@@ -770,7 +770,7 @@ export const makeSessionKernel = (operations: QueryOperations) => {
 
     const { requirement } = yield* mapFailureCause(
       validateEvidenceIn(mapping, record.evidence, true),
-      (error) => (error._tag === "StaleAuthentication" ? invalidPending() : error),
+      (error) => (Schema.is(StaleAuthentication)(error) ? invalidPending() : error),
     );
 
     yield* assessAuthentication(record.evidence, requirement).pipe(
@@ -786,7 +786,7 @@ export const makeSessionKernel = (operations: QueryOperations) => {
     database: Database,
     mapping: PendingAuthenticationMapping<Claims, any, any, any, any, any>,
     options: SessionSqlOptions,
-  ) =>
+  ): Effect.Effect<PendingAuthentication<Claims>, never, LifecycleHooks> =>
     Effect.map(LifecycleHooks, (hooks) => {
       const service = {
         create: <A>(
@@ -918,7 +918,7 @@ export const makeSessionKernel = (operations: QueryOperations) => {
                 yield* transaction
                   .update(mapping.pending.table)
                   .set(
-                    updateValues<any>([
+                    updateValues([
                       [
                         mapping.pending.failedAttempts,
                         sql`case when ${pendingColumns(mapping).failedAttempts} < ${pendingColumns(mapping).attemptLimit} then ${pendingColumns(mapping).failedAttempts} + 1 else ${pendingColumns(mapping).failedAttempts} end`,
@@ -959,7 +959,14 @@ export const makeSessionKernel = (operations: QueryOperations) => {
     database: Database,
     mapping: StatefulSessionMapping<Claims, any, any, any, any, any, any, any>,
     options: SessionSqlOptions,
-  ) =>
+  ): Effect.Effect<
+    {
+      readonly statefulSessionPersistence: StatefulSessionPersistence<Claims>;
+      readonly sessionRepository: SessionRepository;
+    },
+    never,
+    LifecycleHooks
+  > =>
     Effect.map(LifecycleHooks, (hooks) => {
       const c = sessionColumns(mapping);
 
@@ -1282,7 +1289,7 @@ export const makeSessionKernel = (operations: QueryOperations) => {
 
               yield* transaction
                 .update(mapping.subject.table)
-                .set(updateValues<any>([[mapping.subject.securityRevision, next]]))
+                .set(updateValues([[mapping.subject.securityRevision, next]]))
                 .where(
                   and(
                     eq(authorityColumns(mapping).subjectId, nativeSubjectId),
@@ -1393,7 +1400,7 @@ export const makeSessionKernel = (operations: QueryOperations) => {
     database: Database,
     mapping: SignedSessionValidityMapping<any, any, any, any>,
     options: SessionSqlOptions,
-  ) =>
+  ): Effect.Effect<SignedSessionValidity, never, LifecycleHooks> =>
     Effect.map(LifecycleHooks, (hooks) => {
       const subject = subjectColumns(mapping);
 
@@ -1505,7 +1512,7 @@ export const makeSessionKernel = (operations: QueryOperations) => {
                   yield* transaction
                     .update(mapping.tombstone.table)
                     .set(
-                      updateValues<any>([
+                      updateValues([
                         [
                           mapping.tombstone.absoluteExpiresAt,
                           mapping.tombstone.encodeInstant(input.absoluteExpiresAt),
@@ -1557,7 +1564,7 @@ export const makeSessionKernel = (operations: QueryOperations) => {
 
               yield* transaction
                 .update(mapping.subject.table)
-                .set(updateValues<any>([[mapping.subject.securityRevision, next]]))
+                .set(updateValues([[mapping.subject.securityRevision, next]]))
                 .where(
                   and(
                     eq(subject.subjectId, nativeSubjectId),
@@ -1784,7 +1791,7 @@ export const makeSessionKernel = (operations: QueryOperations) => {
     database: Database,
     mapping: SessionStepUpMapping<Claims, any, any, any, any, any, any, any>,
     options: SessionSqlOptions,
-  ) =>
+  ): Effect.Effect<SessionStepUpPersistence<Claims>, never, LifecycleHooks> =>
     Effect.map(LifecycleHooks, (hooks) => {
       const m = mapping.intent,
         c = stepUpColumns(mapping);
@@ -1840,7 +1847,7 @@ export const makeSessionKernel = (operations: QueryOperations) => {
 
               const values = {
                 ...m.encodeInsert(record, { subjectId: authority.nativeSubjectId }),
-                ...updateValues<any>([
+                ...updateValues([
                   [m.digest, record.digest],
                   [m.version, version],
                   [m.flowId, record.flowId],
@@ -1933,7 +1940,7 @@ export const makeSessionKernel = (operations: QueryOperations) => {
 
               yield* tx
                 .update(m.table)
-                .set(updateValues<any>([[m.failedAttempts, sql`${c.failedAttempts} + 1`]]))
+                .set(updateValues([[m.failedAttempts, sql`${c.failedAttempts} + 1`]]))
                 .where(
                   and(
                     eq(c.digest, input.digest),
@@ -2041,7 +2048,7 @@ export const makeSessionKernel = (operations: QueryOperations) => {
 
                 rotation = {
                   ...s.encodeRotation(next),
-                  ...updateValues<any>([
+                  ...updateValues([
                     [s.version, version],
                     [s.digest, next.digest],
                     [s.credentialVersion, next.credentialVersion],
@@ -2143,7 +2150,7 @@ export const makeSessionKernel = (operations: QueryOperations) => {
               yield* tx
                 .update(m.table)
                 .set(
-                  updateValues<any>([
+                  updateValues([
                     [m.consumed, true],
                     [m.version, completionVersion],
                     [m.snapshot, completionSnapshot],

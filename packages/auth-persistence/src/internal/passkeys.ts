@@ -11,31 +11,30 @@ import {
   PasskeyRequirement,
   PasskeyUnavailable,
 } from "@yielded/auth/Passkey";
-import type { SQL, Table } from "drizzle-orm";
 import { Context, Effect, Schema } from "effect";
 import { SqlClient } from "effect/unstable/sql";
 
-import {
-  requiredPasskeyCredentialConstraints,
-  requiredPasskeyPersistenceConstraints,
-  type PasskeyCredentialMapping,
-  type PasskeyPersistenceMapping,
-} from "../drizzle/passkey-model";
-import {
-  requiredPasskeyManagementConstraints,
-  type PasskeyManagementMapping,
-} from "../drizzle/passkey-write-model";
 import {
   PersistenceConfigurationError,
   type MappingInput,
   type PasskeyFeature,
 } from "./configuration";
 import { PersistenceMappingError } from "./mapping-error";
+import {
+  requiredPasskeyCredentialConstraints,
+  requiredPasskeyPersistenceConstraints,
+  type PasskeyCredentialMapping,
+  type PasskeyPersistenceMapping,
+} from "./models/passkey-model";
+import {
+  requiredPasskeyManagementConstraints,
+  type PasskeyManagementMapping,
+} from "./models/passkey-write-model";
 import { makePasskeyKernel } from "./passkey-kernel";
 import type { PasskeyTargetConfiguration } from "./passkey/target";
 import type { Backend } from "./persistence";
 import type { ProofSqlDatabase } from "./proof-kernel";
-import type { QueryOperations } from "./query-operations";
+import type { SqlExpression as SQL, QueryOperations, TableModel } from "./query-operations";
 import { requireStandalone } from "./standalone";
 import { storageTables, type StorageRole } from "./storage-tables";
 
@@ -62,19 +61,33 @@ const credentialData = PasskeyCredential.mapFields(
 const unavailable = () => PasskeyUnavailable.make({});
 const configurationError = (reason: string) => PersistenceConfigurationError.make({ reason });
 
-type ReadMapping = PasskeyCredentialMapping<Table, Table, Table, Table, Table, unknown>;
-type BaseMapping = PasskeyPersistenceMapping<ReadMapping, Table, Table, Table, Table, unknown>;
+type ReadMapping = PasskeyCredentialMapping<
+  TableModel,
+  TableModel,
+  TableModel,
+  TableModel,
+  TableModel,
+  unknown
+>;
+type BaseMapping = PasskeyPersistenceMapping<
+  ReadMapping,
+  TableModel,
+  TableModel,
+  TableModel,
+  TableModel,
+  unknown
+>;
 type ManagementMapping = PasskeyManagementMapping<
-  Table,
-  Table,
-  Table,
-  Table,
-  Table,
-  Table,
-  Table,
-  Table,
-  Table,
-  Table,
+  TableModel,
+  TableModel,
+  TableModel,
+  TableModel,
+  TableModel,
+  TableModel,
+  TableModel,
+  TableModel,
+  TableModel,
+  TableModel,
   unknown
 >;
 
@@ -100,13 +113,13 @@ export const makeComposedPasskeys = (
     passwordModules: ReadonlyArray<string>,
     signInProfiles: ReadonlyArray<PasskeyProfile>,
   ) => {
-    const table = (role: StorageRole): Table => {
+    const table = (role: StorageRole) => {
       const value = storage.tables[role];
 
       if (value === undefined) throw configurationError(`Missing ${role} mapping`);
 
       // Backend validation owns the foreign table shape. Row values are decoded below.
-      return value as Table;
+      return value;
     };
 
     const mapped = <Role extends StorageRole>(role: Role) => ({
@@ -118,7 +131,7 @@ export const makeComposedPasskeys = (
 
     const column = (role: StorageRole, key: string) => getTableColumns(table(role))[key];
     const s = storage.subjects;
-    const subject = s.table as Table;
+    const subject = s.table;
     const sc = getTableColumns(subject);
     const active = (value: unknown) => value === true;
     const owned = (value: unknown) => value === "owned";

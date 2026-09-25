@@ -1,5 +1,5 @@
-import { requiredAuthConstraints, type AuthTables } from "@yielded/auth-persistence/drizzle";
-import type { makeAuthServices } from "@yielded/auth-persistence/drizzle/sqlite-node";
+import { requiredAuthConstraints, type AuthTables } from "@yielded/auth-persistence-drizzle";
+import type { makeAuthServices } from "@yielded/auth-persistence-drizzle/SqliteNode";
 import { OAuthState } from "@yielded/auth/OAuth";
 import {
   ConsumeChallenge,

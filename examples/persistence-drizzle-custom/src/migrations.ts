@@ -1,5 +1,5 @@
 import { BunRuntime, BunServices } from "@effect/platform-bun";
-import { AuthPersistence } from "@yielded/auth-persistence/drizzle/sqlite-bun";
+import { AuthPersistence } from "@yielded/auth-persistence-drizzle/SqliteBun";
 import { Effect, Layer } from "effect";
 
 import { DatabaseLive } from "./data";

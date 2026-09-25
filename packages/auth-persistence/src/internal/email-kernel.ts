@@ -31,33 +31,31 @@ import {
   type AuthenticationRevision,
   type SecurityRevision,
 } from "@yielded/auth/Sessions";
-/* oxlint-disable no-explicit-any -- the shared dialect kernel erases consumer Drizzle table types internally. */
-import type { sql } from "drizzle-orm";
-import type { EffectDrizzleQueryError } from "drizzle-orm/effect-core";
 import { Cause, Context, DateTime, Effect, Option, Schema } from "effect";
 import type * as SqlError from "effect/unstable/sql/SqlError";
 
+import { isMappedConstraintConflict, PersistenceMappingError } from "./mapping-error";
 import {
   type AnyEmailAddressMapping,
   type AnyEmailSignInMapping,
   requiredEmailAddressConstraints,
   requiredEmailSignInConstraints,
-} from "../drizzle/email-model";
-import { isMappedConstraintConflict, PersistenceMappingError } from "./mapping-error";
+} from "./models/email-model";
 import {
   CurrentProofSql,
   type makeProofKernel,
   type ProofSqlConfiguration,
   type ProofSqlDatabase,
 } from "./proof-kernel";
-import type { QueryOperations } from "./query-operations";
+/* oxlint-disable no-explicit-any -- the shared dialect kernel erases consumer Drizzle table types internally. */
+import type { QueryFailure } from "./query-operations";
+import type { QueryOperations, SqlFragment, SqlColumn } from "./query-operations";
 
-type AdapterFailure = EffectDrizzleQueryError | PersistenceMappingError | SqlError.SqlError;
+type AdapterFailure = QueryFailure | PersistenceMappingError | SqlError.SqlError;
 type SignInMapping = AnyEmailSignInMapping;
-type AddressMapping = AnyEmailAddressMapping;
 
 export interface EmailSqlQuery<A = ReadonlyArray<any>> extends Effect.Effect<A, AdapterFailure> {
-  readonly getSQL: () => ReturnType<typeof sql>;
+  readonly getSQL: () => ReturnType<QueryOperations["sql"]>;
   readonly from: (...args: ReadonlyArray<any>) => EmailSqlQuery<A>;
   readonly where: (...args: ReadonlyArray<any>) => EmailSqlQuery<A>;
   readonly limit: (...args: ReadonlyArray<any>) => EmailSqlQuery<A>;
@@ -112,10 +110,15 @@ export interface CurrentAddress {
   readonly eligible: boolean;
 }
 
-export const makeEmailKernel = (
-  operations: QueryOperations,
+export const makeEmailKernel = <
+  Fragment extends SqlFragment = SqlFragment,
+  Column extends SqlColumn = SqlColumn,
+>(
+  operations: QueryOperations<Fragment, Column>,
   proofs: Pick<ReturnType<typeof makeProofKernel>, "completeProofPlanIn">,
 ) => {
+  type AddressMapping = AnyEmailAddressMapping<Fragment>;
+
   const { and, eq, inArray, lte, column, updateValues } = operations;
   const { completeProofPlanIn } = proofs;
   const unavailable = () => EmailUnavailable.make({});
@@ -1014,7 +1017,7 @@ export const makeEmailKernel = (
     }
     yield* database
       .update(mapping.subject.table)
-      .set(updateValues<any>([[mapping.subject.securityRevision, allocated.nextSecurityRevision]]))
+      .set(updateValues([[mapping.subject.securityRevision, allocated.nextSecurityRevision]]))
       .where(
         and(
           eq(s.id, current.nativeSubjectId),

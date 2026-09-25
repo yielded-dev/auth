@@ -23,6 +23,7 @@
         "@yielded/auth-crypto": "workspace:*",
         "@yielded/auth-openid-client": "workspace:*",
         "@yielded/auth-persistence": "workspace:*",
+        "@yielded/auth-persistence-drizzle": "workspace:*",
         "@yielded/auth-simplewebauthn": "workspace:*",
         "alchemy": "catalog:",
         "effect": "catalog:",
@@ -55,6 +56,7 @@
         "@yielded/auth-crypto": "workspace:*",
         "@yielded/auth-openid-client": "workspace:*",
         "@yielded/auth-persistence": "workspace:*",
+        "@yielded/auth-persistence-drizzle": "workspace:*",
         "@yielded/auth-simplewebauthn": "workspace:*",
         "drizzle-orm": "catalog:",
         "effect": "catalog:",
@@ -103,7 +105,7 @@
         "@simplewebauthn/server": "catalog:",
         "@yielded/auth": "workspace:*",
         "@yielded/auth-crypto": "workspace:*",
-        "@yielded/auth-persistence": "workspace:*",
+        "@yielded/auth-persistence-drizzle": "workspace:*",
         "@yielded/auth-simplewebauthn": "workspace:*",
         "drizzle-orm": "catalog:",
         "effect": "catalog:",
@@ -130,7 +132,7 @@
         "@simplewebauthn/server": "catalog:",
         "@yielded/auth": "workspace:*",
         "@yielded/auth-crypto": "workspace:*",
-        "@yielded/auth-persistence": "workspace:*",
+        "@yielded/auth-persistence-drizzle": "workspace:*",
         "@yielded/auth-simplewebauthn": "workspace:*",
         "drizzle-orm": "catalog:",
         "effect": "catalog:",
@@ -249,6 +251,28 @@
         "@yielded/auth-crypto": "workspace:*",
       },
       "devDependencies": {
+        "@effect/platform-node": "catalog:",
+        "@effect/sql-libsql": "catalog:",
+        "@effect/sql-sqlite-node": "catalog:",
+        "@effect/vitest": "catalog:",
+        "effect": "catalog:",
+        "typescript": "catalog:",
+        "vite-plus": "catalog:",
+      },
+      "peerDependencies": {
+        "effect": "^4.0.0-rc.117",
+      },
+    },
+    "packages/auth-persistence-drizzle": {
+      "name": "@yielded/auth-persistence-drizzle",
+      "version": "0.0.0",
+      "dependencies": {
+        "@noble/hashes": "catalog:",
+        "@yielded/auth": "workspace:*",
+        "@yielded/auth-crypto": "workspace:*",
+        "@yielded/auth-persistence": "workspace:*",
+      },
+      "devDependencies": {
         "@effect/platform-bun": "catalog:",
         "@effect/platform-node": "catalog:",
         "@effect/sql-d1": "catalog:",
@@ -289,7 +313,6 @@
         "@effect/sql-sqlite-do",
         "@effect/sql-sqlite-node",
         "@effect/sql-sqlite-wasm",
-        "drizzle-orm",
       ],
     },
     "packages/auth-simplewebauthn": {
@@ -1184,6 +1207,8 @@
     "@yielded/auth-openid-client": ["@yielded/auth-openid-client@workspace:packages/auth-openid-client"],
 
     "@yielded/auth-persistence": ["@yielded/auth-persistence@workspace:packages/auth-persistence"],
+
+    "@yielded/auth-persistence-drizzle": ["@yielded/auth-persistence-drizzle@workspace:packages/auth-persistence-drizzle"],
 
     "@yielded/auth-simplewebauthn": ["@yielded/auth-simplewebauthn@workspace:packages/auth-simplewebauthn"],
 

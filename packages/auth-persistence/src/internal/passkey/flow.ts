@@ -13,7 +13,7 @@ import {
 import type { SubjectId } from "@yielded/auth/Schema";
 import { DateTime, Effect } from "effect";
 
-import type { PasskeyFlowState } from "../../drizzle/passkey-model";
+import type { PasskeyFlowState } from "../models/passkey-model";
 import type { QueryOperations } from "../query-operations";
 import type { makeTransactionKernel } from "../transaction-kernel";
 import type { makePasskeyAdmissionKernel } from "./admission";
@@ -684,7 +684,7 @@ export const makePasskeyFlowKernel = (
     const counter = sql`${col(table.table, table.counter)}`;
     const maximum = sql`${col(table.table, table.maximumCounter)}`;
 
-    const max = (...values: ReadonlyArray<ReturnType<typeof sql>>) =>
+    const max = (...values: ReadonlyArray<ReturnType<QueryOperations["sql"]>>) =>
       dialect === "sqlite"
         ? sql`max(${sql.join([...values], sql`, `)})`
         : sql`greatest(${sql.join([...values], sql`, `)})`;
@@ -848,7 +848,7 @@ export const makePasskeyFlowKernel = (
       sql`, `,
     )})`;
 
-  const custodyFree = (mapping: any, flowExpression: ReturnType<typeof sql>) => {
+  const custodyFree = (mapping: any, flowExpression: ReturnType<QueryOperations["sql"]>) => {
     if (mapping.intent === undefined) return sql`1 = 1`;
     const intent = mapping.intent;
 

@@ -14,6 +14,8 @@ import type { QueryOperations } from "./query-operations";
 import { makeTransactionExecutionKernel } from "./transaction-execution-kernel";
 import { makeTransactionKernel } from "./transaction-kernel";
 
+export type PasskeyKernel = ReturnType<typeof makePasskeyKernel>;
+
 /** One set of passkey state machines, supplied with a SQL compiler and transaction owner. */
 export const makePasskeyKernel = (operations: QueryOperations) => {
   const transactions = makeTransactionKernel(operations);

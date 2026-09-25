@@ -8,7 +8,7 @@ import {
   type PasskeyManagementMapping,
   type PasskeyRegistrationMapping,
   type PasskeyWriteTables,
-} from "@yielded/auth-persistence/drizzle";
+} from "@yielded/auth-persistence-drizzle";
 import {
   PasskeyCredential,
   PasskeyManagementPolicy,

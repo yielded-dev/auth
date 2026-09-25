@@ -7,7 +7,7 @@ import {
   type PasskeyManagementMapping,
   type PasskeyRegistrationMapping,
   type PasskeyWriteTables,
-} from "@yielded/auth-persistence/drizzle";
+} from "@yielded/auth-persistence-drizzle";
 import { PasskeyCredential, PasskeyMethodPolicy, PasskeyProfile } from "@yielded/auth/Passkey";
 import { SubjectId } from "@yielded/auth/Schema";
 import { sql } from "drizzle-orm";

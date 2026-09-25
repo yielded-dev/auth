@@ -30,14 +30,14 @@ import { SubjectId } from "@yielded/auth/Schema";
 import { Effect, Schema } from "effect";
 import type { Statement } from "effect/unstable/sql/Statement";
 
+import type { PersistenceMappingError } from "../mapping-error";
 import type {
   PasskeyCredentialServices,
   PasskeyEnrollmentContextServices,
   PasskeyMappingSource,
   PasskeyPersistenceServices,
-} from "../../drizzle/passkey-model";
-import type { PasskeyRegistrationCeremonyServices } from "../../drizzle/passkey-registration-ceremony-model";
-import type { PersistenceMappingError } from "../mapping-error";
+} from "../models/passkey-model";
+import type { PasskeyRegistrationCeremonyServices } from "../models/passkey-registration-ceremony-model";
 import type {
   TransactionCoordinatorError,
   TransactionExecution,

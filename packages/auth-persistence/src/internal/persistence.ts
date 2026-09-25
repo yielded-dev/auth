@@ -7,7 +7,6 @@ import { hooksLayer } from "@yielded/auth/Persistence";
 import { PhoneAdmission, PhoneSignInTargets, PhoneOtpUnavailable } from "@yielded/auth/PhoneOtp";
 import { ProofPersistence, ProofUnavailable } from "@yielded/auth/Proofs";
 import { AuthenticationAuthority, SessionUnavailable } from "@yielded/auth/Sessions";
-import type { Table } from "drizzle-orm";
 import { Context, Effect, Layer, Schema } from "effect";
 import { SqlClient } from "effect/unstable/sql";
 
@@ -444,7 +443,7 @@ export const createPersistence = <T extends object, R>(
               id: storage.subjects.id,
               securityRevision: storage.subjects.securityRevision,
               activeCondition: eq(
-                column(storage.subjects.table as Table, storage.subjects.status),
+                column(storage.subjects.table, storage.subjects.status),
                 storage.subjects.activeValue,
               ),
             },
