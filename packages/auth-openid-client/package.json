@@ -1,6 +1,6 @@
 {
   "name": "@yielded/auth-openid-client",
-  "version": "0.0.0",
+  "version": "0.1.0-beta.0",
   "description": "OpenID Client protocols and GitHub integration for Yielded Auth.",
   "homepage": "https://yielded.dev/auth/",
   "bugs": {

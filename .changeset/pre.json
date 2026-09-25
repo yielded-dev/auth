@@ -8,7 +8,12 @@
     "@yielded/example-persistence-custom": "0.0.0",
     "@yielded/example-persistence-drizzle-custom": "0.0.0",
     "@yielded/example-persistence-drizzle-managed": "0.0.0",
-    "@yielded/example-persistence-sql": "0.0.0"
+    "@yielded/example-persistence-sql": "0.0.0",
+    "@yielded/auth-cloudflare": "0.0.0",
+    "@yielded/auth-crypto": "0.0.0",
+    "@yielded/auth-openid-client": "0.0.0",
+    "@yielded/auth-persistence-drizzle": "0.0.0",
+    "@yielded/auth-simplewebauthn": "0.0.0"
   },
   "changesets": [
     "application-owned-drizzle-example",
@@ -17,7 +22,9 @@
     "configurable-password-minimum",
     "current-effect-rc",
     "custom-service-account-example",
+    "effect-only-core",
     "github-response-issuer",
+    "isolated-sdk-adapters",
     "keep-session-on-email-confirmation",
     "keep-session-on-passkey-enrollment",
     "managed-oauth-app",
@@ -30,6 +37,7 @@
     "quiet-modules-shake",
     "quiet-oauth-providers",
     "raw-sql-account-example",
+    "separate-drizzle-persistence",
     "short-public-modules",
     "simple-request-auth",
     "small-oauth-signin",
