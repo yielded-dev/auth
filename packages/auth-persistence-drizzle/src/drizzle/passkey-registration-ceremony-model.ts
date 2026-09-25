@@ -1,20 +1,18 @@
-import * as Shared from "@yielded/auth-persistence/Adapter";
+import type * as Shared from "@yielded/auth-persistence/Adapter";
 import type { SQL, Table } from "drizzle-orm";
 
 import type { DrizzleTableModel } from "./table-model";
 
-export type PasskeyRegistrationCeremonyCapabilities =
-  Shared.PasskeyRegistrationCeremonyCapabilities;
-
-export type PasskeyRegistrationCeremonyServices = Shared.PasskeyRegistrationCeremonyServices;
+export {
+  type PasskeyRegistrationCeremonyCapabilities,
+  type PasskeyRegistrationCeremonyServices,
+  requiredPasskeyRegistrationCeremonyConstraints,
+} from "@yielded/auth-persistence/Adapter";
 
 /** Read-only custody supplied by a separate registration issuance authority.
  * No application payload codec, subject codec or provisioning callback runs here. */
 export type PasskeyRegistrationIntentReadTable<T extends Table> =
   Shared.PasskeyRegistrationIntentReadTable<DrizzleTableModel<T>, SQL>;
-
-export const requiredPasskeyRegistrationCeremonyConstraints =
-  Shared.requiredPasskeyRegistrationCeremonyConstraints;
 
 export type PasskeyRegistrationCeremonyMapping<
   Module extends Table,

@@ -47,8 +47,6 @@ import { validateStorage } from "./storage-validation";
 import { makeTransactionExecutionKernel } from "./transaction-execution-kernel";
 import { makeTransactionKernel, type TransactionNativeDatabase } from "./transaction-kernel";
 
-type Table = object;
-
 export interface Backend<T extends object, R> {
   readonly makeTable: (definition: StorageTable) => T;
   readonly describe: (table: T) => StorageTable;
@@ -445,7 +443,7 @@ export const createPersistence = <T extends object, R>(
               id: storage.subjects.id,
               securityRevision: storage.subjects.securityRevision,
               activeCondition: eq(
-                column(storage.subjects.table as Table, storage.subjects.status),
+                column(storage.subjects.table, storage.subjects.status),
                 storage.subjects.activeValue,
               ),
             },

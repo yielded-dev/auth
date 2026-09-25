@@ -3,7 +3,15 @@ import type { InferInsertModel, SQL, Table } from "drizzle-orm";
 
 import type { DrizzleTableModel } from "./table-model";
 
-export type PasskeyCredentialInsert<N> = Shared.PasskeyCredentialInsert<N>;
+export {
+  type PasskeyCredentialInsert,
+  type PasskeyInvalidationInput,
+  requiredPasskeyManagementConstraints,
+  type PasskeyManagementServices,
+  type PasskeyRegistrationWriter,
+  type PasskeyRegistrationServices,
+  requiredPasskeyRegistrationWriteConstraints,
+} from "@yielded/auth-persistence/Adapter";
 
 export type PasskeyWriteTables<
   S extends Table,
@@ -22,16 +30,14 @@ export type PasskeyWriteTables<
   SQL
 >;
 
-export type PasskeyInvalidationInput<N> = Shared.PasskeyInvalidationInput<N>;
-
 export type PasskeyInvalidationMutation<N> = Shared.PasskeyInvalidationMutation<N, SQL>;
 
 /** Same-owner updates for consumer session/pending tables. No external effects or callbacks after commit. */
 export const passkeyInvalidationMutation = <T extends Table, N>(input: {
   readonly table: T;
-  readonly where: (input: PasskeyInvalidationInput<N>) => SQL;
-  readonly values: (input: PasskeyInvalidationInput<N>) => Partial<InferInsertModel<T>>;
-  readonly postcondition: (input: PasskeyInvalidationInput<N>) => SQL;
+  readonly where: (input: Shared.PasskeyInvalidationInput<N>) => SQL;
+  readonly values: (input: Shared.PasskeyInvalidationInput<N>) => Partial<InferInsertModel<T>>;
+  readonly postcondition: (input: Shared.PasskeyInvalidationInput<N>) => SQL;
 }): PasskeyInvalidationMutation<N> =>
   Shared.passkeyInvalidationMutation<DrizzleTableModel<T>, N, SQL>(input);
 
@@ -67,14 +73,6 @@ export type PasskeyManagementMapping<
   SQL
 >;
 
-export const requiredPasskeyManagementConstraints = Shared.requiredPasskeyManagementConstraints;
-
-export type PasskeyManagementServices = Shared.PasskeyManagementServices;
-
-export type PasskeyRegistrationWriter<R> = Shared.PasskeyRegistrationWriter<R>;
-
-export type PasskeyRegistrationServices<R> = Shared.PasskeyRegistrationServices<R>;
-
 export type PasskeyRegistrationMapping<
   S extends Table,
   C extends Table,
@@ -103,6 +101,3 @@ export type PasskeyRegistrationMapping<
   R,
   SQL
 >;
-
-export const requiredPasskeyRegistrationWriteConstraints =
-  Shared.requiredPasskeyRegistrationWriteConstraints;

@@ -40,8 +40,6 @@ import type { StatefulSessionMapping } from "./models/session-model";
 import type { TableModel, SqlFragment } from "./query-operations";
 import { storageTables, type StorageRole } from "./storage-tables";
 
-type Table = object;
-
 const failure = (cause: unknown) => PersistenceMappingError.make({ operation: "decode", cause });
 
 const decode = <S extends Schema.Codec<unknown, unknown>>(schema: S, value: unknown) =>
@@ -78,17 +76,13 @@ const ProofContinuation = Schema.Struct({
   version: ProofVersion,
 });
 
-// Only the foreign table/query shape is erased. Persisted values below always
-// pass through the domain schemas before leaving the adapter.
-const foreignTable = (table: object): Table => table as Table;
-
 export const makeMappings = (input: MappingInput) => {
   const table = (role: StorageRole) => {
     const found = input.tables[role];
 
     if (found === undefined) throw failure(`Missing ${role} mapping`);
 
-    return foreignTable(found);
+    return found;
   };
 
   const mapped = (role: StorageRole) => ({
@@ -100,7 +94,7 @@ export const makeMappings = (input: MappingInput) => {
   const subjectId = { toNative: s.toNative, toSubject: s.toSubject, equals: Object.is };
 
   const subject = {
-    table: foreignTable(s.table),
+    table: s.table,
     id: s.id,
     status: s.status,
     securityRevision: s.securityRevision,

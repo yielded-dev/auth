@@ -1,9 +1,20 @@
-import * as Shared from "@yielded/auth-persistence/Adapter";
+import type * as Shared from "@yielded/auth-persistence/Adapter";
 import type { SQL, Table } from "drizzle-orm";
 
 import type { DrizzleTableModel } from "./table-model";
 
-export type SessionIdCodec<NativeId> = Shared.SessionIdCodec<NativeId>;
+export {
+  type SessionIdCodec,
+  type RequiredSessionConstraints,
+  type RequiredPendingAuthenticationConstraints,
+  type RequiredStatefulPendingConstraints,
+  type RequiredSignedValidityConstraints,
+  requiredSessionConstraints,
+  requiredPendingAuthenticationConstraints,
+  requiredStatefulPendingConstraints,
+  requiredSignedValidityConstraints,
+  type SessionConstraintClassifier,
+} from "@yielded/auth-persistence/Adapter";
 
 export type SessionSubjectTables<Subject extends Table, NativeId> = Shared.SessionSubjectTables<
   DrizzleTableModel<Subject>,
@@ -60,26 +71,6 @@ export type SignedSessionValidityTables<
   NativeSubjectId,
   NativeSessionId
 >;
-
-export type RequiredSessionConstraints = Shared.RequiredSessionConstraints;
-
-export type RequiredPendingAuthenticationConstraints =
-  Shared.RequiredPendingAuthenticationConstraints;
-
-export type RequiredStatefulPendingConstraints = Shared.RequiredStatefulPendingConstraints;
-
-export type RequiredSignedValidityConstraints = Shared.RequiredSignedValidityConstraints;
-
-export const requiredSessionConstraints = Shared.requiredSessionConstraints;
-
-export const requiredPendingAuthenticationConstraints =
-  Shared.requiredPendingAuthenticationConstraints;
-
-export const requiredStatefulPendingConstraints = Shared.requiredStatefulPendingConstraints;
-
-export const requiredSignedValidityConstraints = Shared.requiredSignedValidityConstraints;
-
-export type SessionConstraintClassifier = Shared.SessionConstraintClassifier;
 
 export type AuthenticationAuthorityMapping<
   Claims,

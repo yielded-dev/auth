@@ -76,6 +76,8 @@ export type SessionStepUpSourceTables<
         readonly sessionDigest: "unique(session.digest)";
       };
       readonly sessionId: SessionIdCodec<NativeSessionId>;
+      /** encodeRotation must replace Claims, provenance, and the queryable security
+       * fields together; it must not retain the old proof payload. */
       readonly session: StatefulSessionTables<
         Claims,
         Session,

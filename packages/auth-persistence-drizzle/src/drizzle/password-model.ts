@@ -1,15 +1,23 @@
-import * as Shared from "@yielded/auth-persistence/Adapter";
+import type * as Shared from "@yielded/auth-persistence/Adapter";
 import type { SQL, Table } from "drizzle-orm";
 
 import type { DrizzleTableModel } from "./table-model";
 
-export type PasswordAttemptAction = Shared.PasswordAttemptAction;
-
-export type PasswordAttemptState = Shared.PasswordAttemptState;
-
-export type PasswordRateScopeKind = Shared.PasswordRateScopeKind;
-
-export type PasswordScopeKeys = Shared.PasswordScopeKeys;
+export {
+  type PasswordAttemptAction,
+  type PasswordAttemptState,
+  type PasswordRateScopeKind,
+  type PasswordScopeKeys,
+  type PasswordAttemptRecord,
+  type RequiredPasswordConstraints,
+  requiredPasswordConstraints,
+  type PasswordConstraintClassifier,
+  type PasswordRegistrationState,
+  type PasswordRegistrationIntent,
+  type RequiredPasswordRegistrationConstraints,
+  requiredPasswordRegistrationConstraints,
+  type PasswordRegistrationConstraintClassifier,
+} from "@yielded/auth-persistence/Adapter";
 
 export type PasswordSubjectTable<
   Subject extends Table,
@@ -38,8 +46,6 @@ export type PasswordCredentialTable<
   NativeSubjectId
 >;
 
-export type PasswordAttemptRecord = Shared.PasswordAttemptRecord;
-
 export type PasswordAttemptTable<
   Attempt extends Table,
   NativeSubjectId,
@@ -56,12 +62,6 @@ export type PasswordChargeTable<Charge extends Table> = Shared.PasswordChargeTab
 export type PasswordCommandTable<Command extends Table> = Shared.PasswordCommandTable<
   DrizzleTableModel<Command>
 >;
-
-export type RequiredPasswordConstraints = Shared.RequiredPasswordConstraints;
-
-export const requiredPasswordConstraints = Shared.requiredPasswordConstraints;
-
-export type PasswordConstraintClassifier = Shared.PasswordConstraintClassifier;
 
 export type PasswordD1Clock = Shared.PasswordD1Clock<SQL>;
 
@@ -111,11 +111,6 @@ export type D1PasswordPersistenceMapping<
   SQL
 >;
 
-export type PasswordRegistrationState = Shared.PasswordRegistrationState;
-
-export type PasswordRegistrationIntent<Registration> =
-  Shared.PasswordRegistrationIntent<Registration>;
-
 export type PasswordRegistrationTable<
   Registration,
   Request extends Table,
@@ -131,15 +126,6 @@ export type PasswordRegistrationProvisioning<
   DrizzleTableModel<Subject>,
   NativeSubjectId
 >;
-
-export type RequiredPasswordRegistrationConstraints =
-  Shared.RequiredPasswordRegistrationConstraints;
-
-export const requiredPasswordRegistrationConstraints =
-  Shared.requiredPasswordRegistrationConstraints;
-
-export type PasswordRegistrationConstraintClassifier =
-  Shared.PasswordRegistrationConstraintClassifier;
 
 export type PasswordRegistrationMapping<
   Registration,

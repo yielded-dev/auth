@@ -1,23 +1,22 @@
-import * as Shared from "@yielded/auth-persistence/Adapter";
+import type * as Shared from "@yielded/auth-persistence/Adapter";
 import type { SQL, Table } from "drizzle-orm";
 
 import type { DrizzleTableModel } from "./table-model";
 
-export type ProofAction = Shared.ProofAction;
-
-export type ProofScopeKind = Shared.ProofScopeKind;
-
-export type ProofGenerationState = Shared.ProofGenerationState;
-
-export type ProofDeliveryState = Shared.ProofDeliveryState;
-
-export type ProofCommandKind = Shared.ProofCommandKind;
-
-export type ProofCommandDecision = Shared.ProofCommandDecision;
-
-export type ProofScopeKeys = Shared.ProofScopeKeys;
-
-export type ProofAuthorityInput<NativeSubjectId> = Shared.ProofAuthorityInput<NativeSubjectId>;
+export {
+  type ProofAction,
+  type ProofScopeKind,
+  type ProofGenerationState,
+  type ProofDeliveryState,
+  type ProofCommandKind,
+  type ProofCommandDecision,
+  type ProofScopeKeys,
+  type ProofAuthorityInput,
+  type ProofContinuationRecord,
+  type RequiredProofConstraints,
+  requiredProofConstraints,
+  type ProofConstraintClassifier,
+} from "@yielded/auth-persistence/Adapter";
 
 export type ProofAuthorityTables<
   Subject extends Table,
@@ -44,8 +43,6 @@ export type ProofGenerationTable<Generation extends Table> = Shared.ProofGenerat
   DrizzleTableModel<Generation>
 >;
 
-export type ProofContinuationRecord = Shared.ProofContinuationRecord;
-
 export type ProofContinuationTable<Continuation extends Table> = Shared.ProofContinuationTable<
   DrizzleTableModel<Continuation>
 >;
@@ -65,12 +62,6 @@ export type ProofFailureEventTable<FailureEvent extends Table> = Shared.ProofFai
 export type ProofCommandTable<Command extends Table> = Shared.ProofCommandTable<
   DrizzleTableModel<Command>
 >;
-
-export type RequiredProofConstraints = Shared.RequiredProofConstraints;
-
-export const requiredProofConstraints = Shared.requiredProofConstraints;
-
-export type ProofConstraintClassifier = Shared.ProofConstraintClassifier;
 
 export type ProofD1Clock = Shared.ProofD1Clock<SQL>;
 

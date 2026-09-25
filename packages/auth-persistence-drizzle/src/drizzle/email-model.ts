@@ -1,7 +1,18 @@
-import * as Shared from "@yielded/auth-persistence/Adapter";
+import type * as Shared from "@yielded/auth-persistence/Adapter";
 import type { SQL, Table } from "drizzle-orm";
 
 import type { DrizzleTableModel } from "./table-model";
+
+export {
+  type RequiredEmailSignInConstraints,
+  requiredEmailSignInConstraints,
+  type RequiredEmailAddressConstraints,
+  requiredEmailAddressConstraints,
+  type EmailRegistrationState,
+  type EmailRegistrationIntent,
+  type RequiredEmailRegistrationConstraints,
+  requiredEmailRegistrationConstraints,
+} from "@yielded/auth-persistence/Adapter";
 
 export type EmailSubjectReadTable<Subject extends Table> = Shared.EmailSubjectReadTable<
   DrizzleTableModel<Subject>
@@ -53,10 +64,6 @@ export type EmailCommandTable<Command extends Table> = Shared.EmailCommandTable<
   DrizzleTableModel<Command>
 >;
 
-export type RequiredEmailSignInConstraints = Shared.RequiredEmailSignInConstraints;
-
-export const requiredEmailSignInConstraints = Shared.requiredEmailSignInConstraints;
-
 export type EmailSignInMapping<
   Subject extends Table,
   Identifier extends Table,
@@ -68,10 +75,6 @@ export type EmailSignInMapping<
   DrizzleTableModel<Credential>,
   NativeSubjectId
 >;
-
-export type RequiredEmailAddressConstraints = Shared.RequiredEmailAddressConstraints;
-
-export const requiredEmailAddressConstraints = Shared.requiredEmailAddressConstraints;
 
 export type EmailD1Clock = Shared.EmailD1Clock<SQL>;
 
@@ -109,10 +112,6 @@ export type D1EmailAddressMapping<
   SQL
 >;
 
-export type EmailRegistrationState = Shared.EmailRegistrationState;
-
-export type EmailRegistrationIntent<Registration> = Shared.EmailRegistrationIntent<Registration>;
-
 export type EmailRegistrationTable<
   Registration,
   Request extends Table,
@@ -142,10 +141,6 @@ export type EmailRegistrationAuthorityCredentialTable<
   DrizzleTableModel<Credential>,
   NativeSubjectId
 >;
-
-export type RequiredEmailRegistrationConstraints = Shared.RequiredEmailRegistrationConstraints;
-
-export const requiredEmailRegistrationConstraints = Shared.requiredEmailRegistrationConstraints;
 
 export type EmailRegistrationMapping<
   Registration,

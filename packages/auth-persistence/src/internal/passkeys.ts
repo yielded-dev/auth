@@ -38,8 +38,6 @@ import type { SqlExpression as SQL, QueryOperations, TableModel } from "./query-
 import { requireStandalone } from "./standalone";
 import { storageTables, type StorageRole } from "./storage-tables";
 
-type Table = object;
-
 const profileJson = Schema.fromJsonString(PasskeyProfile);
 const policyJson = Schema.fromJsonString(PasskeyMethodPolicy);
 
@@ -115,13 +113,13 @@ export const makeComposedPasskeys = (
     passwordModules: ReadonlyArray<string>,
     signInProfiles: ReadonlyArray<PasskeyProfile>,
   ) => {
-    const table = (role: StorageRole): Table => {
+    const table = (role: StorageRole) => {
       const value = storage.tables[role];
 
       if (value === undefined) throw configurationError(`Missing ${role} mapping`);
 
       // Backend validation owns the foreign table shape. Row values are decoded below.
-      return value as Table;
+      return value;
     };
 
     const mapped = <Role extends StorageRole>(role: Role) => ({
@@ -133,7 +131,7 @@ export const makeComposedPasskeys = (
 
     const column = (role: StorageRole, key: string) => getTableColumns(table(role))[key];
     const s = storage.subjects;
-    const subject = s.table as Table;
+    const subject = s.table;
     const sc = getTableColumns(subject);
     const active = (value: unknown) => value === true;
     const owned = (value: unknown) => value === "owned";
