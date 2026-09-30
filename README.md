@@ -17,10 +17,10 @@ keys, and SQL connection; see the [runnable example](examples/auth/src/github-ap
 See the [persistence examples](docs/src/content/docs/reference/adapters.md#runnable-examples) for
 managed Drizzle, application-owned Drizzle, raw SQL, and custom service implementations.
 
-Install the beta release with Effect v4:
+Install the beta release with Effect:
 
 ```sh
-vp add @yielded/auth@beta effect@4.0.0-rc.117
+bun add @yielded/auth@beta effect
 ```
 
 ## One API, server and client

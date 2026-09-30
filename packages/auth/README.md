@@ -4,7 +4,7 @@ Composable authentication workflows for Effect applications: sign-in, sessions,
 OAuth, passwords, passkeys, email and phone proofs, and TOTP.
 
 ```sh
-vp add @yielded/auth@beta effect@4.0.0-rc.117
+bun add @yielded/auth@beta effect
 ```
 
 The package owns security-sensitive workflow contracts. Applications own identity,

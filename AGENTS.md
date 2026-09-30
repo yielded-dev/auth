@@ -74,6 +74,14 @@ concepts succinctly: what a feature does, how it fits, and how to use it.
 - Keep crucial caveats beside the relevant concept; link to reference details.
 - Edit the page as a whole. Do not append feature inventories, change histories,
   or long defensive explanations to an otherwise focused guide.
+- Use `bun add` for consumer package installation examples.
+- Use fenced `mermaid` blocks for flow diagrams, with `accTitle` and `accDescr`.
+  The shared Starlight theme owns rendering and colors.
+- Never hardcode Effect's current version in documentation, including READMEs,
+  guides, reference pages, contributor docs, and installation commands. Use plain
+  `effect` without a version or release tag in install examples. Package manifests
+  and the root catalog own exact versions and peer compatibility; refer to them
+  instead of repeating version numbers in prose or tables.
 
 ## Non-negotiable architecture rules
 
@@ -117,7 +125,7 @@ framework package only for a new concern agreed with the repository owner.
 
 - Bun `1.4.2` is the package manager. Use `catalog:` for shared dependencies and `workspace:*`
   for repository packages.
-- The root catalog is the single source for the exact Effect v4 version. Do not pin Effect
+- The root catalog is the single source for the exact Effect version. Do not pin Effect
   independently in a package.
 - After changing an Effect-family version, run `vp install` and `vp run check`.
 - Contributor skills under `.agents/skills` are repo-owned. Dev Kit copies track their source

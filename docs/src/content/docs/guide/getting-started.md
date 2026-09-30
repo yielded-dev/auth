@@ -9,11 +9,11 @@ application. The contract also supplies your HTTP endpoints and browser client.
 ## Install
 
 ```sh
-vp add @yielded/auth@beta effect@4.0.0-rc.117
+bun add @yielded/auth@beta effect
 ```
 
-Yielded Auth is currently in beta and targets Effect v4. Install additional peer
-dependencies only for the [adapters](../reference/adapters) you use.
+Yielded Auth is currently in beta. Install additional peer dependencies only for
+the [adapters](../reference/adapters) you use.
 
 ## Define the shared contract
 

@@ -18,16 +18,32 @@ signed-in user; a **provider grant** lets your app call the provider's API.
 `OAuthApp` manages the redirect, callback, session cookie, and provider tokens.
 Your account policy decides who may sign in and which claims belong in the session.
 
-```text
-Browser → Provider consent → OAuthApp callback
-                                   ↓
-                            Your account policy
-                              ├─ Signed session → Browser
-                              └─ Encrypted grant → SQL
+```mermaid
+sequenceDiagram
+  accTitle: OAuth sign-in
+  accDescr: Provider consent reaches the OAuthApp callback and your account policy. OAuthApp stores an encrypted grant in SQL and returns a signed session to the browser.
+  participant Browser
+  participant Provider
+  participant App as OAuthApp
+  participant Policy as Account policy
+  participant SQL
+  Browser->>Provider: Sign in and consent
+  Provider->>App: Callback
+  App->>Policy: Resolve account
+  Policy-->>App: Subject and claims
+  App->>SQL: Encrypted grant
+  App-->>Browser: Signed session
+```
 
-Your app / jobs → OAuthApp → Provider API
-                     ↕
-               Grant in SQL
+Your app or background jobs use the retained grant to call the provider API:
+
+```mermaid
+flowchart LR
+  accTitle: Provider API access
+  accDescr: Your app or jobs call OAuthApp, which reads the provider grant from SQL and calls the provider API.
+  Jobs[Your app / jobs] --> App[OAuthApp]
+  App --> API[Provider API]
+  App <-->|Provider grant| SQL[(SQL)]
 ```
 
 Sessions verify without a database lookup. Pending flows and provider grants live
