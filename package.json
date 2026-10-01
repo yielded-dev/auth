@@ -113,7 +113,7 @@
     "@astrojs/starlight": "0.42.4",
     "astro": "7.3.5",
     "starlight-links-validator": "0.26.0",
-    "@yielded/starlight-theme": "0.1.1",
+    "@yielded/starlight-theme": "0.1.4",
     "react-native": "0.81.4",
     "react-native-passkey": "3.6.2"
   }
