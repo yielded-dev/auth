@@ -1,5 +1,35 @@
 # @yielded/auth
 
+## 0.1.0-beta.11
+
+### Minor Changes
+
+- [#49](https://github.com/yielded-dev/auth/pull/49) [`b9967b8`](https://github.com/yielded-dev/auth/commit/b9967b8326404a72fc5378c268ae019c4999ef0f) Thanks [@danieljvdm](https://github.com/danieljvdm)! - Use Effect HttpClient Layers for auth transport and bound requests and response bodies with a configurable deadline.
+
+  BEHAVIOR CHANGE: Use `AppClient.layerFetch` for Fetch defaults, or provide an HttpClient Layer to direct client acquisition and `AppClient.layer`; replace the `fetch` option with `FetchHttpClient.Fetch` at Layer construction. Atom defaults to `layerFetch`; pass a composed client as `{ layer: ClientLive }` to customize it. Timed-out requests fail with reason `"timeout"` after 30 seconds by default and must not be automatically retried.
+
+- [#46](https://github.com/yielded-dev/auth/pull/46) [`75cd72c`](https://github.com/yielded-dev/auth/commit/75cd72c41a3fecdd5c8e84cc76f2dd534b7f2e78) Thanks [@danieljvdm](https://github.com/danieljvdm)! - Expose the remaining core modules as named namespaces from `@yielded/auth` while retaining their direct subpaths.
+
+- [#51](https://github.com/yielded-dev/auth/pull/51) [`9392e50`](https://github.com/yielded-dev/auth/commit/9392e50f2b5ae7b275390fbbbd7a3100855441e4) Thanks [@danieljvdm](https://github.com/danieljvdm)! - Rename each sign-in strategy's claims service to `SessionClaims` and expose `subjectId` directly to account lookups.
+
+  BEHAVIOR CHANGE: Replace `ClaimsForPassword`, `ClaimsForPasskey`, `ClaimsForEmail`, `ClaimsForPhone`, and `ClaimsForOAuth` with `SessionClaims`; implement `resolve({ subjectId, credential })`, or `resolve({ subjectId, credential, identity })` for OAuth.
+
+- [#43](https://github.com/yielded-dev/auth/pull/43) [`4973533`](https://github.com/yielded-dev/auth/commit/49735334149d3d29a34542047a27ff6fffac9f7e) Thanks [@danieljvdm](https://github.com/danieljvdm)! - Consolidate password, email, and session authentication on `Auth.make` and the strategy modules, and remove the superseded workflows, HTTP/RPC integration, OAuth linking service, and store adapters. Replace Cloudflare OTP delivery with `layerEmailProofDelivery` for the shared proof engine.
+
+  BEHAVIOR CHANGE: Replace `PasswordAuth`, `EmailOtp`, `AuthSession`, `Workflows`, `HttpServer`, and their support services with the current strategies, `Sessions`, `Http`, and `AuthPersistence`; use `OAuth.makeAccounts` / `OAuth.makeConnected` for provider linking and access. Retired challenge, registration, OAuth-state records, and session cookies are incompatible; reset only that development state and reauthenticate, and explicitly import application identities and credentials if keeping existing accounts.
+
+- [#45](https://github.com/yielded-dev/auth/pull/45) [`156f0b3`](https://github.com/yielded-dev/auth/commit/156f0b3b01a60bb21f9984d6d464d05f73b79283) Thanks [@danieljvdm](https://github.com/danieljvdm)! - Retain provider access through `OAuth.make({ access: profile })` with shared Auth sessions, grant storage, refresh, and disconnect; remove OAuthApp and its separate persistence adapter.
+
+  BEHAVIOR CHANGE: Reset development OAuthApp cookies/flows/grants and older connected token envelopes, then configure the shared sign-in and connected services; preserve account identities and outstanding reconciliation receipts.
+
+### Patch Changes
+
+- [#34](https://github.com/yielded-dev/auth/pull/34) [`bc112cc`](https://github.com/yielded-dev/auth/commit/bc112ccb9f063e374c40dc12d634efaba6812502) Thanks [@danieljvdm](https://github.com/danieljvdm)! - Add the standalone `@yielded/auth-react-native` package with `make()` and `layer` for iOS ES256 platform passkey registration, authentication, and capability checks with typed failures and redacted responses. Support content-free native diagnostics through the shared reporter and document associated-domain setup and interruption limits.
+
+- [#43](https://github.com/yielded-dev/auth/pull/43) [`4973533`](https://github.com/yielded-dev/auth/commit/49735334149d3d29a34542047a27ff6fffac9f7e) Thanks [@danieljvdm](https://github.com/danieljvdm)! - Add a downloadable account starter with local email delivery, SQLite persistence, and a complete first-login guide.
+
+- [#52](https://github.com/yielded-dev/auth/pull/52) [`4dbe837`](https://github.com/yielded-dev/auth/commit/4dbe837e23399e1e659c3b6eb7d2a041b5653de0) Thanks [@danieljvdm](https://github.com/danieljvdm)! - Require stable Effect and matching SQL drivers, and update Cloudflare integration to effect-cf 0.53. Support Drizzle RC4 with the temporary Drizzle patch CLI when adding Drizzle to an existing Bun app.
+
 ## 0.1.0-beta.10
 
 ### Minor Changes
