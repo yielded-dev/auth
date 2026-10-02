@@ -1,5 +1,17 @@
 # @yielded/auth
 
+## 0.1.0-beta.13
+
+### Patch Changes
+
+- [#59](https://github.com/yielded-dev/auth/pull/59) [`1c4df1c`](https://github.com/yielded-dev/auth/commit/1c4df1c52668d64b5e3d909cd03a025e88966e6a) Thanks [@danieljvdm](https://github.com/danieljvdm)! - Release password admission after attempt retention, page phone admission cleanup, and resolve an OAuth reservation when the provider issues no token.
+
+  Keep request resources and post-commit hooks on the caller, report password outages as unavailable, and reuse each issuer's JWKS cache.
+
+  BEHAVIOR CHANGE: Clear unresolved reservations left by earlier definite provider rejections if a cohort stays blocked. Password attempts need no reset.
+
+- [#62](https://github.com/yielded-dev/auth/pull/62) [`1081d5b`](https://github.com/yielded-dev/auth/commit/1081d5b4003e9819e412c753273344ad00d47fc2) Thanks [@danieljvdm](https://github.com/danieljvdm)! - Keep password infrastructure outages distinct from credential rejection and identify invalid HTTP configuration components. Preserve delivery defects and cancellation through settlement without authorizing retries.
+
 ## 0.1.0-beta.12
 
 ### Minor Changes

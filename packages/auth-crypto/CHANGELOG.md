@@ -1,5 +1,12 @@
 # @yielded/auth-crypto
 
+## 0.1.0-beta.13
+
+### Patch Changes
+
+- Updated dependencies [[`1c4df1c`](https://github.com/yielded-dev/auth/commit/1c4df1c52668d64b5e3d909cd03a025e88966e6a), [`1081d5b`](https://github.com/yielded-dev/auth/commit/1081d5b4003e9819e412c753273344ad00d47fc2)]:
+  - @yielded/auth@0.1.0-beta.13
+
 ## 0.1.0-beta.12
 
 ### Patch Changes

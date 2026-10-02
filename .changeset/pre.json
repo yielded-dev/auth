@@ -21,8 +21,10 @@
   "changesets": [
     "aligned-package-versions",
     "application-owned-drizzle-example",
+    "audit-admission-and-request-bounds",
     "bright-oauth-callbacks",
     "canonical-auth-transport",
+    "canonical-failure-classification",
     "complete-root-namespaces",
     "composable-oauth-providers",
     "configurable-password-minimum",
