@@ -39,13 +39,27 @@ export const PendingAuthenticationContext = Schema.Struct({
 
 export type PendingAuthenticationContext = typeof PendingAuthenticationContext.Type;
 
+const decodePendingAuthenticationContext = Schema.decodeEffect(PendingAuthenticationContext);
+
 /** Detaches the entire graph and projects away storage/private fields. */
 export const snapshotPendingAuthenticationContext = Effect.fn(
   "snapshotPendingAuthenticationContext",
 )(function* (input: PendingAuthenticationContext) {
-  const value = yield* Schema.decodeEffect(PendingAuthenticationContext)(input).pipe(
+  const value = yield* decodePendingAuthenticationContext(input).pipe(
     Effect.mapError(() => PendingAuthenticationInvalid.make({})),
   );
+
+  // A decoder that returns its input unchanged still needs the copy:
+  // the caller's object must stay unfrozen.
+  if (value !== input) {
+    for (const credential of value.revision.credentials) {
+      Object.freeze(credential);
+    }
+    Object.freeze(value.revision.credentials);
+    Object.freeze(value.revision);
+
+    return Object.freeze(value);
+  }
 
   return Object.freeze({
     flowId: value.flowId,
