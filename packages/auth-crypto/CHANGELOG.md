@@ -1,8 +1,10 @@
 # @yielded/auth-crypto
 
-## 0.1.0-beta.2
+## 0.1.0-beta.12
 
 ### Patch Changes
+
+- Align all public packages on a single beta version and release them together.
 
 - Updated dependencies [[`67c8eff`](https://github.com/yielded-dev/auth/commit/67c8effd7b61ffb677e2a151d320ac308649fd12)]:
   - @yielded/auth@0.1.0-beta.12

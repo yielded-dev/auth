@@ -1,6 +1,6 @@
 {
   "name": "@yielded/auth-cloudflare",
-  "version": "0.1.0-beta.2",
+  "version": "0.1.0-beta.12",
   "description": "Cloudflare email delivery for Yielded Auth authentication strategies.",
   "homepage": "https://yielded.dev/auth/",
   "bugs": {

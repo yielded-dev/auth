@@ -91,9 +91,14 @@ updates. Dev Kit is not a runtime dependency or repository lifecycle manager.
 
 ## Releases
 
-Changesets maintains the public package's beta release train. Add a changeset for
-consumer-visible changes. Do not leave prerelease mode without an explicit release
-decision. `release:publish` builds and temporarily converts source manifests to
+All public packages, including the Drizzle patch CLI, share one Changesets fixed
+group and one beta version. Add a changeset naming the affected packages for
+consumer-visible changes; the whole group is versioned and published together.
+Keep `.changeset/config.json` aligned with new public workspaces. Private examples
+and documentation are not versioned or published. Do not leave prerelease mode
+without an explicit release decision.
+
+`release:publish` builds and temporarily converts source manifests to
 npm-ready exports and resolves catalog/workspace ranges, then restores the original
 files on success, failure, or interruption.
 

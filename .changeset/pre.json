@@ -19,6 +19,7 @@
     "@yielded/drizzle-effect-v4-patch": "0.1.0-beta.0"
   },
   "changesets": [
+    "aligned-package-versions",
     "application-owned-drizzle-example",
     "bright-oauth-callbacks",
     "canonical-auth-transport",
