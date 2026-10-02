@@ -1,5 +1,12 @@
 # @yielded/auth-cloudflare
 
+## 0.1.0-beta.2
+
+### Patch Changes
+
+- Updated dependencies [[`67c8eff`](https://github.com/yielded-dev/auth/commit/67c8effd7b61ffb677e2a151d320ac308649fd12)]:
+  - @yielded/auth@0.1.0-beta.12
+
 ## 0.1.0-beta.1
 
 ### Minor Changes

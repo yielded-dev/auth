@@ -53,6 +53,7 @@
     "small-oauth-signin",
     "stable-effect",
     "tidy-oauth-engine",
+    "visible-client-dependencies",
     "yielded-auth-publication",
     "yielded-repository-links"
   ]
