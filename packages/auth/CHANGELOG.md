@@ -1,5 +1,11 @@
 # @yielded/auth
 
+## 0.1.0-beta.14
+
+### Minor Changes
+
+- [#61](https://github.com/yielded-dev/auth/pull/61) [`b0ef3d8`](https://github.com/yielded-dev/auth/commit/b0ef3d8ffcb1cebca66db115a2f6fd5f3cc4d5ab) Thanks [@danieljvdm](https://github.com/danieljvdm)! - Deliver Auth-rendered emails through an application-supplied `EmailDelivery` service, with built-in code/link templates and REST API and Alchemy examples. BEHAVIOR CHANGE: replace `Proofs.EmailProofDelivery` and `@yielded/auth-cloudflare` with that service, choose `Password.resetLink({ url })` or `Password.resetCode()` for password management, pass a URL to `Email.makeLink`, and read link fragments with `EmailDelivery.parseLinkFragment`.
+
 ## 0.1.0-beta.13
 
 ### Patch Changes

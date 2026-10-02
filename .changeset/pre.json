@@ -49,6 +49,7 @@
     "quiet-modules-shake",
     "quiet-oauth-providers",
     "raw-sql-account-example",
+    "rendered-email-delivery",
     "separate-drizzle-persistence",
     "short-public-modules",
     "simple-request-auth",
