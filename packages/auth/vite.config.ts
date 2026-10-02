@@ -8,6 +8,8 @@ export default defineConfig({
       "src/Contracts.ts",
       "src/Strategies.ts",
       "src/Auth.ts",
+      "src/BrowserLogin.ts",
+      "src/BrowserLoginContract.ts",
       "src/Persistence.ts",
       "src/AuthContract.ts",
       "src/Client.ts",

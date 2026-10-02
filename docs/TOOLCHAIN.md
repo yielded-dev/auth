@@ -107,7 +107,7 @@ Before enabling automated releases:
 2. Configure `EFFECT_AUTH_APP_ID` and `EFFECT_AUTH_APP_PRIVATE_KEY` repository secrets.
 3. Configure npm trusted publishing for each published package, including
    `@yielded/auth`, `@yielded/auth-persistence`, `@yielded/auth-persistence-drizzle`,
-   `@yielded/auth-simplewebauthn`, `@yielded/auth-react-native`,
+   `@yielded/auth-simplewebauthn`, `@yielded/auth-react-native`, `@yielded/auth-electron`,
    `@yielded/auth-openid-client`, `@yielded/auth-crypto`,
    and `@yielded/drizzle-effect-v4-patch`, repository
    `yielded-dev/auth`, workflow `release.yml`. The first npm publication may

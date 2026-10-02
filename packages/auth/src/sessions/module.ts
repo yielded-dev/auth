@@ -165,6 +165,21 @@ export const makeSessionModule = <
     readonly capabilities: SessionCapabilities;
     /** @effect-expect-leaking AuthenticationAuthority -- fresh issuance alone needs identity authority; verification does not. */
     readonly prepareEstablish: (input: Issuance) => Prepared<Session, AuthenticationAuthority>;
+    /**
+     * Trusted browser-login completion, never a public caller's session assertion.
+     * The caller must persist an inspected source and confirm terminal consumption
+     * of its bound handoff before calling once outside any commit scope; unknown
+     * outcomes never authorize issuance.
+     * Preserve source assurance and proof revisions/times, using a fresh flow/binding.
+     * Initial expiry is capped by the source; after issuance the sessions renew and
+     * revoke independently, subject to their shared subject/credential authority.
+     * @effect-expect-leaking AuthenticationAuthority -- handoff issuance rechecks current authority.
+     */
+    readonly prepareHandoff: (input: {
+      readonly source: Inspection;
+      readonly flowId: AuthenticationFlowId;
+      readonly bindingDigest: TokenDigest;
+    }) => Prepared<Session, AuthenticationAuthority>;
     /** Trusted method-only authentication source. Never expose through a public RPC. */
     readonly inspectForStepUp: (
       credential: Redacted.Redacted<string>,
@@ -350,6 +365,91 @@ export const makeSessionModule = <
     return Object.freeze({ session, provenance, credentialVersion });
   });
 
+  const prepareHandoff = (
+    establish: (input: Issuance, source?: Session) => Prepared<Session, AuthenticationAuthority>,
+  ): Strategy["prepareHandoff"] =>
+    Effect.fn("Session.prepareHandoff")(function* (input) {
+      yield* checkNoAmbientCommit();
+
+      const detached = yield* snapshotInspection(input.source).pipe(
+        Effect.mapError(() => SessionInvalid.make({})),
+      );
+
+      const source = yield* inspectProvenance(
+        detached.session,
+        detached.provenance,
+        detached.credentialVersion,
+      );
+
+      const original = source.provenance.evidence;
+
+      if (input.flowId === original.flowId || input.bindingDigest === original.bindingDigest)
+        return yield* SessionInvalid.make({});
+
+      return yield* establish(
+        {
+          evidence: {
+            ...original,
+            flowId: input.flowId,
+            bindingDigest: input.bindingDigest,
+          },
+          claims: source.session.claims,
+        },
+        source.session,
+      );
+    });
+
+  const prepareIssuance = Effect.fn("Session.prepareIssuance")(function* (
+    input: Issuance,
+    policy: SessionPolicy,
+    source?: Session,
+  ) {
+    const evidence = yield* snapshotAuthenticationEvidence(input.evidence);
+    const authority = yield* AuthenticationAuthority;
+    const requirement = yield* authority.requirements(evidence);
+
+    const assessed = yield* assessAuthentication(evidence, requirement).pipe(
+      Effect.mapError(() => SessionInvalid.make({})),
+    );
+
+    if (!assessed.satisfied) return yield* SessionInvalid.make({});
+
+    // Current policy assesses the original proofs; it does not rewrite their
+    // historical assurance or advance authenticatedAt when an older proof ages out.
+    const assurance =
+      source === undefined ? assessed.assurance : AuthenticationAssurance.make(source.assurance);
+
+    const now = yield* DateTime.now;
+
+    const absoluteExpiresAt = DateTime.makeUnsafe(
+      Math.min(
+        DateTime.toEpochMillis(assurance.authenticatedAt) + policy.absoluteLifetimeMillis,
+        source === undefined ? Infinity : DateTime.toEpochMillis(source.absoluteExpiresAt),
+      ),
+    );
+
+    const session = {
+      subjectId: evidence.revision.subjectId,
+      securityRevision: evidence.revision.securityRevision,
+      assurance,
+      issuedAt: now,
+      expiresAt: DateTime.makeUnsafe(
+        Math.min(
+          DateTime.toEpochMillis(absoluteExpiresAt),
+          DateTime.toEpochMillis(now) + policy.idleLifetimeMillis,
+          // The existing commit-time expiry guard also checks source liveness.
+          source === undefined ? Infinity : DateTime.toEpochMillis(source.expiresAt),
+        ),
+      ),
+      absoluteExpiresAt,
+      claims: input.claims,
+    };
+
+    yield* validateSessionTimeline(session, policy);
+
+    return { evidence, session };
+  });
+
   const replacementSession = Effect.fn("Session.replacementSession")(function* (
     source: Session,
     evidence: AuthenticationEvidence,
@@ -392,10 +492,7 @@ export const makeSessionModule = <
         const secrets = yield* makeSessionSecrets(moduleId);
 
         const services = yield* Effect.context<
-          | Claims["EncodingServices"]
-          | Claims["DecodingServices"]
-          | LifecycleHooks
-          | Context.Service.Identifier<typeof import("effect").Crypto.Crypto>
+          Claims["EncodingServices"] | Claims["DecodingServices"] | LifecycleHooks | Crypto.Crypto
         >();
 
         const validate = (session: Session) =>
@@ -434,77 +531,60 @@ export const makeSessionModule = <
             inspect(credential).pipe(Effect.map((value) => value.session)),
         );
 
+        const prepareEstablish = Effect.fn("StatefulSession.prepareEstablish")(function* (
+          input: Issuance,
+          source?: Session,
+        ) {
+          const planned = yield* prepareIssuance(input, policy, source);
+          const credential = yield* secrets.generate();
+          const digest = yield* secrets.digest(credential, "bearer");
+
+          const base = {
+            ...planned.session,
+            digest,
+            provenance: yield* snapshotSessionAuthenticationProvenance({
+              evidence: planned.evidence,
+            }),
+            credentialVersion: SessionCredentialVersion.make(
+              Redacted.value(yield* secrets.generate()),
+            ),
+          };
+
+          yield* validateSessionTimeline(base, policy);
+          const event = yield* prepareHooks("sign-in", base).pipe(Effect.provide(services));
+
+          const creation = yield* prepareHooks("session-creation", base).pipe(
+            Effect.provide(services),
+          );
+
+          yield* validateSessionTimeline(base, policy);
+          const commitNow = yield* DateTime.now;
+
+          return yield* store.establish(
+            {
+              session: base,
+              evidence: planned.evidence,
+              ...(source === undefined ? {} : { handoffSourceSessionId: source.sessionId }),
+              pending: input.pending,
+              now: commitNow,
+            },
+            (record, journal) => {
+              journal.stage(event);
+              journal.stage(creation);
+
+              return journal.prepare(issue(record, credential));
+            },
+          );
+        });
+
         const strategy = SessionStrategy.of({
           policy,
           capabilities: statefulCapabilities,
           inspectForStepUp,
           inspect,
           verify,
-          prepareEstablish: Effect.fn("StatefulSession.prepareEstablish")(function* (
-            input: Issuance,
-          ) {
-            input = { ...input, evidence: yield* snapshotAuthenticationEvidence(input.evidence) };
-            const authority = yield* AuthenticationAuthority;
-            const requirement = yield* authority.requirements(input.evidence);
-
-            const assessed = yield* assessAuthentication(input.evidence, requirement).pipe(
-              Effect.mapError(() => SessionInvalid.make({})),
-            );
-
-            if (!assessed.satisfied) return yield* SessionInvalid.make({});
-            const now = yield* DateTime.now;
-
-            const absoluteExpiresAt = DateTime.add(assessed.assurance.authenticatedAt, {
-              milliseconds: policy.absoluteLifetimeMillis,
-            });
-
-            const expiresAt = DateTime.makeUnsafe(
-              Math.min(
-                DateTime.toEpochMillis(absoluteExpiresAt),
-                DateTime.toEpochMillis(now) + policy.idleLifetimeMillis,
-              ),
-            );
-
-            const credential = yield* secrets.generate();
-            const digest = yield* secrets.digest(credential, "bearer");
-
-            const base = {
-              subjectId: input.evidence.revision.subjectId,
-              securityRevision: input.evidence.revision.securityRevision,
-              assurance: assessed.assurance,
-              issuedAt: now,
-              expiresAt,
-              absoluteExpiresAt,
-              claims: input.claims,
-              digest,
-              provenance: yield* snapshotSessionAuthenticationProvenance({
-                evidence: input.evidence,
-              }),
-              credentialVersion: SessionCredentialVersion.make(
-                Redacted.value(yield* secrets.generate()),
-              ),
-            };
-
-            yield* validateSessionTimeline(base, policy);
-            const event = yield* prepareHooks("sign-in", base).pipe(Effect.provide(services));
-
-            const creation = yield* prepareHooks("session-creation", base).pipe(
-              Effect.provide(services),
-            );
-
-            yield* validateSessionTimeline(base, policy);
-            const commitNow = yield* DateTime.now;
-
-            return yield* store.establish(
-              { session: base, evidence: input.evidence, pending: input.pending, now: commitNow },
-              (record, journal) => {
-                journal.stage(event);
-                journal.stage(creation);
-
-                return journal.prepare(issue(record, credential));
-              },
-            );
-          }),
+          prepareEstablish: (input) => prepareEstablish(input),
+          prepareHandoff: prepareHandoff(prepareEstablish),
           prepareRenew: Effect.fn("StatefulSession.prepareRenew")(function* (
             credential: Redacted.Redacted<string>,
           ) {
@@ -687,10 +767,7 @@ export const makeSessionModule = <
         const secrets = yield* makeSessionSecrets(moduleId);
 
         const services = yield* Effect.context<
-          | Claims["EncodingServices"]
-          | Claims["DecodingServices"]
-          | LifecycleHooks
-          | Context.Service.Identifier<typeof import("effect").Crypto.Crypto>
+          Claims["EncodingServices"] | Claims["DecodingServices"] | LifecycleHooks | Crypto.Crypto
         >();
 
         const Envelope = Schema.Struct({
@@ -755,81 +832,63 @@ export const makeSessionModule = <
           inspect(credential).pipe(Effect.map((value) => value.session)),
         );
 
+        const prepareEstablish = Effect.fn("SignedSession.prepareEstablish")(function* (
+          input: Issuance,
+          source?: Session,
+        ) {
+          const planned = yield* prepareIssuance(input, policy, source);
+          const authority = yield* AuthenticationAuthority;
+
+          const session: Session = {
+            ...planned.session,
+            sessionId: SessionId.make(Redacted.value(yield* secrets.generate())),
+          };
+
+          if (session.sessionId === source?.sessionId) return yield* SessionInvalid.make({});
+          yield* validateSessionTimeline(session, policy);
+
+          const provenance = yield* snapshotSessionAuthenticationProvenance({
+            evidence: planned.evidence,
+          });
+
+          const credentialVersion = SessionCredentialVersion.make(
+            Redacted.value(yield* secrets.generate()),
+          );
+
+          const credential = yield* encode({ session, provenance, credentialVersion });
+          const event = yield* prepareHooks("sign-in", session).pipe(Effect.provide(services));
+
+          const creation = yield* prepareHooks("session-creation", session).pipe(
+            Effect.provide(services),
+          );
+
+          yield* validateSessionTimeline(session, policy);
+
+          return yield* authority.approve(
+            {
+              evidence: planned.evidence,
+              pending: input.pending,
+              now: yield* DateTime.now,
+              expiresAt: session.expiresAt,
+              absoluteExpiresAt: session.absoluteExpiresAt,
+            },
+            (_, journal) => {
+              journal.stage(event);
+              journal.stage(creation);
+
+              return journal.prepare(issue(session, credential));
+            },
+          );
+        });
+
         const strategy = SessionStrategy.of({
           policy,
           capabilities,
           inspectForStepUp,
           inspect,
           verify,
-          prepareEstablish: Effect.fn("SignedSession.prepareEstablish")(function* (
-            input: Issuance,
-          ) {
-            input = { ...input, evidence: yield* snapshotAuthenticationEvidence(input.evidence) };
-            const authority = yield* AuthenticationAuthority;
-            const requirement = yield* authority.requirements(input.evidence);
-
-            const assessed = yield* assessAuthentication(input.evidence, requirement).pipe(
-              Effect.mapError(() => SessionInvalid.make({})),
-            );
-
-            if (!assessed.satisfied) return yield* SessionInvalid.make({});
-            const now = yield* DateTime.now;
-
-            const absoluteExpiresAt = DateTime.add(assessed.assurance.authenticatedAt, {
-              milliseconds: policy.absoluteLifetimeMillis,
-            });
-
-            const session: Session = {
-              sessionId: SessionId.make(Redacted.value(yield* secrets.generate())),
-              subjectId: input.evidence.revision.subjectId,
-              securityRevision: input.evidence.revision.securityRevision,
-              assurance: assessed.assurance,
-              issuedAt: now,
-              expiresAt: DateTime.makeUnsafe(
-                Math.min(
-                  DateTime.toEpochMillis(absoluteExpiresAt),
-                  DateTime.toEpochMillis(now) + policy.idleLifetimeMillis,
-                ),
-              ),
-              absoluteExpiresAt,
-              claims: input.claims,
-            };
-
-            yield* validateSessionTimeline(session, policy);
-
-            const provenance = yield* snapshotSessionAuthenticationProvenance({
-              evidence: input.evidence,
-            });
-
-            const credentialVersion = SessionCredentialVersion.make(
-              Redacted.value(yield* secrets.generate()),
-            );
-
-            const credential = yield* encode({ session, provenance, credentialVersion });
-            const event = yield* prepareHooks("sign-in", session).pipe(Effect.provide(services));
-
-            const creation = yield* prepareHooks("session-creation", session).pipe(
-              Effect.provide(services),
-            );
-
-            yield* validateSessionTimeline(session, policy);
-
-            return yield* authority.approve(
-              {
-                evidence: input.evidence,
-                pending: input.pending,
-                now: yield* DateTime.now,
-                expiresAt: session.expiresAt,
-                absoluteExpiresAt: session.absoluteExpiresAt,
-              },
-              (_, journal) => {
-                journal.stage(event);
-                journal.stage(creation);
-
-                return journal.prepare(issue(session, credential));
-              },
-            );
-          }),
+          prepareEstablish: (input) => prepareEstablish(input),
+          prepareHandoff: prepareHandoff(prepareEstablish),
           prepareRenew: Effect.fn("SignedSession.prepareRenew")(function* (
             credential: Redacted.Redacted<string>,
           ) {

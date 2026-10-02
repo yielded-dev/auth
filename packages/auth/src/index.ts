@@ -28,3 +28,6 @@ export * as Strava from "./Strava.ts";
 export * as Totp from "./Totp.ts";
 export * as TotpContract from "./TotpContract.ts";
 export * as WebCrypto from "./WebCrypto.ts";
+
+export * as BrowserLogin from "./BrowserLogin.ts";
+export * as BrowserLoginContract from "./BrowserLoginContract.ts";

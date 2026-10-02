@@ -44,6 +44,11 @@ export interface StatefulSessionPersistence<Claims> {
     input: {
       readonly session: Omit<StatefulSessionRecord<Claims>, "sessionId" | "version">;
       readonly evidence: AuthenticationEvidence;
+      /** Trusted handoff: allocate a distinct session ID and preserve the supplied
+       * session.assurance exactly, including authenticatedAt. Still assess current
+       * requirements/freshness at commit. The initial expiry already caps source
+       * liveness; do not extend it or couple subsequent renewal/revocation. */
+      readonly handoffSourceSessionId?: SessionId;
       readonly pending?: PendingConsumption;
       readonly now: DateTime.Utc;
     },

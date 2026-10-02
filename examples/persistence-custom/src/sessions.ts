@@ -126,6 +126,9 @@ export const SessionsLive = Layer.effectContext(
                 version: Sessions.SecurityRevision.make(nextId(state, "session-version")),
               };
 
+              if (row.sessionId === input.handoffSourceSessionId)
+                return yield* Sessions.SessionConflict.make({});
+
               const receipt = prepare(row, journal);
 
               journal.beforeCommit(

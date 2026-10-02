@@ -1128,6 +1128,8 @@ export const makeD1StatefulSessions = <Claims>(
 
           const sessionId = yield* mapping.sessionId.toSession(nativeSessionId);
 
+          if (sessionId === input.handoffSourceSessionId) return yield* SessionConflict.make({});
+
           const version = yield* allocate(
             mapping.session.allocateVersion,
             mapping.session.allocateVersionSync,
@@ -1139,7 +1141,10 @@ export const makeD1StatefulSessions = <Claims>(
             version,
             subjectId: input.evidence.revision.subjectId,
             securityRevision: input.evidence.revision.securityRevision,
-            assurance: assessed.assurance,
+            assurance:
+              input.handoffSourceSessionId === undefined
+                ? assessed.assurance
+                : input.session.assurance,
             provenance: yield* snapshotSessionAuthenticationProvenance({
               evidence: input.evidence,
             }),
@@ -1149,7 +1154,7 @@ export const makeD1StatefulSessions = <Claims>(
             issuedAt: DateTime.makeUnsafe(DateTime.toEpochMillis(input.session.issuedAt)),
           };
 
-          let condition = and(
+          const commitCondition = and(
             authorityCondition(mapping, nativeSubjectId, input.evidence),
             freshnessCondition(mapping, input.evidence, policy, true),
             sql`${DateTime.toEpochMillis(record.issuedAt)} <= ${mapping.d1.engineNowMillis}`,
@@ -1157,6 +1162,7 @@ export const makeD1StatefulSessions = <Claims>(
             sql`${DateTime.toEpochMillis(record.expiresAt)} <= ${DateTime.toEpochMillis(record.absoluteExpiresAt)}`,
           )!;
 
+          let condition = commitCondition;
           const statements: Statement<any>[] = [];
 
           if (input.pending === undefined) {
@@ -1219,6 +1225,9 @@ export const makeD1StatefulSessions = <Claims>(
                 }),
               ),
             ),
+            // Recheck after insertion as well as admission; the capped source
+            // expiry and proof freshness must still hold at the final batch step.
+            yield* assertion(commitCondition),
           );
           const receipt = prepare(record, journal);
 

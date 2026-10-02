@@ -1039,6 +1039,8 @@ export const makeSessionKernel = (operations: QueryOperations) => {
 
             const sessionId = yield* mapping.sessionId.toSession(nativeSessionId);
 
+            if (sessionId === input.handoffSourceSessionId) return yield* SessionConflict.make({});
+
             const version = yield* allocate(
               options.mode,
               mapping.session.allocateVersion,
@@ -1064,7 +1066,10 @@ export const makeSessionKernel = (operations: QueryOperations) => {
               version,
               subjectId: input.evidence.revision.subjectId,
               securityRevision: input.evidence.revision.securityRevision,
-              assurance: assessed.assurance,
+              assurance:
+                input.handoffSourceSessionId === undefined
+                  ? assessed.assurance
+                  : input.session.assurance,
               provenance: yield* snapshotSessionAuthenticationProvenance({
                 evidence: input.evidence,
               }),
@@ -1087,6 +1092,17 @@ export const makeSessionKernel = (operations: QueryOperations) => {
                 sessionId: nativeSessionId,
               }),
             );
+
+            // Writes can suspend after prepare. Recheck the capped lifetime and
+            // original proof freshness while the authority rows remain locked.
+            const commitNow = yield* freshNow;
+
+            if (
+              DateTime.toEpochMillis(commitNow) < DateTime.toEpochMillis(record.issuedAt) ||
+              DateTime.toEpochMillis(commitNow) >= DateTime.toEpochMillis(record.expiresAt) ||
+              !(yield* assessAuthentication(input.evidence, requirement)).satisfied
+            )
+              return yield* stale();
 
             return receipt;
           }).pipe(normalizeMutation(mapping)),

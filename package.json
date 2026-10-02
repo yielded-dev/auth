@@ -107,7 +107,11 @@
     "starlight-links-validator": "0.26.0",
     "@yielded/starlight-theme": "0.2.1",
     "react-native": "0.81.4",
-    "react-native-passkey": "3.6.2"
+    "react-native-passkey": "3.6.2",
+    "react-native-inappbrowser-reborn": "3.7.1",
+    "react-native-keychain": "10.0.0",
+    "electron": "44.5.1",
+    "@electron/packager": "20.3.0"
   },
   "patchedDependencies": {
     "drizzle-orm@1.0.0-rc.4": "packages/drizzle-effect-v4-patch/patches/drizzle-orm@1.0.0-rc.4.patch"

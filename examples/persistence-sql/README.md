@@ -14,6 +14,19 @@ database and keys under `.data/`; accounts from the Drizzle examples are separat
 Set the Cloudflare credentials in [.env.example](.env.example) to deliver email
 from `hello@effect-agent.com`.
 
+The same app hosts the native browser-login examples at `/login`. It confirms the
+signed-in account before returning a single-use code to Electron or iOS. Native
+credentials use the separate `/auth/native` transport; the browser keeps its own
+session. See [browser-login.ts](src/browser-login.ts) for registered clients and
+native admission. Run [the Electron example](../browser-login-electron) beside it.
+
+For a physical iPhone, serve this app through a reachable HTTPS reverse proxy and
+set `AUTH_ORIGIN` to that exact origin. `AUTH_PORT` defaults to `4183`; the server
+binds loopback for the proxy. The origin configures cookies, CSRF and passkey RP
+identity together. Existing localhost passkeys cannot authenticate for a different
+RP; register credentials separately for that host. Never log native credential
+headers or callback URLs at the proxy.
+
 `vp -C examples/persistence-sql run start:pg` starts the same app with persistent
 PostgreSQL through `@effect/sql-pglite`. Choose one server at a time. [data.ts](src/data.ts)
 selects the client Layer; a deployed app can supply `@effect/sql-pg` or another

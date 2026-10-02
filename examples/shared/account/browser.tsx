@@ -9,7 +9,7 @@ import {
 } from "@yielded/auth-simplewebauthn/Browser";
 import { Cause, Schema } from "effect";
 import type { AsyncResult } from "effect/reactivity";
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 
 import { FlowExpired, type AccountClient } from "./client";
@@ -22,6 +22,7 @@ interface AccountAppOptions {
   readonly minimumPasswordLength: number;
   readonly username?: boolean;
   readonly emailDeliveryHint?: string;
+  readonly banner?: ReactNode;
 }
 
 export const mountAccountApp = (client: AccountClient, options: AccountAppOptions) => {
@@ -506,6 +507,7 @@ export const mountAccountApp = (client: AccountClient, options: AccountAppOption
             EXAMPLE {options.number}
           </span>
         </header>
+        {options.banner}
         <section className="intro">
           <p className="eyebrow">YOUR SPACE</p>
           <h1>

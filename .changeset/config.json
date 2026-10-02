@@ -11,6 +11,7 @@
     [
       "@yielded/auth",
       "@yielded/auth-crypto",
+      "@yielded/auth-electron",
       "@yielded/auth-openid-client",
       "@yielded/auth-persistence",
       "@yielded/auth-persistence-drizzle",

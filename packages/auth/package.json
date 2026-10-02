@@ -60,7 +60,9 @@
     "./AuthContract": "./src/AuthContract.ts",
     "./Client": "./src/Client.ts",
     "./Persistence": "./src/Persistence.ts",
-    "./EmailDelivery": "./src/EmailDelivery.ts"
+    "./EmailDelivery": "./src/EmailDelivery.ts",
+    "./BrowserLogin": "./src/BrowserLogin.ts",
+    "./BrowserLoginContract": "./src/BrowserLoginContract.ts"
   },
   "publishConfig": {
     "access": "public"

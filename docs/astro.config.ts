@@ -27,6 +27,7 @@ export default defineConfig({
             { label: "Database & backend choices", slug: "guide/storage" },
             { label: "HTTP integration", slug: "guide/http-and-client" },
             { label: "Effect Atom client", slug: "guide/client" },
+            { label: "Native browser sign-in", slug: "guide/browser-login" },
             { label: "Sessions & protected routes", slug: "guide/sessions" },
             { label: "How sign-in works", slug: "guide/authentication" },
           ],

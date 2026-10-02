@@ -1,3 +1,4 @@
+import { BrowserLoginPersistence } from "@yielded/auth-persistence";
 import { Effect, Layer } from "effect";
 import { Migrator, SqlClient } from "effect/sql";
 
@@ -356,6 +357,9 @@ export const MigrationsLive = Layer.effectDiscard(
       "0001_customers_and_auth": initial,
       "0002_registration_and_email": account,
       "0003_passkeys": passkey,
+      "0004_browser_login": Effect.flatMap(SqlClient.SqlClient, (sql) =>
+        sql.unsafe(BrowserLoginPersistence.migration),
+      ),
     }),
   }),
 );

@@ -1,0 +1,169 @@
+---
+title: Browser sign-in for native apps
+description: Open hosted authentication from Electron or iOS and establish a separate native session.
+---
+
+import { FlowMap } from "@yielded/starlight-theme/components";
+
+`BrowserLogin` lets a native app use your existing hosted sign-in page. The
+browser completes your configured authentication policy and confirms the account;
+the native host exchanges a short-lived code for its own session. Browser cookies
+stay in the browser. Existing direct native authentication remains available.
+
+<FlowMap
+  title="Browser to native session"
+  description="The native host retains its PKCE verifier. Hosted authentication confirms the account and returns a bounded code. Only the initiating host can exchange it; its platform vault receives the new session credential."
+  columns={3}
+  nodes={[
+    {
+      id: "host",
+      at: [1, 1],
+      owner: "app",
+      title: "Native host",
+      note: "Verifier and secure vault",
+    },
+    {
+      id: "browser",
+      at: [1, 2],
+      owner: "app",
+      title: "System browser",
+      note: "Sign in and confirm account",
+    },
+    {
+      id: "server",
+      at: [1, 3],
+      owner: "library",
+      title: "BrowserLogin",
+      note: "Durable single-use exchange",
+    },
+  ]}
+  edges={[
+    { from: "host", to: "browser", label: "Open hosted login" },
+    { from: "browser", to: "server", label: "Authorize" },
+    { from: "server", to: "host", label: "Code, then PKCE exchange" },
+  ]}
+/>
+
+## Server and hosted page
+
+Build the shared `BrowserLoginContract.make(namespace, Session, { basePath })`
+from your session contract. On the server, bind the same namespace and path with
+`BrowserLogin.make(AppAuth.sessions, { basePath })`.
+
+```ts
+import { BrowserLogin } from "@yielded/auth";
+
+const login = BrowserLogin.make(AppAuth.sessions, { basePath: "/auth/browser-login" });
+const LoginLive = login.layer({
+  clients: [
+    {
+      clientId: "desktop",
+      returnUrl: "com.example.desktop://auth/callback",
+      browserSession: "confirm",
+    },
+  ],
+});
+```
+
+Supply the existing session strategy, authentication authority, and
+`BrowserLogin.Persistence`. The SQL companion's `BrowserLoginPersistence.layer`
+supports SQLite, D1, and PostgreSQL; apply its `migration` through your migrations.
+Use an exact registered HTTPS or reverse-domain custom-scheme return URL, without
+query parameters or fragments. Attempts expire after two minutes by default;
+`lifetimeMillis` accepts one second through five minutes.
+
+Mount **`login.http`** with the existing `OperationHttpServer` configuration and
+invocation Layers. This wrapper restricts authorization to the browser and
+initiation, exchange, status, and cancellation to admitted native requests. Native
+admission must reject cookies, browser-origin requests and unsupported clients;
+application ingress limits still apply. A public client marker is not a secret.
+
+The hosted page receives an `attempt` query parameter. Complete your usual login
+and MFA, display the account and app, then dispatch `routes.authorize` with
+`{ attemptId, decision: "continue" }`. Its credential comes from the private
+browser cookie. Navigate to the returned redacted `callbackUrl` only after that
+explicit confirmation. Keep the page and redirect non-cacheable, with
+`Referrer-Policy: no-referrer`, and exclude callback URLs from analytics.
+
+`confirm` permits an existing browser session after confirmation.
+`reauthenticate` additionally requires authentication at or after attempt creation.
+An uncompleted MFA flow cannot authorize either policy. The server retains private
+authentication provenance and checks current subject/factor authority again when
+issuing the native session; public account metadata supplies no authority.
+Approval captures a short-lived grant: signing out that browser session afterward
+does not withdraw it. Cancelling the attempt does. Exchange rechecks the current
+client registration and reauthentication policy.
+
+## Native host
+
+Provide `BrowserLogin.Browser`, `BrowserLogin.Vault`, `Crypto.Crypto`, and one
+`OperationHttpClient.Client`. Configure the transport with the **same vault** as
+its native credential store, cookie omission, redirect rejection, and no mutation
+retries. Supply cryptography from the native platform; React Native does not imply
+browser WebCrypto support.
+
+`BrowserLogin.makeClient(contract, { clientId, returnUrl, hostedUrl, ephemeral })`
+returns Effects for `signIn`, `resume`, `cancel`, and `status`, plus `finish(url)`
+for host-delivered callbacks. Compose these in your Effect/Atom workflows.
+React and Electron renderers receive public session state only. Use existing session
+operations for protected API calls, restoration, and sign-out.
+
+| Platform | Adapter                                   | Ownership                                                                                                          |
+| -------- | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| Electron | `@yielded/auth-electron/BrowserLogin`     | Main-process browser launch, protocol events and platform-encrypted storage.                                       |
+| iOS      | `@yielded/auth-react-native/BrowserLogin` | `ASWebAuthenticationSession` through `react-native-inappbrowser-reborn`; Keychain through `react-native-keychain`. |
+
+The [Electron example](https://github.com/yielded-dev/auth/tree/main/examples/browser-login-electron)
+and [SQL hosted account app](https://github.com/yielded-dev/auth/tree/main/examples/persistence-sql)
+show full composition and account replacement. The
+[iOS adapter setup](https://github.com/yielded-dev/auth/tree/main/packages/auth-react-native#browser-login)
+covers native peers and callback registration. iOS requires a native development
+build; a JavaScript-only preview cannot exercise the bridge.
+
+On Electron, the main process owns a single-instance lock and scoped callback
+listeners. Packaged protocol registration differs by operating system. If launch
+or registration fails, show a recoverable error and retain the attempt; never
+fall back to an embedded login window or plaintext credential storage. Validate
+both IPC sender and payload, and expose no credential-reading IPC method.
+
+On iOS, normal sessions may share browser sign-in state. `ephemeral: true` requests
+an isolated browser session; it does not sign out or erase Keychain data. This
+bridge supports custom-scheme callbacks, not HTTPS universal-link callbacks.
+Interruption dismisses the prompt; late results are discarded. Keychain access
+uses device-only, unlocked storage and can survive uninstalling the app.
+
+## Lifetimes and recovery
+
+The native session has a distinct identity and credential, with unchanged original
+assurance, proof timestamps, and authentication time. Its initial expiry cannot
+exceed the source session's expiry; its absolute lifetime cannot exceed the source
+absolute expiry or current session policy. Renewal follows the configured strategy.
+Signing out in one client leaves the other session intact. Subject-wide revocation
+and account disablement retain the guarantees of your configured session mode.
+
+Before account replacement, sign out the old native session. A successful exchange
+clears previous pending credentials and advances the transport's response generation;
+your Atom workflow must also publish the new subject and invalidate its queries.
+
+Cancellation closes the platform prompt when its Effect is interrupted. Then call
+`cancel` to retire a waiting attempt. Expired attempts cannot authorize or exchange.
+After restart, `resume` can reopen a waiting hosted flow, or `finish` can consume a
+validated cold-start callback. The app can always restore a securely saved session
+through its protected session endpoint.
+
+**An uncertain exchange is never retried.** The host durably records `Exchanging`
+before sending it; the server durably consumes the attempt before issuing a session.
+`status` reports `Exchanging` or `Complete`, with the issued session ID when known.
+Restore and verify the saved credential, or revoke the possible session through
+session management. If issuance has no known receipt, subject-wide revocation or
+the session's bounded expiry resolves the possible orphan according to session
+capabilities. Only after that deliberate reconciliation should the host call
+`acknowledge` and start another attempt. A timeout, duplicate callback, or lost
+credential-store response is not permission to issue again.
+
+SQL storage rejects ambient transactions for these standalone commits. It can
+delete expired attempt records, but an exchange may have committed without a
+deliverable credential; cleanup does not revoke that session. This conservative
+policy trades recovery convenience for preventing repeated issuance. Validate the
+full browser return, platform storage and relaunch behavior in a packaged Electron
+app and on a signed physical iOS device before claiming platform acceptance.

@@ -3,7 +3,7 @@ import { layer as layerSimpleWebAuthnPasskeyProtocol } from "@yielded/auth-simpl
 import { Crypto, Effect, Layer, Option, Schema } from "effect";
 import { SqlClient } from "effect/sql";
 
-import { AppAuth } from "../../shared/account/auth";
+import { AppAuth, sessionConfiguration } from "../../shared/account/auth";
 import { Claims, minimumPasswordLength } from "../../shared/account/contract";
 import { HashingLive } from "../../shared/account/hashing";
 import { MigrationsLive } from "./migrations";
@@ -146,6 +146,10 @@ const ServicesLive = Layer.mergeAll(ClaimsLive, PasskeyClaimsLive, ActionPolicie
   Layer.provideMerge(SessionClaimsLive),
 );
 
+export const NativeSessionLive = AppAuth.sessions
+  .layer(sessionConfiguration.policy(AppAuth.sessions.moduleId))
+  .pipe(Layer.provideMerge(ServicesLive), Layer.provideMerge(DatabaseReady));
+
 // The host supplies SQL, delivery, proof keys, and compromised-password screening.
 export const AuthLive = AppAuth.layer.pipe(
   Layer.provide(
@@ -158,12 +162,4 @@ export const AuthLive = AppAuth.layer.pipe(
   Layer.provide(ServicesLive),
   Layer.provideMerge(DatabaseReady),
   Layer.provideMerge(HashingLive),
-  Layer.provide(
-    Passkey.PasskeyConfig.layer({
-      id: "localhost",
-      name: "Yielded Auth · Example 03",
-      origins: ["http://localhost:4183"],
-      developmentLocalhost: true,
-    }),
-  ),
 );
