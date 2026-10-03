@@ -263,7 +263,10 @@ const configure = Effect.fn("Strava.configure")(function* (
         identity: { provider: key, issuer, subject: String(athlete.id) },
         profile: {
           displayName: [athlete.firstname, athlete.lastname].filter(Boolean).join(" "),
-          ...(athlete.profile === undefined ? {} : { avatarUrl: athlete.profile }),
+          // Strava uses this relative placeholder when the athlete has no photo.
+          ...(athlete.profile === undefined || athlete.profile === "avatar/athlete/large.png"
+            ? {}
+            : { avatarUrl: athlete.profile }),
           providerData: { ...athlete },
         },
         scopes: granted,

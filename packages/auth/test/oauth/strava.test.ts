@@ -187,6 +187,7 @@ it.effect("cancels an oversized athlete response during refresh", () =>
 );
 
 it.effect.each([
+  { name: "active-content avatar", athlete: { id: 1, profile: "javascript:alert(1)" } },
   {
     name: "oversized normalized name",
     athlete: { id: 1, firstname: "a".repeat(256), lastname: "b" },
@@ -208,5 +209,24 @@ it.effect("preserves ordinary HTTPS profile metadata", () =>
 
     expect(result.profile?.avatarUrl).toBe("https://images.example.com/ada");
     expect(result.identity.subject).toBe("1");
+  }),
+);
+
+it.effect("accepts an athlete without a profile photo", () =>
+  Effect.gen(function* () {
+    const result = yield* exchange.pipe(
+      Effect.provide(
+        live(() =>
+          Response.json({
+            ...token,
+            athlete: { ...token.athlete, profile: "avatar/athlete/large.png" },
+          }),
+        ),
+      ),
+    );
+
+    expect(result.identity.subject).toBe("1");
+    expect(result.profile?.avatarUrl).toBeUndefined();
+    expect(result.profile?.providerData?.profile).toBe("avatar/athlete/large.png");
   }),
 );

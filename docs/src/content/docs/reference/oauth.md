@@ -296,8 +296,8 @@ stored issuers: they are part of identity keys and encrypted context.
 
 Verified identity is the provider/issuer/subject tuple. `profile` is optional
 metadata: display fields plus bounded `providerData`. It does not authorize account
-linking or local roles. Expose only needed fields in claims; treat profile URLs as
-untrusted input.
+linking or local roles. Normalized profile display URLs accept only HTTP(S).
+Expose only needed fields in claims; still treat profile URLs as untrusted input.
 
 | Consumer                      | Profile access                                               |
 | ----------------------------- | ------------------------------------------------------------ |
