@@ -161,7 +161,7 @@ const beginRoute = OperationHttpContract.route(connected.operations.Begin, {
   path: "/auth/provider/begin",
   credentials: {
     preparationCredential: "connected-intent",
-    actionProof: "pending",
+    actionProof: "pending-proof",
   },
 });
 ```
