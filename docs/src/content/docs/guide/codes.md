@@ -194,9 +194,34 @@ including exact retries and unknown addresses. HTTP derives the caller from the
 socket peer automatically. See [HTTP admission](./http-and-client#proof-request-admission)
 for configuration and overrides.
 
-For new accounts use `Email.makeRegistration`; for verified-address management
-use `Email.makeAddresses`. Verification alone does not sign in or link an account.
-See [email persistence](../reference/adapters#email) for those transaction boundaries.
+## Register a mailbox owner
+
+Compose `Email.makeRegistration({ namespace, registration: Registration })` with
+`Email.makeCode({ namespace })` using the same namespace. A guest calls
+`beginRegistration` → `register` → `verifyRegistration` → `completeRegistration`.
+The [shared login contract](https://github.com/yielded-dev/auth/blob/main/examples/auth/src/login-contract.ts)
+exposes these existing operations with private request-binding and continuation
+cookies; the [server composition](https://github.com/yielded-dev/auth/blob/main/examples/auth/src/login-server.ts)
+supplies both strategies.
+
+Provide the registration strategy's `RegistrationAuthority` with
+`makeEmailRegistrationServices` from your Drizzle adapter, and provide
+`ProofPersistence` through `makeProofPersistenceServices` with the same proof mapping
+for issuance and completion. In atomic mode, completed
+mailbox proof can replace another subject's active, unverified email reservation
+when the application's inspection and proof policies allow it. The new account
+receives the verified address. The earlier account keeps its data and credentials,
+and its security revision advances. Verified ownership is never replaced.
+
+Registration does not issue a session. Start a fresh email sign-in afterward;
+an authenticated user can then call `addPassword` when password management is
+enabled. `AuthPersistence.layer` does not install guest email-registration services
+automatically. Pending-mode registration leaves provisioning and ownership changes
+to the application. See [email persistence](../reference/adapters#email) for mapping
+and session invalidation requirements.
+
+Use `Email.makeAddresses` for authenticated address management. Confirming an
+address there does not create or link an account.
 
 See the [combined login example](./oauth#other-providers)
 to share Auth, sessions, and client methods with GitHub.

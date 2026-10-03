@@ -51,6 +51,13 @@ const result = yield* auth.register({
 Generate `requestId` once per submission and retain it for an exact retry.
 `RegistrationAccepted` does not reveal whether the account already existed.
 
+Password registration does not prove ownership of the email address. Offer
+[mailbox registration](./codes#register-a-mailbox-owner) with `Email.makeRegistration`
+so the mailbox owner can complete signup when someone else reserved the address
+without verifying it. This provisions a fresh account; it does not reset or inherit
+the earlier account. Password-only compositions must add that registration endpoint
+and its services explicitly.
+
 ## Handle a rejected sign-in
 
 With `Effect` imported from `effect`, handle only the expected rejection:

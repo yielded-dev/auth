@@ -50,7 +50,7 @@ import {
   type EmailRegistrationMapping,
   type EmailSignInMapping,
 } from "./email-model";
-import type { EmailRegistrationAuthority } from "./email-registration";
+import { type EmailRegistrationAuthority, readEmailRegistrationTarget } from "./email-registration";
 import {
   CurrentEmailSql,
   currentAddress,
@@ -969,6 +969,7 @@ const registrationPlan = Effect.fn("Drizzle.registrationPlan")(function* <Regist
   allocated: {
     readonly credentialId?: string;
     readonly securityRevision?: SecurityRevision;
+    readonly displacedSecurityRevision?: SecurityRevision;
     readonly identifierRevision?: SecurityRevision;
     readonly credentialRevision?: SecurityRevision;
     readonly nativeSubjectId?: unknown;
@@ -1002,6 +1003,21 @@ const registrationPlan = Effect.fn("Drizzle.registrationPlan")(function* <Regist
         mapping.authorityCredential.d1ActiveStatusValue === undefined))
   )
     return { receipt: prepare({ _tag: "Rejected" }, journal), statements: [] };
+
+  const target =
+    mapping.mode === "atomic"
+      ? yield* readEmailRegistrationTarget(mapping, input.identifier, false)
+      : undefined;
+
+  if (target?._tag === "Rejected")
+    return { receipt: prepare({ _tag: "Rejected" }, journal), statements: [] };
+  if (
+    target?._tag === "Reserved" &&
+    (allocated.displacedSecurityRevision === undefined ||
+      allocated.displacedSecurityRevision === target.securityRevision ||
+      allocated.identifierRevision === target.bindingRevision)
+  )
+    return yield* unavailable();
 
   const intent = {
     moduleId: input.moduleId,
@@ -1065,6 +1081,30 @@ const registrationPlan = Effect.fn("Drizzle.registrationPlan")(function* <Regist
     const nativeSubjectId = allocated.nativeSubjectId;
 
     desired = { _tag: "Registered" };
+    const i = mapping.identifier;
+    const s = mapping.subject;
+    const marker = `effect-auth-proof-guard:protected:${input.completion.input.continuationId}`;
+
+    if (target?._tag === "Reserved") {
+      // The planning reads hold no locks. Guard both ownership and the displaced
+      // subject revision before any provisioning or invalidation can commit.
+      statements.push(
+        yield* assertion(
+          and(
+            existsSql(sql`select 1 from ${i.table} where
+          ${column(i.table, i.namespace)}=${sql.param(input.identifier.namespace, column(i.table, i.namespace))}
+          and ${column(i.table, i.value)}=${sql.param(input.identifier.value, column(i.table, i.value))}
+          and ${column(i.table, i.subjectId)}=${sql.param(target.nativeSubjectId, column(i.table, i.subjectId))}
+          and ${column(i.table, i.bindingRevision)}=${sql.param(target.bindingRevision, column(i.table, i.bindingRevision))}
+          and ${column(i.table, i.verifiedAt)} is null`),
+            existsSql(sql`select 1 from ${s.table} where
+          ${column(s.table, s.id)}=${sql.param(target.nativeSubjectId, column(s.table, s.id))}
+          and ${column(s.table, s.securityRevision)}=${sql.param(target.securityRevision, column(s.table, s.securityRevision))}`),
+          )!,
+          marker,
+        ),
+      );
+    }
     statements.push(
       yield* statement(
         database.insert(mapping.subject.table).values(
@@ -1074,19 +1114,55 @@ const registrationPlan = Effect.fn("Drizzle.registrationPlan")(function* <Regist
           }),
         ),
       ),
-      yield* statement(
-        database.insert(mapping.identifier.table).values(
-          driverValues(
-            mapping.identifier.encodeVerifiedInsert({
-              identifier: input.identifier,
-              subjectId: nativeSubjectId,
-              verifiedAtMillis: transitionMillis,
-              bindingRevision: allocated.identifierRevision,
-            }),
-            [[mapping.identifier.verifiedAt, mapping.encodeInstant(transitionMillis)]],
-          ),
-        ),
-      ),
+      ...(target?._tag === "Reserved"
+        ? [
+            yield* statement(
+              database
+                .update(i.table)
+                .set(
+                  updateValues([
+                    [i.subjectId, nativeSubjectId],
+                    [i.verifiedAt, mapping.encodeInstant(transitionMillis)],
+                    [i.bindingRevision, allocated.identifierRevision],
+                  ]),
+                )
+                .where(
+                  and(
+                    eq(column(i.table, i.namespace), input.identifier.namespace),
+                    eq(column(i.table, i.value), input.identifier.value),
+                    eq(column(i.table, i.subjectId), target.nativeSubjectId),
+                    eq(column(i.table, i.bindingRevision), target.bindingRevision),
+                    sql`${column(i.table, i.verifiedAt)} is null`,
+                  ),
+                ),
+            ),
+            yield* statement(
+              database
+                .update(s.table)
+                .set(updateValues([[s.securityRevision, allocated.displacedSecurityRevision]]))
+                .where(
+                  and(
+                    eq(column(s.table, s.id), target.nativeSubjectId),
+                    eq(column(s.table, s.securityRevision), target.securityRevision),
+                  ),
+                ),
+            ),
+          ]
+        : [
+            yield* statement(
+              database.insert(i.table).values(
+                driverValues(
+                  i.encodeVerifiedInsert({
+                    identifier: input.identifier,
+                    subjectId: nativeSubjectId,
+                    verifiedAtMillis: transitionMillis,
+                    bindingRevision: allocated.identifierRevision,
+                  }),
+                  [[i.verifiedAt, mapping.encodeInstant(transitionMillis)]],
+                ),
+              ),
+            ),
+          ]),
       yield* statement(
         database.insert(mapping.credential.table).values(
           mapping.credential.encodeVerifiedInsert({
@@ -1148,6 +1224,11 @@ const registrationPlan = Effect.fn("Drizzle.registrationPlan")(function* <Regist
     );
 
     applied = and(
+      target?._tag === "Reserved"
+        ? existsSql(sql`select 1 from ${s.table} where
+            ${sId}=${sql.param(target.nativeSubjectId, sId)}
+            and ${sRevision}=${sql.param(allocated.displacedSecurityRevision, sRevision)}`)
+        : sql`true`,
       existsSql(
         sql`select 1 from ${mapping.subject.table} where ${sId}=${sql.param(nativeSubjectId, sId)} and ${sStatus}=${sql.param(mapping.subject.d1ActiveStatusValue, sStatus)} and ${sRevision}=${sql.param(allocated.securityRevision, sRevision)}`,
       ),
@@ -1227,6 +1308,10 @@ const makeRegistrationPlans = <Registration>(
         ? yield* allocate(mapping.allocateRevision, mapping.allocateRevisionSync)
         : undefined;
 
+      const displacedSecurityRevision = atomic
+        ? yield* allocate(mapping.allocateRevision, mapping.allocateRevisionSync)
+        : undefined;
+
       const identifierRevision = atomic
         ? yield* allocate(mapping.allocateRevision, mapping.allocateRevisionSync)
         : undefined;
@@ -1256,6 +1341,7 @@ const makeRegistrationPlans = <Registration>(
         {
           ...(credentialId === undefined ? {} : { credentialId }),
           ...(securityRevision === undefined ? {} : { securityRevision }),
+          ...(displacedSecurityRevision === undefined ? {} : { displacedSecurityRevision }),
           ...(identifierRevision === undefined ? {} : { identifierRevision }),
           ...(credentialRevision === undefined ? {} : { credentialRevision }),
           ...(nativeSubjectId === undefined ? {} : { nativeSubjectId }),

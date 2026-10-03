@@ -17,7 +17,7 @@ import type { LoginIdentifier } from "@yielded/auth/Identity";
 import { reportPersistenceFailure } from "@yielded/auth/Persistence";
 import { type ProofCompletionPlan, ProofUnavailable } from "@yielded/auth/Proofs";
 import type { TokenDigest } from "@yielded/auth/Schema";
-import type { SecurityRevision } from "@yielded/auth/Sessions";
+import { SecurityRevision } from "@yielded/auth/Sessions";
 /* oxlint-disable no-explicit-any -- registration plans bridge consumer-owned Drizzle rows. */
 import { and, eq, isNull } from "drizzle-orm";
 import { Cause, DateTime, Effect, Schema } from "effect";
@@ -27,7 +27,7 @@ import {
   requiredEmailRegistrationConstraints,
 } from "./email-model";
 import { CurrentEmailSql, type EmailSqlDatabase, type EmailSqlQuery } from "./email-sql";
-import { column, isMappedConstraintConflict, PersistenceMappingError } from "./model";
+import { column, isMappedConstraintConflict, PersistenceMappingError, updateValues } from "./model";
 import {
   CurrentProofSql,
   completeProofPlanIn,
@@ -148,6 +148,69 @@ const registrationRows = Effect.fn("Drizzle.registrationRows")(function* <Regist
   );
 });
 
+/** Discover before locking, then lock subject before identifier like the other
+ * identity owners. A changed discovery is rejected rather than locking a second
+ * subject in the opposite order. Proof authority separately enforces the host's
+ * active/unverified eligibility policy in the same physical owner. */
+export const readEmailRegistrationTarget = Effect.fnUntraced(function* <Registration>(
+  mapping: Extract<Mapping<Registration>, { readonly mode: "atomic" }>,
+  identifier: LoginIdentifier,
+  locking: boolean,
+) {
+  const database = yield* CurrentEmailSql;
+  const i = mapping.identifier;
+  const s = mapping.subject;
+
+  const lookup = () =>
+    database
+      .select()
+      .from(i.table)
+      .where(
+        and(
+          eq(column(i.table, i.namespace), identifier.namespace),
+          eq(column(i.table, i.value), identifier.value),
+        ),
+      )
+      .limit(1);
+
+  const discovered = (yield* lookup())[0];
+
+  if (discovered === undefined) return { _tag: "Absent" } as const;
+  if (discovered[i.verifiedAt] !== null) return { _tag: "Rejected" } as const;
+  const nativeSubjectId = discovered[i.subjectId];
+
+  const subject = (yield* selectRows(
+    database
+      .select()
+      .from(s.table)
+      .where(eq(column(s.table, s.id), nativeSubjectId))
+      .limit(1),
+    locking,
+  ))[0];
+
+  const current = (yield* selectRows(lookup(), locking))[0];
+
+  if (
+    subject === undefined ||
+    current === undefined ||
+    current[i.verifiedAt] !== null ||
+    !mapping.subjectId.equals(current[i.subjectId], nativeSubjectId) ||
+    current[i.bindingRevision] !== discovered[i.bindingRevision]
+  )
+    return { _tag: "Rejected" } as const;
+
+  return {
+    _tag: "Reserved" as const,
+    nativeSubjectId,
+    bindingRevision: yield* Schema.decodeUnknownEffect(SecurityRevision)(
+      current[i.bindingRevision],
+    ),
+    securityRevision: yield* Schema.decodeUnknownEffect(SecurityRevision)(
+      subject[s.securityRevision],
+    ),
+  };
+});
+
 const owned = <A, E, R>(
   database: EmailSqlDatabase,
   configuration: EmailRegistrationConfiguration,
@@ -225,6 +288,7 @@ const registerIn = Effect.fn("DrizzleEmailRegistration.registerIn")(function* <R
   allocated: {
     readonly credentialId?: string;
     readonly securityRevision?: SecurityRevision;
+    readonly displacedSecurityRevision?: SecurityRevision;
     readonly identifierRevision?: SecurityRevision;
     readonly credentialRevision?: SecurityRevision;
     readonly nativeSubjectId?: unknown;
@@ -246,6 +310,20 @@ const registerIn = Effect.fn("DrizzleEmailRegistration.registerIn")(function* <R
   if (!completionMatches(mapping, input)) return prepare({ _tag: "Rejected" }, journal);
   if (!inspected.eligible || inspected.fingerprint !== input.fingerprint)
     return prepare({ _tag: "Rejected" }, journal);
+
+  const target =
+    mapping.mode === "atomic"
+      ? yield* readEmailRegistrationTarget(mapping, input.identifier, configuration.locking)
+      : undefined;
+
+  if (target?._tag === "Rejected") return prepare({ _tag: "Rejected" }, journal);
+  if (
+    target?._tag === "Reserved" &&
+    (allocated.displacedSecurityRevision === undefined ||
+      allocated.displacedSecurityRevision === target.securityRevision ||
+      allocated.identifierRevision === target.bindingRevision)
+  )
+    return yield* unavailable();
   const now = yield* nowMillis;
 
   const intent = {
@@ -300,14 +378,49 @@ const registerIn = Effect.fn("DrizzleEmailRegistration.registerIn")(function* <R
         nativeSubjectId = yield* mapping.provisioning.decodeGeneratedId(rows);
       } else yield* subjectInsert;
       if (nativeSubjectId === undefined) return false;
-      yield* transaction.insert(mapping.identifier.table).values(
-        mapping.identifier.encodeVerifiedInsert({
-          identifier: input.identifier,
-          subjectId: nativeSubjectId,
-          verifiedAtMillis: now,
-          bindingRevision: allocated.identifierRevision,
-        }),
-      );
+      if (target?._tag === "Reserved") {
+        const i = mapping.identifier;
+        const s = mapping.subject;
+
+        // Change only mapped ownership columns. Never delete a consumer-owned
+        // identifier row or copy insertion defaults over unrelated columns.
+        yield* transaction
+          .update(i.table)
+          .set(
+            updateValues([
+              [i.subjectId, nativeSubjectId],
+              [i.verifiedAt, mapping.encodeInstant(now)],
+              [i.bindingRevision, allocated.identifierRevision],
+            ]),
+          )
+          .where(
+            and(
+              eq(column(i.table, i.namespace), input.identifier.namespace),
+              eq(column(i.table, i.value), input.identifier.value),
+              eq(column(i.table, i.subjectId), target.nativeSubjectId),
+              eq(column(i.table, i.bindingRevision), target.bindingRevision),
+              isNull(column(i.table, i.verifiedAt)),
+            ),
+          );
+        yield* transaction
+          .update(s.table)
+          .set(updateValues([[s.securityRevision, allocated.displacedSecurityRevision]]))
+          .where(
+            and(
+              eq(column(s.table, s.id), target.nativeSubjectId),
+              eq(column(s.table, s.securityRevision), target.securityRevision),
+            ),
+          );
+      } else {
+        yield* transaction.insert(mapping.identifier.table).values(
+          mapping.identifier.encodeVerifiedInsert({
+            identifier: input.identifier,
+            subjectId: nativeSubjectId,
+            verifiedAtMillis: now,
+            bindingRevision: allocated.identifierRevision,
+          }),
+        );
+      }
       yield* transaction.insert(mapping.credential.table).values(
         mapping.credential.encodeVerifiedInsert({
           moduleId: input.moduleId,
@@ -458,7 +571,25 @@ const registerIn = Effect.fn("DrizzleEmailRegistration.registerIn")(function* <R
         false,
       ))[0];
 
+      const displaced =
+        target?._tag === "Reserved"
+          ? (yield* transaction
+              .select()
+              .from(mapping.subject.table)
+              .where(
+                and(
+                  eq(subjectId, target.nativeSubjectId),
+                  eq(
+                    column(mapping.subject.table, mapping.subject.securityRevision),
+                    allocated.displacedSecurityRevision,
+                  ),
+                ),
+              )
+              .limit(1))[0]
+          : undefined;
+
       if (
+        (target?._tag === "Reserved" && displaced === undefined) ||
         subject === undefined ||
         !mapping.subject.isActiveStatus(subject[mapping.subject.status]) ||
         subject[mapping.subject.securityRevision] !== allocated.securityRevision ||
@@ -626,6 +757,14 @@ export const makeSqlEmailRegistrationAuthority = Effect.fn("makeSqlEmailRegistra
               )
             : undefined;
 
+          const displacedSecurityRevision = atomic
+            ? yield* allocate(
+                configuration.mode,
+                mapping.allocateRevision,
+                mapping.allocateRevisionSync,
+              )
+            : undefined;
+
           const identifierRevision = atomic
             ? yield* allocate(
                 configuration.mode,
@@ -672,6 +811,7 @@ export const makeSqlEmailRegistrationAuthority = Effect.fn("makeSqlEmailRegistra
                 {
                   ...(credentialId === undefined ? {} : { credentialId }),
                   ...(securityRevision === undefined ? {} : { securityRevision }),
+                  ...(displacedSecurityRevision === undefined ? {} : { displacedSecurityRevision }),
                   ...(identifierRevision === undefined ? {} : { identifierRevision }),
                   ...(credentialRevision === undefined ? {} : { credentialRevision }),
                   ...(nativeSubjectId === undefined ? {} : { nativeSubjectId }),

@@ -1,7 +1,7 @@
 import { D1Client } from "@effect/sql-d1/D1Client";
 import type { D1Client as D1ClientService } from "@effect/sql-d1/D1Client";
 import * as SqliteClient from "@effect/sql-sqlite-node/SqliteClient";
-import { Auth, PhoneOtp, Sessions } from "@yielded/auth";
+import { Auth, Email, Password, PhoneOtp, Sessions } from "@yielded/auth";
 import { makeStorageMappings } from "@yielded/auth-persistence/Adapter";
 import { SubjectId } from "@yielded/auth/Schema";
 import { getTableColumns, is, sql } from "drizzle-orm";
@@ -25,7 +25,13 @@ import { AuthPersistence } from "../../src/SqliteNode";
 
 const app = Auth.make("test/proof-d1", {
   claims: Schema.Struct({}),
-  strategies: { phone: PhoneOtp.make() },
+  strategies: {
+    phone: PhoneOtp.make(),
+    password: Password.make(),
+    email: Email.makeAddresses({
+      addresses: { maximumEvidenceAgeMillis: 300_000, requireImmediateInvalidation: true },
+    }),
+  },
   sessions: Sessions.stateful(),
 });
 
