@@ -62,15 +62,15 @@ or investigation logs to the product repository.
 
 ## Documentation
 
-Documentation is for humans learning the library. Guides must be terse and explain
-concepts succinctly: what a feature does, how it fits, and how to use it.
+Write documentation for humans learning how the library works and how to use it.
+Keep it terse: explain the mental model, how pieces fit, and essential usage.
+Make code self-documenting through clear names, types, schemas, and structure;
+agents can read the implementation.
 
-- Lead with the mental model and ownership boundaries. Use small architecture or
-  flow diagrams and only the code snippets essential to understanding and usage.
+- Use small diagrams and code snippets only when they clarify ownership or usage.
 - Put detailed options, defaults, and API behavior in scannable reference pages.
   Link to runnable examples for complete setup.
-- Keep implementation contracts in source, schemas, and API comments. LLMs can
-  read the code; do not turn user guides into agent context or implementation audits.
+- Keep implementation contracts in source, schemas, and API comments.
 - Keep crucial caveats beside the relevant concept; link to reference details.
 - Edit the page as a whole. Do not append feature inventories, change histories,
   or long defensive explanations to an otherwise focused guide.
