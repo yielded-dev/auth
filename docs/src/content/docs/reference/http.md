@@ -35,9 +35,14 @@ Configure paths through `basePath` rather than prefixing the generated endpoints
 
 Cookies default to `Secure`, `HttpOnly`, `SameSite=Lax`, path `/`, and the
 `__Host-effect-auth-` prefix. Override `cookie.name` for the session slot or
-`cookie.prefix` for all slots. Plain HTTP development requires an explicit
-`cookie.secure: false`. Use your real HTTPS origin; never derive trusted origins
-from an untrusted request header.
+`cookie.prefix` for all slots. Secure custom names and prefixes must begin with
+`__Host-`; their cookies retain path `/` and no Domain. `cookie.secure: false` is
+allowed only with HTTP loopback origins (`localhost`, `127.0.0.1`, or `[::1]`).
+Use your real HTTPS origin; never derive trusted origins from an untrusted request
+header. Invalid combinations fail startup.
+
+OAuth callbacks need the request-binding cookie on a cross-site return. Keep
+`SameSite=Lax`; configuring OAuth with `cookie.sameSite: "strict"` fails startup.
 
 POST auth actions require the configured Origin, JSON content type, and
 `x-effect-auth-csrf: 1` by default. GET actions have no body or CSRF header and

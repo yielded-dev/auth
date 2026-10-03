@@ -46,7 +46,7 @@ import { httpGroup, matchesEndpoint } from "./auth-contract";
 import { makeOAuth, type OAuthOptions } from "./oauth";
 import type { makeSessionHttpContract } from "./session-contract";
 
-/** Browser transport policy. Insecure cookies require an explicit development override. */
+/** Browser transport policy. Secure names retain __Host-; insecure cookies are loopback-only. */
 export interface AuthHttpOptions<E = never, R = never, ResponseR = never> {
   readonly origin: string;
   readonly maximumBodyBytes?: number;
@@ -182,18 +182,27 @@ export const make = <
 
   const sessionCookieName = options.cookie?.name ?? cookies.session.name;
 
-  const configuration = configurationLayer({
-    publicOrigin: options.origin,
-    trustedOrigins: [options.origin],
-    cookies: {
-      ...cookies,
-      session: { ...cookies.session, name: sessionCookieName },
-    },
-    csrfHeader: options.csrf?.header ?? "x-effect-auth-csrf",
-    csrfValue: options.csrf?.value ?? "1",
-    maximumBodyBytes: options.maximumBodyBytes ?? 65536,
-    maximumUrlBytes: options.maximumUrlBytes ?? 8192,
-  });
+  const configuration =
+    (secure &&
+      (!cookies.session.name.startsWith("__Host-") || !sessionCookieName.startsWith("__Host-"))) ||
+    (!secure && options.origin.startsWith("https:")) ||
+    (options.oauth !== undefined && options.cookie?.sameSite === "strict")
+      ? Layer.effect(
+          OperationHttpServerConfig,
+          Effect.fail(OperationHttpConfigurationError.make({ reason: "cookies" })),
+        )
+      : configurationLayer({
+          publicOrigin: options.origin,
+          trustedOrigins: [options.origin],
+          cookies: {
+            ...cookies,
+            session: { ...cookies.session, name: sessionCookieName },
+          },
+          csrfHeader: options.csrf?.header ?? "x-effect-auth-csrf",
+          csrfValue: options.csrf?.value ?? "1",
+          maximumBodyBytes: options.maximumBodyBytes ?? 65536,
+          maximumUrlBytes: options.maximumUrlBytes ?? 8192,
+        });
 
   const resolve = (
     api: Pick<SessionApi<S>, "verifySession">,
