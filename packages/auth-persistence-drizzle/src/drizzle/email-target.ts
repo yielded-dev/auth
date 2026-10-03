@@ -24,6 +24,7 @@ import {
 } from "./email-sql";
 import type { ProofTargetConfiguration } from "./proof-target";
 import { sqlClientStandaloneGuard, type TransactionService } from "./standalone-guard";
+import { validateDrizzleStorage } from "./storage-validation";
 
 export interface EmailTargetConfiguration {
   readonly mode: "interactive" | "synchronous";
@@ -151,6 +152,10 @@ export const coordinateTargetEmailAddress = <Transaction, A, E, R>(
     if (yield* hasCommitScope) return yield* EmailUnavailable.make({});
     yield* configuration.coordinatorGuard ?? configuration.standaloneGuard;
 
+    yield* validateDrizzleStorage(database, { ...mapping, proof: proofMapping }).pipe(
+      Effect.mapError(() => EmailUnavailable.make({})),
+    );
+
     const result = yield* coordinateCommit(
       () =>
         database.transaction((transaction) =>
@@ -186,6 +191,10 @@ export const coordinateTargetEmailRegistration = <Registration, Transaction, A, 
 
     if (yield* hasCommitScope) return yield* EmailUnavailable.make({});
     yield* configuration.coordinatorGuard ?? configuration.standaloneGuard;
+
+    yield* validateDrizzleStorage(database, { ...mapping, proof: proofMapping }).pipe(
+      Effect.mapError(() => EmailUnavailable.make({})),
+    );
 
     const result = yield* coordinateCommit(
       () =>

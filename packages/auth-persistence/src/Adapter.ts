@@ -294,3 +294,5 @@ export type {
   Definition,
   PersistenceApi,
 } from "./internal/configuration";
+
+export { validateStorage, type PhysicalStorageTable } from "./internal/storage-validation";

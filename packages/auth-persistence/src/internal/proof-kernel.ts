@@ -661,8 +661,17 @@ export const makeProofKernel = <
   const makeSqlProofPersistence = Effect.fn("makeSqlProofPersistence")(function* (
     mapping: Mapping,
     configuration: ProofSqlConfiguration,
-  ): Effect.fn.Return<ProofPersistence["Service"], never, LifecycleHooks | CurrentProofSql> {
+  ): Effect.fn.Return<
+    ProofPersistence["Service"],
+    ProofUnavailable,
+    LifecycleHooks | CurrentProofSql
+  > {
     const database = yield* CurrentProofSql;
+
+    if (!configuration.coordinated)
+      yield* (operations.validateStorage?.(database, mapping) ?? Effect.void).pipe(
+        Effect.mapError(unavailable),
+      );
     const hooks = yield* LifecycleHooks;
 
     return ProofPersistence.of({

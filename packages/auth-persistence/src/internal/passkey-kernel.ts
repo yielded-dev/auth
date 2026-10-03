@@ -44,7 +44,15 @@ export const makePasskeyKernel = (operations: QueryOperations) => {
     transactions,
   );
 
-  const target = makePasskeyTargetKernel(credentials, flow, registrationCeremony, state, execution);
+  const target = makePasskeyTargetKernel(
+    credentials,
+    flow,
+    registrationCeremony,
+    state,
+    execution,
+    operations,
+  );
+
   const writeState = makePasskeyWriteStateKernel(operations, state, transactions);
 
   const enrollment = makePasskeyEnrollmentKernel(

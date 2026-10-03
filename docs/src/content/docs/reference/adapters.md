@@ -186,6 +186,13 @@ boundary. Transaction coordinators retain their explicit acquisition Effects and
 transaction ownership contracts. Durable Object `databaseLayer` requires a SQL
 client configured with `storage`, which provides the synchronous commit boundary.
 
+Explicit Drizzle factories and transaction coordinators check mapped unique keys
+against the captured database's catalog during acquisition. Apply migrations before
+building these Layers; a Drizzle declaration does not install a constraint. Permit
+catalog reads on PostgreSQL, MySQL, and SQLite, and reacquire services after schema
+changes. These checks cover usable, unconditional unique keys; application predicates
+and column codecs remain application contracts.
+
 ## Compose the application Layer
 
 ```ts title="apps/server/auth-dependencies.ts"

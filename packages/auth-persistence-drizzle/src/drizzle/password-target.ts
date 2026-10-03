@@ -23,6 +23,7 @@ import {
 } from "./password-sql";
 import type { ProofTargetConfiguration } from "./proof-target";
 import { sqlClientStandaloneGuard, type TransactionService } from "./standalone-guard";
+import { validateDrizzleStorage } from "./storage-validation";
 
 export interface PasswordTargetConfiguration {
   readonly mode: "interactive" | "synchronous";
@@ -140,6 +141,10 @@ export const coordinateTargetPasswordPersistence = <Transaction, A, E, R>(
     if (yield* hasCommitScope) return yield* PasswordUnavailable.make({});
     yield* configuration.coordinatorGuard ?? configuration.standaloneGuard;
 
+    yield* validateDrizzleStorage(database, { ...mapping, proof: proofMapping }).pipe(
+      Effect.mapError(() => PasswordUnavailable.make({})),
+    );
+
     const result = yield* coordinateCommit(
       () =>
         database.transaction((transaction) =>
@@ -179,6 +184,10 @@ export const coordinateTargetPasswordRegistration = <Registration, Transaction, 
 
     if (yield* hasCommitScope) return yield* PasswordUnavailable.make({});
     yield* configuration.coordinatorGuard ?? configuration.standaloneGuard;
+
+    yield* validateDrizzleStorage(database, mapping).pipe(
+      Effect.mapError(() => PasswordUnavailable.make({})),
+    );
 
     const result = yield* coordinateCommit(
       () =>

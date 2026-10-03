@@ -25,6 +25,7 @@ import {
   type SubjectProvisioningTables,
 } from "./model";
 import { Database as DatabaseService } from "./mysql-database";
+import { validateDrizzleStorage } from "./storage-validation";
 
 type RuntimeDatabase = EffectMysql2Database<any>;
 const unavailable = () => IdentityUnavailable.make();
@@ -46,6 +47,10 @@ export const makeMysqlSubjectProvisioningServices = Effect.fnUntraced(function* 
   NativeId,
 >(mapping: SubjectProvisioningTables<Subject, Identifier, Request, NativeId>) {
   const database = yield* DatabaseService;
+
+  yield* validateDrizzleStorage(database, mapping).pipe(
+    Effect.mapError(() => IdentityUnavailable.make()),
+  );
 
   const db = database as RuntimeDatabase;
   const requestTable = mapping.provisioningRequest.table;
@@ -197,6 +202,10 @@ export const makeMysqlExternalIdentityServices = Effect.fnUntraced(function* <
   NativeId,
 >(mapping: ExternalIdentityTables<Subject, External, NativeId>) {
   const database = yield* DatabaseService;
+
+  yield* validateDrizzleStorage(database, mapping).pipe(
+    Effect.mapError(() => IdentityUnavailable.make()),
+  );
 
   const db = database as RuntimeDatabase;
   const externalTable = mapping.externalIdentity.table;

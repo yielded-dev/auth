@@ -64,6 +64,7 @@ import {
 } from "./email-sql";
 import { column, isMappedConstraintConflict, PersistenceMappingError, updateValues } from "./model";
 import type { D1ProofPersistenceMapping } from "./proof-model";
+import { validateDrizzleStorage } from "./storage-validation";
 import type { SuppliedService } from "./SuppliedService";
 
 type PlanPrepare<Method extends (...args: any[]) => any, A> = (
@@ -1271,29 +1272,39 @@ export const makeD1EmailSignInServices = <
 >(
   mapping: EmailSignInMapping<S, I, C, NativeId>,
 ) =>
-  Effect.map(DatabaseService, (database) => ({
-    emailSignInTargets: EmailSignInTargets.of({
-      lookup: (input) => {
-        if (!validEmailSignInConstraints(mapping as any)) return Effect.fail(unavailable());
+  Effect.flatMap(DatabaseService, (database) =>
+    validateDrizzleStorage(database, mapping).pipe(
+      Effect.mapError(unavailable),
+      Effect.as({
+        emailSignInTargets: EmailSignInTargets.of({
+          lookup: (input) => {
+            if (!validEmailSignInConstraints(mapping as any)) return Effect.fail(unavailable());
 
-        return emailLookupRows(mapping as any, input.moduleId, input.identifier).pipe(
-          Effect.flatMap((rows) => {
-            const row = rows[0];
+            return emailLookupRows(mapping as any, input.moduleId, input.identifier).pipe(
+              Effect.flatMap((rows) => {
+                const row = rows[0];
 
-            if (row === undefined) return Effect.succeed(Option.none());
+                if (row === undefined) return Effect.succeed(Option.none());
 
-            return decodeEmailSnapshot(mapping as any, input.moduleId, input.identifier, row).pipe(
-              Effect.map((snapshot) =>
-                snapshot === undefined ? Option.none() : Option.some(snapshot),
-              ),
+                return decodeEmailSnapshot(
+                  mapping as any,
+                  input.moduleId,
+                  input.identifier,
+                  row,
+                ).pipe(
+                  Effect.map((snapshot) =>
+                    snapshot === undefined ? Option.none() : Option.some(snapshot),
+                  ),
+                );
+              }),
+              Effect.provideService(CurrentD1PlanningDatabase, database),
+              translateFailure,
             );
-          }),
-          Effect.provideService(CurrentD1PlanningDatabase, database),
-          translateFailure,
-        );
-      },
-    }),
-  }));
+          },
+        }),
+      }),
+    ),
+  );
 
 export const makeD1EmailAddressServices = Effect.fnUntraced(function* <
   S extends AnySQLiteTable,
@@ -1332,6 +1343,10 @@ export const makeD1EmailAddressServices = Effect.fnUntraced(function* <
   >,
 ) {
   const database = yield* DatabaseService;
+
+  yield* validateDrizzleStorage(database, { ...mapping, proof: proofMapping }).pipe(
+    Effect.mapError(unavailable),
+  );
 
   const hooks = yield* LifecycleHooks;
 
@@ -1418,6 +1433,10 @@ export const makeD1EmailRegistrationServices = Effect.fnUntraced(function* <
   >,
 ) {
   const database = yield* DatabaseService;
+
+  yield* validateDrizzleStorage(database, { ...mapping, proof: proofMapping }).pipe(
+    Effect.mapError(unavailable),
+  );
 
   const hooks = yield* LifecycleHooks;
 
@@ -1509,6 +1528,10 @@ export function coordinateD1EmailAddress<
 > {
   return Effect.flatMap(acquire, (database) =>
     Effect.gen(function* () {
+      yield* validateDrizzleStorage(database, {
+        ...options.mapping,
+        proof: options.proofMapping,
+      }).pipe(Effect.mapError(unavailable));
       const hooks = yield* LifecycleHooks;
 
       if (yield* hasCommitScope) return yield* unavailable();
@@ -1680,6 +1703,10 @@ export function coordinateD1EmailRegistration<
 > {
   return Effect.flatMap(acquire, (database) =>
     Effect.gen(function* () {
+      yield* validateDrizzleStorage(database, {
+        ...options.mapping,
+        proof: options.proofMapping,
+      }).pipe(Effect.mapError(unavailable));
       const hooks = yield* LifecycleHooks;
 
       if (yield* hasCommitScope) return yield* unavailable();

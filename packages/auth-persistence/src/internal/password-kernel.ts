@@ -1122,8 +1122,20 @@ export const makePasswordKernel = <
   const makeSqlPasswordPersistence = Effect.fn("makeSqlPasswordPersistence")(function* (
     mapping: Mapping,
     configuration: PasswordSqlConfiguration,
-  ): Effect.fn.Return<PasswordPersistence["Service"], never, LifecycleHooks | CurrentPasswordSql> {
+  ): Effect.fn.Return<
+    PasswordPersistence["Service"],
+    PasswordUnavailable,
+    LifecycleHooks | CurrentPasswordSql
+  > {
     const database = yield* CurrentPasswordSql;
+
+    if (!configuration.coordinated)
+      yield* (
+        operations.validateStorage?.(database, {
+          ...mapping,
+          proof: configuration.proof?.mapping,
+        }) ?? Effect.void
+      ).pipe(Effect.mapError(unavailable));
     const hooks = yield* LifecycleHooks;
 
     return PasswordPersistence.of({

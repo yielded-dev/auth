@@ -57,6 +57,7 @@ import {
   unavailable,
 } from "./password-prepared-state";
 import { CurrentPasswordSql, type PasswordSqlDatabase } from "./password-sql";
+import { validateDrizzleStorage } from "./storage-validation";
 import type { SuppliedService } from "./SuppliedService";
 
 type PlanPrepare<Method extends (...args: any[]) => any, A> = (
@@ -990,6 +991,10 @@ export const makeD1PasswordPreparedPersistenceServices = Effect.fnUntraced(funct
 ) {
   const database = yield* DatabaseService;
 
+  yield* validateDrizzleStorage(database, { ...mapping, proof: proofMapping }).pipe(
+    Effect.mapError(unavailable),
+  );
+
   const hooks = yield* LifecycleHooks;
   const plans = makePreparedPlans(mapping as unknown as Mapping, proofMapping);
 
@@ -1081,6 +1086,10 @@ export function coordinateD1PasswordPreparedPersistence<
 > {
   return Effect.flatMap(acquire, (database) =>
     Effect.gen(function* () {
+      yield* validateDrizzleStorage(database, {
+        ...options.mapping,
+        proof: options.proofMapping,
+      }).pipe(Effect.mapError(unavailable));
       const hooks = yield* LifecycleHooks;
 
       if (yield* hasCommitScope) return yield* unavailable();

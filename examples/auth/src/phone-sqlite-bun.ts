@@ -13,13 +13,15 @@ import {
 import { phonePersistenceLayer } from "@yielded/auth-persistence-drizzle";
 import {
   Database,
+  coordinatePhonePersistence,
   databaseLayer,
   makeAuthenticationAuthorityServices,
   makePhonePersistenceServices,
   makeProofPersistenceServices,
 } from "@yielded/auth-persistence-drizzle/SqliteBun";
 import { eq } from "drizzle-orm";
-import { Effect, Layer, Redacted } from "effect";
+import { Effect, Layer, Redacted, Schema } from "effect";
+import { SqlClient } from "effect/sql";
 
 import { keyring, phone, sessionPolicy, sessions, shopAuth } from "./phone-application";
 import {
@@ -42,6 +44,39 @@ export const phoneConsumer = Effect.gen(function* () {
   const database = yield* Database;
 
   yield* migrate;
+
+  // Phone completion owns these proof writes, even without a separate proof service.
+  const sql = yield* SqlClient.SqlClient;
+
+  yield* sql`drop table phone_proof_command`;
+  yield* sql`create table phone_proof_command(moduleId text not null,commandId text not null,kind text not null,decision text not null,retentionUntil text not null)`;
+
+  const drifted = yield* makePhonePersistenceServices(mapping).pipe(Effect.result);
+  let entered = false;
+
+  const coordinate = coordinatePhonePersistence(
+    Effect.succeed(database),
+    { mapping },
+    Effect.sync(() => {
+      entered = true;
+    }),
+  );
+
+  const driftedOwner = yield* coordinate.pipe(Effect.result);
+
+  assert(
+    drifted._tag === "Failure" && Schema.is(PhoneOtp.PhoneConfigurationError)(drifted.failure),
+    "Phone storage accepted a missing proof-command key",
+  );
+  assert(
+    driftedOwner._tag === "Failure" &&
+      Schema.is(PhoneOtp.PhoneConfigurationError)(driftedOwner.failure) &&
+      !entered,
+    "Phone coordination accepted a missing proof-command key",
+  );
+  yield* sql`create unique index phone_command_unique on phone_proof_command(moduleId,commandId)`;
+  yield* coordinate;
+  assert(entered, "Phone coordination did not recover after restoring the proof-command key");
 
   const phoneStorage = phonePersistenceLayer(makePhonePersistenceServices(mapping));
   const proofServices = yield* makeProofPersistenceServices(proofs);

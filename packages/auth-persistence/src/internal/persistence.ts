@@ -566,7 +566,13 @@ export const createPersistence = <T extends object, R>(
 
         // The checked capability metadata above determines exactly these service keys.
         return context as Context.Context<Ports<C, Id, A>>;
-      }),
+      }).pipe(
+        Effect.mapError((error) =>
+          Schema.is(PersistenceConfigurationError)(error)
+            ? error
+            : configError("Cannot acquire SQL persistence"),
+        ),
+      ),
     ).pipe(Layer.provide(hooksLayer));
 
     return {

@@ -346,7 +346,7 @@ export const makePasskeyWriteTargetKernel = (
   ) =>
     Effect.gen(function* () {
       const mapping = yield* writeMapping(source, configuration, false);
-      const execution = yield* makePasskeyExecution(configuration);
+      const execution = yield* makePasskeyExecution(configuration, mapping);
 
       return managementServices(mapping, execution, configuration);
     });
@@ -357,7 +357,7 @@ export const makePasskeyWriteTargetKernel = (
   ) =>
     Effect.gen(function* () {
       const mapping = yield* writeMapping(source, configuration, true);
-      const execution = yield* makePasskeyExecution(configuration);
+      const execution = yield* makePasskeyExecution(configuration, mapping);
 
       return registrationServices<R>(mapping, execution, configuration);
     });
@@ -380,7 +380,7 @@ export const makePasskeyWriteTargetKernel = (
         database,
         CurrentPasskeyTransaction,
         configuration,
-        Effect.void,
+        operations.validateStorage?.(database, mapping) ?? Effect.void,
         unavailable,
         nonce,
         (execute) =>
@@ -415,7 +415,7 @@ export const makePasskeyWriteTargetKernel = (
         database,
         CurrentPasskeyTransaction,
         configuration,
-        Effect.void,
+        operations.validateStorage?.(database, mapping) ?? Effect.void,
         unavailable,
         nonce,
         (execute) =>

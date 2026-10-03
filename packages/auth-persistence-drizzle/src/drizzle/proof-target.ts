@@ -17,6 +17,7 @@ import {
   type ProofSqlQuery,
 } from "./proof-sql";
 import { sqlClientStandaloneGuard, type TransactionService } from "./standalone-guard";
+import { validateDrizzleStorage } from "./storage-validation";
 
 export interface ProofTargetConfiguration {
   readonly mode: "interactive" | "synchronous";
@@ -89,6 +90,10 @@ export const coordinateTargetProofPersistence = <Transaction, A, E, R>(
 
     if (yield* hasCommitScope) return yield* ProofUnavailable.make({});
     yield* configuration.coordinatorGuard ?? configuration.standaloneGuard;
+
+    yield* validateDrizzleStorage(database, mapping).pipe(
+      Effect.mapError(() => ProofUnavailable.make({})),
+    );
 
     const result = yield* coordinateCommit(
       () =>

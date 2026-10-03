@@ -25,6 +25,7 @@ import {
 } from "./password-model";
 import { CurrentPasswordSql, type PasswordSqlQuery } from "./password-sql";
 import { CurrentProofSql, type ProofSqlDatabase } from "./proof-sql";
+import { validateDrizzleStorage } from "./storage-validation";
 
 type Mapping<Registration> = AnyPasswordRegistrationMapping<Registration>;
 const unavailable = () => PasswordUnavailable.make({});
@@ -218,10 +219,13 @@ export const makeSqlPasswordRegistrationAuthority = Effect.fn(
   configuration: PasswordRegistrationConfiguration,
 ): Effect.fn.Return<
   PasswordRegistrationAuthority<Registration>,
-  never,
+  PasswordUnavailable,
   LifecycleHooks | CurrentPasswordSql
 > {
   const database = yield* CurrentPasswordSql;
+
+  if (!configuration.coordinated)
+    yield* validateDrizzleStorage(database, mapping).pipe(Effect.mapError(unavailable));
   const hooks = yield* LifecycleHooks;
 
   return {

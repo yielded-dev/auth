@@ -15,6 +15,7 @@ import type { Statement } from "effect/sql/Statement";
 
 import type { PersistenceMappingError } from "./model";
 import { nativeDatabase } from "./native-database";
+import { validateDrizzleStorage } from "./storage-validation";
 import type { SuppliedService } from "./SuppliedService";
 import {
   type TotpMapping,
@@ -140,6 +141,10 @@ export const makeTargetTotpPersistence = <
       catch: () => TotpConfigurationError.make({}),
     });
 
+    yield* validateDrizzleStorage(yield* NativeDatabase, mapping).pipe(
+      Effect.mapError(() => TotpConfigurationError.make({})),
+    );
+
     const execution = yield* makeTransactionExecution(
       CurrentTotpTransaction,
       configuration,
@@ -167,6 +172,10 @@ export const coordinateTargetTotp = <M, A, E, R, RSetup = never>(
       try: () => validateMapping(original, configuration),
       catch: () => TotpConfigurationError.make({}),
     });
+
+    yield* validateDrizzleStorage(database, mapping).pipe(
+      Effect.mapError(() => TotpConfigurationError.make({})),
+    );
 
     return yield* coordinateTransactionOwner(
       database,

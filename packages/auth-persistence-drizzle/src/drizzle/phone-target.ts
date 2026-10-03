@@ -28,6 +28,7 @@ import {
   type PhoneMapping,
   type PhoneMappingSource,
   type PhonePersistenceServices,
+  type PhoneProofCompletionMapping,
   requiredPhoneConstraints,
 } from "./phone-model";
 import {
@@ -43,6 +44,7 @@ import {
 } from "./phone-state";
 import { requiredProofConstraints } from "./proof-model";
 import { completeProofPlanIn, CurrentProofSql } from "./proof-sql";
+import { validateDrizzleStorage } from "./storage-validation";
 import type { SuppliedService } from "./SuppliedService";
 import {
   coordinateTransactionOwner,
@@ -277,6 +279,11 @@ export const makeTargetPhonePersistence = <
       catch: () => PhoneConfigurationError.make({}),
     });
 
+    yield* validateDrizzleStorage(yield* NativeDatabase, {
+      ...mapping,
+      proofs: phoneProofs(mapping.proofs),
+    }).pipe(Effect.mapError(() => PhoneConfigurationError.make({})));
+
     const execution = yield* makeTransactionExecution(
       CurrentPhoneTransaction,
       configuration,
@@ -287,7 +294,13 @@ export const makeTargetPhonePersistence = <
     return yield* services(mapping, execution, configuration);
   });
 
-export const coordinateTargetPhone = <M, A, E, R, RSetup = never>(
+export const coordinateTargetPhone = <
+  M extends { readonly proofs: PhoneProofCompletionMapping },
+  A,
+  E,
+  R,
+  RSetup = never,
+>(
   database: TransactionNativeDatabase,
   source: PhoneMappingSource<M, RSetup>,
   configuration: PhoneTargetConfiguration,
@@ -304,6 +317,11 @@ export const coordinateTargetPhone = <M, A, E, R, RSetup = never>(
       try: () => validateMapping(original, configuration),
       catch: () => PhoneConfigurationError.make({}),
     });
+
+    yield* validateDrizzleStorage(database, {
+      ...mapping,
+      proofs: phoneProofs(mapping.proofs),
+    }).pipe(Effect.mapError(() => PhoneConfigurationError.make({})));
 
     return yield* coordinateTransactionOwner(
       database,

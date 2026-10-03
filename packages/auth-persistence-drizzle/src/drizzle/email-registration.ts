@@ -33,6 +33,7 @@ import {
   type ProofSqlConfiguration,
   type ProofSqlDatabase,
 } from "./proof-sql";
+import { validateDrizzleStorage } from "./storage-validation";
 
 type Mapping<Registration> = AnyEmailRegistrationMapping<Registration>;
 const unavailable = () => EmailUnavailable.make({});
@@ -544,10 +545,16 @@ export const makeSqlEmailRegistrationAuthority = Effect.fn("makeSqlEmailRegistra
     configuration: EmailRegistrationConfiguration,
   ): Effect.fn.Return<
     EmailRegistrationAuthority<Registration>,
-    never,
+    EmailUnavailable,
     LifecycleHooks | CurrentEmailSql
   > {
     const database = yield* CurrentEmailSql;
+
+    if (!configuration.coordinated)
+      yield* validateDrizzleStorage(database, {
+        ...mapping,
+        proof: configuration.proof.mapping,
+      }).pipe(Effect.mapError(unavailable));
     const hooks = yield* LifecycleHooks;
 
     return {

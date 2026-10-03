@@ -37,13 +37,14 @@ import type {
   PasskeyPersistenceServices,
 } from "../models/passkey-model";
 import type { PasskeyRegistrationCeremonyServices } from "../models/passkey-registration-ceremony-model";
+import type { QueryOperations } from "../query-operations";
 import type {
   TransactionCoordinatorError,
   TransactionExecution,
   TransactionTargetConfiguration,
   makeTransactionExecutionKernel,
 } from "../transaction-execution-kernel";
-import type { NativeDatabase } from "../transaction-kernel";
+import { NativeDatabase } from "../transaction-kernel";
 import type { makePasskeyCredentialsKernel } from "./credentials";
 import type { makePasskeyFlowKernel } from "./flow";
 import type { makePasskeyRegistrationCeremonyKernel } from "./registration-ceremony";
@@ -91,6 +92,7 @@ export const makePasskeyTargetKernel = (
     | "makeTransactionExecution"
     | "sqlClientTransactionStandaloneGuard"
   >,
+  operations: QueryOperations,
 ) => {
   const { captureEnrollmentContext, lookupCredential } = credentials;
 
@@ -124,8 +126,17 @@ export const makePasskeyTargetKernel = (
 
   const makePasskeyExecution = Effect.fnUntraced(function* (
     configuration: PasskeyTargetConfiguration,
-  ): Effect.fn.Return<PasskeyExecution, never, LifecycleHooks | NativeDatabase> {
+    mapping: unknown,
+  ): Effect.fn.Return<
+    PasskeyExecution,
+    PasskeyConfigurationError,
+    LifecycleHooks | NativeDatabase
+  > {
     const hooks = yield* LifecycleHooks;
+
+    yield* (operations.validateStorage?.(yield* NativeDatabase, mapping) ?? Effect.void).pipe(
+      Effect.mapError(() => PasskeyConfigurationError.make({})),
+    );
 
     const execution = yield* makeTransactionExecution(
       CurrentPasskeyTransaction,
@@ -431,7 +442,7 @@ export const makePasskeyTargetKernel = (
     Effect.gen(function* () {
       const mapping = yield* capturedMapping(source, "read", configuration);
 
-      const execution = yield* makePasskeyExecution(configuration).pipe(
+      const execution = yield* makePasskeyExecution(configuration, mapping).pipe(
         Effect.provideService(LifecycleHooks, emptyHooks),
       );
 
@@ -449,7 +460,7 @@ export const makePasskeyTargetKernel = (
     Effect.gen(function* () {
       const mapping = yield* capturedMapping(source, "context", configuration);
 
-      const execution = yield* makePasskeyExecution(configuration).pipe(
+      const execution = yield* makePasskeyExecution(configuration, mapping).pipe(
         Effect.provideService(LifecycleHooks, emptyHooks),
       );
 
@@ -466,7 +477,7 @@ export const makePasskeyTargetKernel = (
   > =>
     Effect.gen(function* () {
       const mapping = yield* capturedMapping(source, "assertion", configuration);
-      const execution = yield* makePasskeyExecution(configuration);
+      const execution = yield* makePasskeyExecution(configuration, mapping);
 
       return {
         passkeyPersistence: makePasskeyPersistence(mapping, execution, configuration),
@@ -483,7 +494,7 @@ export const makePasskeyTargetKernel = (
   > =>
     Effect.gen(function* () {
       const mapping = yield* capturedMapping(source, "registration", configuration);
-      const execution = yield* makePasskeyExecution(configuration);
+      const execution = yield* makePasskeyExecution(configuration, mapping);
 
       return registrationServices(mapping, execution, configuration);
     });
@@ -504,7 +515,7 @@ export const makePasskeyTargetKernel = (
           database,
           CurrentPasskeyTransaction,
           configuration,
-          Effect.void,
+          operations.validateStorage?.(database, mapping) ?? Effect.void,
           unavailable,
           nonce,
           (execution) => ({
@@ -541,7 +552,7 @@ export const makePasskeyTargetKernel = (
           database,
           CurrentPasskeyTransaction,
           configuration,
-          Effect.void,
+          operations.validateStorage?.(database, mapping) ?? Effect.void,
           unavailable,
           nonce,
           (execution) =>

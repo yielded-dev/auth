@@ -382,8 +382,16 @@ export const makeEmailKernel = <
   const makeSqlEmailSignInTargets = Effect.fn("makeSqlEmailSignInTargets")(function* (
     mapping: SignInMapping,
     configuration: EmailSqlConfiguration,
-  ): Effect.fn.Return<EmailSignInTargets["Service"], never, CurrentEmailSql> {
+  ): Effect.fn.Return<EmailSignInTargets["Service"], EmailUnavailable, CurrentEmailSql> {
     const database = yield* CurrentEmailSql;
+
+    if (!configuration.coordinated)
+      yield* (
+        operations.validateStorage?.(database, {
+          ...mapping,
+          proof: configuration.proof?.mapping,
+        }) ?? Effect.void
+      ).pipe(Effect.mapError(unavailable));
 
     return EmailSignInTargets.of({
       lookup: (input) =>
@@ -1221,8 +1229,20 @@ export const makeEmailKernel = <
   const makeSqlEmailAddressPersistence = Effect.fn("makeSqlEmailAddressPersistence")(function* (
     mapping: AddressMapping,
     configuration: EmailSqlConfiguration,
-  ): Effect.fn.Return<EmailAddressPersistence["Service"], never, LifecycleHooks | CurrentEmailSql> {
+  ): Effect.fn.Return<
+    EmailAddressPersistence["Service"],
+    EmailUnavailable,
+    LifecycleHooks | CurrentEmailSql
+  > {
     const database = yield* CurrentEmailSql;
+
+    if (!configuration.coordinated)
+      yield* (
+        operations.validateStorage?.(database, {
+          ...mapping,
+          proof: configuration.proof?.mapping,
+        }) ?? Effect.void
+      ).pipe(Effect.mapError(unavailable));
     const hooks = yield* LifecycleHooks;
 
     return EmailAddressPersistence.of({

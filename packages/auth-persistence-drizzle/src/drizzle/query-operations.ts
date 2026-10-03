@@ -18,8 +18,10 @@ import {
 
 import { balancedD1And, compactD1GeneratedStatement } from "./d1-generated-statement";
 import { column, updateValues } from "./model";
+import { validateDrizzleStorage } from "./storage-validation";
 
 const operations = {
+  validateStorage: validateDrizzleStorage,
   and,
   asc,
   or,

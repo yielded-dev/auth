@@ -23,6 +23,7 @@ import {
   type PasswordTargetConfiguration,
   type PasswordCoordinatorError,
 } from "./password-target";
+import { validateDrizzleStorage } from "./storage-validation";
 
 export const makeTargetPasswordPreparedPersistenceServices = (
   mapping: any,
@@ -57,6 +58,10 @@ export const coordinateTargetPasswordPreparedPersistence = <Transaction, A, E, R
 
     if (yield* hasCommitScope) return yield* PasswordUnavailable.make({});
     yield* configuration.coordinatorGuard ?? configuration.standaloneGuard;
+
+    yield* validateDrizzleStorage(database, { ...mapping, proof: proofMapping }).pipe(
+      Effect.mapError(() => PasswordUnavailable.make({})),
+    );
 
     const result = yield* coordinateCommit(
       () =>

@@ -69,6 +69,7 @@ import type {
   D1StatefulSessionMapping,
 } from "./session-model";
 import type { D1SessionStepUpMapping } from "./step-up-model";
+import { validateDrizzleStorage } from "./storage-validation";
 import type { SuppliedService } from "./SuppliedService";
 
 type Database = D1PlanningDatabase;
@@ -1626,6 +1627,8 @@ export const makeD1SessionServiceEffects = {
   authority: <Claims>(mapping: any) =>
     Effect.gen(function* () {
       const database = yield* CurrentD1PlanningDatabase;
+
+      yield* validateDrizzleStorage(database, mapping).pipe(Effect.mapError(unavailable));
       const hooks = yield* LifecycleHooks;
       const raw = makeD1AuthenticationAuthority<Claims>(mapping);
 
@@ -1654,6 +1657,8 @@ export const makeD1SessionServiceEffects = {
   pending: <Claims>(mapping: any) =>
     Effect.gen(function* () {
       const database = yield* CurrentD1PlanningDatabase;
+
+      yield* validateDrizzleStorage(database, mapping).pipe(Effect.mapError(unavailable));
       const hooks = yield* LifecycleHooks;
       const raw = makeD1PendingAuthentication<Claims>(mapping);
 
@@ -1683,6 +1688,8 @@ export const makeD1SessionServiceEffects = {
   stateful: <Claims>(mapping: any) =>
     Effect.gen(function* () {
       const database = yield* CurrentD1PlanningDatabase;
+
+      yield* validateDrizzleStorage(database, mapping).pipe(Effect.mapError(unavailable));
       const hooks = yield* LifecycleHooks;
       const raw = makeD1StatefulSessions<Claims>(mapping);
 
@@ -1718,6 +1725,8 @@ export const makeD1SessionServiceEffects = {
   validity: (mapping: any) =>
     Effect.gen(function* () {
       const database = yield* CurrentD1PlanningDatabase;
+
+      yield* validateDrizzleStorage(database, mapping).pipe(Effect.mapError(unavailable));
       const hooks = yield* LifecycleHooks;
       const raw = makeD1SignedValidity(mapping);
 
@@ -1759,11 +1768,14 @@ type D1CoordinatorError<E> = E | D1DomainError | HookConfigurationError;
  */
 export const coordinateD1SessionBatch = <Services, A, E, R>(
   database: Database,
+  mapping: unknown,
   make: (batch: D1SessionBatch) => Effect.Effect<Services, never, LifecycleHooks>,
   owner: (services: Services, batch: D1SessionBatch) => Effect.Effect<A, E, R>,
 ): Effect.Effect<A, D1CoordinatorError<E>, R | LifecycleHooks> =>
   Effect.gen(function* (): Effect.fn.Return<A, D1CoordinatorError<E>, R | LifecycleHooks> {
     if (yield* hasCommitScope) return yield* unavailable();
+
+    yield* validateDrizzleStorage(database, mapping).pipe(Effect.mapError(unavailable));
 
     const result = yield* coordinateCommit(
       () =>
@@ -1941,6 +1953,7 @@ export function coordinateD1AuthenticationAuthority<
   return Effect.flatMap(acquire, (database) =>
     coordinateD1SessionBatch(
       database,
+      options.mapping,
       (batch) =>
         Effect.gen(function* () {
           const hooks = yield* LifecycleHooks;
@@ -2015,6 +2028,7 @@ export function coordinateD1PendingAuthentication<
   return Effect.flatMap(acquire, (database) =>
     coordinateD1SessionBatch(
       database,
+      options.mapping,
       (batch) =>
         Effect.gen(function* () {
           const hooks = yield* LifecycleHooks;
@@ -2094,6 +2108,7 @@ export function coordinateD1StatefulSessions<
   return Effect.flatMap(acquire, (database) =>
     coordinateD1SessionBatch(
       database,
+      options.mapping,
       (batch) =>
         Effect.gen(function* () {
           const hooks = yield* LifecycleHooks;
@@ -2177,6 +2192,7 @@ export function coordinateD1SignedSessionValidity<
   return Effect.flatMap(acquire, (database) =>
     coordinateD1SessionBatch(
       database,
+      options.mapping,
       (batch) =>
         Effect.gen(function* () {
           const hooks = yield* LifecycleHooks;
@@ -2762,6 +2778,8 @@ export const makeD1SessionStepUpServices = Effect.fnUntraced(function* <
 ) {
   const database = yield* DatabaseService;
 
+  yield* validateDrizzleStorage(database, mapping).pipe(Effect.mapError(unavailable));
+
   const hooks = yield* LifecycleHooks;
   const raw = makeD1SessionStepUp<Claims>(mapping as any);
 
@@ -2829,6 +2847,7 @@ export function coordinateD1SessionStepUp<
   return Effect.flatMap(acquire, (database) =>
     coordinateD1SessionBatch(
       database,
+      options.mapping,
       (batch) =>
         Effect.gen(function* () {
           const hooks = yield* LifecycleHooks;

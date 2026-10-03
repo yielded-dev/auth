@@ -63,6 +63,7 @@ import {
   type ProofScopeKeys,
   type ProofScopeKind,
 } from "./proof-model";
+import { validateDrizzleStorage } from "./storage-validation";
 
 type PlanPrepare<Method extends (...args: any[]) => any, A> = (
   value: Parameters<Parameters<Method>[1]>[0],
@@ -2002,6 +2003,8 @@ export const makeD1ProofPersistenceServices = Effect.fnUntraced(function* <
 >(mapping: D1ProofPersistenceMapping<Rq, S, G, Cn, Rs, A, F, C, Sub, I, Cr, NativeId>) {
   const database = yield* DatabaseService;
 
+  yield* validateDrizzleStorage(database, mapping).pipe(Effect.mapError(unavailable));
+
   const hooks = yield* LifecycleHooks;
   const plans = makeProofPlans(mapping as unknown as Mapping);
 
@@ -2068,6 +2071,7 @@ export function coordinateD1ProofPersistence<
 > {
   return Effect.flatMap(acquire, (database) =>
     Effect.gen(function* () {
+      yield* validateDrizzleStorage(database, options.mapping).pipe(Effect.mapError(unavailable));
       const hooks = yield* LifecycleHooks;
 
       if (yield* hasCommitScope) return yield* unavailable();
