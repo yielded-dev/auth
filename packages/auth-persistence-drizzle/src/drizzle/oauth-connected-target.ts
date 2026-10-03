@@ -134,6 +134,8 @@ export const makeConnected = (
       ),
       capture: read(mapping, execute, F.capture),
       issue: mutation(mapping, execute, F.issue, M.OAuthConnectedIssueDecision),
+      prepare: mutation(mapping, execute, F.prepare, M.OAuthConnectedIssueDecision),
+      inspectPrepared: read(mapping, execute, F.inspectPrepared),
       preflight: read(mapping, execute, F.preflight),
       claim: mutation(mapping, execute, F.claim, M.OAuthConnectedClaimDecision),
       inspectGrant: read(mapping, execute, F.inspectGrant),

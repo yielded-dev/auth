@@ -22,6 +22,11 @@ const issue = Schema.Struct({
   authorization: M.OAuthConnectedActionAuthorization,
 });
 
+const preparation = Schema.Struct({
+  flow: M.OAuthConnectedPendingFlow,
+  authorization: M.OAuthConnectedUseAuthorization,
+});
+
 const claim = Schema.Struct({
   ...issue.fields,
   access: M.OAuthConnectedAccess,
@@ -120,6 +125,8 @@ export const connectedInputs = {
   ),
   capture: snapshot(capture),
   issue: snapshot(issue),
+  prepare: snapshot(preparation),
+  inspectPrepared: snapshot(M.OAuthConnectedPreparedAccess),
   preflight: snapshot(M.OAuthConnectedAccess),
   claim: snapshot(claim),
   inspectGrant: snapshot(inspectGrant),

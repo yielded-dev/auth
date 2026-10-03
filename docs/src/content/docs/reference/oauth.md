@@ -136,6 +136,46 @@ Unresolved exchanges with unknown identity can block cohort cleanup for that cli
 registration and require application-owned reconciliation; expiry alone is not proof
 that the provider operation did not happen.
 
+### Connect an authenticated account
+
+`OAuth.makeConnectedModule` manages provider access independently of sign-in.
+Call `Connected.prepareBegin` first: it retains the generated grant identity,
+PKCE/state, callback, profile, revisions, and expiry in native flow custody.
+Preparation returns only a public flow ID and expiry, plus a private
+`connected-intent` credential command. It cannot exchange a code or activate a grant.
+
+A trusted server factor adapter calls `Connected.beginContext` with that private
+credential and the original input, verifies independent evidence for the returned
+challenge, and then calls `Connected.begin` with the same input and proof. Keep the
+challenge's flow ID, binding digest, and full revision unchanged. Re-reading a target
+must never rebind an already verified proof. `completeContext` resolves the original
+callback target; `disconnectContext` resolves the native grant and command target.
+These context methods are server-only services, not public HTTP operations. Factor
+selection, proof custody and one-time consumption remain application-owned through
+`OAuthConnectedActionEvidence`; ordinary session history is not an exact-action proof.
+
+Use the existing Operation HTTP credential mapping to keep credentials out of JSON:
+
+```ts
+const beginRoute = OperationHttpContract.route(connected.operations.Begin, {
+  path: "/auth/provider/begin",
+  credentials: {
+    preparationCredential: "connected-intent",
+    actionProof: "pending",
+  },
+});
+```
+
+`Complete` maps `requestBinding` to `request-binding`; map `actionProof` to your
+private proof slot for complete and disconnect as well. Execute begin only after
+proof authorization to receive the retained authorization URL and move the original
+binder into `request-binding`. Keep flow and command IDs across retries. Duplicate
+preparations and uncertain commits never authorize issuing a replacement credential.
+Disconnect preserves its existing durable command replay and revocation receipts.
+Unclaimed connected-management flows from before this cutover must be restarted;
+retain grants, exchange receipts and unresolved revocation work. Ordinary sign-in
+flow envelopes are unchanged.
+
 ### Runnable examples
 
 Run `vp run @yielded/example-auth#example:github` with `GITHUB_CLIENT_ID`,

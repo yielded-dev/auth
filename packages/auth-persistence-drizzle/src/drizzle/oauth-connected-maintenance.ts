@@ -197,7 +197,7 @@ export const cleanup = Effect.fn("oauthConnected.cleanup")(function* (
     f.table,
     both(
       eq(col(f.table, f.moduleId), input.moduleId),
-      sql`((${col(f.table, f.state)} = 'Pending' and ${col(f.table, f.expiresAt)} <= ${mapping.clock.encodeInstant(at)}) or (${col(f.table, f.state)} = 'Claimed' and ${col(f.table, f.claimExpiresAt)} <= ${mapping.clock.encodeInstant(at)}) or (${col(f.table, f.state)} not in ('Pending','Claimed') and ${col(f.table, f.work)} <> 'Unresolved' and ${col(f.table, f.retentionUntil)} <= ${mapping.clock.encodeInstant(at)}))`,
+      sql`((${col(f.table, f.state)} in ('Prepared','Pending') and ${col(f.table, f.expiresAt)} <= ${mapping.clock.encodeInstant(at)}) or (${col(f.table, f.state)} = 'Claimed' and ${col(f.table, f.claimExpiresAt)} <= ${mapping.clock.encodeInstant(at)}) or (${col(f.table, f.state)} not in ('Prepared','Pending','Claimed') and ${col(f.table, f.work)} <> 'Unresolved' and ${col(f.table, f.retentionUntil)} <= ${mapping.clock.encodeInstant(at)}))`,
     ),
     {
       limit: input.limit + 1,
@@ -250,7 +250,7 @@ export const cleanup = Effect.fn("oauthConnected.cleanup")(function* (
       state === "Claimed" ? row[f.claimExpiresAt] : row[f.expiresAt],
     );
 
-    if ((state === "Pending" || state === "Claimed") && now >= expires) {
+    if ((state === "Prepared" || state === "Pending" || state === "Claimed") && now >= expires) {
       yield* owner.update(
         f.table,
         { [f.moduleId]: input.moduleId, [f.flowId]: row[f.flowId], [f.version]: row[f.version] },
@@ -263,6 +263,7 @@ export const cleanup = Effect.fn("oauthConnected.cleanup")(function* (
       owner.postconditions.push(sql`${mapping.clock.engineNowMillis} >= ${expires}`);
       terminalized++;
     } else if (
+      state !== "Prepared" &&
       state !== "Pending" &&
       state !== "Claimed" &&
       row[f.work] !== "Unresolved" &&

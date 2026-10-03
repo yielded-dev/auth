@@ -2,6 +2,7 @@ import {
   OAuthConnectedTransactionProtector,
   type OAuthTransactionKeyring,
   OAuthConnectedTransactionContext,
+  OAuthConnectedTransactionSecrets,
   OAuthUnavailable,
   OAuthSealedTransaction,
   snapshotOAuthSync,
@@ -43,5 +44,10 @@ const aad = (context: OAuthConnectedTransactionContext, keyId: string) => {
 export const connectedTransactionLayer = (keyring: OAuthTransactionKeyring) =>
   Layer.effect(
     OAuthConnectedTransactionProtector,
-    transactionEncryption(OAuthConnectedTransactionContext, aad, keyring),
+    transactionEncryption(
+      OAuthConnectedTransactionContext,
+      aad,
+      keyring,
+      OAuthConnectedTransactionSecrets,
+    ),
   );

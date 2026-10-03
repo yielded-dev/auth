@@ -19,7 +19,7 @@ import type { AuthInvocation } from "../operations/context";
 import type { AuthCredentialCommand, AuthOperationResult } from "../operations/credentials";
 import { AuthenticationRequired } from "../operations/errors";
 import { makeOperation, operationGroup } from "../operations/operation";
-import { makeRequestBinding } from "../operations/requestBinding";
+import { makeRequestBinding, RequestBindingPublic } from "../operations/requestBinding";
 import { TokenDigest } from "../Schema";
 import { assessAuthentication } from "../sessions/assurance";
 import { AuthenticationFlowId, SecurityRevision } from "../sessions/models";
@@ -113,6 +113,29 @@ export const makeOAuthConnected = <const Id extends string>(
   const Connected = Context.Service<
     ConnectedModule<Id>,
     {
+      /** Retain the generated OAuth context before independent proof verification.
+       * Deliver the connected-intent command through the private transport. */
+      readonly prepareBegin: (
+        invocation: AuthInvocation,
+        input: typeof M.OAuthConnectedPrepareBegin.Type,
+      ) => Effect.Effect<AuthOperationResult<typeof RequestBindingPublic.Type>, Failure>;
+      /** Server-only private-bearer target lookup for a trusted factor adapter.
+       * Reuse the same input at begin; never expose or replace this challenge. */
+      readonly beginContext: (
+        invocation: AuthInvocation,
+        input: typeof M.OAuthConnectedBegin.Type,
+      ) => Effect.Effect<M.OAuthConnectedActionChallenge, Failure>;
+      /** Resolve the original callback target before claiming an independent factor. */
+      readonly completeContext: (
+        invocation: AuthInvocation,
+        input: typeof M.OAuthConnectedComplete.Type,
+      ) => Effect.Effect<M.OAuthConnectedActionChallenge, Failure>;
+      /** Resolve the current native grant and command target. A later grant/revision
+       * change invalidates the proof; a committed command replays via disconnect. */
+      readonly disconnectContext: (
+        invocation: AuthInvocation,
+        input: typeof M.OAuthConnectedDisconnect.Type,
+      ) => Effect.Effect<M.OAuthConnectedActionChallenge, Failure>;
       readonly begin: (
         invocation: AuthInvocation,
         input: typeof M.OAuthConnectedBegin.Type,
@@ -143,6 +166,8 @@ export const makeOAuthConnected = <const Id extends string>(
       const {
         capture,
         issue,
+        prepare: prepareFlow,
+        inspectPrepared,
         preflight,
         claim,
         inspectGrant,
@@ -302,12 +327,12 @@ export const makeOAuthConnected = <const Id extends string>(
         });
       });
 
-      const begin = Effect.fn("OAuthConnected.begin")(function* (
+      const prepareBegin = Effect.fn("OAuthConnected.prepareBegin")(function* (
         invocation: AuthInvocation,
-        raw: typeof M.OAuthConnectedBegin.Type,
+        raw: typeof M.OAuthConnectedPrepareBegin.Type,
       ) {
         const caller = yield* connectedCaller(invocation);
-        const request = yield* snapshotOAuth(M.OAuthConnectedBegin, raw);
+        const request = yield* snapshotOAuth(M.OAuthConnectedPrepareBegin, raw);
 
         const found = yield* capture({
           moduleId: id,
@@ -425,21 +450,19 @@ export const makeOAuthConnected = <const Id extends string>(
           claimLifetimeMillis: policy.claimLifetimeMillis,
         });
 
-        const authorization = yield* authorize(
-          caller,
-          yield* challenge(
-            "connected-begin",
-            context.flowId,
-            context.commandId,
-            context.revision,
-            Schema.encodeSync(contextJson)(context),
-          ),
-          request.actionProof,
+        const authorization = yield* connectedUseAuthorization(
+          yield* authorizeUse({ invocation: caller, moduleId: id, purpose: "metadata" }),
+          id,
+          caller.subjectId,
+          "metadata",
         );
 
         const sealed = yield* sealFlow({
           context,
-          secrets: snapshotOAuthSync(OAuthTransactionSecrets, prepared.secrets),
+          secrets: snapshotOAuthSync(M.OAuthConnectedTransactionSecrets, {
+            ...prepared.secrets,
+            authorizationUrl: Redacted.make(prepared.authorizationUrl),
+          }),
         }).pipe(Effect.flatMap((value) => snapshotOAuth(OAuthSealedTransaction, value)));
 
         const flow = snapshotOAuthSync(M.OAuthConnectedPendingFlow, {
@@ -448,7 +471,7 @@ export const makeOAuthConnected = <const Id extends string>(
           retentionUntilMillis: expiresAtMillis + policy.retentionMillis,
         });
 
-        const receipt = yield* issue(
+        const receipt = yield* prepareFlow(
           { flow: snapshotOAuthSync(M.OAuthConnectedPendingFlow, flow), authorization },
           (value, journal) => {
             const decision = snapshotOAuthSync(M.OAuthConnectedIssueDecision, value);
@@ -468,14 +491,148 @@ export const makeOAuthConnected = <const Id extends string>(
         return {
           value: {
             flowId: request.flowId,
-            authorizationUrl: prepared.authorizationUrl,
             expiresAtMillis,
           },
-          credentialCommands: [command],
+          credentialCommands: [{ ...command, slot: "connected-intent" as const }],
         };
       }, connectedSafe);
 
-      const complete = Effect.fn("OAuthConnected.complete")(function* (
+      const preparedBegin = Effect.fn("OAuthConnected.preparedBegin")(function* (
+        invocation: AuthInvocation,
+        raw: typeof M.OAuthConnectedBegin.Type,
+      ) {
+        const caller = yield* connectedCaller(invocation);
+        const request = yield* snapshotOAuth(M.OAuthConnectedBegin, raw);
+
+        const binder = yield* verifyBinding(request.flowId, request.preparationCredential).pipe(
+          Effect.mapError(binderError),
+        );
+
+        const access = snapshotOAuthSync(M.OAuthConnectedPreparedAccess, {
+          moduleId: id,
+          generation: policy.generation,
+          subjectId: caller.subjectId,
+          flowId: request.flowId,
+          commandId: request.commandId,
+          requestBindingVerifier: binder.verifier,
+          requestBindingExpiresAtMillis: binder.expiresAtMillis,
+          nowMillis: DateTime.toEpochMillis(yield* DateTime.now),
+        });
+
+        const inspected = yield* inspectPrepared(access);
+
+        if (inspected === undefined) return yield* OAuthRejected.make({});
+        const flow = yield* snapshotOAuth(M.OAuthConnectedPendingFlow, inspected);
+        const context = flow.context;
+        const returnTarget = yield* resolveTarget(request.returnTarget);
+
+        if (
+          context.moduleId !== id ||
+          context.generation !== policy.generation ||
+          context.flowId !== request.flowId ||
+          context.commandId !== request.commandId ||
+          context.revision.subjectId !== caller.subjectId ||
+          context.callbackId !== request.callbackId ||
+          context.profile.key !== request.intent.profileKey ||
+          !connectedSame(OAuthReturnTarget, context.returnTarget, returnTarget) ||
+          context.requestBindingVerifier !== binder.verifier ||
+          context.requestBindingExpiresAtMillis !== binder.expiresAtMillis ||
+          access.nowMillis < context.issuedAtMillis ||
+          access.nowMillis >= context.expiresAtMillis ||
+          !connectedProfile(policy, context.profile) ||
+          (request.intent._tag === "Connect"
+            ? context.reconnect !== undefined || context.provider !== request.intent.provider
+            : context.reconnect === undefined || context.grantId !== request.intent.grantId)
+        )
+          return yield* OAuthRejected.make({});
+
+        const current = yield* capture({
+          moduleId: id,
+          subjectId: caller.subjectId,
+          ...(context.reconnect === undefined ? {} : { grantId: context.grantId }),
+        });
+
+        if (
+          current === undefined ||
+          !connectedSame(OAuthAccountRevision, current.revision, context.revision) ||
+          (context.reconnect !== undefined &&
+            (current.target === undefined ||
+              !connectedSame(M.OAuthConnectedTarget, current.target, context.reconnect)))
+        )
+          return yield* OAuthRejected.make({});
+        const secrets = yield* openFlow({ context, sealed: flow.sealed });
+
+        return {
+          caller,
+          request,
+          flow,
+          context,
+          authorizationUrl: Redacted.value(secrets.authorizationUrl),
+        };
+      }, connectedSafe);
+
+      const beginChallenge = (context: M.OAuthConnectedTransactionContext) =>
+        challenge(
+          "connected-begin",
+          context.flowId,
+          context.commandId,
+          context.revision,
+          Schema.encodeSync(contextJson)(context),
+        );
+
+      const beginContext = Effect.fn("OAuthConnected.beginContext")(function* (
+        invocation: AuthInvocation,
+        raw: typeof M.OAuthConnectedBegin.Type,
+      ) {
+        return yield* beginChallenge((yield* preparedBegin(invocation, raw)).context);
+      }, connectedSafe);
+
+      const begin = Effect.fn("OAuthConnected.begin")(function* (
+        invocation: AuthInvocation,
+        raw: typeof M.OAuthConnectedBegin.Type,
+      ) {
+        const { caller, request, flow, context, authorizationUrl } = yield* preparedBegin(
+          invocation,
+          raw,
+        );
+
+        const authorization = yield* authorize(
+          caller,
+          yield* beginChallenge(context),
+          request.actionProof,
+        );
+
+        const receipt = yield* issue({ flow, authorization }, (decision, journal) => {
+          if (
+            decision._tag === "Issued" &&
+            !connectedSame(M.OAuthConnectedPendingFlow, decision.flow, flow)
+          )
+            throw OAuthUnavailable.make({});
+
+          return journal.prepare(decision._tag === "Issued");
+        });
+
+        if (!(yield* connectedRead(receipt))) return yield* OAuthRejected.make({});
+
+        return {
+          value: {
+            flowId: context.flowId,
+            authorizationUrl,
+            expiresAtMillis: context.expiresAtMillis,
+          },
+          credentialCommands: [
+            {
+              _tag: "Issue" as const,
+              slot: "request-binding" as const,
+              credential: request.preparationCredential,
+              expiresAtMillis: context.requestBindingExpiresAtMillis,
+            },
+            { _tag: "Clear" as const, slot: "connected-intent" as const },
+          ],
+        };
+      }, connectedSafe);
+
+      const preparedComplete = Effect.fn("OAuthConnected.preparedComplete")(function* (
         invocation: AuthInvocation,
         raw: typeof M.OAuthConnectedComplete.Type,
       ) {
@@ -535,15 +692,35 @@ export const makeOAuthConnected = <const Id extends string>(
         )
           return yield* OAuthUnavailable.make({});
 
+        return { caller, request, flow, context, access };
+      }, connectedSafe);
+
+      const completeChallenge = (context: M.OAuthConnectedTransactionContext) =>
+        challenge(
+          "connected-complete",
+          context.flowId,
+          context.commandId,
+          context.revision,
+          Schema.encodeSync(contextJson)(context),
+        );
+
+      const completeContext = Effect.fn("OAuthConnected.completeContext")(function* (
+        invocation: AuthInvocation,
+        raw: typeof M.OAuthConnectedComplete.Type,
+      ) {
+        return yield* completeChallenge((yield* preparedComplete(invocation, raw)).context);
+      }, connectedSafe);
+
+      const complete = Effect.fn("OAuthConnected.complete")(function* (
+        invocation: AuthInvocation,
+        raw: typeof M.OAuthConnectedComplete.Type,
+      ) {
+        const { caller, request, flow, context, access } = yield* preparedComplete(invocation, raw);
+        const response = request.response;
+
         const authorization = yield* authorize(
           caller,
-          yield* challenge(
-            "connected-complete",
-            context.flowId,
-            context.commandId,
-            context.revision,
-            Schema.encodeSync(contextJson)(context),
-          ),
+          yield* completeChallenge(context),
           request.actionProof,
           context.maximumEvidenceAgeMillis,
         );
@@ -807,7 +984,7 @@ export const makeOAuthConnected = <const Id extends string>(
         return result;
       }, connectedSafe);
 
-      const disconnect = Effect.fn("OAuthConnected.disconnect")(function* (
+      const preparedDisconnect = Effect.fn("OAuthConnected.preparedDisconnect")(function* (
         invocation: AuthInvocation,
         raw: typeof M.OAuthConnectedDisconnect.Type,
       ) {
@@ -831,6 +1008,44 @@ export const makeOAuthConnected = <const Id extends string>(
           Effect.flatMap((value) => snapshotOAuth(M.OAuthConnectedDisconnectInspection, value)),
         );
 
+        return { caller, request, inspected };
+      }, connectedSafe);
+
+      const disconnectChallenge = (
+        request: typeof M.OAuthConnectedDisconnect.Type,
+        inspected: Extract<
+          typeof M.OAuthConnectedDisconnectInspection.Type,
+          { readonly _tag: "Target" }
+        >,
+      ) =>
+        challenge(
+          "connected-disconnect",
+          M.OAuthConnectedActionChallenge.fields.flowId.make(request.commandId),
+          request.commandId,
+          inspected.revision,
+          Schema.encodeSync(Schema.fromJsonString(M.OAuthConnectedDisconnectGrant))(
+            inspected.grant,
+          ),
+        );
+
+      const disconnectContext = Effect.fn("OAuthConnected.disconnectContext")(function* (
+        invocation: AuthInvocation,
+        raw: typeof M.OAuthConnectedDisconnect.Type,
+      ) {
+        const { request, inspected } = yield* preparedDisconnect(invocation, raw);
+
+        if (inspected._tag === "Conflict") return yield* IdentityConflict.make({});
+        if (inspected._tag !== "Target") return yield* OAuthRejected.make({});
+
+        return yield* disconnectChallenge(request, inspected);
+      }, connectedSafe);
+
+      const disconnect = Effect.fn("OAuthConnected.disconnect")(function* (
+        invocation: AuthInvocation,
+        raw: typeof M.OAuthConnectedDisconnect.Type,
+      ) {
+        const { caller, request, inspected } = yield* preparedDisconnect(invocation, raw);
+
         if (inspected._tag === "Rejected") return yield* OAuthRejected.make({});
         if (inspected._tag === "Conflict") return yield* IdentityConflict.make({});
         if (inspected._tag === "Replay") {
@@ -853,13 +1068,7 @@ export const makeOAuthConnected = <const Id extends string>(
 
         const authorization = yield* authorize(
           caller,
-          yield* challenge(
-            "connected-disconnect",
-            M.OAuthConnectedActionChallenge.fields.flowId.make(request.commandId),
-            request.commandId,
-            inspected.revision,
-            Schema.encodeSync(Schema.fromJsonString(M.OAuthConnectedDisconnectGrant))(grant),
-          ),
+          yield* disconnectChallenge(request, inspected),
           request.actionProof,
         );
 
@@ -924,9 +1133,28 @@ export const makeOAuthConnected = <const Id extends string>(
         return result;
       }, connectedSafe);
 
-      return Connected.of({ begin, complete, list, disconnect });
+      return Connected.of({
+        prepareBegin,
+        beginContext,
+        completeContext,
+        disconnectContext,
+        begin,
+        complete,
+        list,
+        disconnect,
+      });
     }),
   );
+
+  const PrepareBegin = makeOperation(`${moduleId}/connected/prepare-begin`, {
+    payload: M.OAuthConnectedPrepareBegin,
+    success: RequestBindingPublic,
+    error: Failure,
+    access: "authenticated",
+    exposure: "public",
+    replay: "non-idempotent",
+    credentials: true,
+  });
 
   const Begin = makeOperation(`${moduleId}/connected/begin`, {
     payload: M.OAuthConnectedBegin,
@@ -967,6 +1195,9 @@ export const makeOAuthConnected = <const Id extends string>(
   });
 
   const handlersLayer = Layer.mergeAll(
+    PrepareBegin.credentialHandlerLayer((input, invocation) =>
+      Effect.flatMap(Connected, (connected) => connected.prepareBegin(invocation, input)),
+    ),
     Begin.credentialHandlerLayer(
       Effect.fn("OAuthConnected.Begin")(function* (input, invocation) {
         return yield* (yield* Connected).begin(invocation, input);
@@ -993,9 +1224,9 @@ export const makeOAuthConnected = <const Id extends string>(
     Connected,
     binding,
     layer,
-    operations: Object.freeze({ Begin, Complete, List, Disconnect }),
+    operations: Object.freeze({ PrepareBegin, Begin, Complete, List, Disconnect }),
     handlersLayer,
-    group: operationGroup(Begin, Complete, List, Disconnect),
+    group: operationGroup(PrepareBegin, Begin, Complete, List, Disconnect),
     ...makeOAuthConnectedAccess(moduleId, configuration),
     ...makeOAuthConnectedMaintenance(moduleId, configuration),
   });

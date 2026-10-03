@@ -11,12 +11,13 @@ import {
   OAuthConnectedPersistence,
   OAuthConnectedProtocol,
   OAuthModuleId,
+  OAuthCommandId,
   OAuthProtocol,
   OAuthRedirectUri,
   OAuthReturnTargets,
   OAuthUnavailable,
 } from "@yielded/auth/OAuth";
-import { guest, type AuthCredentialCommand } from "@yielded/auth/Operations";
+import { guest, RequestBindingFlowId, type AuthCredentialCommand } from "@yielded/auth/Operations";
 import { SubjectId } from "@yielded/auth/Schema";
 import { AuthenticationFlowId, AuthenticationRequirement } from "@yielded/auth/Sessions";
 import { OAuth } from "@yielded/auth/strategies";
@@ -157,6 +158,7 @@ const advance = Effect.fnUntraced(function* (duration: Duration.Input) {
 
 const harness = (
   settings: {
+    actionEvidence?: OAuthConnectedActionEvidence["Service"];
     failedRefresh?: boolean;
     unknownGrantCommit?: boolean;
     onRequest?: (operation: string) => Effect.Effect<void>;
@@ -244,8 +246,14 @@ const harness = (
     }),
   );
 
-  const live = Layer.merge(AppAuth.layer, oauth.access.accessLayer).pipe(
-    Layer.provide(actionEvidence),
+  const live = Layer.mergeAll(AppAuth.layer, oauth.access.accessLayer, oauth.access.layer).pipe(
+    Layer.provide(LifecycleHooks.empty),
+    Layer.provide(oauth.access.binding.layer),
+    Layer.provide(
+      settings.actionEvidence === undefined
+        ? actionEvidence
+        : Layer.succeed(OAuthConnectedActionEvidence, settings.actionEvidence),
+    ),
     Layer.provide(protocols),
     Layer.provide(OAuthCrypto.transactionLayer(keys(2))),
     Layer.provide(OAuthCrypto.connectedTransactionLayer(keys(2))),
@@ -393,6 +401,136 @@ it.effect("libSQL persistence rejects ambient transactions", () =>
     expect(error._tag).toBe("OAuthUnavailable");
   }).pipe(Effect.provide(durable)),
 );
+
+// Requested regression seam: resolve an internally generated connected target
+// before verifying independent evidence, then execute that exact retained target.
+it.effect("connected preparation retains its exact target until authorized execution", () => {
+  let target:
+    | Parameters<OAuthConnectedActionEvidence["Service"]["verify"]>[0]["challenge"]
+    | undefined;
+
+  let verifications = 0;
+
+  const h = harness({
+    actionEvidence: {
+      verify: Effect.fnUntraced(function* ({ invocation, challenge, proof }) {
+        verifications++;
+        if (
+          invocation._tag !== "Authenticated" ||
+          proof === undefined ||
+          Redacted.value(proof) !== "begin-proof" ||
+          target === undefined ||
+          JSON.stringify(challenge) !== JSON.stringify(target)
+        )
+          return yield* OAuthConnectedActionRequired.make({});
+        const credential = challenge.revision.credentials[0];
+
+        if (credential === undefined) return yield* OAuthConnectedActionRequired.make({});
+
+        return {
+          requirement: AuthenticationRequirement.make({
+            maximumAgeMillis: 300_000,
+            alternatives: [
+              {
+                factors: ["possession"],
+                minimumCredentials: 1,
+                userVerified: false,
+                phishingResistant: false,
+              },
+            ],
+          }),
+          evidence: Sessions.AuthenticationEvidence.make({
+            flowId: AuthenticationFlowId.make(challenge.flowId),
+            bindingDigest: challenge.bindingDigest,
+            revision: challenge.revision,
+            proofs: [
+              {
+                method: "independent-test-factor",
+                credentialId: credential.credentialId,
+                factors: ["possession"],
+                userVerified: false,
+                phishingResistant: false,
+                verifiedAt: yield* DateTime.now,
+              },
+            ],
+          }),
+        };
+      }),
+    },
+  });
+
+  return Effect.gen(function* () {
+    const signedIn = yield* signIn;
+    const connected = yield* oauth.access.Connected;
+
+    const input = {
+      flowId: RequestBindingFlowId.make("prepared-flow"),
+      commandId: OAuthCommandId.make("prepared-command"),
+      callbackId,
+      intent: {
+        _tag: "Reconnect" as const,
+        grantId: signedIn.connection.grantId,
+        profileKey: profile.key,
+      },
+      returnTarget: "/sync",
+    };
+
+    const prepared = yield* connected.prepareBegin(signedIn.caller, input);
+
+    const issued = prepared.credentialCommands.find(
+      (command) => command._tag === "Issue" && command.slot === "connected-intent",
+    );
+
+    if (issued?._tag !== "Issue")
+      return yield* Effect.die("Missing private preparation credential");
+    expect(Object.keys(prepared.value)).toEqual(["flowId", "expiresAtMillis"]);
+
+    const command = {
+      ...input,
+      preparationCredential: issued.credential,
+      actionProof: Redacted.make("begin-proof"),
+    };
+
+    target = yield* connected.beginContext(signedIn.caller, command);
+    expect(verifications).toBe(0);
+    yield* advance("1 second");
+    const repeated = yield* connected.beginContext(signedIn.caller, command);
+
+    expect(repeated).toEqual(target);
+    expect(
+      (yield* connected
+        .beginContext(signedIn.caller, {
+          ...command,
+          commandId: OAuthCommandId.make("other-command"),
+        })
+        .pipe(Effect.flip))._tag,
+    ).toBe("OAuthRejected");
+    const result = yield* connected.begin(signedIn.caller, command);
+
+    expect(verifications).toBe(1);
+    expect(result.value.expiresAtMillis).toBe(prepared.value.expiresAtMillis);
+    expect(
+      result.credentialCommands.some(
+        (value) =>
+          value._tag === "Issue" &&
+          value.slot === "request-binding" &&
+          Redacted.value(value.credential) === Redacted.value(issued.credential),
+      ),
+    ).toBe(true);
+    expect((yield* connected.begin(signedIn.caller, command).pipe(Effect.flip))._tag).toBe(
+      "OAuthRejected",
+    );
+    expect(verifications).toBe(1);
+    const sql = yield* SqlClient.SqlClient;
+
+    const rows =
+      yield* sql`SELECT snapshot, state FROM oauth_connected_flow WHERE flowId = ${input.flowId}`;
+
+    expect(rows[0]?.state).toBe("Pending");
+    expect(JSON.stringify(rows)).not.toContain(Redacted.value(issued.credential));
+    expect(JSON.stringify(rows)).not.toContain(result.value.authorizationUrl);
+  }).pipe(Effect.provide(h.live));
+});
 
 it.effect(
   "a lost grant-commit response issues no session and cannot repeat the authorization code",

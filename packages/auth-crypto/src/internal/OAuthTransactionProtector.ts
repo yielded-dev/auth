@@ -4,6 +4,7 @@ import {
   OAuthUnavailable,
   OAuthEncryptionKeyId,
   OAuthSealedTransaction,
+  OAuthTransactionSecrets,
   OAuthSignInTransactionContext,
   snapshotOAuthSync,
 } from "@yielded/auth/OAuth";
@@ -83,5 +84,5 @@ const aad = (context: OAuthSignInTransactionContext, keyId: string) => {
 export const transactionLayer = (keyring: OAuthTransactionKeyring) =>
   Layer.effect(
     OAuthTransactionProtector,
-    transactionEncryption(OAuthSignInTransactionContext, aad, keyring),
+    transactionEncryption(OAuthSignInTransactionContext, aad, keyring, OAuthTransactionSecrets),
   );

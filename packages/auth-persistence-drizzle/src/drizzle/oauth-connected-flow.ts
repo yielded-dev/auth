@@ -84,9 +84,11 @@ export const expected = (flow: M.OAuthConnectedPendingFlow) => ({
   configuration: S.configuration(flow),
 });
 
-export const issue = Effect.fn("oauthConnected.issue")(function* (
+const retain = Effect.fn("oauthConnected.retain")(function* (
   mapping: S.Mapping,
-  input: Input<"issue">,
+  input:
+    | ({ readonly _tag: "Prepare" } & Input<"prepare">)
+    | ({ readonly _tag: "Issue" } & Input<"issue">),
 ) {
   const owner = yield* CurrentOAuthTransaction;
 
@@ -95,10 +97,16 @@ export const issue = Effect.fn("oauthConnected.issue")(function* (
 
   const found = yield* S.current(mapping, c.revision.subjectId);
 
-  if (
-    found === undefined ||
-    !(yield* S.action(mapping, found, input.authorization, "issue", expected(flow)))
-  )
+  if (found === undefined) return { _tag: "Rejected" } as const;
+  if (input._tag === "Prepare") {
+    if (
+      input.authorization.moduleId !== c.moduleId ||
+      !sameRevision(input.authorization.revision, c.revision) ||
+      !sameRevision(found.revision, c.revision) ||
+      (yield* S.useAuthority(mapping, input.authorization, "metadata")) === undefined
+    )
+      return { _tag: "Rejected" } as const;
+  } else if (!(yield* S.action(mapping, found, input.authorization, "issue", expected(flow))))
     return { _tag: "Rejected" } as const;
   if (c.profile.revocation === "cohort") invariant(mapping.revocation.mode === "cohort");
   const client = yield* S.client(mapping, S.configuration(flow), true);
@@ -131,6 +139,31 @@ export const issue = Effect.fn("oauthConnected.issue")(function* (
     { limit: 1 },
   );
 
+  owner.postconditions.push(
+    sql`${mapping.clock.engineNowMillis} >= ${c.issuedAtMillis} and ${mapping.clock.engineNowMillis} < ${c.expiresAtMillis}`,
+  );
+  if (input._tag === "Issue") {
+    const row = prior.rows[0];
+
+    if (
+      row === undefined ||
+      command.rows[0] === undefined ||
+      row[f.state] !== "Prepared" ||
+      row[f.snapshot] !== S.flowStorage.encode(flow) ||
+      command.rows[0][f.flowId] !== c.flowId
+    )
+      return { _tag: "Rejected" } as const;
+    yield* owner.update(
+      f.table,
+      { ...key, [f.state]: "Prepared", [f.version]: row[f.version] },
+      { [f.state]: "Pending", [f.version]: owner.marker },
+    );
+    owner.postconditions.push(
+      sql`exists(select 1 from ${f.table} where ${equal(f.table, { ...key, [f.state]: "Pending", [f.version]: owner.marker })})`,
+    );
+
+    return { _tag: "Issued", flow } as const;
+  }
   if (prior.rows.length || command.rows.length) return { _tag: "Rejected" } as const;
 
   const values = {
@@ -143,7 +176,7 @@ export const issue = Effect.fn("oauthConnected.issue")(function* (
     [f.subjectId]: found.nativeId,
     [f.clientKey]: client.id,
     [f.cohortKey]: null,
-    [f.state]: "Pending",
+    [f.state]: "Prepared",
     [f.version]: owner.marker,
     [f.stateDigest]: c.stateDigest,
     [f.snapshot]: S.flowStorage.encode(flow),
@@ -163,11 +196,66 @@ export const issue = Effect.fn("oauthConnected.issue")(function* (
   prior.rows = inserted.rows;
   command.rows = inserted.rows;
   if (inserted.rows[0]?.[f.version] !== owner.marker) return { _tag: "Rejected" } as const;
-  owner.postconditions.push(
-    sql`${mapping.clock.engineNowMillis} >= ${c.issuedAtMillis} and ${mapping.clock.engineNowMillis} < ${c.expiresAtMillis}`,
-  );
 
   return { _tag: "Issued", flow } as const;
+});
+
+export const prepare = (mapping: S.Mapping, input: Input<"prepare">) =>
+  retain(mapping, { _tag: "Prepare", ...input });
+
+export const issue = (mapping: S.Mapping, input: Input<"issue">) =>
+  retain(mapping, { _tag: "Issue", ...input });
+
+export const inspectPrepared = Effect.fn("oauthConnected.inspectPrepared")(function* (
+  mapping: S.Mapping,
+  access: M.OAuthConnectedPreparedAccess,
+) {
+  const owner = yield* CurrentOAuthTransaction;
+  const found = yield* S.current(mapping, access.subjectId);
+
+  if (found === undefined) return undefined;
+  const f = mapping.flow;
+
+  const read = yield* owner.read(
+    f.table,
+    equal(f.table, {
+      [f.moduleId]: access.moduleId,
+      [f.flowId]: access.flowId,
+      [f.subjectId]: found.nativeId,
+    }),
+    { limit: 1 },
+  );
+
+  const row = read.rows[0];
+
+  if (row === undefined || row[f.state] !== "Prepared" || row[f.snapshot] === null)
+    return undefined;
+  const flow = S.flowStorage.decode(row[f.snapshot]);
+  const c = flow.context;
+
+  invariant(
+    row[f.moduleId] === c.moduleId &&
+      row[f.flowId] === c.flowId &&
+      row[f.commandId] === c.commandId &&
+      mapping.subjectId.equals(found.nativeId, row[f.subjectId]) &&
+      row[f.clientKey] === S.clientKey(S.configuration(flow)) &&
+      row[f.stateDigest] === c.stateDigest &&
+      mapping.clock.decodeInstant(row[f.expiresAt]) === c.expiresAtMillis &&
+      mapping.clock.decodeInstant(row[f.retentionUntil]) === flow.retentionUntilMillis,
+  );
+  const now = yield* owner.now(mapping.clock);
+
+  return c.moduleId === access.moduleId &&
+    c.generation === access.generation &&
+    c.flowId === access.flowId &&
+    c.commandId === access.commandId &&
+    c.revision.subjectId === access.subjectId &&
+    sameRevision(found.revision, c.revision) &&
+    c.requestBindingVerifier === access.requestBindingVerifier &&
+    c.requestBindingExpiresAtMillis === access.requestBindingExpiresAtMillis &&
+    live(flow, now)
+    ? flow
+    : undefined;
 });
 
 export const sameTarget = (target: M.OAuthConnectedTarget, context: M.OAuthConnectedTokenContext) =>

@@ -1,6 +1,6 @@
 import { Schema } from "effect";
 
-import { RequestBindingFlowId } from "../operations/requestBinding";
+import { RequestBindingFlowId, RequestBindingCredential } from "../operations/requestBinding";
 import { SecurityRevision } from "../sessions/models";
 import {
   OAuthAccountRevision,
@@ -30,6 +30,7 @@ import {
   OAuthSignInPolicy,
   OAuthSignInTransactionContext,
   OAuthTransactionSecrets,
+  OAuthAuthorizationUrl,
 } from "./signInModels";
 
 const revision = SecurityRevision.check(Schema.isMaxLength(256));
@@ -89,12 +90,17 @@ export const OAuthConnectedIntent = Schema.Union([
   }),
 ]);
 
-export const OAuthConnectedBegin = Schema.Struct({
+export const OAuthConnectedPrepareBegin = Schema.Struct({
   flowId: RequestBindingFlowId,
   commandId: OAuthCommandId,
   callbackId: OAuthCallbackId,
   intent: OAuthConnectedIntent,
   returnTarget: Schema.String.check(Schema.isMaxLength(2048)),
+});
+
+export const OAuthConnectedBegin = Schema.Struct({
+  ...OAuthConnectedPrepareBegin.fields,
+  preparationCredential: RequestBindingCredential,
   actionProof: Schema.optionalKey(
     Schema.RedactedFromValue(Schema.NonEmptyString.check(Schema.isMaxLength(16384))),
   ),
@@ -143,6 +149,14 @@ export const OAuthConnectedTransactionContext = Schema.Struct({
 });
 
 export type OAuthConnectedTransactionContext = typeof OAuthConnectedTransactionContext.Type;
+
+/** The authorization URL contains state and remains encrypted during preparation. */
+export const OAuthConnectedTransactionSecrets = Schema.Struct({
+  ...OAuthTransactionSecrets.fields,
+  authorizationUrl: Schema.RedactedFromValue(OAuthAuthorizationUrl),
+});
+
+export type OAuthConnectedTransactionSecrets = typeof OAuthConnectedTransactionSecrets.Type;
 
 export const OAuthConnectedPendingFlow = Schema.Struct({
   context: OAuthConnectedTransactionContext,
@@ -370,6 +384,19 @@ export const OAuthConnectedAccess = Schema.Struct({
 });
 
 export type OAuthConnectedAccess = typeof OAuthConnectedAccess.Type;
+
+export const OAuthConnectedPreparedAccess = Schema.Struct({
+  moduleId: OAuthModuleId,
+  generation: OAuthGeneration,
+  subjectId: OAuthAccountRevision.fields.subjectId,
+  flowId: RequestBindingFlowId,
+  commandId: OAuthCommandId,
+  requestBindingVerifier: OAuthConnectedTransactionContext.fields.requestBindingVerifier,
+  requestBindingExpiresAtMillis: OAuthInstant,
+  nowMillis: OAuthInstant,
+});
+
+export type OAuthConnectedPreparedAccess = typeof OAuthConnectedPreparedAccess.Type;
 
 export const OAuthConnectedIssueDecision = Schema.Union([
   Schema.TaggedStruct("Issued", { flow: OAuthConnectedPendingFlow }),

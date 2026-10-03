@@ -23,7 +23,6 @@ const keyringSchema = Schema.Struct({
 });
 
 const encoder = new TextEncoder();
-const secretCodec = Schema.fromJsonString(OAuthTransactionSecrets);
 
 const decodeBase64 = (value: string, maximum: number, exact?: number) => {
   if (
@@ -48,11 +47,12 @@ const decodeBase64 = (value: string, maximum: number, exact?: number) => {
   return bytes;
 };
 
-const validateSecrets = (
+const validateSecrets = <S extends OAuthTransactionSecrets>(
   context: { readonly protocol: "oidc" | "oauth" },
-  secrets: OAuthTransactionSecrets,
+  secrets: S,
+  schema: Schema.Codec<S, unknown, never, never>,
 ) => {
-  const value = snapshotOAuthSync(OAuthTransactionSecrets, secrets);
+  const value = snapshotOAuthSync(schema, secrets);
 
   if ((context.protocol === "oidc") !== (value.oidcNonce !== undefined))
     throw OAuthUnavailable.make({});
@@ -64,11 +64,16 @@ const validateSecrets = (
 };
 
 /** Private primitive: public protectors each own a fixed typed AAD domain. */
-export const transactionEncryption = <C extends { readonly protocol: "oidc" | "oauth" }>(
+export const transactionEncryption = <
+  C extends { readonly protocol: "oidc" | "oauth" },
+  S extends OAuthTransactionSecrets,
+>(
   contextSchema: Schema.Codec<C, unknown, never, never>,
   aad: (context: C, keyId: string) => Uint8Array,
   keyring: OAuthTransactionKeyring,
+  secretSchema: Schema.Codec<S, unknown, never, never>,
 ) => {
+  const secretCodec = Schema.fromJsonString(secretSchema);
   let captured: typeof keyringSchema.Type | undefined;
 
   try {
@@ -106,12 +111,12 @@ export const transactionEncryption = <C extends { readonly protocol: "oidc" | "o
     return {
       seal: Effect.fn("OAuthTransactionProtector.seal")(function* (input: {
         readonly context: C;
-        readonly secrets: OAuthTransactionSecrets;
+        readonly secrets: S;
       }) {
         const retained = yield* Effect.try({
           try: () => ({
             context: snapshotOAuthSync(contextSchema, input.context),
-            secrets: validateSecrets(input.context, input.secrets),
+            secrets: validateSecrets(input.context, input.secrets, secretSchema),
           }),
           catch: () => OAuthUnavailable.make({}),
         });
@@ -176,7 +181,7 @@ export const transactionEncryption = <C extends { readonly protocol: "oidc" | "o
                 if (Schema.encodeSync(secretCodec)(secrets) !== json)
                   throw OAuthUnavailable.make({});
 
-                return validateSecrets(context, secrets);
+                return validateSecrets(context, secrets, secretSchema);
               } finally {
                 nonce?.fill(0);
                 ciphertext?.fill(0);
