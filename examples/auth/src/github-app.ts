@@ -42,7 +42,7 @@ const runtime = Layer.unwrap(
 
 // Callback URLs contain credentials; do not record them in request logs or traces.
 HttpRouter.serve(runtime, { disableLogger: true }).pipe(
-  Layer.provide(BunHttpServer.layer({ port: 3000 })),
+  Layer.provide(BunHttpServer.layer({ hostname: "127.0.0.1", port: 3000 })),
   Layer.provide(Layer.succeed(HttpMiddleware.TracerDisabledWhen, () => true)),
   Layer.provide(BunServices.layer),
   Layer.launch,
