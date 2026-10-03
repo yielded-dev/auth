@@ -1,6 +1,11 @@
-import { Crypto, DateTime, Effect, Redacted, Schema } from "effect";
+import { Crypto, DateTime, Effect, Redacted, Schema, Stream } from "effect";
 import { Base64Url } from "effect/encoding";
-import { FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
+import {
+  FetchHttpClient,
+  HttpClient,
+  HttpClientRequest,
+  type HttpClientResponse,
+} from "effect/http";
 
 import { selectCallback } from "./callback";
 import { wipeConnectedMaterial } from "./connectedAccess";
@@ -24,9 +29,9 @@ import {
 
 export const Athlete = Schema.Struct({
   id: Schema.Int.check(Schema.isGreaterThan(0)),
-  firstname: Schema.optionalKey(Schema.String),
-  lastname: Schema.optionalKey(Schema.String),
-  profile: Schema.optionalKey(Schema.String),
+  firstname: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(256))),
+  lastname: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(256))),
+  profile: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(2048))),
 });
 
 const Token = Schema.Struct({
@@ -35,7 +40,36 @@ const Token = Schema.Struct({
   refresh_token: Schema.NonEmptyString.check(Schema.isMaxLength(16384)),
   expires_at: Schema.Int.check(Schema.isGreaterThan(0)),
   athlete: Schema.optionalKey(Athlete),
-  scope: Schema.optionalKey(Schema.String),
+  scope: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(16384))),
+});
+
+const decodeGrant = Schema.decodeEffect(Schema.toType(OAuthConnectedGrantResponse));
+
+// Fetch's JSON accessor buffers unknown fields too. Bound the scoped stream before decoding.
+const readBody = Effect.fnUntraced(function* (response: HttpClientResponse.HttpClientResponse) {
+  const decoder = new TextDecoder("utf-8", { fatal: true });
+  let size = 0;
+
+  const chunks = yield* response.stream.pipe(
+    Stream.mapEffect((chunk) =>
+      Effect.try({
+        try: () => {
+          size += chunk.length;
+          if (size > 1_048_576) throw OAuthUnavailable.make({});
+
+          return decoder.decode(chunk, { stream: true });
+        },
+        catch: () => OAuthUnavailable.make({}),
+      }),
+    ),
+    Stream.runCollect,
+    Effect.mapError(() => OAuthUnavailable.make({})),
+  );
+
+  return yield* Effect.try({
+    try: () => chunks.join("") + decoder.decode(),
+    catch: () => OAuthUnavailable.make({}),
+  });
 });
 
 const Scopes = Schema.NonEmptyArray(
@@ -142,7 +176,9 @@ const configure = Effect.fn("Strava.configure")(function* (
         return yield* OAuthProtocolRejected.make({});
       if (response.status !== 200) return yield* OAuthUnavailable.make({});
 
-      return yield* HttpClientResponse.schemaBodyJson(Token)(response);
+      return yield* readBody(response).pipe(
+        Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(Token))),
+      );
     },
     Effect.scoped,
     (effect) =>
@@ -223,7 +259,7 @@ const configure = Effect.fn("Strava.configure")(function* (
       if (scopes.some((scope) => !granted.includes(scope)))
         return yield* OAuthProtocolRejected.make({});
 
-      return OAuthConnectedGrantResponse.make({
+      return yield* decodeGrant({
         identity: { provider: key, issuer, subject: String(athlete.id) },
         profile: {
           displayName: [athlete.firstname, athlete.lastname].filter(Boolean).join(" "),
@@ -234,7 +270,7 @@ const configure = Effect.fn("Strava.configure")(function* (
         resources: [],
         accessExpiresAtMillis: token.expires_at * 1000,
         material: material(token),
-      });
+      }).pipe(Effect.mapError(() => OAuthUnavailable.make({})));
     }),
     refreshGrant: Effect.fn("Strava.refreshGrant")(function* (input) {
       yield* verifyConfiguration(input.context.configuration);
@@ -257,7 +293,8 @@ const configure = Effect.fn("Strava.configure")(function* (
 
       if (response.status !== 200) return yield* OAuthUnavailable.make({});
 
-      const athlete = yield* HttpClientResponse.schemaBodyJson(Athlete)(response).pipe(
+      const athlete = yield* readBody(response).pipe(
+        Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(Athlete))),
         Effect.mapError(() => OAuthUnavailable.make({})),
       );
 
@@ -267,7 +304,7 @@ const configure = Effect.fn("Strava.configure")(function* (
       )
         return yield* OAuthProtocolRejected.make({});
 
-      return OAuthConnectedGrantResponse.make({
+      return yield* decodeGrant({
         identity: input.context.identity,
         scopes:
           token.scope === undefined
@@ -276,7 +313,7 @@ const configure = Effect.fn("Strava.configure")(function* (
         resources: [],
         accessExpiresAtMillis: token.expires_at * 1000,
         material: material(token),
-      });
+      }).pipe(Effect.mapError(() => OAuthUnavailable.make({})));
     }, Effect.scoped),
     revokeGrant: () => Effect.fail(OAuthUnavailable.make({})),
   };

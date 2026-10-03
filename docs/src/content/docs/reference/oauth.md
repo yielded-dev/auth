@@ -249,7 +249,7 @@ mapping. See the [registration example](https://github.com/yielded-dev/auth/blob
 `GitHub.accessProfile` defaults to `read:user`, rotating refresh tokens, cohort
 revocation, and thirty days of local refresh retention. `Strava.accessProfile`
 requires scopes and declares unsupported remote revocation. Its adapter rechecks
-athlete identity on refresh. Custom Effect HTTP clients must reject redirects and
+athlete identity on refresh and limits response bodies to 1 MiB. Custom Effect HTTP clients must reject redirects and
 must not retry token exchanges.
 
 For generic providers, registration `access` supplies `clientRegistrationId`,
