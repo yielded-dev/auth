@@ -120,9 +120,9 @@ import { PhonePersistenceLive, ProofPersistenceLive } from "./auth-persistence";
 const TwilioConfigLive = Layer.effect(
   Twilio.TwilioConfig,
   Config.all({
-    accountSid: Config.string("TWILIO_ACCOUNT_SID"),
-    authToken: Config.redacted("TWILIO_AUTH_TOKEN"),
-    from: Config.string("TWILIO_FROM"),
+    accountSid: Config.String("TWILIO_ACCOUNT_SID"),
+    authToken: Config.Redacted("TWILIO_AUTH_TOKEN"),
+    from: Config.String("TWILIO_FROM"),
   }),
 );
 

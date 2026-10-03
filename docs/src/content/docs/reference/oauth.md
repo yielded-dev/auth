@@ -275,7 +275,7 @@ Effect containing the stable `subject` and optional profile. Set scopes explicit
 S256 PKCE and response issuer validation are required by default. Set
 `responseIssuerMode: "unsupported"` only for providers without issuer responses.
 Public clients use `authentication: { method: "none", publicClient: true }`.
-Load secrets with `Config.redacted`. Invalid settings fail Layer construction with
+Load secrets with `Config.Redacted`. Invalid settings fail Layer construction with
 `OpenIdClientConfigurationError`.
 
 ### Configuration rotation
