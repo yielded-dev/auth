@@ -284,6 +284,7 @@ export {
 export { PersistenceConfigurationError } from "./internal/configuration";
 export { makeComposedPasskeys } from "./internal/passkeys";
 export { createPersistence } from "./internal/persistence";
+export { makeMappings as makeStorageMappings } from "./internal/storage-mapping";
 export { type StorageTable } from "./internal/storage-tables";
 export type { SubjectIdCodec } from "./internal/models/common";
 export type { PasswordRegistrationAuthority } from "./internal/registration-contract";

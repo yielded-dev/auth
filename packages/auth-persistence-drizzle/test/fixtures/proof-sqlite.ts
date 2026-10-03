@@ -2,6 +2,7 @@ import { D1Client } from "@effect/sql-d1/D1Client";
 import type { D1Client as D1ClientService } from "@effect/sql-d1/D1Client";
 import * as SqliteClient from "@effect/sql-sqlite-node/SqliteClient";
 import { Auth, PhoneOtp, Sessions } from "@yielded/auth";
+import { makeStorageMappings } from "@yielded/auth-persistence/Adapter";
 import { SubjectId } from "@yielded/auth/Schema";
 import { getTableColumns, is, sql } from "drizzle-orm";
 import * as DrizzleD1 from "drizzle-orm/effect-d1";
@@ -18,7 +19,6 @@ import { SqlClient } from "effect/sql";
 import type { SqlError } from "effect/sql/SqlError";
 import type { Statement } from "effect/sql/Statement";
 
-import { makeMappings } from "../../../auth-persistence/src/internal/storage-mapping";
 import { Database as D1Database } from "../../src/drizzle/d1-database";
 import type { D1ProofPersistenceMapping } from "../../src/drizzle/proof-model";
 import { AuthPersistence } from "../../src/SqliteNode";
@@ -62,7 +62,7 @@ export const storage = persistence.managed({
 });
 
 // Use production codecs and table mapping, rather than a test proof-store implementation.
-export const proofMapping = makeMappings(storage).proofs();
+export const proofMapping = makeStorageMappings(storage).proofs();
 const identifiers = getTableColumns(storage.schema.identifiers);
 const clock = sql`(select now from proof_clock)`;
 

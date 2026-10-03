@@ -264,6 +264,20 @@ secret keys. Adapters provide implementations; they are not installed automatica
 Install the selected driver's Effect SQL and Drizzle peers. Import it directly to
 avoid loading unrelated adapters. Shared mapping types live in `@yielded/auth-persistence-drizzle`.
 
+Adapter authors can reuse the canonical row codecs when composing explicit services:
+
+```ts
+import { makeStorageMappings } from "@yielded/auth-persistence/Adapter";
+
+const mappings = makeStorageMappings(storage);
+const proofMapping = mappings.proofs();
+```
+
+The layout must include each requested mapping's role tables. These are shared
+mapping types: the adapter still supplies typed table handles and, for D1, its
+engine clock and atomic commit predicates. Refine authority policy only for the
+intended proof purpose; the composed Layer's defaults remain unchanged.
+
 Use the Effect SQL peer ranges declared by the adapter package and keep the driver
 aligned with `effect`. The native PostgreSQL driver accepts one
 statement per query, decodes `int8` as `bigint`, timestamps as `Date`, and `bytea`

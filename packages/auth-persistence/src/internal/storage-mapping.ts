@@ -76,6 +76,11 @@ const ProofContinuation = Schema.Struct({
   version: ProofVersion,
 });
 
+/** Derive shared row mappings from a managed or custom storage layout.
+ * Each factory requires its role tables to exist. Adapter authors supply typed
+ * table handles and dialect-specific clocks/commit predicates, and may refine
+ * authority policy for explicit services. This does not alter composed defaults.
+ */
 export const makeMappings = (input: MappingInput) => {
   const table = (role: StorageRole) => {
     const found = input.tables[role];
