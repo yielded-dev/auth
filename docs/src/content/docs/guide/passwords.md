@@ -100,7 +100,6 @@ import { authorizePasswordChange, registerAccount, resolvePasswordClaims } from 
 import { PasswordPersistenceLive, ProofPersistenceLive } from "./auth-persistence";
 import { checkPassword } from "./password-screening";
 import { EmailLive } from "./email";
-import { ProofIngressLive } from "./proof-ingress";
 
 export const PasswordLive = Layer.mergeAll(
   PasswordCrypto.layer().pipe(
@@ -114,7 +113,6 @@ export const PasswordLive = Layer.mergeAll(
   Layer.succeed(Password.CompromisedPasswords, { check: checkPassword }),
   Layer.succeed(Password.PasswordActionEvidence, { verify: authorizePasswordChange }),
   EmailLive,
-  ProofIngressLive,
 );
 
 export const AuthLive = AppAuth.layer.pipe(
@@ -170,10 +168,9 @@ To resend, retain the flow ID and use a fresh request ID after the cooldown.
 A new reset attempt leaves an existing unexpired link or code usable and sends no
 new email. Ignored requests do not extend its expiry (five minutes by default).
 
-Reset requests require a shared `Proofs.HostIngressLimiter` and a trusted
-`Proofs.ProofRequestContext` supplied per invocation. Admission precedes target
-lookup for every request, including unknown addresses and retries. See
-[HTTP admission](./http-and-client#proof-request-admission) for host wiring and
+Auth supplies a network rate limiter, and HTTP derives the caller from the socket
+peer automatically. Checks precede target lookup, including unknown addresses and
+retries. See [HTTP admission](./http-and-client#proof-request-admission) for overrides and
 [proof budgets](./codes#proof-expiry-and-rate-limits) for delivery limits.
 
 For links, the originating client uses `EmailDelivery.parseLinkFragment` to extract

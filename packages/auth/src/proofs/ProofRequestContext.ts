@@ -1,12 +1,19 @@
-import { Context, type Redacted } from "effect";
+import { Context, type Effect, type Redacted } from "effect";
 
-/** Host-verified opaque ingress identity, supplied per invocation. Never accept
- * these keys in operation payloads or install a caller in a shared auth Layer.
+import type { ProofUnavailable } from "./errors";
+
+/** Resolve a host-verified identity when a request needs proof admission.
+ * Auth HTTP supplies the current socket peer by default. Raw callers and trusted
+ * proxy integrations provide a resolver per invocation. Never accept these keys
+ * in operation payloads or install a caller in a shared auth Layer.
  */
 export class ProofRequestContext extends Context.Service<
   ProofRequestContext,
-  {
-    readonly networkKey: Redacted.Redacted<string>;
-    readonly deviceKey?: Redacted.Redacted<string>;
-  }
+  Effect.Effect<
+    {
+      readonly networkKey: Redacted.Redacted<string>;
+      readonly deviceKey?: Redacted.Redacted<string>;
+    },
+    ProofUnavailable
+  >
 >()("effect-auth/ProofRequestContext") {}

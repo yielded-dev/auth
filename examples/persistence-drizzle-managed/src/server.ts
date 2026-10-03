@@ -4,7 +4,6 @@ import { Effect, FileSystem, Layer, Path } from "effect";
 import { FetchHttpClient, HttpRouter, HttpServerResponse } from "effect/http";
 
 import { AppAuth } from "../../shared/account/auth";
-import { ProofIngressLive, ProofRequestMiddleware } from "../../shared/account/proof-ingress";
 import { DatabaseLive, KeysLive } from "./data";
 import { DeliveryLive } from "./delivery";
 import { AuthLive } from "./live";
@@ -44,14 +43,11 @@ const PageRoutes = Layer.unwrap(
 );
 
 const ApplicationLive = AuthLive.pipe(
-  Layer.provide([DatabaseLive, KeysLive, DeliveryLive, ScreeningLive, ProofIngressLive]),
+  Layer.provide([DatabaseLive, KeysLive, DeliveryLive, ScreeningLive]),
   Layer.provide([FetchHttpClient.layer, BunServices.layer]),
 );
 
-const Routes = Layer.merge(
-  http.routes().pipe(Layer.provide(ProofRequestMiddleware.layer)),
-  PageRoutes,
-).pipe(Layer.provide(ApplicationLive));
+const Routes = Layer.merge(http.routes(), PageRoutes).pipe(Layer.provide(ApplicationLive));
 
 const ServerLive = HttpRouter.serve(Routes, { disableLogger: true }).pipe(
   Layer.provide(BunHttpServer.layer({ hostname: "127.0.0.1", port })),

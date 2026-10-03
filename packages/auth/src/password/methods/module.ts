@@ -12,7 +12,7 @@ import { makeOperation, operationGroup } from "../../operations/operation";
 import { proofRequestAdmission } from "../../proofs/admission";
 import type { ProofSecretPolicy } from "../../proofs/crypto";
 import { readProofCommit } from "../../proofs/dispatch";
-import { HostIngressLimiter } from "../../proofs/HostIngressLimiter";
+import { defaultIngressLayer } from "../../proofs/HostIngressLimiter";
 import {
   ProofBinding,
   ProofContinuation,
@@ -937,7 +937,7 @@ const makePasswordWithManagement = <
         Layer.provide(defaultLayer(reset.Proofs, reset.emailLayer)),
         Layer.provide([newPasswordLayer, hooksLayer]),
         Layer.provideMerge(cryptoLayer),
-        Layer.merge(Layer.effect(HostIngressLimiter, HostIngressLimiter)),
+        Layer.merge(defaultIngressLayer),
       ),
       { completion: true },
     ),

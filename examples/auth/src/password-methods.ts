@@ -4,7 +4,6 @@ import * as PasswordCrypto from "@yielded/auth-crypto/Password";
 import { DateTime, Effect, Layer, Redacted } from "effect";
 import { Base64Url } from "effect/encoding";
 
-import { ProofIngressLive } from "../../shared/account/proof-ingress";
 import {
   makePasswordConsumer,
   passwordAuth,
@@ -22,7 +21,6 @@ const base = Layer.mergeAll(
   Hooks.LifecycleHooks.empty,
   hashing,
   Proofs.ProofDispatchScheduler.layerInline,
-  ProofIngressLive,
 );
 
 const screening = Layer.succeed(Password.CompromisedPasswords, {
@@ -269,9 +267,10 @@ const program = Effect.gen(function* () {
     Effect.scoped,
     Effect.provideService(Auth.AuthRequest, { ...call, invocation: Operations.guest }),
     // This CLI host owns its caller; HTTP hosts derive a fresh key per request.
-    Effect.provideService(Proofs.ProofRequestContext, {
-      networkKey: Redacted.make("password-cli"),
-    }),
+    Effect.provideService(
+      Proofs.ProofRequestContext,
+      Effect.succeed({ networkKey: Redacted.make("password-cli") }),
+    ),
     Effect.provide(
       Layer.mergeAll(sessionHandlers, model.layer, strategy, completion, delivery, screening),
     ),

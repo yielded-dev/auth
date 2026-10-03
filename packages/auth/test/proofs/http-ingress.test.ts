@@ -95,7 +95,10 @@ it.effect("resolves proof ingress from each HTTP invocation instead of shared co
       Effect.provide(configuration),
       Effect.provide(handlers),
       Effect.provideService(Proofs.HostIngressLimiter, limiter),
-      Effect.provideService(Proofs.ProofRequestContext, { networkKey: Redacted.make("startup") }),
+      Effect.provideService(
+        Proofs.ProofRequestContext,
+        Effect.succeed({ networkKey: Redacted.make("startup") }),
+      ),
     );
 
     const call = (network: string) =>
@@ -104,7 +107,10 @@ it.effect("resolves proof ingress from each HTTP invocation instead of shared co
         .pipe(
           Effect.provide(handlers),
           Effect.provideService(Proofs.HostIngressLimiter, limiter),
-          Effect.provideService(Proofs.ProofRequestContext, { networkKey: Redacted.make(network) }),
+          Effect.provideService(
+            Proofs.ProofRequestContext,
+            Effect.succeed({ networkKey: Redacted.make(network) }),
+          ),
         );
 
     const denied = yield* call("blocked");
@@ -131,6 +137,12 @@ const contract = AuthContract.make("test/http-invocation", {
     observe: AuthContract.action({
       payload: Schema.Void,
       success: Schema.Literal("accepted"),
+      error: Proofs.ProofUnavailable,
+      mode: "query",
+    }),
+    health: AuthContract.action({
+      payload: Schema.Void,
+      success: Schema.Literal("healthy"),
       error: Schema.Never,
       mode: "query",
     }),
@@ -140,7 +152,12 @@ const contract = AuthContract.make("test/http-invocation", {
 class HttpAuth extends Context.Service<
   HttpAuth,
   Auth.SessionApi<typeof contract.sessions.Session.Type> & {
-    readonly observe: () => Effect.Effect<"accepted", never, Proofs.ProofRequestContext>;
+    readonly observe: () => Effect.Effect<
+      "accepted",
+      Proofs.ProofUnavailable,
+      Proofs.ProofRequestContext
+    >;
+    readonly health: () => Effect.Effect<"healthy">;
   }
 >()("test/HttpAuth") {}
 
@@ -155,10 +172,13 @@ export const makeHttp = (seen: string[]) => {
     renewSession: unusedSession,
     observe: () =>
       Effect.gen(function* () {
-        seen.push(Redacted.value((yield* Proofs.ProofRequestContext).networkKey));
+        const context = yield* yield* Proofs.ProofRequestContext;
+
+        seen.push(Redacted.value(context.networkKey));
 
         return "accepted" as const;
       }),
+    health: () => Effect.succeed("healthy" as const),
   });
 
   return Http.make(Object.assign(HttpAuth, { contract, sessions: contract.sessions, layer }), {
@@ -166,30 +186,21 @@ export const makeHttp = (seen: string[]) => {
   });
 };
 
-it.effect("keeps trusted context in request middleware when mounting shared auth HTTP routes", () =>
+it.effect("uses each HTTP peer by default and preserves a trusted caller override", () =>
   Effect.gen(function* () {
     const seen: string[] = [];
     const http = makeHttp(seen);
 
-    const caller = HttpRouter.middleware<{ provides: Proofs.ProofRequestContext }>()((effect) =>
-      Effect.gen(function* () {
-        const incoming = yield* HttpServerRequest.HttpServerRequest;
-        const network = Option.getOrThrow(incoming.remoteAddress);
-
-        return yield* effect.pipe(
-          Effect.provideService(Proofs.ProofRequestContext, {
-            networkKey: Redacted.make(network),
-          }),
-        );
-      }),
-    );
-
     const handle = yield* HttpRouter.toHttpEffect(
-      http.routes().pipe(Layer.provide(http.layer), Layer.provide(caller.layer)),
+      http.routes().pipe(Layer.provide(http.layer)),
     ).pipe(Effect.provide(HttpServer.layerServices));
 
     for (const network of ["first-network", "second-network"]) {
-      const request = HttpServerRequest.fromWeb(new Request(`${origin}/auth/observe`)).modify({
+      const request = HttpServerRequest.fromWeb(
+        new Request(`${origin}/auth/observe`, {
+          headers: { "x-forwarded-for": "forged-peer", forwarded: "for=forged-peer" },
+        }),
+      ).modify({
         remoteAddress: Option.some(network),
       });
 
@@ -205,6 +216,37 @@ it.effect("keeps trusted context in request middleware when mounting shared auth
         value: "accepted",
       });
     }
-    expect(seen).toEqual(["first-network", "second-network"]);
+    const withoutPeer = HttpServerRequest.fromWeb(new Request(`${origin}/auth/observe`));
+
+    const overridden = yield* handle.pipe(
+      Effect.provideService(HttpServerRequest.HttpServerRequest, withoutPeer),
+      Effect.provideService(
+        Proofs.ProofRequestContext,
+        Effect.succeed({ networkKey: Redacted.make("trusted-proxy-client") }),
+      ),
+    );
+
+    expect(overridden.status).toBe(200);
+    expect(seen).toEqual(["first-network", "second-network", "trusted-proxy-client"]);
+
+    const missingPeer = yield* handle.pipe(
+      Effect.provideService(HttpServerRequest.HttpServerRequest, withoutPeer),
+    );
+
+    expect(yield* Effect.promise(() => HttpServerResponse.toWeb(missingPeer).json())).toMatchObject(
+      {
+        _tag: "Failure",
+        error: { _tag: "ProofUnavailable" },
+      },
+    );
+
+    const unrelated = yield* handle.pipe(
+      Effect.provideService(
+        HttpServerRequest.HttpServerRequest,
+        HttpServerRequest.fromWeb(new Request(`${origin}/auth/health`)),
+      ),
+    );
+
+    expect(unrelated.status).toBe(200);
   }).pipe(Effect.scoped),
 );

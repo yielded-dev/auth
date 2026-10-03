@@ -4,4 +4,4 @@
 "@yielded/auth-persistence-drizzle": patch
 ---
 
-Protect live proofs from another request binding, charge only accepted issuance, and expose `Adapter.makeStorageMappings` for explicit adapter composition. BEHAVIOR CHANGE: supply `Proofs.HostIngressLimiter` at construction and `Proofs.ProofRequestContext` per invocation for email proof and password-reset requests; provide raw HTTP operation handlers, codecs, and callback services at `server.handle` invocation.
+Protect active codes and reset links from other request attempts, charge only issued proofs, provide configurable request rate limiting by default, and expose `Adapter.makeStorageMappings` for adapter composition. BEHAVIOR CHANGE: supply `Proofs.ProofRequestContext` for non-HTTP calls and provide raw HTTP operation handlers, codecs, and callback services at `server.handle` invocation; standard Auth HTTP routes supply the caller automatically.

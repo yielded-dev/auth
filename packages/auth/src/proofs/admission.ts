@@ -5,7 +5,7 @@ import { ProofRequestContext } from "./ProofRequestContext";
 
 /** Resolve trusted keys for every request, before target lookup or eligibility. */
 export const proofRequestAdmission = Effect.fn("Proof.admitRequest")(function* (action: string) {
-  const context = yield* ProofRequestContext;
+  const context = yield* yield* ProofRequestContext;
 
   return yield* (yield* HostIngressLimiter).check({
     action,

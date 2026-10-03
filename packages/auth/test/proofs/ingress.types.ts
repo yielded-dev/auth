@@ -2,7 +2,7 @@ import type { Auth, Proofs } from "@yielded/auth";
 import type { Effect, Layer } from "effect";
 import { expectTypeOf } from "vite-plus/test";
 
-import type { app, TestProofRequestContext } from "./ingress.test";
+import type { app } from "./ingress.test";
 
 // Shared construction must never absorb the trusted caller's invocation requirement.
 export const proofIngressRequirements = () => {
@@ -24,21 +24,19 @@ export const proofIngressRequirements = () => {
     Extract<RawReset, Proofs.HostIngressLimiter>
   >().toEqualTypeOf<Proofs.HostIngressLimiter>();
   expectTypeOf<
-    Extract<RawEmail, TestProofRequestContext>
-  >().toEqualTypeOf<TestProofRequestContext>();
+    Extract<RawEmail, Proofs.ProofRequestContext>
+  >().toEqualTypeOf<Proofs.ProofRequestContext>();
   expectTypeOf<
-    Extract<RawReset, TestProofRequestContext>
-  >().toEqualTypeOf<TestProofRequestContext>();
+    Extract<RawReset, Proofs.ProofRequestContext>
+  >().toEqualTypeOf<Proofs.ProofRequestContext>();
   expectTypeOf<
-    Extract<EmailCall, TestProofRequestContext>
-  >().toEqualTypeOf<TestProofRequestContext>();
+    Extract<EmailCall, Proofs.ProofRequestContext>
+  >().toEqualTypeOf<Proofs.ProofRequestContext>();
   expectTypeOf<
-    Extract<ResetCall, TestProofRequestContext>
-  >().toEqualTypeOf<TestProofRequestContext>();
+    Extract<ResetCall, Proofs.ProofRequestContext>
+  >().toEqualTypeOf<Proofs.ProofRequestContext>();
   expectTypeOf<Extract<ResetCall, Proofs.HostIngressLimiter>>().toEqualTypeOf<never>();
   expectTypeOf<Extract<ResetCall, Auth.AuthRequest>>().toEqualTypeOf<Auth.AuthRequest>();
-  expectTypeOf<
-    Extract<Construction, Proofs.HostIngressLimiter>
-  >().toEqualTypeOf<Proofs.HostIngressLimiter>();
-  expectTypeOf<Extract<Construction, TestProofRequestContext>>().toEqualTypeOf<never>();
+  expectTypeOf<Extract<Construction, Proofs.HostIngressLimiter>>().toEqualTypeOf<never>();
+  expectTypeOf<Extract<Construction, Proofs.ProofRequestContext>>().toEqualTypeOf<never>();
 };

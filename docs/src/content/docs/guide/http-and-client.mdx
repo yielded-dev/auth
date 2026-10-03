@@ -120,30 +120,19 @@ export const Routes = Layer.mergeAll(AuthRoutes, ApplicationRoutes).pipe(
 
 ### Proof request admission
 
-Email proof and password-reset requests require an application-supplied
-`Proofs.HostIngressLimiter`. Provide it when building Auth, then supply
-`Proofs.ProofRequestContext` from trusted network/device information on each request:
+Email code/link and password-reset requests have built-in rate limiting. Auth
+shares one limiter across these methods; HTTP uses the current socket peer, so
+normal server setup needs no additional service or middleware.
 
-```ts
-import { ProofRequestMiddleware } from "./proof-ingress";
+The default allows a burst of twenty requests per network and replenishes one
+request every three minutes. It checks every request before account lookup,
+including retries and unknown addresses. Change the policy with
+`Proofs.HostIngressLimiter.layer({ limit: 40 })`, or provide your own service.
 
-const Routes = http
-  .routes()
-  .pipe(Layer.provide(ProofRequestMiddleware.layer), Layer.provide(AuthLive));
-```
-
-The [local account example](https://github.com/yielded-dev/auth/blob/main/examples/shared/account/proof-ingress.ts)
-uses the socket peer, ignores forwarded headers, and fails closed without a peer.
-Its in-memory limiter permits twenty proof requests per network per hour across
-all purposes. It is a loopback demo policy; deployed hosts must choose limits for
-their traffic and use shared admission across replicas. Proxy deployments own
-trusted peer extraction. Never accept these keys in a JSON payload or install one
-caller in the shared Auth Layer.
-
-The library checks admission before target lookup for eligible, unknown,
-suppressed, and replayed requests. Also limit traffic at the host before parsing
-to cover malformed requests. Durable issuance budgets count accepted deliveries
-and do not replace ingress limits.
+The default store is local to the Auth runtime. Multiple server instances can use
+a shared Effect `RateLimiterStore`. Behind a proxy, provide the trusted client
+identity per request; forwarded headers are not trusted automatically. See the
+[rate-limit reference](../reference/http#proof-request-rate-limits) for those overrides.
 
 ### Application routes
 

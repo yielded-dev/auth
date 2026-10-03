@@ -17,9 +17,9 @@ const AccountClaims = Schema.Struct({
 
 /** Call once at the application's composition root with its decoded configuration.
  * The returned Layer requires the application's persistence and account authorities
- * plus SmsDelivery and HostIngressLimiter.
+ * plus SmsDelivery.
  * Each adapter can provide several related services together.
- * Supply ProofRequestContext per HTTP request for email proof/password reset actions.
+ * Auth supplies proof request limiting; HTTP derives the caller from the socket peer.
  */
 export const makeApplicationAuth = (configuration: {
   readonly relyingParty: {

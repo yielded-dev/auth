@@ -24,9 +24,9 @@ export const httpIngressRequirements = () => {
   expectTypeOf<Extract<Routes, Proofs.ProofRequestContext>>().toEqualTypeOf<never>();
   expectTypeOf<
     Extract<HttpRouter.Request.Only<"Requires", Routes>, Proofs.ProofRequestContext>
-  >().toEqualTypeOf<Proofs.ProofRequestContext>();
+  >().toEqualTypeOf<never>();
   expectTypeOf<Extract<Callbacks, Proofs.ProofRequestContext>>().toEqualTypeOf<never>();
   expectTypeOf<
     Extract<HttpRouter.Request.Only<"Requires", Callbacks>, Proofs.ProofRequestContext>
-  >().toEqualTypeOf<Proofs.ProofRequestContext>();
+  >().toEqualTypeOf<never>();
 };

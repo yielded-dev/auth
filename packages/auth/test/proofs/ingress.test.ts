@@ -1,16 +1,9 @@
 import { it } from "@effect/vitest";
 import { Auth, Email, Password, Proofs, Sessions } from "@yielded/auth";
-import { Context, Effect, Layer, Redacted, Schema } from "effect";
+import { Effect, Layer, Redacted, Schema } from "effect";
+import { RateLimiter } from "effect/persistence";
+import { TestClock } from "effect/testing";
 import { expect } from "vite-plus/test";
-
-// The stable runtime key lets the regression execute against the ungated release.
-export class TestProofRequestContext extends Context.Service<
-  TestProofRequestContext,
-  {
-    readonly networkKey: Redacted.Redacted<string>;
-    readonly deviceKey?: Redacted.Redacted<string>;
-  }
->()("effect-auth/ProofRequestContext") {}
 
 export const app = Auth.make("test/proof-ingress", {
   claims: Schema.Struct({}),
@@ -72,7 +65,10 @@ it.effect("authorizes email requests and resends with the current trusted networ
     const denied = yield* Request.invoke(guest, request).pipe(
       Effect.provide(handlers),
       Effect.provideService(Proofs.HostIngressLimiter, limiter),
-      Effect.provideService(TestProofRequestContext, { networkKey: Redacted.make("blocked") }),
+      Effect.provideService(
+        Proofs.ProofRequestContext,
+        Effect.succeed({ networkKey: Redacted.make("blocked") }),
+      ),
       Effect.result,
     );
 
@@ -81,17 +77,23 @@ it.effect("authorizes email requests and resends with the current trusted networ
     const admitted = yield* Request.invoke(guest, request).pipe(
       Effect.provide(handlers),
       Effect.provideService(Proofs.HostIngressLimiter, limiter),
-      Effect.provideService(TestProofRequestContext, {
-        networkKey: Redacted.make("allowed"),
-        deviceKey: Redacted.make("trusted-device"),
-      }),
+      Effect.provideService(
+        Proofs.ProofRequestContext,
+        Effect.succeed({
+          networkKey: Redacted.make("allowed"),
+          deviceKey: Redacted.make("trusted-device"),
+        }),
+      ),
       Effect.result,
     );
 
     const resent = yield* Resend.invoke(guest, { ...request, supersedes: "previous" }).pipe(
       Effect.provide(handlers),
       Effect.provideService(Proofs.HostIngressLimiter, limiter),
-      Effect.provideService(TestProofRequestContext, { networkKey: Redacted.make("blocked") }),
+      Effect.provideService(
+        Proofs.ProofRequestContext,
+        Effect.succeed({ networkKey: Redacted.make("blocked") }),
+      ),
       Effect.result,
     );
 
@@ -144,14 +146,20 @@ it.effect(
       const denied = yield* RequestReset.invoke(guest, request).pipe(
         Effect.provide(handlers),
         Effect.provideService(Proofs.HostIngressLimiter, limiter),
-        Effect.provideService(TestProofRequestContext, { networkKey: Redacted.make("blocked") }),
+        Effect.provideService(
+          Proofs.ProofRequestContext,
+          Effect.succeed({ networkKey: Redacted.make("blocked") }),
+        ),
         Effect.result,
       );
 
       const unavailable = yield* RequestReset.invoke(guest, request).pipe(
         Effect.provide(handlers),
         Effect.provideService(Proofs.HostIngressLimiter, limiter),
-        Effect.provideService(TestProofRequestContext, { networkKey: Redacted.make("outage") }),
+        Effect.provideService(
+          Proofs.ProofRequestContext,
+          Effect.succeed({ networkKey: Redacted.make("outage") }),
+        ),
         Effect.result,
       );
 
@@ -163,4 +171,38 @@ it.effect(
       expect(entered).toBe(0);
       expect(seen).toEqual(["blocked", "outage"]);
     }).pipe(Effect.scoped),
+);
+
+// Requested configurable defaults: separately built limiters must honor a supplied
+// shared store; changing purpose or device cannot create another network allowance.
+it.effect("shares a configured network allowance through the supplied store and refills it", () =>
+  Effect.gen(function* () {
+    const store = yield* Layer.build(RateLimiter.layerStoreMemory);
+
+    const check = (network: string, action: string, device: string) =>
+      Effect.flatMap(Proofs.HostIngressLimiter, (limiter) =>
+        limiter.check({
+          action,
+          networkKey: Redacted.make(network),
+          deviceKey: Redacted.make(device),
+        }),
+      ).pipe(
+        Effect.provide(
+          Proofs.HostIngressLimiter.layer({ limit: 2, windowMillis: 1000 }).pipe(
+            Layer.provide(Layer.succeedContext(store)),
+          ),
+        ),
+        Effect.result,
+      );
+
+    expect(yield* check("caller", "email", "first")).toMatchObject({ _tag: "Success" });
+    expect(yield* check("caller", "reset", "second")).toMatchObject({ _tag: "Success" });
+    expect(yield* check("caller", "email", "third")).toMatchObject({
+      _tag: "Failure",
+      failure: { _tag: "ProofIngressDenied" },
+    });
+    expect(yield* check("another-caller", "reset", "first")).toMatchObject({ _tag: "Success" });
+    yield* TestClock.adjust("500 millis");
+    expect(yield* check("caller", "reset", "fourth")).toMatchObject({ _tag: "Success" });
+  }).pipe(Effect.scoped),
 );

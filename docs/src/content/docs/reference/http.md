@@ -52,6 +52,52 @@ the request boundary; it applies mutation policy and supplies private collectors
 without imposing a body format. Custom hosts still own webhook validation and
 ordinary application mutation policy.
 
+## Proof request rate limits
+
+Auth supplies `Proofs.HostIngressLimiter` for email code/link and password-reset
+requests. The default network bucket holds twenty requests and replenishes one
+every three minutes, shared across purposes and device keys. Every request is
+checked before target lookup, including retries and suppressed requests.
+Durable delivery quotas separately count only issued proofs.
+
+Configure the bucket when building Auth:
+
+```ts
+import { Proofs } from "@yielded/auth";
+import { Layer } from "effect";
+
+const AuthLive = AppAuth.layer.pipe(
+  Layer.provide(Proofs.HostIngressLimiter.layer({ limit: 40, windowMillis: 3_600_000 })),
+);
+```
+
+Both options must be positive integers. The default Effect memory store retains
+network keys for the runtime's lifetime and resets when it is recreated. For
+shared enforcement across servers, provide an Effect `RateLimiterStore`, such as
+`RateLimiter.layerStoreRedis({ prefix: "auth:requests" })`, to the Auth Layer.
+An explicitly provided `RateLimiter` or `HostIngressLimiter` also replaces its
+default. Limit malformed traffic at the host before HTTP/RPC parsing.
+
+`Http.layer`, generated routes, and `http.middleware` derive
+`Proofs.ProofRequestContext` from the current socket peer. They ignore `Forwarded`
+and `X-Forwarded-For`. For a trusted proxy or a host without socket metadata,
+provide the verified client identity around each request:
+
+```ts
+handler.pipe(
+  Effect.provideService(
+    Proofs.ProofRequestContext,
+    Effect.succeed({ networkKey: Redacted.make(trustedClientAddress) }),
+  ),
+);
+```
+
+The resolver runs only when an operation needs proof admission. Without a peer or
+override, code/reset requests fail as unavailable; unrelated routes still work.
+Never derive this identity from operation payloads or install one caller in a
+shared Auth Layer. Raw `OperationHttpServer.handle` and non-HTTP calls require
+this per-invocation service explicitly.
+
 ## Declare an action
 
 The method guides show the available local strategy calls. Browser access requires

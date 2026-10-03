@@ -17,7 +17,7 @@ import {
 import { proofRequestAdmission } from "../proofs/admission";
 import type { ProofSecretPolicy } from "../proofs/crypto";
 import { readProofCommit } from "../proofs/dispatch";
-import { HostIngressLimiter } from "../proofs/HostIngressLimiter";
+import { defaultIngressLayer } from "../proofs/HostIngressLimiter";
 import {
   ProofBinding,
   ProofContinuation,
@@ -475,7 +475,7 @@ export const makeEmailSignInModule = <
           Layer.provide(defaultLayer(proof.Proofs, proof.emailLayer)),
           Layer.provide(defaultLayer(binding.RequestBinding, binding.layer)),
           Layer.provide([cryptoLayer, hooksLayer]),
-          Layer.merge(Layer.effect(HostIngressLimiter, HostIngressLimiter)),
+          Layer.merge(defaultIngressLayer),
         ),
         { completion: true },
       ),
@@ -556,7 +556,7 @@ export const makeEmailAccountModule = <
           Layer.provide(defaultLayer(registrationProof.Proofs, registrationProof.emailLayer)),
           Layer.provide(defaultLayer(binding.RequestBinding, binding.layer)),
           Layer.provide([cryptoLayer, hooksLayer]),
-          Layer.merge(Layer.effect(HostIngressLimiter, HostIngressLimiter)),
+          Layer.merge(defaultIngressLayer),
         ),
       ),
     });
@@ -595,7 +595,7 @@ export const makeEmailAccountModule = <
           ]),
           Layer.provide(defaultLayer(binding.RequestBinding, binding.layer)),
           Layer.provide([cryptoLayer, hooksLayer]),
-          Layer.merge(Layer.effect(HostIngressLimiter, HostIngressLimiter)),
+          Layer.merge(defaultIngressLayer),
         ),
       ),
     });

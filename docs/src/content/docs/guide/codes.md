@@ -153,8 +153,9 @@ requests but cannot guarantee availability against distributed traffic.
 
 ## Supply the services
 
-Lookup, claims, storage, delivery, and ingress admission are application-supplied. The library provides
-a delivery worker, an exact-route allowlist helper, Web Crypto, and empty lifecycle hooks:
+Your application supplies lookup, claims, storage, and delivery. Auth provides
+request rate limiting, a delivery worker, an exact-route allowlist helper,
+Web Crypto, and empty lifecycle hooks:
 
 ```ts title="apps/server/email-live.ts"
 import { Layer } from "effect";
@@ -165,7 +166,6 @@ import { AuthDependencies } from "./auth-dependencies";
 import { lookupEmail, resolveEmailClaims } from "./auth-accounts";
 import { ProofPersistenceLive } from "./auth-persistence";
 import { EmailLive } from "./email";
-import { ProofIngressLive } from "./proof-ingress";
 
 export const EmailServicesLive = Layer.mergeAll(
   ProofPersistenceLive,
@@ -173,7 +173,6 @@ export const EmailServicesLive = Layer.mergeAll(
   Layer.succeed(AppAuth.strategies.email.SessionClaims, { resolve: resolveEmailClaims }),
   Email.EmailReturnTargets.exactRoutes(["/account"]),
   EmailLive,
-  ProofIngressLive,
 );
 
 export const AuthLive = AppAuth.layer.pipe(
@@ -190,11 +189,10 @@ See [email delivery](./email-delivery#compose-auth) for runtime ownership and ov
 [session, account, and key configuration](../reference/adapters#compose-the-application-layer).
 For database-backed lookup, use [the email adapter](../reference/adapters#email).
 
-`ProofIngressLive` supplies `Proofs.HostIngressLimiter`. Email requests and resends
-check it before target lookup, including exact retries and unknown addresses.
-Supply `Proofs.ProofRequestContext` with trusted network/device keys on each call;
-never put a caller in the shared Auth Layer. See [HTTP admission](./http-and-client#proof-request-admission)
-for request middleware and the local example policy.
+Email requests and resends check the built-in rate limiter before target lookup,
+including exact retries and unknown addresses. HTTP derives the caller from the
+socket peer automatically. See [HTTP admission](./http-and-client#proof-request-admission)
+for configuration and overrides.
 
 For new accounts use `Email.makeRegistration`; for verified-address management
 use `Email.makeAddresses`. Verification alone does not sign in or link an account.

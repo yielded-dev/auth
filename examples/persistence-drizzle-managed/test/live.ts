@@ -11,7 +11,6 @@ import { TestClock } from "effect/testing";
 import { AppAuth } from "../../shared/account/auth";
 import { AuthApi } from "../../shared/account/contract";
 import { makeClient } from "../../shared/account/email-client";
-import { ProofIngressLive } from "../../shared/account/proof-ingress";
 import { DatabaseLive, KeysLive } from "../src/data";
 import { AuthLive } from "../src/live";
 
@@ -40,7 +39,6 @@ const program = Effect.gen(function* () {
       DatabaseLive,
       KeysLive,
       delivery,
-      ProofIngressLive,
       Proofs.ProofDispatchScheduler.layerInline,
       Layer.succeed(Password.CompromisedPasswords, {
         check: () => Effect.succeed({ _tag: "Allowed" }),
@@ -58,9 +56,10 @@ const program = Effect.gen(function* () {
   // In-process Web Requests have no socket peer; this host owns their identity.
   const caller = HttpRouter.middleware<{ provides: Proofs.ProofRequestContext }>()((handler) =>
     handler.pipe(
-      Effect.provideService(Proofs.ProofRequestContext, {
-        networkKey: Redacted.make("managed-example-test"),
-      }),
+      Effect.provideService(
+        Proofs.ProofRequestContext,
+        Effect.succeed({ networkKey: Redacted.make("managed-example-test") }),
+      ),
     ),
   );
 

@@ -7,6 +7,7 @@ import {
   Duration,
   Effect,
   Layer,
+  Option,
   Redacted,
   Scope,
 } from "effect";
@@ -41,10 +42,27 @@ import {
 } from "../operations/credentials";
 import type { RequestBindingConfigurationError } from "../operations/requestBinding";
 import type { RequestBindingConfig } from "../operations/RequestBindingConfig";
+import { ProofUnavailable } from "../proofs/errors";
+import { ProofRequestContext } from "../proofs/ProofRequestContext";
 import type { SessionMetadata } from "../sessions/models";
 import { httpGroup, matchesEndpoint } from "./auth-contract";
 import { makeOAuth, type OAuthOptions } from "./oauth";
 import type { makeSessionHttpContract } from "./session-contract";
+
+const withProofRequestContext = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+  Effect.gen(function* () {
+    const supplied = yield* Effect.serviceOption(ProofRequestContext);
+    const incoming = yield* HttpServerRequest.HttpServerRequest;
+
+    const context = Option.isSome(supplied)
+      ? supplied.value
+      : Option.match(incoming.remoteAddress, {
+          onNone: () => Effect.fail(ProofUnavailable.make({})),
+          onSome: (address) => Effect.succeed({ networkKey: Redacted.make(address) }),
+        });
+
+    return yield* Effect.provideService(effect, ProofRequestContext, context);
+  });
 
 /** Browser transport policy. Insecure cookies require an explicit development override. */
 export interface AuthHttpOptions<E = never, R = never, ResponseR = never> {
@@ -317,6 +335,7 @@ export const make = <
           beforeMutation,
           credentialCommandSink: sink,
         }),
+        withProofRequestContext,
       );
 
       const now = DateTime.toEpochMillis(yield* DateTime.now);
@@ -342,7 +361,7 @@ export const make = <
     });
 
   const requestLayer = HttpRouter.middleware<{
-    provides: I | AuthRequest;
+    provides: I | AuthRequest | ProofRequestContext;
   }>()(
     Effect.gen(function* () {
       const api = yield* auth;
@@ -473,7 +492,8 @@ export const make = <
       const server = yield* makeOperationServer({ routes: table }, { callbacks });
 
       return {
-        handle: (request: Request) => server.handle(request).pipe(Effect.provideService(auth, api)),
+        handle: (request: Request) =>
+          server.handle(request).pipe(Effect.provideService(auth, api), withProofRequestContext),
         callbackPaths: callbacks.map((callback) => callback.path),
       };
     }).pipe(Effect.provide([configuration, requestInvocation]));
