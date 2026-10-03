@@ -56,7 +56,7 @@ export const makeBrowser = Effect.fnUntraced(function* (options: typeof optionsS
     returnUrl: Schema.Literal(config.returnUrl),
     ephemeral: Schema.Literal(false),
     url: Schema.String.check(
-      Schema.isMaxLength(2081),
+      Schema.isMaxLength(config.hostedUrl.length + "?attempt=".length + 43),
       Schema.makeFilter((text) => {
         try {
           const url = new URL(text);

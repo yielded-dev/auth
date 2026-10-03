@@ -365,39 +365,38 @@ export const makeSessionModule = <
     return Object.freeze({ session, provenance, credentialVersion });
   });
 
-  const prepareHandoff = (
-    establish: (input: Issuance, source?: Session) => Prepared<Session, AuthenticationAuthority>,
-  ): Strategy["prepareHandoff"] =>
-    Effect.fn("Session.prepareHandoff")(function* (input) {
-      yield* checkNoAmbientCommit();
+  const prepareHandoffIssuance = Effect.fn("Session.prepareHandoffIssuance")(function* (
+    input: Parameters<Strategy["prepareHandoff"]>[0],
+  ) {
+    yield* checkNoAmbientCommit();
 
-      const detached = yield* snapshotInspection(input.source).pipe(
-        Effect.mapError(() => SessionInvalid.make({})),
-      );
+    const detached = yield* snapshotInspection(input.source).pipe(
+      Effect.mapError(() => SessionInvalid.make({})),
+    );
 
-      const source = yield* inspectProvenance(
-        detached.session,
-        detached.provenance,
-        detached.credentialVersion,
-      );
+    const source = yield* inspectProvenance(
+      detached.session,
+      detached.provenance,
+      detached.credentialVersion,
+    );
 
-      const original = source.provenance.evidence;
+    const original = source.provenance.evidence;
 
-      if (input.flowId === original.flowId || input.bindingDigest === original.bindingDigest)
-        return yield* SessionInvalid.make({});
+    if (input.flowId === original.flowId || input.bindingDigest === original.bindingDigest)
+      return yield* SessionInvalid.make({});
 
-      return yield* establish(
-        {
-          evidence: {
-            ...original,
-            flowId: input.flowId,
-            bindingDigest: input.bindingDigest,
-          },
-          claims: source.session.claims,
+    return {
+      issuance: {
+        evidence: {
+          ...original,
+          flowId: input.flowId,
+          bindingDigest: input.bindingDigest,
         },
-        source.session,
-      );
-    });
+        claims: source.session.claims,
+      },
+      source: source.session,
+    };
+  });
 
   const prepareIssuance = Effect.fn("Session.prepareIssuance")(function* (
     input: Issuance,
@@ -584,7 +583,11 @@ export const makeSessionModule = <
           inspect,
           verify,
           prepareEstablish: (input) => prepareEstablish(input),
-          prepareHandoff: prepareHandoff(prepareEstablish),
+          prepareHandoff: Effect.fn("StatefulSession.prepareHandoff")(function* (input) {
+            const handoff = yield* prepareHandoffIssuance(input);
+
+            return yield* prepareEstablish(handoff.issuance, handoff.source);
+          }),
           prepareRenew: Effect.fn("StatefulSession.prepareRenew")(function* (
             credential: Redacted.Redacted<string>,
           ) {
@@ -888,7 +891,11 @@ export const makeSessionModule = <
           inspect,
           verify,
           prepareEstablish: (input) => prepareEstablish(input),
-          prepareHandoff: prepareHandoff(prepareEstablish),
+          prepareHandoff: Effect.fn("SignedSession.prepareHandoff")(function* (input) {
+            const handoff = yield* prepareHandoffIssuance(input);
+
+            return yield* prepareEstablish(handoff.issuance, handoff.source);
+          }),
           prepareRenew: Effect.fn("SignedSession.prepareRenew")(function* (
             credential: Redacted.Redacted<string>,
           ) {
