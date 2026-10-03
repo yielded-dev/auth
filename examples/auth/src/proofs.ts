@@ -34,6 +34,7 @@ const base = Layer.mergeAll(
     keys: [
       {
         id: "current",
+        // Demo-only key material. Production requires independently generated random keys.
         material: Redacted.make(Base64Url.encode(new Uint8Array(32).fill(23))),
       },
     ],
