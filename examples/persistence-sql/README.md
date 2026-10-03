@@ -14,32 +14,24 @@ database and keys under `.data/`; accounts from the Drizzle examples are separat
 Set the Cloudflare credentials in [.env.example](.env.example) to deliver email
 from `hello@effect-agent.com`.
 
-The same app hosts the native browser-login examples at `/login`. With the default
-clients, a fresh sign-in returns to Electron or iOS automatically; an existing
-browser session first asks you to confirm the account. A manual return link
-remains if the browser blocks opening the app. Native credentials use the
-separate `/auth/native` transport; the browser keeps its own
-session. See [browser-login.ts](src/browser-login.ts) for registered clients and
-native admission. Run [the Electron example](../browser-login-electron) beside it.
-The example requires authentication within five minutes for a new native session.
-If confirmation rejects an older browser session, sign out and sign in again.
+## Native browser sign-in
 
-The default clients use custom schemes and keep existing-session confirmation.
-To enable automatic reuse for a claimed HTTPS iOS callback, set both
-`AUTH_IOS_RETURN_URL` (the exact public HTTPS callback URL on port 443) and
-`AUTH_IOS_APP_ID` (the signed `PREFIX.bundle.identifier`). The server rejects
-partial or invalid configuration. Configure the native client with that same
-callback, and deploy the associated-domain entitlement and generated Apple
-association document on the callback host before enabling it. See the
-[browser-login guide](../../docs/src/content/docs/guide/browser-login.mdx).
-The private development origin does not establish claimed-link device support.
+`/login` also serves [the Electron example](../browser-login-electron) and iOS
+clients. Fresh sign-in returns automatically; an existing session asks for
+confirmation. Authentication must be within five minutes, so an older session
+may need to sign in again.
 
-For a physical iPhone, serve this app through a reachable HTTPS reverse proxy and
-set `AUTH_ORIGIN` to that exact origin. `AUTH_PORT` defaults to `4183`; the server
-binds loopback for the proxy. The origin configures cookies, CSRF and passkey RP
-identity together. Existing localhost passkeys cannot authenticate for a different
-RP; register credentials separately for that host. Never log native credential
-headers or callback URLs at the proxy.
+For a physical iPhone, put a reachable HTTPS reverse proxy in front of the server
+and set `AUTH_ORIGIN` to that origin. `AUTH_PORT` defaults to `4183`; the server
+binds loopback. Passkeys are tied to the configured host.
+
+To reuse an existing session automatically, configure the iOS client with an
+associated HTTPS callback and set both `AUTH_IOS_RETURN_URL` and `AUTH_IOS_APP_ID`
+(the signed `PREFIX.bundle.identifier`). Deploy the app/domain association first;
+see the [browser-login guide](../../docs/src/content/docs/guide/browser-login.mdx).
+The default registrations in [browser-login.ts](src/browser-login.ts) use custom schemes.
+
+## Storage
 
 `vp -C examples/persistence-sql run start:pg` starts the same app with persistent
 PostgreSQL through `@effect/sql-pglite`. Choose one server at a time. [data.ts](src/data.ts)

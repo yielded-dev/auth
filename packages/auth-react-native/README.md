@@ -30,10 +30,18 @@ and [API reference](../../docs/src/content/docs/reference/passkey-react-native.m
 
 ## Browser login
 
-Use the peers matching your app's Expo SDK. SDK 54 (React Native 0.81) uses
-WebBrowser `~15.0.11` and SecureStore `~15.0.8`; SDK 57 uses WebBrowser `~57.0.3`
-and SecureStore `~57.0.4`. This adapter requires iOS 16+ with SDK 54 or iOS 16.4+
-with SDK 57. For SDK 54:
+Open your hosted sign-in page with Expo WebBrowser and keep the native session in
+Expo SecureStore. See the [browser-login guide](../../docs/src/content/docs/guide/browser-login.mdx)
+for the shared client, server policy, and recovery flow.
+
+Install the peers matching your Expo SDK:
+
+| Expo SDK | `expo-web-browser` | `expo-secure-store` | Minimum iOS |
+| -------- | ------------------ | ------------------- | ----------- |
+| 54       | `~15.0.11`         | `~15.0.8`           | 16          |
+| 57       | `~57.0.3`          | `~57.0.4`           | 16.4        |
+
+For SDK 54:
 
 ```sh
 bun add @yielded/auth-react-native@beta effect expo-web-browser@~15.0.11 expo-secure-store@~15.0.8 react-native-url-polyfill
@@ -42,10 +50,8 @@ bun add @yielded/auth-react-native@beta effect expo-web-browser@~15.0.11 expo-se
 Plain React Native apps must first [install Expo Modules](https://docs.expo.dev/bare/installing-expo-modules/).
 Rebuild the native app after installing the peers.
 
-Browser login requires complete WHATWG `URL` and `URLSearchParams` implementations;
-React Native's built-in URL implementation is insufficient for callback validation.
-Load the [URL polyfill](https://github.com/charpeni/react-native-url-polyfill) in your
-application entrypoint before any auth module imports:
+Load the required [WHATWG URL polyfill](https://github.com/charpeni/react-native-url-polyfill)
+in your application entrypoint before any auth imports:
 
 ```ts
 import "react-native-url-polyfill/auto";
@@ -64,123 +70,30 @@ export const NativeLoginLive = Layer.merge(
 );
 ```
 
-`BrowserLogin.makeClient` also requires Effect's `Crypto.Crypto` for secure random
-bytes and SHA-256. React Native does not supply browser `SubtleCrypto`; do not
-provide `WebCrypto.layerWebCrypto`. Crypto belongs to the application's composition
-root, alongside its native HTTP client, and is not an additional peer of this adapter.
+Create one vault Layer per authentication lifetime and share it with
+`BrowserLogin.makeClient` and your native HTTP client's credentials service.
+Choose a dedicated `service` per app, server environment, and client ID; keep it
+stable across restarts and allow no other writers. Storage is device-only,
+available while unlocked, and does not use biometric gating. Keychain data can
+survive app deletion.
 
-An Expo 54 app can use [`expo-crypto`](https://docs.expo.dev/versions/v54.0.0/sdk/crypto/)
-(SDK-compatible range `~15.0.9`) in its own `native-crypto.ts`:
+Your app also supplies `Crypto.Crypto` with cryptographically secure random bytes
+and SHA-256. React Native does not supply browser `SubtleCrypto`.
+With [`expo-crypto`](https://docs.expo.dev/versions/v54.0.0/sdk/crypto/), use
+`getRandomValues` and `digest`; `getRandomBytes` can fall back to `Math.random`
+in development.
 
-```ts
-import { Crypto, Effect, Layer, PlatformError } from "effect";
-import * as ExpoCrypto from "expo-crypto";
-
-const algorithms = {
-  "SHA-1": ExpoCrypto.CryptoDigestAlgorithm.SHA1,
-  "SHA-256": ExpoCrypto.CryptoDigestAlgorithm.SHA256,
-  "SHA-384": ExpoCrypto.CryptoDigestAlgorithm.SHA384,
-  "SHA-512": ExpoCrypto.CryptoDigestAlgorithm.SHA512,
-};
-
-const unavailable = (method: string) =>
-  PlatformError.systemError({ _tag: "Unknown", module: "Crypto", method });
-
-export const ExpoCryptoLive = Layer.sync(Crypto.Crypto, () => {
-  const crypto = Crypto.make({
-    randomBytes: (size) => ExpoCrypto.getRandomValues(new Uint8Array(size)),
-    digest: (algorithm, data) =>
-      Effect.tryPromise({
-        try: async () =>
-          new Uint8Array(await ExpoCrypto.digest(algorithms[algorithm], Uint8Array.from(data))),
-        catch: () => unavailable("digest"),
-      }),
-  });
-
-  return Crypto.Crypto.of({
-    ...crypto,
-    randomBytes: (size) =>
-      crypto
-        .randomBytes(size)
-        .pipe(Effect.catchDefect(() => Effect.fail(unavailable("randomBytes")))),
-  });
-});
-```
-
-Provide the vault to the app's `OperationHttpClient.Client` Layer, preserving the
-same instance for `BrowserLogin.makeClient`:
-
-```ts
-const NativeClientLive = NativeHttpClientLive.pipe(
-  Layer.provideMerge(NativeLoginLive),
-  Layer.provideMerge(ExpoCryptoLive),
-);
-
-const makeClient = BrowserLogin.makeClient(contract, options).pipe(
-  Effect.provide(NativeClientLive),
-);
-```
-
-Here `NativeHttpClientLive` uses `BrowserLogin.Vault` as its native credentials
-service and already provides its transport. Use `getRandomValues`:
-Expo documents a development `Math.random` fallback for `getRandomBytes`. The
-example keeps bridge failures typed and sanitized, and passes raw digest bytes
-back to core for base64url encoding. Run in the native runtime with the module
-linked; a browser debugger does not prove native crypto availability.
-
-`layerBrowser` uses [Expo WebBrowser](https://docs.expo.dev/versions/latest/sdk/webbrowser/)
-and `ASWebAuthenticationSession`. Register a reverse-domain
-custom URL scheme in `CFBundleURLTypes`, for example `com.example.app`, and register
-the exact return URL, such as `com.example.app://auth/callback`, with your server.
-Custom-scheme clients retain explicit account confirmation when reusing an
-existing browser session. The hosted page must use HTTPS. Core checks state and
-codes; the adapter checks the full callback target.
+The hosted page must use HTTPS. For a custom callback, register a reverse-domain
+scheme in `CFBundleURLTypes` and the exact return URL, such as
+`com.example.app://auth/callback`, with your server.
 
 HTTPS callbacks require iOS 17.4+ and a signed `webcredentials:<callback-host>`
 [Associated Domains entitlement](https://developer.apple.com/documentation/xcode/supporting-associated-domains).
-The host's `apple-app-site-association` file must list the app's `TEAMID.bundleID`
-under `webcredentials.apps`. Register that same app ID and exact callback URL on
-the server before enabling its automatic SSO policy. Ordinary Universal Link
-delivery additionally uses `applinks`; the authentication session receives its
-callback directly. Older iOS versions fail before opening an HTTPS callback session.
-Do not reopen the returned URL with `Linking.openURL` or add a competing Linking listener.
+The host's `apple-app-site-association` file must list the app's `PREFIX.bundleID`
+under `webcredentials.apps`. Register that app ID and exact callback URL on the
+server; the [guide's AASA helper](../../docs/src/content/docs/guide/browser-login.mdx#claimed-https-callbacks)
+generates the association file. Older iOS versions reject HTTPS callbacks.
 
-Each `open` owns its prompt Scope. Interruption requests `dismissAuthSession`, discards late
-results, and retains the process-wide busy guard until the native promise settles.
-All callers must use this adapter's single installed bridge instance. The
-`ephemeral` option requests a browser session without shared browsing data; it
-does not revoke sessions or clear the vault.
-SDK 54 can leave a failed native presentation pending; interrupt the operation to
-dismiss it and settle the bridge before trying again.
-
-`layerVault` stores the private attempt and credential slots in one record through
-[Expo SecureStore](https://docs.expo.dev/versions/v54.0.0/sdk/securestore/).
-It uses device-only Keychain access while unlocked (`WHEN_UNLOCKED_THIS_DEVICE_ONLY`),
-with biometric gating disabled (`requireAuthentication: false`). Use a fresh,
-dedicated `service` per app, server environment, and client ID; acquire one vault
-Layer per authentication lifetime, without other writers to that service. Keep
-the service name stable across restarts.
-Native writes are not cancellable: admitted operations settle before releasing
-the vault's serialization gate. A failed write may have committed; failures never
-authorize an exchange retry. The vault provides no cross-process compare-and-set.
-
-Core owns restoring `Waiting`, persisting `Exchanging` before dispatch, and refusing
-to repeat that exchange. The vault preserves either phase without replaying it;
-`saveAttempt(undefined)` clears only the attempt. Expired credentials are omitted
-from reads. Invalid JSON and native read/write errors fail closed. Credential
-methods retain `OperationHttpError`; attempt methods use `BrowserLogin.PlatformError`.
-Neither exposes native messages or private values in errors.
-
-The previous experimental Keychain vault is not imported. Before switching,
-reconcile any uncertain exchange and revoke the old development native session;
-then reset only that app/environment/client's vault and sign in afresh.
-Keychain data can survive app deletion; uninstalling is not a reliable reset.
-Keep credentials and attempts out of React state, logs, and public operation
-results. Provide the vault as the native credentials service to the shared HTTP
-client. Verify the chosen React Native transport's redirect rejection and cookie
-omission on device before treating an end-to-end flow as proven.
-
-Use a signed physical-device build to verify the prompt, registered callback,
-SecureStore persistence across relaunch and interrupted writes, and cancellation.
-Verify your credential record sizes on device; native storage can reject large
-values. A simulator or mocked bridge alone does not establish those outcomes.
+Let this adapter own the authentication session: do not open a competing
+WebBrowser session or handle its callback through `Linking`. On SDK 54, a failed
+presentation can stay pending; interrupt login before trying again.
