@@ -725,6 +725,28 @@ const issuePlan = Effect.fn("Drizzle.issuePlan")(function* <A>(
   const seriesVersion = yield* allocateVersion(mapping);
   const active = existingSeries?.[mapping.series.activeProofId] as string | null | undefined;
 
+  const activeGeneration =
+    active === null || active === undefined
+      ? undefined
+      : (yield* readGeneration(mapping, input.record.moduleId, active))[0];
+
+  if (
+    active !== null &&
+    active !== undefined &&
+    (activeGeneration === undefined ||
+      activeGeneration[mapping.generation.purpose] !== input.record.purpose)
+  )
+    return yield* unavailable();
+
+  const matchesActiveBinding =
+    activeGeneration !== undefined &&
+    sameBinding(yield* mapping.generation.decodeBinding(activeGeneration), input.record.binding);
+
+  const replacesLiveProof =
+    activeGeneration !== undefined &&
+    activeGeneration[mapping.generation.state] === "active" &&
+    (yield* mapping.decodeInstant(activeGeneration[mapping.generation.expiresAt])) > now;
+
   const lastIssue =
     existingSeries?.[mapping.series.lastIssueAt] === null ||
     existingSeries?.[mapping.series.lastIssueAt] === undefined
@@ -737,6 +759,7 @@ const issuePlan = Effect.fn("Drizzle.issuePlan")(function* <A>(
     admitted.length === scopes.length &&
     input.record.issuedAtMillis <= now &&
     input.record.expiresAtMillis > now &&
+    (!replacesLiveProof || matchesActiveBinding) &&
     (input.supersedes === undefined || input.supersedes === active) &&
     (lastIssue === undefined || now - lastIssue >= input.policy.abuse.resendCooldownMillis);
 
@@ -806,7 +829,7 @@ const issuePlan = Effect.fn("Drizzle.issuePlan")(function* <A>(
       input.record.purpose,
       "issue",
       input.record.requestId,
-      admitted,
+      allowed ? scopes : [],
       now,
       retentionUntil,
       marker,
@@ -814,6 +837,25 @@ const issuePlan = Effect.fn("Drizzle.issuePlan")(function* <A>(
   );
   if (allowed) {
     const sc = seriesColumns(mapping);
+    const gc = generationColumns(mapping);
+
+    // Recheck replacement authority in the submitted batch. Generation bindings
+    // are immutable; the version and stored binding also fence a changed row.
+    const replacementCondition =
+      activeGeneration === undefined
+        ? sql`1 = 1`
+        : sql`exists(select 1 from ${mapping.generation.table} where ${and(
+            eq(gc.moduleId, input.record.moduleId),
+            eq(gc.proofId, activeGeneration[mapping.generation.proofId]),
+            eq(gc.version, activeGeneration[mapping.generation.version]),
+            eq(
+              column(mapping.generation.table, mapping.generation.binding),
+              activeGeneration[mapping.generation.binding],
+            ),
+            matchesActiveBinding
+              ? sql`1 = 1`
+              : sql`(${gc.state} <> 'active' or ${gc.expiresAt} <= ${mapping.d1.engineNow})`,
+          )})`;
 
     const seriesCondition = and(
       eq(sc.moduleId, input.record.moduleId),
@@ -834,6 +876,7 @@ const issuePlan = Effect.fn("Drizzle.issuePlan")(function* <A>(
       yield* assertion(
         and(
           current.condition,
+          replacementCondition,
           sql`${mapping.d1.engineNowMillis} >= ${input.record.issuedAtMillis}`,
           sql`${mapping.d1.engineNow} < ${sql.param(mapping.encodeInstant(input.record.expiresAtMillis), generationColumns(mapping).expiresAt)}`,
           sql`exists(select 1 from ${mapping.series.table} where ${seriesCondition})`,

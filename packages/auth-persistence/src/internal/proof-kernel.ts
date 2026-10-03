@@ -835,6 +835,34 @@ export const makeProofKernel = <
               | null
               | undefined;
 
+            const activeGeneration =
+              activeProofId === null || activeProofId === undefined
+                ? undefined
+                : (yield* readGeneration(
+                    mapping,
+                    input.record.moduleId,
+                    activeProofId,
+                    configuration.locking,
+                  ))[0];
+
+            if (
+              activeProofId !== null &&
+              activeProofId !== undefined &&
+              (activeGeneration === undefined ||
+                activeGeneration[mapping.generation.purpose] !== input.record.purpose)
+            )
+              return yield* unavailable();
+
+            const replacementAuthorized =
+              activeGeneration === undefined ||
+              activeGeneration[mapping.generation.state] !== "active" ||
+              (yield* mapping.decodeInstant(activeGeneration[mapping.generation.expiresAt])) <=
+                now ||
+              sameBinding(
+                yield* mapping.generation.decodeBinding(activeGeneration),
+                input.record.binding,
+              );
+
             const supersedesCurrent =
               input.supersedes === undefined || input.supersedes === activeProofId;
 
@@ -844,6 +872,7 @@ export const makeProofKernel = <
               admitted.length === scopes.length &&
               input.record.issuedAtMillis <= now &&
               input.record.expiresAtMillis > now &&
+              replacementAuthorized &&
               supersedesCurrent &&
               (lastIssueAt === undefined ||
                 now - lastIssueAt >= input.policy.abuse.resendCooldownMillis);
@@ -864,18 +893,17 @@ export const makeProofKernel = <
               journal,
             );
 
-            if (admitted.length > 0)
-              yield* insertScopeEvents(
-                mapping,
-                input.record.moduleId,
-                input.record.purpose,
-                "issue",
-                input.record.requestId,
-                admitted,
-                now,
-                retentionUntil,
-              );
             if (!allowed) return prepared;
+            yield* insertScopeEvents(
+              mapping,
+              input.record.moduleId,
+              input.record.purpose,
+              "issue",
+              input.record.requestId,
+              scopes,
+              now,
+              retentionUntil,
+            );
             if (activeProofId !== null && activeProofId !== undefined)
               yield* transaction
                 .update(mapping.generation.table)
