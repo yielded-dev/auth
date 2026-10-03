@@ -71,6 +71,7 @@ export class NewPasswordCheck extends Context.Service<
             const normalized = Redacted.make(value);
 
             const result = yield* Effect.suspend(() => screening(normalized, checkedContext)).pipe(
+              Effect.timeout(policy.screeningTimeoutMillis ?? 10_000),
               Effect.flatMap(Schema.decodeEffect(PasswordScreening)),
               Effect.catchCause((cause) =>
                 reportAuthFailure("password-screening", cause).pipe(
