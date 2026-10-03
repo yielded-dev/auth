@@ -197,8 +197,6 @@ export const make = <const Id extends string>(
     metadata: "/.well-known/oauth-authorization-server",
   } as const;
 
-  const cookieName = `yielded-${id}-consent`;
-
   const Identity = Context.Service<
     { readonly server: Id; readonly kind: "identity" },
     {
@@ -225,6 +223,8 @@ export const make = <const Id extends string>(
       readonly revoke: (grantId: string) => Effect.Effect<void, Unavailable>;
       readonly resource: string;
       readonly resourceMetadata: string;
+      /** Exact name for this configured origin, including the HTTPS host prefix. */
+      readonly cookieName: string;
     }
   >()(`effect-auth/OAuthServer/${id}`);
 
@@ -251,6 +251,8 @@ export const make = <const Id extends string>(
           })),
         }).pipe(Effect.mapError(() => ConfigurationError.make({})));
 
+        const secure = config.origin.startsWith("https:");
+        const cookieName = `${secure ? "__Host-" : ""}yielded-${id}-consent`;
         const resourceUrl = new URL(config.resource);
 
         if (
@@ -372,10 +374,10 @@ export const make = <const Id extends string>(
         const cookie = (credential: string, maxAge: number) =>
           Cookies.serializeCookie(
             Cookies.makeCookieUnsafe(cookieName, credential, {
-              path: paths.authorize,
+              path: secure ? "/" : paths.authorize,
               httpOnly: true,
               sameSite: "lax",
-              secure: config.origin.startsWith("https:"),
+              secure,
               maxAge: Duration.seconds(maxAge),
             }),
           );
@@ -738,6 +740,7 @@ export const make = <const Id extends string>(
           revoke: (grantId) => store.revoke(namespace, grantId),
           resource: config.resource,
           resourceMetadata,
+          cookieName,
         });
       }),
     ).pipe(Layer.provide(cryptoLayer));
@@ -818,5 +821,5 @@ export const make = <const Id extends string>(
       }),
     );
 
-  return { Service, Identity, layer, routes, middleware, paths, cookieName };
+  return { Service, Identity, layer, routes, middleware, paths };
 };
