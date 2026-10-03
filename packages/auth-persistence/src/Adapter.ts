@@ -1,8 +1,9 @@
 /** Shared storage contracts and kernels for persistence adapter authors.
- * Standalone constructors require the matching Current*Sql or NativeDatabase
- * service during acquisition. Provide a coordinator's exact transaction when
- * constructing bound services; do not provide the root database around their
- * later operations, where Current*Sql identifies an active transaction. */
+ * Supply the captured root through NativeDatabase for catalog validation and
+ * standalone execution, alongside each constructor's matching Current*Sql service.
+ * Provide a coordinator's exact transaction through Current*Sql when constructing
+ * bound services; do not provide the root around their later operations, where
+ * Current*Sql identifies an active transaction. */
 export {
   type EmailSubjectReadTable,
   type EmailSubjectTable,

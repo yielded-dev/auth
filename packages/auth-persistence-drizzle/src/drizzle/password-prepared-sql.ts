@@ -1,4 +1,5 @@
 import {
+  type NativeDatabase,
   CurrentPasswordPreparedTransaction,
   PasswordPreparedPostconditions,
   PasswordPreparedJournalGuards,
@@ -414,12 +415,12 @@ export const makeSqlPasswordPreparedPersistence = Effect.fn("makeSqlPasswordPrep
   ): Effect.fn.Return<
     PasswordPreparedPersistence,
     PasswordUnavailable,
-    LifecycleHooks | CurrentPasswordSql
+    LifecycleHooks | CurrentPasswordSql | NativeDatabase
   > {
     const database = yield* CurrentPasswordSql;
 
     if (!configuration.coordinated)
-      yield* validateDrizzleStorage(database, {
+      yield* validateDrizzleStorage({
         ...mapping,
         proof: configuration.proof?.mapping,
       }).pipe(Effect.mapError(unavailable));

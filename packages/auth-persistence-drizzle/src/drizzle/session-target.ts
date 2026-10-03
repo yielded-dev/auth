@@ -1,3 +1,4 @@
+import type { NativeDatabase } from "@yielded/auth-persistence/Adapter";
 import {
   coordinateCommit,
   hasCommitScope,
@@ -104,16 +105,20 @@ const coordinate = <Transaction, Services, A, E, R>(
   database: TransactionOwner<Transaction>,
   configuration: SessionTargetConfiguration,
   mapping: object,
-  make: (transaction: Transaction) => Effect.Effect<Services, SessionUnavailable, LifecycleHooks>,
+  make: (
+    transaction: Transaction,
+  ) => Effect.Effect<Services, SessionUnavailable, LifecycleHooks | NativeDatabase>,
   owner: (transaction: Transaction, services: Services) => Effect.Effect<A, E, R>,
-): Effect.Effect<A, CoordinatorError<E>, R | LifecycleHooks> =>
-  Effect.gen(function* (): Effect.fn.Return<A, CoordinatorError<E>, R | LifecycleHooks> {
+): Effect.Effect<A, CoordinatorError<E>, R | LifecycleHooks | NativeDatabase> =>
+  Effect.gen(function* (): Effect.fn.Return<
+    A,
+    CoordinatorError<E>,
+    R | LifecycleHooks | NativeDatabase
+  > {
     if (yield* hasCommitScope) return yield* SessionUnavailable.make({});
     yield* configuration.coordinatorGuard ?? configuration.standaloneGuard;
 
-    yield* validateDrizzleStorage(database, mapping).pipe(
-      Effect.mapError(() => SessionUnavailable.make({})),
-    );
+    yield* validateDrizzleStorage(mapping).pipe(Effect.mapError(() => SessionUnavailable.make({})));
 
     const result = yield* coordinateCommit(
       () =>

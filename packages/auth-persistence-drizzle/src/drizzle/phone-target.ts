@@ -279,7 +279,7 @@ export const makeTargetPhonePersistence = <
       catch: () => PhoneConfigurationError.make({}),
     });
 
-    yield* validateDrizzleStorage(yield* NativeDatabase, {
+    yield* validateDrizzleStorage({
       ...mapping,
       proofs: phoneProofs(mapping.proofs),
     }).pipe(Effect.mapError(() => PhoneConfigurationError.make({})));
@@ -309,7 +309,7 @@ export const coordinateTargetPhone = <
     services: PhonePersistenceServices,
     append: (statement: Statement<any>) => void,
   ) => Effect.Effect<A, E, R>,
-): Effect.Effect<A, PhoneCoordinatorError<E>, R | RSetup | LifecycleHooks> =>
+): Effect.Effect<A, PhoneCoordinatorError<E>, R | RSetup | LifecycleHooks | NativeDatabase> =>
   Effect.gen(function* () {
     const original = yield* Effect.isEffect(source) ? source : Effect.succeed(source);
 
@@ -318,7 +318,7 @@ export const coordinateTargetPhone = <
       catch: () => PhoneConfigurationError.make({}),
     });
 
-    yield* validateDrizzleStorage(database, {
+    yield* validateDrizzleStorage({
       ...mapping,
       proofs: phoneProofs(mapping.proofs),
     }).pipe(Effect.mapError(() => PhoneConfigurationError.make({})));
@@ -455,12 +455,19 @@ export const makePhoneTarget = <
     | RSetup
     | DatabaseRequirements
   > {
-    return Effect.flatMap(acquire, (database) =>
+    return Effect.flatMap(nativeDatabase(acquire), (database) =>
       coordinateTargetPhone(
         database as any,
         options.mapping,
         configuration,
-        (transaction: TransactionOf<Database>, services) => {
+        (
+          transaction: TransactionOf<Database>,
+          services,
+        ): Effect.Effect<
+          A,
+          E,
+          Exclude<R, PhonePersistence | PhoneAdmission | PhoneSignInTargets>
+        > => {
           const provided = Context.make(PhonePersistence, services.phonePersistence).pipe(
             Context.add(PhoneAdmission, services.phoneAdmission),
             Context.add(PhoneSignInTargets, services.phoneSignInTargets),
@@ -472,7 +479,7 @@ export const makePhoneTarget = <
             ? work
             : Effect.provideService(work, options.transaction, options.transaction.of(transaction));
         },
-      ),
+      ).pipe(Effect.provideService(NativeDatabase, database)),
     );
   }
 

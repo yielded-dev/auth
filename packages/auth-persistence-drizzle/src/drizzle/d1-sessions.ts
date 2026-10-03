@@ -1,4 +1,5 @@
 import {
+  NativeDatabase,
   decodeStepUpIntent,
   encodeStepUpIntent,
   stepUpIntentLive,
@@ -62,6 +63,7 @@ import {
 } from "./d1-planning";
 import { D1BatchStatements } from "./D1BatchStatements";
 import { column, PersistenceMappingError, isMappedConstraintConflict, updateValues } from "./model";
+import { nativeDatabase } from "./native-database";
 import type {
   D1AuthenticationAuthorityMapping,
   D1PendingAuthenticationMapping,
@@ -1628,7 +1630,7 @@ export const makeD1SessionServiceEffects = {
     Effect.gen(function* () {
       const database = yield* CurrentD1PlanningDatabase;
 
-      yield* validateDrizzleStorage(database, mapping).pipe(Effect.mapError(unavailable));
+      yield* validateDrizzleStorage(mapping).pipe(Effect.mapError(unavailable));
       const hooks = yield* LifecycleHooks;
       const raw = makeD1AuthenticationAuthority<Claims>(mapping);
 
@@ -1658,7 +1660,7 @@ export const makeD1SessionServiceEffects = {
     Effect.gen(function* () {
       const database = yield* CurrentD1PlanningDatabase;
 
-      yield* validateDrizzleStorage(database, mapping).pipe(Effect.mapError(unavailable));
+      yield* validateDrizzleStorage(mapping).pipe(Effect.mapError(unavailable));
       const hooks = yield* LifecycleHooks;
       const raw = makeD1PendingAuthentication<Claims>(mapping);
 
@@ -1689,7 +1691,7 @@ export const makeD1SessionServiceEffects = {
     Effect.gen(function* () {
       const database = yield* CurrentD1PlanningDatabase;
 
-      yield* validateDrizzleStorage(database, mapping).pipe(Effect.mapError(unavailable));
+      yield* validateDrizzleStorage(mapping).pipe(Effect.mapError(unavailable));
       const hooks = yield* LifecycleHooks;
       const raw = makeD1StatefulSessions<Claims>(mapping);
 
@@ -1726,7 +1728,7 @@ export const makeD1SessionServiceEffects = {
     Effect.gen(function* () {
       const database = yield* CurrentD1PlanningDatabase;
 
-      yield* validateDrizzleStorage(database, mapping).pipe(Effect.mapError(unavailable));
+      yield* validateDrizzleStorage(mapping).pipe(Effect.mapError(unavailable));
       const hooks = yield* LifecycleHooks;
       const raw = makeD1SignedValidity(mapping);
 
@@ -1771,11 +1773,15 @@ export const coordinateD1SessionBatch = <Services, A, E, R>(
   mapping: unknown,
   make: (batch: D1SessionBatch) => Effect.Effect<Services, never, LifecycleHooks>,
   owner: (services: Services, batch: D1SessionBatch) => Effect.Effect<A, E, R>,
-): Effect.Effect<A, D1CoordinatorError<E>, R | LifecycleHooks> =>
-  Effect.gen(function* (): Effect.fn.Return<A, D1CoordinatorError<E>, R | LifecycleHooks> {
+): Effect.Effect<A, D1CoordinatorError<E>, R | LifecycleHooks | NativeDatabase> =>
+  Effect.gen(function* (): Effect.fn.Return<
+    A,
+    D1CoordinatorError<E>,
+    R | LifecycleHooks | NativeDatabase
+  > {
     if (yield* hasCommitScope) return yield* unavailable();
 
-    yield* validateDrizzleStorage(database, mapping).pipe(Effect.mapError(unavailable));
+    yield* validateDrizzleStorage(mapping).pipe(Effect.mapError(unavailable));
 
     const result = yield* coordinateCommit(
       () =>
@@ -1860,7 +1866,10 @@ export const makeD1AuthenticationAuthorityServices = <
 ) =>
   makeD1SessionServiceEffects
     .authority<Claims>(mapping as any)
-    .pipe(Effect.provideServiceEffect(CurrentD1PlanningDatabase, DatabaseService));
+    .pipe(
+      Effect.provideServiceEffect(CurrentD1PlanningDatabase, DatabaseService),
+      Effect.provideServiceEffect(NativeDatabase, nativeDatabase(DatabaseService)),
+    );
 
 export const makeD1PendingAuthenticationServices = <
   Claims,
@@ -1881,7 +1890,10 @@ export const makeD1PendingAuthenticationServices = <
 ) =>
   makeD1SessionServiceEffects
     .pending<Claims>(mapping as any)
-    .pipe(Effect.provideServiceEffect(CurrentD1PlanningDatabase, DatabaseService));
+    .pipe(
+      Effect.provideServiceEffect(CurrentD1PlanningDatabase, DatabaseService),
+      Effect.provideServiceEffect(NativeDatabase, nativeDatabase(DatabaseService)),
+    );
 
 export const makeD1StatefulSessionServices = <
   Claims,
@@ -1906,7 +1918,10 @@ export const makeD1StatefulSessionServices = <
 ) =>
   makeD1SessionServiceEffects
     .stateful<Claims>(mapping as any)
-    .pipe(Effect.provideServiceEffect(CurrentD1PlanningDatabase, DatabaseService));
+    .pipe(
+      Effect.provideServiceEffect(CurrentD1PlanningDatabase, DatabaseService),
+      Effect.provideServiceEffect(NativeDatabase, nativeDatabase(DatabaseService)),
+    );
 
 export const makeD1SignedSessionValidityServices = <
   Subject extends AnySQLiteTable,
@@ -1918,7 +1933,10 @@ export const makeD1SignedSessionValidityServices = <
 ) =>
   makeD1SessionServiceEffects
     .validity(mapping as any)
-    .pipe(Effect.provideServiceEffect(CurrentD1PlanningDatabase, DatabaseService));
+    .pipe(
+      Effect.provideServiceEffect(CurrentD1PlanningDatabase, DatabaseService),
+      Effect.provideServiceEffect(NativeDatabase, nativeDatabase(DatabaseService)),
+    );
 
 export function coordinateD1AuthenticationAuthority<
   Claims,
@@ -1950,7 +1968,7 @@ export function coordinateD1AuthenticationAuthority<
   D1CoordinatorError<E> | DatabaseError,
   Exclude<R, AuthenticationAuthority | D1BatchStatements> | LifecycleHooks | DatabaseRequirements
 > {
-  return Effect.flatMap(acquire, (database) =>
+  return Effect.flatMap(nativeDatabase(acquire), (database) =>
     coordinateD1SessionBatch(
       database,
       options.mapping,
@@ -1989,7 +2007,7 @@ export function coordinateD1AuthenticationAuthority<
 
         return Effect.provideContext(body, provided);
       },
-    ),
+    ).pipe(Effect.provideService(NativeDatabase, database)),
   );
 }
 
@@ -2025,7 +2043,7 @@ export function coordinateD1PendingAuthentication<
   D1CoordinatorError<E> | DatabaseError,
   Exclude<R, TargetId | D1BatchStatements> | LifecycleHooks | DatabaseRequirements
 > {
-  return Effect.flatMap(acquire, (database) =>
+  return Effect.flatMap(nativeDatabase(acquire), (database) =>
     coordinateD1SessionBatch(
       database,
       options.mapping,
@@ -2061,7 +2079,7 @@ export function coordinateD1PendingAuthentication<
 
         return Effect.provideContext(body, provided);
       },
-    ),
+    ).pipe(Effect.provideService(NativeDatabase, database)),
   );
 }
 
@@ -2105,7 +2123,7 @@ export function coordinateD1StatefulSessions<
   | LifecycleHooks
   | DatabaseRequirements
 > {
-  return Effect.flatMap(acquire, (database) =>
+  return Effect.flatMap(nativeDatabase(acquire), (database) =>
     coordinateD1SessionBatch(
       database,
       options.mapping,
@@ -2157,7 +2175,7 @@ export function coordinateD1StatefulSessions<
 
         return Effect.provideContext(body, provided);
       },
-    ),
+    ).pipe(Effect.provideService(NativeDatabase, database)),
   );
 }
 
@@ -2189,7 +2207,7 @@ export function coordinateD1SignedSessionValidity<
   D1CoordinatorError<E> | DatabaseError,
   Exclude<R, TargetId | D1BatchStatements> | LifecycleHooks | DatabaseRequirements
 > {
-  return Effect.flatMap(acquire, (database) =>
+  return Effect.flatMap(nativeDatabase(acquire), (database) =>
     coordinateD1SessionBatch(
       database,
       options.mapping,
@@ -2224,7 +2242,7 @@ export function coordinateD1SignedSessionValidity<
 
         return Effect.provideContext(body, provided);
       },
-    ),
+    ).pipe(Effect.provideService(NativeDatabase, database)),
   );
 }
 
@@ -2778,7 +2796,10 @@ export const makeD1SessionStepUpServices = Effect.fnUntraced(function* <
 ) {
   const database = yield* DatabaseService;
 
-  yield* validateDrizzleStorage(database, mapping).pipe(Effect.mapError(unavailable));
+  yield* validateDrizzleStorage(mapping).pipe(
+    Effect.provideServiceEffect(NativeDatabase, nativeDatabase(DatabaseService)),
+    Effect.mapError(unavailable),
+  );
 
   const hooks = yield* LifecycleHooks;
   const raw = makeD1SessionStepUp<Claims>(mapping as any);
@@ -2844,7 +2865,7 @@ export function coordinateD1SessionStepUp<
   D1CoordinatorError<E> | DatabaseError,
   Exclude<R, Id | D1BatchStatements> | LifecycleHooks | DatabaseRequirements
 > {
-  return Effect.flatMap(acquire, (database) =>
+  return Effect.flatMap(nativeDatabase(acquire), (database) =>
     coordinateD1SessionBatch(
       database,
       options.mapping,
@@ -2884,6 +2905,6 @@ export function coordinateD1SessionStepUp<
 
         return Effect.provideContext(body, provided);
       },
-    ),
+    ).pipe(Effect.provideService(NativeDatabase, database)),
   );
 }

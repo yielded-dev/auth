@@ -1,3 +1,4 @@
+import type { NativeDatabase } from "@yielded/auth-persistence/Adapter";
 import {
   type PrepareEmailCommit,
   type EmailCommandId,
@@ -546,12 +547,12 @@ export const makeSqlEmailRegistrationAuthority = Effect.fn("makeSqlEmailRegistra
   ): Effect.fn.Return<
     EmailRegistrationAuthority<Registration>,
     EmailUnavailable,
-    LifecycleHooks | CurrentEmailSql
+    LifecycleHooks | CurrentEmailSql | NativeDatabase
   > {
     const database = yield* CurrentEmailSql;
 
     if (!configuration.coordinated)
-      yield* validateDrizzleStorage(database, {
+      yield* validateDrizzleStorage({
         ...mapping,
         proof: configuration.proof.mapping,
       }).pipe(Effect.mapError(unavailable));

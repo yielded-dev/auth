@@ -1,4 +1,5 @@
 import {
+  type NativeDatabase,
   CurrentPasswordPreparedTransaction,
   PasswordPreparedPostconditions,
   PasswordPreparedJournalGuards,
@@ -52,14 +53,14 @@ export const coordinateTargetPasswordPreparedPersistence = <Transaction, A, E, R
     transaction: Transaction,
     services: { readonly passwordPreparedPersistence: PasswordPreparedPersistence },
   ) => Effect.Effect<A, E, R>,
-): Effect.Effect<A, PasswordCoordinatorError<E>, R | LifecycleHooks> =>
+): Effect.Effect<A, PasswordCoordinatorError<E>, R | LifecycleHooks | NativeDatabase> =>
   Effect.gen(function* () {
     const hooks = yield* LifecycleHooks;
 
     if (yield* hasCommitScope) return yield* PasswordUnavailable.make({});
     yield* configuration.coordinatorGuard ?? configuration.standaloneGuard;
 
-    yield* validateDrizzleStorage(database, { ...mapping, proof: proofMapping }).pipe(
+    yield* validateDrizzleStorage({ ...mapping, proof: proofMapping }).pipe(
       Effect.mapError(() => PasswordUnavailable.make({})),
     );
 

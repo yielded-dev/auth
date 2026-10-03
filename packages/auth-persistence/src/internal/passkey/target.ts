@@ -44,7 +44,7 @@ import type {
   TransactionTargetConfiguration,
   makeTransactionExecutionKernel,
 } from "../transaction-execution-kernel";
-import { NativeDatabase } from "../transaction-kernel";
+import type { NativeDatabase } from "../transaction-kernel";
 import type { makePasskeyCredentialsKernel } from "./credentials";
 import type { makePasskeyFlowKernel } from "./flow";
 import type { makePasskeyRegistrationCeremonyKernel } from "./registration-ceremony";
@@ -134,7 +134,7 @@ export const makePasskeyTargetKernel = (
   > {
     const hooks = yield* LifecycleHooks;
 
-    yield* (operations.validateStorage?.(yield* NativeDatabase, mapping) ?? Effect.void).pipe(
+    yield* (operations.validateStorage?.(mapping) ?? Effect.void).pipe(
       Effect.mapError(() => PasskeyConfigurationError.make({})),
     );
 
@@ -508,14 +508,14 @@ export const makePasskeyTargetKernel = (
       services: PasskeyPersistenceServices,
       append: (statement: Statement<unknown>) => void,
     ) => Effect.Effect<A, E, R>,
-  ): Effect.Effect<A, PasskeyCoordinatorError<E>, R | RSetup | LifecycleHooks> =>
+  ): Effect.Effect<A, PasskeyCoordinatorError<E>, R | RSetup | LifecycleHooks | NativeDatabase> =>
     Effect.flatMap(capturedMapping(source, "assertion", configuration), (mapping) =>
       Effect.flatMap(LifecycleHooks, (hooks) =>
         coordinateTransactionOwner(
           database,
           CurrentPasskeyTransaction,
           configuration,
-          operations.validateStorage?.(database, mapping) ?? Effect.void,
+          operations.validateStorage?.(mapping) ?? Effect.void,
           unavailable,
           nonce,
           (execution) => ({
@@ -545,14 +545,14 @@ export const makePasskeyTargetKernel = (
       services: PasskeyRegistrationCeremonyServices,
       append: (statement: Statement<unknown>) => void,
     ) => Effect.Effect<A, E, R>,
-  ): Effect.Effect<A, PasskeyCoordinatorError<E>, R | RSetup | LifecycleHooks> =>
+  ): Effect.Effect<A, PasskeyCoordinatorError<E>, R | RSetup | LifecycleHooks | NativeDatabase> =>
     Effect.flatMap(capturedMapping(source, "registration", configuration), (mapping) =>
       Effect.flatMap(LifecycleHooks, (hooks) =>
         coordinateTransactionOwner(
           database,
           CurrentPasskeyTransaction,
           configuration,
-          operations.validateStorage?.(database, mapping) ?? Effect.void,
+          operations.validateStorage?.(mapping) ?? Effect.void,
           unavailable,
           nonce,
           (execution) =>

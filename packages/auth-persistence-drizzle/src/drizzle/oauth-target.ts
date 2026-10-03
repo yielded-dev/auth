@@ -1,4 +1,4 @@
-import { NativeDatabase } from "@yielded/auth-persistence/Adapter";
+import type { NativeDatabase } from "@yielded/auth-persistence/Adapter";
 import { LifecycleHooks } from "@yielded/auth/Hooks";
 import {
   OAuthAccountRevision,
@@ -94,7 +94,7 @@ export const makeOAuthExecution = Effect.fnUntraced(function* (
 ): Effect.fn.Return<OAuthExecution, OAuthUnavailable, LifecycleHooks | NativeDatabase> {
   const hooks = yield* LifecycleHooks;
 
-  yield* validateDrizzleStorage(yield* NativeDatabase, mapping).pipe(Effect.mapError(unavailable));
+  yield* validateDrizzleStorage(mapping).pipe(Effect.mapError(unavailable));
 
   const execution = yield* makeTransactionExecution(
     CurrentOAuthTransaction,
@@ -435,7 +435,7 @@ export const coordinateOAuthOwner = <Services, Transaction, A, E, R>(
     services: Services,
     append: (statement: Statement<any>) => void,
   ) => Effect.Effect<A, E, R>,
-): Effect.Effect<A, OAuthCoordinatorError<E>, R | LifecycleHooks> => {
+): Effect.Effect<A, OAuthCoordinatorError<E>, R | LifecycleHooks | NativeDatabase> => {
   const captured = captureOAuthMapping(mapping);
 
   return Effect.flatMap(LifecycleHooks, (hooks) =>
@@ -443,7 +443,7 @@ export const coordinateOAuthOwner = <Services, Transaction, A, E, R>(
       database,
       CurrentOAuthTransaction,
       configuration,
-      validateDrizzleStorage(database, captured).pipe(
+      validateDrizzleStorage(captured).pipe(
         Effect.andThen(Effect.suspend(() => allocate(captured))),
       ),
       unavailable,

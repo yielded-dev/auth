@@ -1,5 +1,6 @@
 /* oxlint-disable no-explicit-any -- driver exports preserve concrete consumer mappings. */
 import type { D1Client } from "@effect/sql-d1/D1Client";
+import { NativeDatabase } from "@yielded/auth-persistence/Adapter";
 import {
   coordinateCommit,
   CurrentCommitJournal,
@@ -39,6 +40,7 @@ import { CurrentD1PlanningDatabase, makeD1Owner } from "./d1-planning";
 import { checkD1ProofCompletion, compileD1ProofCompletionPlan } from "./d1-proofs";
 import { D1BatchStatements } from "./D1BatchStatements";
 import { PersistenceMappingError, column, updateValues } from "./model";
+import { nativeDatabase } from "./native-database";
 import type {
   D1PasswordPreparedPersistenceMapping,
   D1PasswordPreparedProofMapping,
@@ -991,7 +993,8 @@ export const makeD1PasswordPreparedPersistenceServices = Effect.fnUntraced(funct
 ) {
   const database = yield* DatabaseService;
 
-  yield* validateDrizzleStorage(database, { ...mapping, proof: proofMapping }).pipe(
+  yield* validateDrizzleStorage({ ...mapping, proof: proofMapping }).pipe(
+    Effect.provideServiceEffect(NativeDatabase, nativeDatabase(DatabaseService)),
     Effect.mapError(unavailable),
   );
 
@@ -1084,9 +1087,9 @@ export function coordinateD1PasswordPreparedPersistence<
   E | PasswordUnavailable | HookConfigurationError | DatabaseError,
   Exclude<R, TargetId | D1BatchStatements> | LifecycleHooks | DatabaseRequirements
 > {
-  return Effect.flatMap(acquire, (database) =>
+  return Effect.flatMap(nativeDatabase(acquire), (database) =>
     Effect.gen(function* () {
-      yield* validateDrizzleStorage(database, {
+      yield* validateDrizzleStorage({
         ...options.mapping,
         proof: options.proofMapping,
       }).pipe(Effect.mapError(unavailable));
@@ -1215,7 +1218,7 @@ export function coordinateD1PasswordPreparedPersistence<
       ).pipe(Effect.provideService(LifecycleHooks, hooks));
 
       return result.value;
-    }),
+    }).pipe(Effect.provideService(NativeDatabase, database)),
   );
 }
 

@@ -1,3 +1,4 @@
+import { NativeDatabase } from "@yielded/auth-persistence/Adapter";
 import {
   ExternalIdentityMutation,
   IdentityConflict,
@@ -24,6 +25,7 @@ import {
   type IdentityTables,
   type SubjectProvisioningTables,
 } from "./model";
+import { nativeDatabase } from "./native-database";
 import { Database as DatabaseService } from "./pg-database";
 import { validateDrizzleStorage } from "./storage-validation";
 
@@ -49,7 +51,8 @@ export const makePgSubjectProvisioningServices = Effect.fnUntraced(function* <
 >(mapping: SubjectProvisioningTables<Subject, Identifier, Request, NativeId>) {
   const database = yield* DatabaseService;
 
-  yield* validateDrizzleStorage(database, mapping).pipe(
+  yield* validateDrizzleStorage(mapping).pipe(
+    Effect.provideServiceEffect(NativeDatabase, nativeDatabase(DatabaseService)),
     Effect.mapError(() => IdentityUnavailable.make()),
   );
 
@@ -186,7 +189,8 @@ export const makePgExternalIdentityServices = Effect.fnUntraced(function* <
 >(mapping: ExternalIdentityTables<Subject, External, NativeId>) {
   const database = yield* DatabaseService;
 
-  yield* validateDrizzleStorage(database, mapping).pipe(
+  yield* validateDrizzleStorage(mapping).pipe(
+    Effect.provideServiceEffect(NativeDatabase, nativeDatabase(DatabaseService)),
     Effect.mapError(() => IdentityUnavailable.make()),
   );
 

@@ -177,7 +177,7 @@ export const makePasskeyTarget = <
     PasskeyCoordinatorError<E> | DatabaseError,
     Exclude<R, PasskeyPersistence> | LifecycleHooks | DatabaseRequirements | RSetup
   > {
-    return Effect.flatMap(acquire, (database) =>
+    return Effect.flatMap(nativeDatabase(acquire), (database) =>
       coordinateTargetPasskey(
         database,
         options.mapping,
@@ -190,7 +190,7 @@ export const makePasskeyTarget = <
             ? work
             : Effect.provideService(work, options.transaction, options.transaction.of(transaction));
         },
-      ),
+      ).pipe(Effect.provideService(NativeDatabase, database)),
     );
   }
   function coordinatePasskeyRegistrationCeremony<
@@ -290,7 +290,7 @@ export const makePasskeyTarget = <
     PasskeyCoordinatorError<E> | DatabaseError,
     Exclude<R, PasskeyPersistence> | LifecycleHooks | DatabaseRequirements | RSetup
   > {
-    return Effect.flatMap(acquire, (database) =>
+    return Effect.flatMap(nativeDatabase(acquire), (database) =>
       coordinateTargetPasskeyRegistration(
         database,
         options.mapping,
@@ -303,7 +303,7 @@ export const makePasskeyTarget = <
             ? work
             : Effect.provideService(work, options.transaction, options.transaction.of(transaction));
         },
-      ),
+      ).pipe(Effect.provideService(NativeDatabase, database)),
     );
   }
 

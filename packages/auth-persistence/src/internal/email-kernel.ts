@@ -50,6 +50,7 @@ import {
 /* oxlint-disable no-explicit-any -- the shared dialect kernel erases consumer Drizzle table types internally. */
 import type { QueryFailure } from "./query-operations";
 import type { QueryOperations, SqlFragment, SqlColumn } from "./query-operations";
+import type { NativeDatabase } from "./transaction-kernel";
 
 type AdapterFailure = QueryFailure | PersistenceMappingError | SqlError.SqlError;
 type SignInMapping = AnyEmailSignInMapping;
@@ -382,12 +383,16 @@ export const makeEmailKernel = <
   const makeSqlEmailSignInTargets = Effect.fn("makeSqlEmailSignInTargets")(function* (
     mapping: SignInMapping,
     configuration: EmailSqlConfiguration,
-  ): Effect.fn.Return<EmailSignInTargets["Service"], EmailUnavailable, CurrentEmailSql> {
+  ): Effect.fn.Return<
+    EmailSignInTargets["Service"],
+    EmailUnavailable,
+    CurrentEmailSql | NativeDatabase
+  > {
     const database = yield* CurrentEmailSql;
 
     if (!configuration.coordinated)
       yield* (
-        operations.validateStorage?.(database, {
+        operations.validateStorage?.({
           ...mapping,
           proof: configuration.proof?.mapping,
         }) ?? Effect.void
@@ -1232,13 +1237,13 @@ export const makeEmailKernel = <
   ): Effect.fn.Return<
     EmailAddressPersistence["Service"],
     EmailUnavailable,
-    LifecycleHooks | CurrentEmailSql
+    LifecycleHooks | CurrentEmailSql | NativeDatabase
   > {
     const database = yield* CurrentEmailSql;
 
     if (!configuration.coordinated)
       yield* (
-        operations.validateStorage?.(database, {
+        operations.validateStorage?.({
           ...mapping,
           proof: configuration.proof?.mapping,
         }) ?? Effect.void

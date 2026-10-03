@@ -133,7 +133,7 @@ export const makeOAuthTarget = <
     OAuthCoordinatorError<E> | DatabaseError,
     Exclude<R, OAuthSignInPersistence> | LifecycleHooks | DatabaseRequirements
   > {
-    return Effect.flatMap(acquire, (database) =>
+    return Effect.flatMap(nativeDatabase(acquire), (database) =>
       coordinateTargetOAuthSignIn<
         TransactionOf<Database>,
         A,
@@ -154,7 +154,7 @@ export const makeOAuthTarget = <
             ? work
             : Effect.provideService(work, options.transaction, options.transaction.of(transaction));
         },
-      ),
+      ).pipe(Effect.provideService(NativeDatabase, database)),
     );
   }
   function coordinateOAuthRegistrationIntents<
@@ -250,7 +250,7 @@ export const makeOAuthTarget = <
     OAuthCoordinatorError<E> | DatabaseError,
     Exclude<R, OAuthRegistrationIntents> | LifecycleHooks | DatabaseRequirements
   > {
-    return Effect.flatMap(acquire, (database) =>
+    return Effect.flatMap(nativeDatabase(acquire), (database) =>
       coordinateTargetOAuthRegistrationIntents<
         TransactionOf<Database>,
         A,
@@ -275,7 +275,7 @@ export const makeOAuthTarget = <
             ? work
             : Effect.provideService(work, options.transaction, options.transaction.of(transaction));
         },
-      ),
+      ).pipe(Effect.provideService(NativeDatabase, database)),
     );
   }
   function coordinateOAuthAccounts<
@@ -371,7 +371,7 @@ export const makeOAuthTarget = <
     OAuthCoordinatorError<E> | DatabaseError,
     Exclude<R, OAuthAccountsPersistence> | LifecycleHooks | DatabaseRequirements
   > {
-    return Effect.flatMap(acquire, (database) =>
+    return Effect.flatMap(nativeDatabase(acquire), (database) =>
       coordinateTargetOAuthAccounts<
         TransactionOf<Database>,
         A,
@@ -396,7 +396,7 @@ export const makeOAuthTarget = <
             ? work
             : Effect.provideService(work, options.transaction, options.transaction.of(transaction));
         },
-      ),
+      ).pipe(Effect.provideService(NativeDatabase, database)),
     );
   }
   function coordinateOAuthRegistration<
@@ -497,7 +497,7 @@ export const makeOAuthTarget = <
     OAuthCoordinatorError<E> | DatabaseError,
     Exclude<R, TargetId> | LifecycleHooks | DatabaseRequirements
   > {
-    return Effect.flatMap(acquire, (database) =>
+    return Effect.flatMap(nativeDatabase(acquire), (database) =>
       coordinateTargetOAuthRegistration<
         Registration,
         TransactionOf<Database>,
@@ -519,7 +519,7 @@ export const makeOAuthTarget = <
             ? work
             : Effect.provideService(work, options.transaction, options.transaction.of(transaction));
         },
-      ),
+      ).pipe(Effect.provideService(NativeDatabase, database)),
     );
   }
 

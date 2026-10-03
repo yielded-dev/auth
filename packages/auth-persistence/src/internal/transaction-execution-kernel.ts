@@ -203,6 +203,7 @@ export const makeTransactionExecutionKernel = (
     OwnerId,
     Resources,
     AllocationError,
+    AllocationRequirements,
     Services,
     Transaction,
     A,
@@ -212,7 +213,7 @@ export const makeTransactionExecutionKernel = (
     database: TransactionNativeDatabase,
     ownerTag: Context.Key<OwnerId, TransactionOwner<Failure>>,
     configuration: TransactionTargetConfiguration<Failure>,
-    allocate: Effect.Effect<Resources, AllocationError>,
+    allocate: Effect.Effect<Resources, AllocationError, AllocationRequirements>,
     unavailable: () => Failure,
     nonce: () => string,
     services: (execution: TransactionExecution<Failure, OwnerId>, resources: Resources) => Services,
@@ -224,7 +225,7 @@ export const makeTransactionExecutionKernel = (
   ): Effect.Effect<
     A,
     TransactionCoordinatorError<E, Failure>,
-    Exclude<R, CurrentCommitJournal> | LifecycleHooks
+    Exclude<R, CurrentCommitJournal> | LifecycleHooks | AllocationRequirements
   > => {
     return Effect.gen(function* () {
       if (yield* hasCommitScope) return yield* Effect.fail(unavailable());

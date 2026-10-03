@@ -1,3 +1,4 @@
+import { NativeDatabase } from "@yielded/auth-persistence/Adapter";
 import type { LifecycleHooks, HookConfigurationError } from "@yielded/auth/Hooks";
 import type { PasswordUnavailable, PasswordPreparedPersistence } from "@yielded/auth/Password";
 import type { AnySQLiteTable } from "drizzle-orm/sqlite-core";
@@ -216,7 +217,7 @@ export const makeSqlitePasswordPreparedTarget = <
     E | PasswordUnavailable | HookConfigurationError | SqlError | DatabaseError,
     Exclude<R, TargetId> | LifecycleHooks | DatabaseRequirements
   > {
-    return Effect.flatMap(acquire, (database) =>
+    return Effect.flatMap(nativeDatabase(acquire), (database) =>
       coordinateTargetPasswordPreparedPersistence<
         TransactionOf<Database>,
         Out,
@@ -238,7 +239,7 @@ export const makeSqlitePasswordPreparedTarget = <
             ? work
             : Effect.provideService(work, options.transaction, options.transaction.of(transaction));
         },
-      ),
+      ).pipe(Effect.provideService(NativeDatabase, database)),
     );
   }
 
@@ -268,7 +269,10 @@ export const makeSqlitePasswordPreparedTarget = <
     ) =>
       Effect.flatMap(standaloneConfiguration, (configuration) =>
         makeTargetPasswordPreparedPersistenceServices(mapping, configuration, proofMapping),
-      ).pipe(Effect.provideServiceEffect(CurrentPasswordSql, nativeDatabase(databaseService))),
+      ).pipe(
+        Effect.provideServiceEffect(CurrentPasswordSql, nativeDatabase(databaseService)),
+        Effect.provideServiceEffect(NativeDatabase, nativeDatabase(databaseService)),
+      ),
     coordinatePasswordPreparedPersistence,
   };
 };

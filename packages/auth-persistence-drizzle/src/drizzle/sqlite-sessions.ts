@@ -1,3 +1,4 @@
+import { NativeDatabase } from "@yielded/auth-persistence/Adapter";
 import type { LifecycleHooks, HookConfigurationError } from "@yielded/auth/Hooks";
 import {
   AuthenticationAuthority,
@@ -364,7 +365,7 @@ export const makeSqliteSessionTarget = <
     E | SessionUnavailable | HookConfigurationError | SqlError | DatabaseError,
     Exclude<R, Id> | LifecycleHooks | DatabaseRequirements
   > {
-    return Effect.flatMap(acquire, (database) =>
+    return Effect.flatMap(nativeDatabase(acquire), (database) =>
       coordinateSqliteSessionStepUp(
         database,
         options.mapping,
@@ -381,7 +382,7 @@ export const makeSqliteSessionTarget = <
             ? work
             : Effect.provideService(work, options.transaction, options.transaction.of(transaction));
         },
-      ),
+      ).pipe(Effect.provideService(NativeDatabase, database)),
     );
   }
   function coordinateAuthenticationAuthority<
@@ -471,7 +472,7 @@ export const makeSqliteSessionTarget = <
     E | SessionUnavailable | HookConfigurationError | SqlError | DatabaseError,
     Exclude<R, AuthenticationAuthority> | LifecycleHooks | DatabaseRequirements
   > {
-    return Effect.flatMap(acquire, (database) =>
+    return Effect.flatMap(nativeDatabase(acquire), (database) =>
       coordinateSqliteAuthenticationAuthority(
         database,
         options.mapping,
@@ -487,7 +488,7 @@ export const makeSqliteSessionTarget = <
             ? work
             : Effect.provideService(work, options.transaction, options.transaction.of(transaction));
         },
-      ),
+      ).pipe(Effect.provideService(NativeDatabase, database)),
     );
   }
   function coordinatePendingAuthentication<
@@ -579,7 +580,7 @@ export const makeSqliteSessionTarget = <
     E | SessionUnavailable | HookConfigurationError | SqlError | DatabaseError,
     Exclude<R, TargetId> | LifecycleHooks | DatabaseRequirements
   > {
-    return Effect.flatMap(acquire, (database) =>
+    return Effect.flatMap(nativeDatabase(acquire), (database) =>
       coordinateSqlitePendingAuthentication(
         database,
         options.mapping,
@@ -595,7 +596,7 @@ export const makeSqliteSessionTarget = <
             ? work
             : Effect.provideService(work, options.transaction, options.transaction.of(transaction));
         },
-      ),
+      ).pipe(Effect.provideService(NativeDatabase, database)),
     );
   }
   function coordinateStatefulSessions<
@@ -730,7 +731,7 @@ export const makeSqliteSessionTarget = <
     E | SessionUnavailable | HookConfigurationError | SqlError | DatabaseError,
     Exclude<R, PersistenceId | RepositoryId> | LifecycleHooks | DatabaseRequirements
   > {
-    return Effect.flatMap(acquire, (database) =>
+    return Effect.flatMap(nativeDatabase(acquire), (database) =>
       coordinateSqliteStatefulSessions(
         database,
         options.mapping,
@@ -753,7 +754,7 @@ export const makeSqliteSessionTarget = <
             ? work
             : Effect.provideService(work, options.transaction, options.transaction.of(transaction));
         },
-      ),
+      ).pipe(Effect.provideService(NativeDatabase, database)),
     );
   }
   function coordinateSignedSessionValidity<
@@ -839,7 +840,7 @@ export const makeSqliteSessionTarget = <
     E | SessionUnavailable | HookConfigurationError | SqlError | DatabaseError,
     Exclude<R, TargetId> | LifecycleHooks | DatabaseRequirements
   > {
-    return Effect.flatMap(acquire, (database) =>
+    return Effect.flatMap(nativeDatabase(acquire), (database) =>
       coordinateSqliteSignedSessionValidity(
         database,
         options.mapping,
@@ -855,7 +856,7 @@ export const makeSqliteSessionTarget = <
             ? work
             : Effect.provideService(work, options.transaction, options.transaction.of(transaction));
         },
-      ),
+      ).pipe(Effect.provideService(NativeDatabase, database)),
     );
   }
 
@@ -885,7 +886,10 @@ export const makeSqliteSessionTarget = <
     ) =>
       Effect.flatMap(standaloneConfiguration, (configuration) =>
         makeSqliteSessionStepUpServices(mapping, target, configuration),
-      ).pipe(Effect.provideServiceEffect(CurrentSessionSql, nativeDatabase(databaseService))),
+      ).pipe(
+        Effect.provideServiceEffect(CurrentSessionSql, nativeDatabase(databaseService)),
+        Effect.provideServiceEffect(NativeDatabase, nativeDatabase(databaseService)),
+      ),
     coordinateSessionStepUp,
     makeAuthenticationAuthorityServices: <
       Claims,
@@ -899,7 +903,10 @@ export const makeSqliteSessionTarget = <
     ) =>
       Effect.flatMap(standaloneConfiguration, (configuration) =>
         makeSqliteAuthenticationAuthorityServices(mapping, configuration),
-      ).pipe(Effect.provideServiceEffect(CurrentSessionSql, nativeDatabase(databaseService))),
+      ).pipe(
+        Effect.provideServiceEffect(CurrentSessionSql, nativeDatabase(databaseService)),
+        Effect.provideServiceEffect(NativeDatabase, nativeDatabase(databaseService)),
+      ),
     makePendingAuthenticationServices: <
       Claims,
       S extends AnySQLiteTable,
@@ -912,7 +919,10 @@ export const makeSqliteSessionTarget = <
     ) =>
       Effect.flatMap(standaloneConfiguration, (configuration) =>
         makeSqlitePendingAuthenticationServices(mapping, configuration),
-      ).pipe(Effect.provideServiceEffect(CurrentSessionSql, nativeDatabase(databaseService))),
+      ).pipe(
+        Effect.provideServiceEffect(CurrentSessionSql, nativeDatabase(databaseService)),
+        Effect.provideServiceEffect(NativeDatabase, nativeDatabase(databaseService)),
+      ),
     makeStatefulSessionServices: <
       Claims,
       S extends AnySQLiteTable,
@@ -927,7 +937,10 @@ export const makeSqliteSessionTarget = <
     ) =>
       Effect.flatMap(standaloneConfiguration, (configuration) =>
         makeSqliteStatefulSessionServices(mapping, configuration),
-      ).pipe(Effect.provideServiceEffect(CurrentSessionSql, nativeDatabase(databaseService))),
+      ).pipe(
+        Effect.provideServiceEffect(CurrentSessionSql, nativeDatabase(databaseService)),
+        Effect.provideServiceEffect(NativeDatabase, nativeDatabase(databaseService)),
+      ),
     makeSignedSessionValidityServices: <
       S extends AnySQLiteTable,
       T extends AnySQLiteTable,
@@ -938,7 +951,10 @@ export const makeSqliteSessionTarget = <
     ) =>
       Effect.flatMap(standaloneConfiguration, (configuration) =>
         makeSqliteSignedSessionValidityServices(mapping, configuration),
-      ).pipe(Effect.provideServiceEffect(CurrentSessionSql, nativeDatabase(databaseService))),
+      ).pipe(
+        Effect.provideServiceEffect(CurrentSessionSql, nativeDatabase(databaseService)),
+        Effect.provideServiceEffect(NativeDatabase, nativeDatabase(databaseService)),
+      ),
     coordinateAuthenticationAuthority,
     coordinatePendingAuthentication,
     coordinateStatefulSessions,

@@ -61,6 +61,7 @@ import {
   validateStepUpPlan,
   stepUpRotationMatches,
 } from "./step-up-state";
+import type { NativeDatabase } from "./transaction-kernel";
 
 type CommitMode = "interactive" | "synchronous";
 
@@ -632,12 +633,12 @@ export const makeSessionKernel = (operations: QueryOperations) => {
   ): Effect.fn.Return<
     AuthenticationAuthority["Service"],
     SessionUnavailable,
-    LifecycleHooks | CurrentSessionSql
+    LifecycleHooks | CurrentSessionSql | NativeDatabase
   > {
     const database = yield* CurrentSessionSql;
 
     if (!options.coordinated)
-      yield* (operations.validateStorage?.(database, mapping) ?? Effect.void).pipe(
+      yield* (operations.validateStorage?.(mapping) ?? Effect.void).pipe(
         Effect.mapError(unavailable),
       );
     const hooks = yield* LifecycleHooks;
@@ -799,12 +800,12 @@ export const makeSessionKernel = (operations: QueryOperations) => {
   ): Effect.fn.Return<
     PendingAuthentication<Claims>,
     SessionUnavailable,
-    LifecycleHooks | CurrentSessionSql
+    LifecycleHooks | CurrentSessionSql | NativeDatabase
   > {
     const database = yield* CurrentSessionSql;
 
     if (!options.coordinated)
-      yield* (operations.validateStorage?.(database, mapping) ?? Effect.void).pipe(
+      yield* (operations.validateStorage?.(mapping) ?? Effect.void).pipe(
         Effect.mapError(unavailable),
       );
     const hooks = yield* LifecycleHooks;
@@ -980,12 +981,12 @@ export const makeSessionKernel = (operations: QueryOperations) => {
       readonly sessionRepository: SessionRepository;
     },
     SessionUnavailable,
-    LifecycleHooks | CurrentSessionSql
+    LifecycleHooks | CurrentSessionSql | NativeDatabase
   > {
     const database = yield* CurrentSessionSql;
 
     if (!options.coordinated)
-      yield* (operations.validateStorage?.(database, mapping) ?? Effect.void).pipe(
+      yield* (operations.validateStorage?.(mapping) ?? Effect.void).pipe(
         Effect.mapError(unavailable),
       );
     const hooks = yield* LifecycleHooks;
@@ -1411,12 +1412,12 @@ export const makeSessionKernel = (operations: QueryOperations) => {
   ): Effect.fn.Return<
     SignedSessionValidity,
     SessionUnavailable,
-    LifecycleHooks | CurrentSessionSql
+    LifecycleHooks | CurrentSessionSql | NativeDatabase
   > {
     const database = yield* CurrentSessionSql;
 
     if (!options.coordinated)
-      yield* (operations.validateStorage?.(database, mapping) ?? Effect.void).pipe(
+      yield* (operations.validateStorage?.(mapping) ?? Effect.void).pipe(
         Effect.mapError(unavailable),
       );
     const hooks = yield* LifecycleHooks;
@@ -1812,12 +1813,12 @@ export const makeSessionKernel = (operations: QueryOperations) => {
   ): Effect.fn.Return<
     SessionStepUpPersistence<Claims>,
     SessionUnavailable,
-    LifecycleHooks | CurrentSessionSql
+    LifecycleHooks | CurrentSessionSql | NativeDatabase
   > {
     const database = yield* CurrentSessionSql;
 
     if (!options.coordinated)
-      yield* (operations.validateStorage?.(database, mapping) ?? Effect.void).pipe(
+      yield* (operations.validateStorage?.(mapping) ?? Effect.void).pipe(
         Effect.mapError(unavailable),
       );
     const hooks = yield* LifecycleHooks;

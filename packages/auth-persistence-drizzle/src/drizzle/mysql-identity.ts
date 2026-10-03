@@ -1,3 +1,4 @@
+import { NativeDatabase } from "@yielded/auth-persistence/Adapter";
 import {
   ExternalIdentityMutation,
   type ExternalIdentity,
@@ -25,6 +26,7 @@ import {
   type SubjectProvisioningTables,
 } from "./model";
 import { Database as DatabaseService } from "./mysql-database";
+import { nativeDatabase } from "./native-database";
 import { validateDrizzleStorage } from "./storage-validation";
 
 type RuntimeDatabase = EffectMysql2Database<any>;
@@ -48,7 +50,8 @@ export const makeMysqlSubjectProvisioningServices = Effect.fnUntraced(function* 
 >(mapping: SubjectProvisioningTables<Subject, Identifier, Request, NativeId>) {
   const database = yield* DatabaseService;
 
-  yield* validateDrizzleStorage(database, mapping).pipe(
+  yield* validateDrizzleStorage(mapping).pipe(
+    Effect.provideServiceEffect(NativeDatabase, nativeDatabase(DatabaseService)),
     Effect.mapError(() => IdentityUnavailable.make()),
   );
 
@@ -203,7 +206,8 @@ export const makeMysqlExternalIdentityServices = Effect.fnUntraced(function* <
 >(mapping: ExternalIdentityTables<Subject, External, NativeId>) {
   const database = yield* DatabaseService;
 
-  yield* validateDrizzleStorage(database, mapping).pipe(
+  yield* validateDrizzleStorage(mapping).pipe(
+    Effect.provideServiceEffect(NativeDatabase, nativeDatabase(DatabaseService)),
     Effect.mapError(() => IdentityUnavailable.make()),
   );
 

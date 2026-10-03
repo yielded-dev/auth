@@ -1,3 +1,4 @@
+import { NativeDatabase } from "@yielded/auth-persistence/Adapter";
 import type { LifecycleHooks, HookConfigurationError } from "@yielded/auth/Hooks";
 import { type ProofUnavailable, ProofPersistence } from "@yielded/auth/Proofs";
 import type { AnyRelations } from "drizzle-orm";
@@ -180,7 +181,7 @@ export const makeSqliteProofTarget = <
     E | ProofUnavailable | HookConfigurationError | SqlError | DatabaseError,
     Exclude<R, ProofPersistence> | LifecycleHooks | DatabaseRequirements
   > {
-    return Effect.flatMap(acquire, (database) =>
+    return Effect.flatMap(nativeDatabase(acquire), (database) =>
       coordinateTargetProofPersistence<TransactionOf<Database>, A, E, Exclude<R, ProofPersistence>>(
         database,
         options.mapping,
@@ -196,7 +197,7 @@ export const makeSqliteProofTarget = <
             ? work
             : Effect.provideService(work, options.transaction, options.transaction.of(transaction));
         },
-      ),
+      ).pipe(Effect.provideService(NativeDatabase, database)),
     );
   }
 
@@ -219,7 +220,10 @@ export const makeSqliteProofTarget = <
     ) =>
       Effect.flatMap(standaloneConfiguration, (configuration) =>
         makeTargetProofPersistenceServices(mapping, configuration),
-      ).pipe(Effect.provideServiceEffect(CurrentProofSql, nativeDatabase(databaseService))),
+      ).pipe(
+        Effect.provideServiceEffect(CurrentProofSql, nativeDatabase(databaseService)),
+        Effect.provideServiceEffect(NativeDatabase, nativeDatabase(databaseService)),
+      ),
     coordinateProofPersistence,
   };
 };

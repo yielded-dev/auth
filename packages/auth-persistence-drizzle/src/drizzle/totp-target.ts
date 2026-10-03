@@ -141,7 +141,7 @@ export const makeTargetTotpPersistence = <
       catch: () => TotpConfigurationError.make({}),
     });
 
-    yield* validateDrizzleStorage(yield* NativeDatabase, mapping).pipe(
+    yield* validateDrizzleStorage(mapping).pipe(
       Effect.mapError(() => TotpConfigurationError.make({})),
     );
 
@@ -164,7 +164,7 @@ export const coordinateTargetTotp = <M, A, E, R, RSetup = never>(
     services: TotpPersistenceServices,
     append: (statement: Statement<any>) => void,
   ) => Effect.Effect<A, E, R>,
-): Effect.Effect<A, TotpCoordinatorError<E>, R | RSetup | LifecycleHooks> =>
+): Effect.Effect<A, TotpCoordinatorError<E>, R | RSetup | LifecycleHooks | NativeDatabase> =>
   Effect.gen(function* () {
     const original = yield* Effect.isEffect(source) ? source : Effect.succeed(source);
 
@@ -173,7 +173,7 @@ export const coordinateTargetTotp = <M, A, E, R, RSetup = never>(
       catch: () => TotpConfigurationError.make({}),
     });
 
-    yield* validateDrizzleStorage(database, mapping).pipe(
+    yield* validateDrizzleStorage(mapping).pipe(
       Effect.mapError(() => TotpConfigurationError.make({})),
     );
 
@@ -289,12 +289,15 @@ export const makeTotpTarget = <
     TotpCoordinatorError<E> | DatabaseError,
     Exclude<R, TotpPersistence> | LifecycleHooks | RSetup | DatabaseRequirements
   > {
-    return Effect.flatMap(acquire, (database) =>
+    return Effect.flatMap(nativeDatabase(acquire), (database) =>
       coordinateTargetTotp(
         database as any,
         options.mapping,
         configuration,
-        (transaction: TransactionOf<Database>, services) => {
+        (
+          transaction: TransactionOf<Database>,
+          services,
+        ): Effect.Effect<A, E, Exclude<R, TotpPersistence>> => {
           const provided = Context.make(TotpPersistence, services.totpPersistence);
           const work = Effect.provideContext(body, provided);
 
@@ -302,7 +305,7 @@ export const makeTotpTarget = <
             ? work
             : Effect.provideService(work, options.transaction, options.transaction.of(transaction));
         },
-      ),
+      ).pipe(Effect.provideService(NativeDatabase, database)),
     );
   }
 

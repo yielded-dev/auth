@@ -1,4 +1,5 @@
 import type { D1Client } from "@effect/sql-d1/D1Client";
+import { NativeDatabase } from "@yielded/auth-persistence/Adapter";
 import type { LifecycleHooks } from "@yielded/auth/Hooks";
 import { TotpUnavailable, TotpPersistence } from "@yielded/auth/Totp";
 import type { AnyRelations } from "drizzle-orm";
@@ -9,6 +10,7 @@ import { Context, Effect } from "effect";
 import { Database as DatabaseService } from "./d1-database";
 import { makeD1Owner } from "./d1-planning";
 import { D1BatchStatements } from "./D1BatchStatements";
+import { nativeDatabase } from "./native-database";
 import type { D1TotpMapping, TotpMapping, TotpMappingSource } from "./totp-model";
 import { coordinateTargetTotp, makeTotpTarget, type TotpCoordinatorError } from "./totp-target";
 type Database = EffectSQLiteD1Database<AnyRelations> & { readonly $client: D1Client };
@@ -50,7 +52,7 @@ export const coordinateTotpPersistence = <
   TotpCoordinatorError<E> | DatabaseError,
   Exclude<R, TotpPersistence | D1BatchStatements> | LifecycleHooks | RSetup | DatabaseRequirements
 > =>
-  Effect.flatMap(acquire, (database) =>
+  Effect.flatMap(nativeDatabase(acquire), (database) =>
     coordinateTargetTotp(
       database,
       options.mapping,
@@ -78,5 +80,5 @@ export const coordinateTotpPersistence = <
 
           return yield* owner.close(Effect.provideContext(body, provided));
         }),
-    ),
+    ).pipe(Effect.provideService(NativeDatabase, database)),
   );

@@ -31,7 +31,7 @@ export interface TransactionNativeDatabase {
   ) => Effect.Effect<A, E | SqlError, R>;
 }
 
-/** Root native database required only while constructing standalone services.
+/** Captured root database for service construction and pre-transaction catalog checks.
  * Active transactions remain owned by their coordinator and journal. */
 export class NativeDatabase extends Context.Service<NativeDatabase, TransactionNativeDatabase>()(
   "effect-auth/persistence/NativeDatabase",

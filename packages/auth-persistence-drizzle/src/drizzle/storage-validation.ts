@@ -1,4 +1,8 @@
-import { PersistenceMappingError, validateStorage } from "@yielded/auth-persistence/Adapter";
+import {
+  NativeDatabase,
+  PersistenceMappingError,
+  validateStorage,
+} from "@yielded/auth-persistence/Adapter";
 import { getTableColumns, getTableName, is, Table } from "drizzle-orm";
 import { getTableConfig as getMysqlTableConfig, MySqlTable } from "drizzle-orm/mysql-core";
 import { getTableConfig as getPgTableConfig, PgTable } from "drizzle-orm/pg-core";
@@ -225,9 +229,9 @@ const plans = (mapping: Readonly<Record<string, unknown>>) => {
   return result;
 };
 
-/** Validate at acquisition using this Drizzle database's captured SQL client. */
+/** Validate at acquisition using the root database supplied by the adapter. */
 export const validateDrizzleStorage = Effect.fnUntraced(
-  function* (database: object, mapping: unknown) {
+  function* (mapping: unknown) {
     const physical = yield* Effect.try({
       try: () => plans(record(mapping)),
       catch: () =>
@@ -237,8 +241,7 @@ export const validateDrizzleStorage = Effect.fnUntraced(
         }),
     });
 
-    // The public Drizzle classes omit $client; every Effect driver captures it.
-    const client = (database as { readonly $client: SqlClient }).$client;
+    const { $client: client } = yield* NativeDatabase;
 
     for (const plan of physical) {
       const pg = is(plan.table, PgTable);

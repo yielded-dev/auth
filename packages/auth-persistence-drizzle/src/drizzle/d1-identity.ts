@@ -1,4 +1,5 @@
 import type { D1Client } from "@effect/sql-d1/D1Client";
+import { NativeDatabase } from "@yielded/auth-persistence/Adapter";
 import {
   ExternalIdentityMutation,
   type ExternalIdentity,
@@ -34,6 +35,7 @@ import {
   type D1GeneratedIdentityMapping,
   type D1SubjectProvisioningMapping,
 } from "./model";
+import { nativeDatabase } from "./native-database";
 import { validateDrizzleStorage } from "./storage-validation";
 
 type RuntimeDatabase = EffectSQLiteD1Database<any> & { readonly $client: D1Client };
@@ -101,7 +103,8 @@ export const makeD1SubjectProvisioningServices = Effect.fnUntraced(function* <
 >(mapping: D1SubjectProvisioningMapping<Subject, Identifier, Request, NativeId>) {
   const database = yield* DatabaseService;
 
-  yield* validateDrizzleStorage(database, mapping).pipe(
+  yield* validateDrizzleStorage(mapping).pipe(
+    Effect.provideServiceEffect(NativeDatabase, nativeDatabase(DatabaseService)),
     Effect.mapError(() => IdentityUnavailable.make()),
   );
 
@@ -267,7 +270,8 @@ export const makeD1ExternalIdentityServices = Effect.fnUntraced(function* <
 >(mapping: D1ExternalIdentityMapping<Subject, External, NativeId>) {
   const database = yield* DatabaseService;
 
-  yield* validateDrizzleStorage(database, mapping).pipe(
+  yield* validateDrizzleStorage(mapping).pipe(
+    Effect.provideServiceEffect(NativeDatabase, nativeDatabase(DatabaseService)),
     Effect.mapError(() => IdentityUnavailable.make()),
   );
 
