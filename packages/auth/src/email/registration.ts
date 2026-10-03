@@ -9,6 +9,7 @@ import type { AuthOperationResult } from "../operations/credentials";
 import { makeOperation, operationGroup } from "../operations/operation";
 import type { makeRequestBinding } from "../operations/requestBinding";
 import { RequestBindingCredential, RequestBindingFlowId } from "../operations/requestBinding";
+import { proofRequestAdmission } from "../proofs/admission";
 import type { ProofCompletionPlan } from "../proofs/completion";
 import { readProofCommit } from "../proofs/dispatch";
 import type { ProofBinding } from "../proofs/models";
@@ -345,7 +346,12 @@ export const makeEmailRegistration = <
     }),
   );
 
+  const admitRequest = proofRequestAdmission(`${moduleId}/registration`).pipe(
+    Effect.mapError(emailCompletionFailure),
+  );
+
   const Request = makeOperation(`${moduleId}/registration/request`, {
+    authorize: () => admitRequest,
     payload: RequestInput,
     success: ProofRequestReceipt,
     error: Failure,
@@ -355,6 +361,7 @@ export const makeEmailRegistration = <
   });
 
   const Resend = makeOperation(`${moduleId}/registration/resend`, {
+    authorize: () => admitRequest,
     payload: ResendInput,
     success: ProofRequestReceipt,
     error: Failure,

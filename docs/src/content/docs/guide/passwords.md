@@ -100,6 +100,7 @@ import { authorizePasswordChange, registerAccount, resolvePasswordClaims } from 
 import { PasswordPersistenceLive, ProofPersistenceLive } from "./auth-persistence";
 import { checkPassword } from "./password-screening";
 import { EmailLive } from "./email";
+import { ProofIngressLive } from "./proof-ingress";
 
 export const PasswordLive = Layer.mergeAll(
   PasswordCrypto.layer().pipe(
@@ -113,6 +114,7 @@ export const PasswordLive = Layer.mergeAll(
   Layer.succeed(Password.CompromisedPasswords, { check: checkPassword }),
   Layer.succeed(Password.PasswordActionEvidence, { verify: authorizePasswordChange }),
   EmailLive,
+  ProofIngressLive,
 );
 
 export const AuthLive = AppAuth.layer.pipe(
@@ -163,6 +165,12 @@ const requested = yield* auth.requestReset({ flowId, requestId, email, locale: "
 Retain the original flow ID, email, request ID, and reference. Always show a generic
 response such as “If this address is eligible, check your email.” The receipt does
 not reveal account eligibility or whether a message was sent.
+
+Reset requests require a shared `Proofs.HostIngressLimiter` and a trusted
+`Proofs.ProofRequestContext` supplied per invocation. Admission precedes target
+lookup for every request, including unknown addresses and retries. See
+[HTTP admission](./http-and-client#proof-request-admission) for host wiring and
+[proof budgets](./codes#proof-expiry-and-rate-limits) for delivery limits.
 
 For links, the originating client uses `EmailDelivery.parseLinkFragment` to extract
 the reference and secret, clears the fragment from history, then waits for an

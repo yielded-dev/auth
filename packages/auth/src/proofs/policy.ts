@@ -13,13 +13,15 @@ export const ProofBudget = Schema.Struct({
 export type ProofBudget = typeof ProofBudget.Type;
 
 export const ProofAbusePolicy = Schema.Struct({
+  /** Count newly issued proofs only; suppression and exact replay do not charge issuance. */
   issues: ProofBudget,
   attempts: ProofBudget,
   /** These windows survive consumption, failure, and every resend/flow/request ID. */
   subjectIssues: ProofBudget,
   subjectAttempts: ProofBudget,
-  /** Global action limits also cover unknown subjects and rotating identifiers. */
+  /** Global issuance limit; host ingress separately covers every request and network. */
   actionIssues: ProofBudget,
+  /** Attempt limits also cover unknown subjects and rotating identifiers. */
   actionAttempts: ProofBudget,
   resendCooldownMillis: Schema.Natural,
 });

@@ -14,8 +14,10 @@ import {
   RequestBindingFlowId,
   RequestBindingPublic,
 } from "../operations/requestBinding";
+import { proofRequestAdmission } from "../proofs/admission";
 import type { ProofSecretPolicy } from "../proofs/crypto";
 import { readProofCommit } from "../proofs/dispatch";
+import { HostIngressLimiter } from "../proofs/HostIngressLimiter";
 import {
   ProofBinding,
   ProofContinuation,
@@ -392,7 +394,12 @@ export const makeEmailSignInModule = <
       }),
     );
 
+    const admitRequest = proofRequestAdmission(`${moduleId}/${mode}/sign-in`).pipe(
+      Effect.mapError(emailCompletionFailure),
+    );
+
     const Request = makeOperation(`${moduleId}/${mode}/sign-in/request`, {
+      authorize: () => admitRequest,
       payload: RequestInput,
       success: ProofRequestReceipt,
       error: Failure,
@@ -402,6 +409,7 @@ export const makeEmailSignInModule = <
     });
 
     const Resend = makeOperation(`${moduleId}/${mode}/sign-in/resend`, {
+      authorize: () => admitRequest,
       payload: ResendInput,
       success: ProofRequestReceipt,
       error: Failure,
@@ -467,6 +475,7 @@ export const makeEmailSignInModule = <
           Layer.provide(defaultLayer(proof.Proofs, proof.emailLayer)),
           Layer.provide(defaultLayer(binding.RequestBinding, binding.layer)),
           Layer.provide([cryptoLayer, hooksLayer]),
+          Layer.merge(Layer.effect(HostIngressLimiter, HostIngressLimiter)),
         ),
         { completion: true },
       ),
@@ -547,6 +556,7 @@ export const makeEmailAccountModule = <
           Layer.provide(defaultLayer(registrationProof.Proofs, registrationProof.emailLayer)),
           Layer.provide(defaultLayer(binding.RequestBinding, binding.layer)),
           Layer.provide([cryptoLayer, hooksLayer]),
+          Layer.merge(Layer.effect(HostIngressLimiter, HostIngressLimiter)),
         ),
       ),
     });
@@ -585,6 +595,7 @@ export const makeEmailAccountModule = <
           ]),
           Layer.provide(defaultLayer(binding.RequestBinding, binding.layer)),
           Layer.provide([cryptoLayer, hooksLayer]),
+          Layer.merge(Layer.effect(HostIngressLimiter, HostIngressLimiter)),
         ),
       ),
     });

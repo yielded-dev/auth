@@ -9,8 +9,10 @@ import { LoginIdentifier } from "../../identity/models";
 import { type AuthInvocation } from "../../operations/context";
 import type { AuthOperationResult } from "../../operations/credentials";
 import { makeOperation, operationGroup } from "../../operations/operation";
+import { proofRequestAdmission } from "../../proofs/admission";
 import type { ProofSecretPolicy } from "../../proofs/crypto";
 import { readProofCommit } from "../../proofs/dispatch";
+import { HostIngressLimiter } from "../../proofs/HostIngressLimiter";
 import {
   ProofBinding,
   ProofContinuation,
@@ -784,6 +786,8 @@ const makePasswordWithManagement = <
   });
 
   const RequestReset = makeOperation(`${moduleId}/request-reset`, {
+    authorize: () =>
+      proofRequestAdmission(`${moduleId}/reset`).pipe(Effect.mapError(passwordCompletionFailure)),
     payload: RequestResetInput,
     success: ProofRequestReceipt,
     error: Failure,
@@ -933,6 +937,7 @@ const makePasswordWithManagement = <
         Layer.provide(defaultLayer(reset.Proofs, reset.emailLayer)),
         Layer.provide([newPasswordLayer, hooksLayer]),
         Layer.provideMerge(cryptoLayer),
+        Layer.merge(Layer.effect(HostIngressLimiter, HostIngressLimiter)),
       ),
       { completion: true },
     ),

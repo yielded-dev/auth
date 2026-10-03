@@ -1,5 +1,6 @@
 export { HostIngressLimiter } from "./proofs/HostIngressLimiter";
 export { ProofDispatchScheduler } from "./proofs/ProofDispatchScheduler";
+export { ProofRequestContext } from "./proofs/ProofRequestContext";
 
 export {
   IdentifierChangeProofBinding,

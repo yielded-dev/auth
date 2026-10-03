@@ -83,7 +83,10 @@ export const transportInvocation = OperationHttpServer.invocationLayer(
 );
 
 export const server = OperationHttpServer.make(transport).pipe(
-  Effect.provide(Layer.mergeAll(transportConfiguration, transportInvocation, currentSubjectLayer)),
+  Effect.provide(Layer.merge(transportConfiguration, transportInvocation)),
+  Effect.map((server) => ({
+    handle: (request: Request) => server.handle(request).pipe(Effect.provide(currentSubjectLayer)),
+  })),
 );
 
 /** Supply an Effect HttpClient Layer at the host boundary; React is optional. */

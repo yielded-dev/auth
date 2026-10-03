@@ -3,7 +3,9 @@ import { Context, type Effect, type Redacted } from "effect";
 import type { ProofIngressDenied, ProofUnavailable } from "./errors";
 
 /**
- * Optional host extension, invoked before RPC/HTTP parsing as well as valid calls.
+ * Required host admission for email proof requests and password reset requests,
+ * checked before target lookup for eligible, unknown, suppressed and replayed calls.
+ * Hosts also enforce ingress before RPC/HTTP parsing to cover malformed requests.
  * Only the host's trusted network extraction supplies these keys; wire payloads
  * cannot choose their own IP/device bucket. No permissive default or process-
  * memory implementation is presented as distributed protection.

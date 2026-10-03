@@ -118,6 +118,33 @@ export const Routes = Layer.mergeAll(AuthRoutes, ApplicationRoutes).pipe(
 );
 ```
 
+### Proof request admission
+
+Email proof and password-reset requests require an application-supplied
+`Proofs.HostIngressLimiter`. Provide it when building Auth, then supply
+`Proofs.ProofRequestContext` from trusted network/device information on each request:
+
+```ts
+import { ProofRequestMiddleware } from "./proof-ingress";
+
+const Routes = http
+  .routes()
+  .pipe(Layer.provide(ProofRequestMiddleware.layer), Layer.provide(AuthLive));
+```
+
+The [local account example](https://github.com/yielded-dev/auth/blob/main/examples/shared/account/proof-ingress.ts)
+uses the socket peer, ignores forwarded headers, and fails closed without a peer.
+Its in-memory limiter permits twenty proof requests per network per hour across
+all purposes. It is a loopback demo policy; deployed hosts must choose limits for
+their traffic and use shared admission across replicas. Proxy deployments own
+trusted peer extraction. Never accept these keys in a JSON payload or install one
+caller in the shared Auth Layer.
+
+The library checks admission before target lookup for eligible, unknown,
+suppressed, and replayed requests. Also limit traffic at the host before parsing
+to cover malformed requests. Durable issuance budgets count accepted deliveries
+and do not replace ingress limits.
+
 ### Application routes
 
 For application routes that call auth, build the middleware with `Http.make`:

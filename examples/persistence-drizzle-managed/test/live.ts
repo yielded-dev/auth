@@ -1,12 +1,13 @@
 import { BunHttpServer, BunRuntime, BunServices } from "@effect/platform-bun";
 import * as SqliteClient from "@effect/sql-sqlite-bun/SqliteClient";
-import { Client, Http, Password, EmailDelivery } from "@yielded/auth";
-import { ConfigProvider, Context, Effect, FileSystem, Layer } from "effect";
+import { Client, Http, Password, EmailDelivery, Proofs } from "@yielded/auth";
+import { ConfigProvider, Context, Effect, FileSystem, Layer, Redacted } from "effect";
 import { FetchHttpClient, HttpRouter } from "effect/http";
 import { SqlClient } from "effect/sql";
 
 import { AppAuth } from "../../shared/account/auth";
 import { AuthApi } from "../../shared/account/contract";
+import { ProofIngressLive } from "../../shared/account/proof-ingress";
 import { DatabaseLive, KeysLive } from "../src/data";
 import { AuthLive } from "../src/live";
 
@@ -30,6 +31,7 @@ const program = Effect.gen(function* () {
       DatabaseLive,
       KeysLive,
       delivery,
+      ProofIngressLive,
       Layer.succeed(Password.CompromisedPasswords, {
         check: () => Effect.succeed({ _tag: "Allowed" }),
       }),
@@ -43,12 +45,25 @@ const program = Effect.gen(function* () {
     Layer.provide(BunServices.layer),
   );
 
+  // In-process Web Requests have no socket peer; this host owns their identity.
+  const caller = HttpRouter.middleware<{ provides: Proofs.ProofRequestContext }>()((handler) =>
+    handler.pipe(
+      Effect.provideService(Proofs.ProofRequestContext, {
+        networkKey: Redacted.make("managed-example-test"),
+      }),
+    ),
+  );
+
   const routes = Http.make(AppAuth, {
     origin,
     cookie: { secure: false, prefix: "managed-example-" },
   })
     .routes()
-    .pipe(Layer.provide(application), Layer.provide(BunHttpServer.layerHttpServices));
+    .pipe(
+      Layer.provide(caller.layer),
+      Layer.provide(application),
+      Layer.provide(BunHttpServer.layerHttpServices),
+    );
 
   const open = Effect.acquireRelease(
     Effect.sync(() => HttpRouter.toWebHandler(Layer.fresh(routes), { disableLogger: true })),

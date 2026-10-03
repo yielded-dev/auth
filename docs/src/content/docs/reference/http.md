@@ -91,6 +91,14 @@ example and [TOTP](../guide/totp#expose-private-reveals-over-http) for private r
 injection and explicitly selected reveals.
 Encode expected response failures before leaving the request wrapper.
 
+`OperationHttpServer.make` retains configuration and caller resolution. Supply
+operation handlers, codec services, and callback response services when running
+`server.handle(request)`. Shared `Http` routes bind their auth API and expose other
+invocation services as `HttpRouter.Request` requirements for host middleware.
+Keep trusted caller context in that middleware; never install one caller in a
+shared application Layer. See the
+[lower-level server example](https://github.com/yielded-dev/auth/blob/main/examples/auth/src/transport-application.ts).
+
 `OperationHttpClient.make` requires the same Effect `HttpClient` service.
 `OperationHttpClient.layer(options)` provides `OperationHttpClient.Client` for
 consumers such as `AuthAtom.makeLifetime({ initialSubject })`. Supply this Layer

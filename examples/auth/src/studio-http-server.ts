@@ -1,7 +1,7 @@
 import { Http, OperationHttpServer as HttpServer, Operations } from "@yielded/auth";
 import { Database } from "@yielded/auth-persistence-drizzle/Postgres";
 import { eq } from "drizzle-orm";
-import { Effect, Layer } from "effect";
+import { Effect } from "effect";
 
 import { StudioAuth } from "./studio-auth";
 import { subject } from "./studio-passkey-schema";
@@ -33,5 +33,8 @@ const http = Http.make(StudioAuth, {
 });
 
 export const studioHttp = HttpServer.make(transport).pipe(
-  Effect.provide(Layer.mergeAll(http.operationLayer, memberLayer)),
+  Effect.provide(http.operationLayer),
+  Effect.map((server) => ({
+    handle: (request: Request) => server.handle(request).pipe(Effect.provide(memberLayer)),
+  })),
 );

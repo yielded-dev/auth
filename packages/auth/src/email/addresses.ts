@@ -10,6 +10,7 @@ import type { AuthOperationResult } from "../operations/credentials";
 import { makeOperation, operationGroup } from "../operations/operation";
 import type { makeRequestBinding } from "../operations/requestBinding";
 import { RequestBindingCredential, RequestBindingFlowId } from "../operations/requestBinding";
+import { proofRequestAdmission } from "../proofs/admission";
 import { readProofCommit } from "../proofs/dispatch";
 import type { ProofBinding } from "../proofs/models";
 import {
@@ -536,7 +537,12 @@ export const makeEmailAddresses = <
   ) => {
     const action = mode === "verify" ? "verify-address" : "change-address";
 
+    const admitRequest = proofRequestAdmission(`${moduleId}/address/${mode}`).pipe(
+      Effect.mapError(emailCompletionFailure),
+    );
+
     const Request = makeOperation(`${moduleId}/address/${mode}/request`, {
+      authorize: () => admitRequest,
       payload: schemas.request,
       success: ProofRequestReceipt,
       error: Failure,
@@ -546,6 +552,7 @@ export const makeEmailAddresses = <
     });
 
     const Resend = makeOperation(`${moduleId}/address/${mode}/resend`, {
+      authorize: () => admitRequest,
       payload: schemas.resend,
       success: ProofRequestReceipt,
       error: Failure,

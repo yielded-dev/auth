@@ -4,6 +4,7 @@ import { Effect, Layer, Redacted } from "effect";
 import { Base64Url } from "effect/encoding";
 import { HttpRouter, HttpServerResponse } from "effect/http";
 
+import { ProofIngressLive } from "../../shared/account/proof-ingress";
 import { emailAuth, makeEmailConsumer, sessions, sessionPolicy } from "./email-methods-consumer";
 
 const program = Effect.gen(function* () {
@@ -28,6 +29,7 @@ const program = Effect.gen(function* () {
       WebCrypto.layerWebCrypto,
       hooks,
       Proofs.ProofDispatchScheduler.layerInline,
+      ProofIngressLive,
     );
 
     yield* Effect.gen(function* () {
@@ -477,6 +479,10 @@ const program = Effect.gen(function* () {
       }).pipe(
         Effect.scoped,
         Effect.provideService(Auth.AuthRequest, { ...call, invocation: Operations.guest }),
+        // This CLI host owns its caller; HTTP hosts derive a fresh key per request.
+        Effect.provideService(Proofs.ProofRequestContext, {
+          networkKey: Redacted.make(`email-cli-${mode}`),
+        }),
         Effect.provide(handlers),
       );
     }).pipe(Effect.provide(base));

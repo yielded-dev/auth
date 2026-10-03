@@ -103,6 +103,8 @@ export const makeServer = (config: {
     }),
   );
 
+  // The host supplies HostIngressLimiter at construction and trusted
+  // ProofRequestContext through request middleware for email proof operations.
   const Routes = Layer.mergeAll(http.routes(), ApplicationRoutes.pipe(http.middleware)).pipe(
     Layer.provide(http.layer),
     Layer.provide(
