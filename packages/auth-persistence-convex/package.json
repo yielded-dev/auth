@@ -1,0 +1,46 @@
+{
+  "name": "@yielded/auth-persistence-convex",
+  "version": "0.1.0-beta.0",
+  "description": "Convex persistence for Yielded Auth.",
+  "homepage": "https://yielded.dev/auth/",
+  "bugs": {
+    "url": "https://github.com/yielded-dev/auth/issues"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yielded-dev/auth.git",
+    "directory": "packages/auth-persistence-convex"
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "type": "module",
+  "sideEffects": [],
+  "exports": {
+    ".": "./src/index.ts",
+    "./Server": "./src/Server.ts"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "vp pack",
+    "check": "tsc --noEmit -p tsconfig.json",
+    "test": "vp test --passWithNoTests"
+  },
+  "dependencies": {
+    "@yielded/auth": "workspace:*"
+  },
+  "devDependencies": {
+    "convex": "catalog:",
+    "effect": "catalog:",
+    "typescript": "catalog:",
+    "vite-plus": "catalog:"
+  },
+  "peerDependencies": {
+    "convex": "^1.46.0",
+    "effect": "^4.0.0"
+  }
+}

@@ -1,0 +1,232 @@
+---
+title: Convex persistence
+description: Store passwords, proof challenges, sessions, and OAuth grants in Convex.
+---
+
+import { FlowMap } from "@yielded/starlight-theme/components";
+
+`@yielded/auth-persistence-convex` stores password credentials, proof challenges,
+and sessions in Convex. Authentication and cryptography run in an action or HTTP
+action. Internal functions own the conditional database commit; credentials and
+lifecycle hooks are released only after that commit is acknowledged.
+
+Your application owns subjects, account provisioning, claims, factor policy, and
+private delivery. Auth records and application provisioning use the same
+`Transaction` service. This adapter does not replace Confect's identity service
+or configure a Convex JWT provider.
+
+<FlowMap
+  title="Convex owns each auth commit"
+  description="The action prepares results and hooks, then an internal mutation validates observed records and time bounds before publishing every write atomically."
+  columns={3}
+  nodes={[
+    {
+      id: "action",
+      at: [1, 1],
+      owner: "app",
+      title: "Action / HTTP action",
+      note: "Password, proof, and session workflows",
+    },
+    {
+      id: "layer",
+      at: [1, 2],
+      owner: "library",
+      title: "Persistence Layer",
+      code: "DocumentStore.layer",
+    },
+    {
+      id: "functions",
+      at: [2, 2],
+      owner: "library",
+      title: "Internal functions",
+      note: "Read validation and conditional writes",
+    },
+    {
+      id: "database",
+      at: [2, 3],
+      owner: "app",
+      title: "Convex database",
+      note: "Indexed auth and account records",
+    },
+  ]}
+  edges={[
+    { from: "action", to: "layer" },
+    { from: "layer", to: "functions", label: "runQuery / runMutation" },
+    { from: "functions", to: "database", label: "Atomic commit" },
+  ]}
+/>
+
+## Install and register storage
+
+```sh
+bun add @yielded/auth@beta @yielded/auth-persistence-convex@beta effect convex
+```
+
+Merge the adapter's tables into your application schema:
+
+```ts title="convex/schema.ts"
+import { tables } from "@yielded/auth-persistence-convex/Server";
+import { defineSchema } from "convex/server";
+
+export default defineSchema({ ...tables });
+```
+
+Register the supplied internal functions. They are storage authority, not
+client-accessible auth endpoints:
+
+```ts title="convex/authStorage.ts"
+export {
+  readDocuments,
+  commitDocuments,
+  get,
+  insert,
+  compareAndSet,
+  revoke,
+  cleanup,
+} from "@yielded/auth-persistence-convex/Server";
+```
+
+## Managed password accounts
+
+Let the provider assemble password, proof, and session storage, account
+provisioning, and claims resolution from your Auth definition:
+
+```ts
+import * as Convex from "@yielded/auth-persistence-convex";
+
+import { AppAuth, signInRequirement, actionRequirement } from "./auth";
+
+export const persistence = Convex.managed(AppAuth, {
+  requirements: {
+    signIn: signInRequirement,
+    actions: actionRequirement,
+  },
+});
+```
+
+The provider derives namespaces, module IDs, and claims from `AppAuth`. Its
+managed profile validates the decoded registration value against the claims
+Schema and stores it alongside the subject, identifier, and password in one
+commit. Registration data must satisfy that Schema; otherwise supply custom
+provisioning and claims services. Policy remains application-owned: `actions`
+defaults to `signIn`, and your password-action evidence verifier is still required.
+
+Inside each action, connect the provider to the generated internal functions:
+
+```ts
+const PersistenceLive = persistence.layer(ctx, internal.authStorage);
+```
+
+Supply `PersistenceLive` to auth with ordinary `Effect.provide` or
+`Layer.provide`. Cryptography, lifecycle hooks, password hashing, delivery, and
+action policy remain explicit service dependencies. The
+[account example](https://github.com/yielded-dev/auth/blob/main/examples/auth/src/convex-account.ts)
+contains the complete persistence configuration.
+
+Managed composition currently accepts password strategies with registration.
+It also supplies authentication authority, stateful session storage, listing,
+pending authentication, and signed-session validity. The individual persistence
+Layers remain available for other compositions.
+
+## Override services with Effect
+
+Explicitly provided services take precedence over managed defaults. Use the
+existing auth service keys to replace claims or persistence, without changing
+the provider's constructor:
+
+```ts
+import { Layer } from "effect";
+
+const CustomClaims = Layer.succeed(AppAuth.strategies.password.SessionClaims, {
+  resolve: ({ subjectId }) => customerClaims(subjectId),
+});
+
+const PersistenceLive = persistence
+  .layer(ctx, internal.authStorage)
+  .pipe(Layer.provide(CustomClaims));
+```
+
+Here `customerClaims` is your application's Effect returning the configured
+claims or `PasswordUnavailable`. Its dependencies belong in `CustomClaims`.
+The same approach applies to password/proof storage and the session services.
+
+For custom account creation, provide
+`persistence.provisioning.password` (use your strategy's actual name). Its `create`
+Effect receives typed registration data and an identifier, joins the current
+`Transaction`, and returns the application's subject ID. Stage a `Subject` with
+its policy and security revision, plus any application profile data that must
+commit atomically. The registration adapter adds the identifier and password.
+If the profile layout changes, replace `SessionClaims` as well.
+
+## Own account data and transactions
+
+`Subject`, `Identifier`, and `AuthorityCredential` describe authoritative identity
+metadata. Managed profiles use the Auth definition's claims Schema. Custom data
+uses your own Effect Schema through `Transaction.get`, `put`, `remove`, and
+bounded `scan`. The underlying records live in the adapter's indexed document
+table with Schema-encoded payloads; managed composition does not map arbitrary
+native Convex tables.
+
+Use `bindIdentifier` to maintain unique ownership and the subject's identifier
+index together. Bump the subject's security revision with `invalidateSubject`
+whenever status, factor policy, or identifier semantics change. Those writes
+must share the transaction; an independently updated Convex table cannot supply
+this adapter's authentication authority.
+
+Inside provisioning, yield `Transaction` to join the current commit. Do not start
+another `DocumentStore.transaction` or call unrelated Convex mutations from that
+body. External delivery and other side effects belong after commit. For a
+standalone application operation, use `DocumentStore.transaction` to acquire a
+new transaction. The provider exposes `DocumentStore` for this purpose.
+
+For lower-level composition, use `DocumentStore.layer(namespace)`,
+`PasswordPersistence.layer`, `ProofPersistence.layer`, `makeSessions`, and
+`makePasswordRegistration`. Supply `ActionContext` and `DocumentFunctions` per
+invocation. Query and mutation contexts cannot acknowledge an independent root
+commit, and ambient Yielded commit scopes are rejected before storage work.
+
+## Transactions and failures
+
+The action reads bounded indexed records, prepares its immutable result and
+hook journal, then submits one conditional mutation. Convex validates each read,
+including empty reads and range membership, checks fresh time bounds, and applies
+the writes atomically. Preparation failure publishes nothing. A lost comparison
+discards the prepared result and hooks. An uncertain outcome remains unavailable;
+the adapter never repeats credential issuance or automatically retries the command.
+
+Session issuance timestamps use Convex authority time sampled during preparation.
+The final mutation rechecks expiry and proof-freshness bounds, so delayed work
+cannot publish expired authentication. The planning horizon is 30 seconds.
+Transactions support at most 128 observations and 128 writes; scans read at most
+500 records per page. A scan without explicit pagination requires fewer than
+500 results. Use explicit pages for larger collections. Capacity failures fail closed.
+
+Password changes and recovery consume their authority decisions and bump security
+revision in the same commit. Old sessions and pending authentication then fail
+verification. Proof requests, consumption, rolling budgets, and delivery claims
+retain their own replay and retention rules. Application delivery services still
+own provider idempotency and ambiguity handling.
+
+Schedule cleanup through the password and proof services. Each invocation is
+bounded: password cleanup accepts up to 50 attempts, while proof cleanup processes
+up to 20 retention entries and reports `hasMore`. Keep command and identity records
+until application policy can safely retire their durable identifiers; never reuse
+flow or command IDs.
+
+Session and pending-authentication cleanup remains application-owned. Preserve
+session flow records through their deduplication horizon and signed-session
+revocations through absolute expiry. Separate adapters are still required for
+optional TOTP, passkey, and step-up persistence.
+
+## OAuth authorization-server grants
+
+The independent `OAuthServerPersistence.layer` still implements
+[OAuth authorization-server grants](./oauth#authorize-mcp-clients). Provide
+`ActionContext` and `Functions` using the same internal function module. It stores
+one grant document with atomic insert, version comparison, and monotonic
+revocation. The [OAuth composition example](https://github.com/yielded-dev/auth/blob/main/examples/auth/src/convex-persistence.ts)
+keeps the authorization server's application `Identity` service required.
+
+Schedule `internal.authStorage.cleanup` with `{ limit: 100 }` to remove expired
+grants. Limits range from 1 to 1000; the result contains `removed` and `hasMore`.
+Grant writes commit independently of document transactions.

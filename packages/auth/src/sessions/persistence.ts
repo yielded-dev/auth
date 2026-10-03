@@ -57,7 +57,7 @@ export interface StatefulSessionPersistence<Claims> {
     readonly digest: TokenDigest;
     readonly now: DateTime.Utc;
   }) => Effect.Effect<StatefulSessionRecord<Claims>, SessionInvalid | SessionUnavailable>;
-  /** One CAS winner; check live digest/version/revision and both expiry bounds against a fresh clock at the actual commit. Set issuedAt to that clock; preserve authenticatedAt/absoluteExpiresAt and exact private provenance. Rotate credentialVersion from the prepared input independently of the authority-allocated row version. No upsert. */
+  /** One CAS winner; check live digest/version/revision and both expiry bounds against a fresh authority clock at the conditional commit. Set issuedAt to authority time sampled while preparing this commit; remote/batch owners must recheck the time predicates before publication and must not move the prepared timestamp forward. Preserve authenticatedAt/absoluteExpiresAt and exact private provenance. Rotate credentialVersion from the prepared input independently of the authority-allocated row version. No upsert. */
   readonly rotate: <A>(
     input: {
       readonly sessionId: SessionId;
