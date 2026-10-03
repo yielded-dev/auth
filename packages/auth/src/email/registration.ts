@@ -21,7 +21,7 @@ import {
   ProofRequestReceipt,
 } from "../proofs/models";
 import type { makeProofModule } from "../proofs/module";
-import { Email, TokenDigest } from "../Schema";
+import { Email, Locale, TokenDigest } from "../Schema";
 import type { PrepareEmailCommit } from "./EmailAddressPersistence";
 import {
   emailCompletionFailure,
@@ -85,7 +85,7 @@ export const makeEmailRegistration = <
   const RequestInput = Schema.Struct({
     ...base,
     requestId: ProofRequestId,
-    locale: Schema.NonEmptyString.check(Schema.isMaxLength(64)),
+    locale: Locale,
   });
 
   const ResendInput = Schema.Struct({ ...RequestInput.fields, supersedes: ProofId });

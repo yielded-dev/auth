@@ -8,6 +8,12 @@ export type SubjectId = typeof SubjectId.Type;
 export const TokenDigest = Schema.NonEmptyString.pipe(Schema.brand("effect-auth/TokenDigest"));
 export type TokenDigest = typeof TokenDigest.Type;
 
+/** Application locale hint, bounded and free of controls before custom rendering. */
+export const Locale = Schema.NonEmptyString.check(
+  Schema.isMaxLength(64),
+  Schema.isPattern(/^(?![\s\S]*[\p{Cc}\p{Zl}\p{Zp}])[\s\S]*$/u),
+);
+
 /**
  * Ordinary ASCII addresses only; internationalized email is deferred. The
  * normalized (trimmed, fully lowercased) value is the identity key.

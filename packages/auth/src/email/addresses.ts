@@ -21,7 +21,7 @@ import {
   ProofRequestReceipt,
 } from "../proofs/models";
 import type { makeProofModule } from "../proofs/module";
-import { Email, TokenDigest } from "../Schema";
+import { Email, Locale, TokenDigest } from "../Schema";
 import { assessAuthentication, snapshotAuthenticationEvidence } from "../sessions/assurance";
 import { SessionInvalidationWindow, sessionInvalidationWindow } from "../sessions/invalidation";
 import { AuthenticationFlowId } from "../sessions/models";
@@ -60,7 +60,7 @@ const BindingInput = Schema.Struct(base);
 const RequestInput = Schema.Struct({
   ...base,
   requestId: ProofRequestId,
-  locale: Schema.NonEmptyString.check(Schema.isMaxLength(64)),
+  locale: Locale,
 });
 
 const ResendInput = Schema.Struct({ ...RequestInput.fields, supersedes: ProofId });

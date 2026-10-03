@@ -11,6 +11,7 @@ import {
 } from "../hooks/models";
 import type { AuthOperationResult } from "../operations/credentials";
 import { makeOperation, operationGroup } from "../operations/operation";
+import { Locale } from "../Schema";
 import type { ProofCompletionPlan } from "./completion";
 import {
   makeProofCrypto,
@@ -57,7 +58,6 @@ export interface ProofModule<Id extends string, Binding> {
   readonly binding: Types.Invariant<Binding>;
 }
 
-const Locale = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(64));
 const Credential = Schema.RedactedFromValue(Schema.String.check(Schema.isMaxLength(4096)));
 
 const noAmbient = Effect.fn("Proofs.noAmbient")(function* () {

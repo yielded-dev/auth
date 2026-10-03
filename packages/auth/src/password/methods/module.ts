@@ -23,7 +23,7 @@ import {
 import { makeProofModule } from "../../proofs/module";
 import type { ProofPolicy } from "../../proofs/policy";
 import type { SubjectId } from "../../Schema";
-import { Email } from "../../Schema";
+import { Email, Locale } from "../../Schema";
 import { assessAuthentication, snapshotAuthenticationEvidence } from "../../sessions/assurance";
 import { AuthenticationAuthority } from "../../sessions/AuthenticationAuthority";
 import { SessionInvalidationWindow, sessionInvalidationWindow } from "../../sessions/invalidation";
@@ -207,7 +207,7 @@ const makePasswordWithManagement = <
   const RequestResetInput = Schema.Struct({
     ...ResetBase,
     requestId: ProofRequestId,
-    locale: Schema.NonEmptyString.check(Schema.isMaxLength(64)),
+    locale: Locale,
   });
 
   const VerifyResetInput = Schema.Struct({

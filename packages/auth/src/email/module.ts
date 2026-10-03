@@ -28,7 +28,7 @@ import {
 } from "../proofs/models";
 import { makeProofModule } from "../proofs/module";
 import type { ProofPolicy } from "../proofs/policy";
-import { Email, type SubjectId, TokenDigest } from "../Schema";
+import { Email, Locale, type SubjectId, TokenDigest } from "../Schema";
 import { AuthenticationAuthority } from "../sessions/AuthenticationAuthority";
 import type { AuthenticationEvidence } from "../sessions/models";
 import { AuthenticationFlowId } from "../sessions/models";
@@ -63,7 +63,7 @@ const SignInBindingInput = Schema.Struct(SignInBase);
 const RequestInput = Schema.Struct({
   ...SignInBase,
   requestId: ProofRequestId,
-  locale: Schema.NonEmptyString.check(Schema.isMaxLength(64)),
+  locale: Locale,
 });
 
 const ResendInput = Schema.Struct({ ...RequestInput.fields, supersedes: ProofId });
