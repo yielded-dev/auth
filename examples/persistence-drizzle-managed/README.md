@@ -87,4 +87,5 @@ This app's [live.ts](src/live.ts) supplies persistence and account Layers;
 [delivery.ts](src/delivery.ts) selects local or Cloudflare email.
 
 `vp -C examples/persistence-drizzle-managed run test` checks registration rollback
-after credential storage fails, through HTTP against a temporary database.
+after credential storage fails, plus password recovery through the client's resend
+action, using HTTP against a temporary database.

@@ -166,6 +166,10 @@ Retain the original flow ID, email, request ID, and reference. Always show a gen
 response such as “If this address is eligible, check your email.” The receipt does
 not reveal account eligibility or whether a message was sent.
 
+To resend, retain the flow ID and use a fresh request ID after the cooldown.
+A new reset attempt leaves an existing unexpired link or code usable and sends no
+new email. Ignored requests do not extend its expiry (five minutes by default).
+
 Reset requests require a shared `Proofs.HostIngressLimiter` and a trusted
 `Proofs.ProofRequestContext` supplied per invocation. Admission precedes target
 lookup for every request, including unknown addresses and retries. See
