@@ -4,6 +4,7 @@ import { SubjectId, TokenDigest } from "@yielded/auth/Schema";
 import * as Sessions from "@yielded/auth/Sessions";
 import { layerWebCrypto } from "@yielded/auth/WebCrypto";
 import { DateTime, Effect, Layer, Redacted, Schema } from "effect";
+import { TestClock } from "effect/testing";
 import { expect } from "vite-plus/test";
 
 const subjectId = SubjectId.make("actor-session-audience-regression");
@@ -96,6 +97,19 @@ it.effect("rejects another audience even when the signing key is shared", () =>
 
     expect((yield* verify(production, "kommunikasie")).subjectId).toBe(subjectId);
     expect(yield* Effect.flip(verify(production, "kommunikasie-preview:pr-101"))).toBeInstanceOf(
+      Sessions.SessionInvalid,
+    );
+  }),
+);
+
+// Requested hardening: an unrevocable default credential must expire promptly.
+it.effect("expires a default stateless credential after fifteen minutes", () =>
+  Effect.gen(function* () {
+    const token = yield* issue("kommunikasie");
+
+    expect((yield* verify(token, "kommunikasie")).subjectId).toBe(subjectId);
+    yield* TestClock.adjust("15 minutes");
+    expect(yield* Effect.flip(verify(token, "kommunikasie"))).toBeInstanceOf(
       Sessions.SessionInvalid,
     );
   }),
