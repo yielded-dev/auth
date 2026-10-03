@@ -1,7 +1,7 @@
 import { BunHttpServer, BunRuntime, BunServices } from "@effect/platform-bun";
 import * as SqliteClient from "@effect/sql-sqlite-bun/SqliteClient";
-import { Client, Http, Password, EmailDelivery } from "@yielded/auth";
-import { ConfigProvider, Context, Effect, FileSystem, Layer } from "effect";
+import { Client, Http, Password, EmailDelivery, Passkey } from "@yielded/auth";
+import { ConfigProvider, Context, Effect, FileSystem, Layer, Schema } from "effect";
 import { FetchHttpClient, HttpRouter } from "effect/http";
 import { SqlClient } from "effect/sql";
 
@@ -144,6 +144,53 @@ const program = Effect.gen(function* () {
           assert(receipts.length === 0, "A failed registration left a committed receipt");
         }),
       );
+
+      // The hardening request requires fresh proof before a session can add a credential.
+      const signedIn = yield* call.passwordSignIn({ email, password });
+
+      assert(signedIn._tag === "Authenticated", "Password sign-in failed");
+
+      const enrollment = {
+        flowId: "fresh-enrollment",
+        commandId: "fresh-enrollment",
+        profileId: "default",
+        name: "My passkey",
+      };
+
+      yield* call.enrollPasskey(enrollment);
+      yield* sql(
+        Effect.gen(function* () {
+          const db = yield* SqlClient.SqlClient;
+
+          // Age the whole session consistently while retaining the database's real clock.
+          yield* db`update customer_auth_sessions set
+            issued_at = issued_at - 300001,
+            expires_at = expires_at - 300001,
+            absolute_expires_at = absolute_expires_at - 300001,
+            record = json_set(record,
+            '$.provenance.evidence.proofs[0].verifiedAt',
+            json_extract(record, '$.provenance.evidence.proofs[0].verifiedAt') - 300001,
+            '$.assurance.evidence[0].verifiedAt',
+            json_extract(record, '$.assurance.evidence[0].verifiedAt') - 300001,
+            '$.assurance.authenticatedAt',
+            json_extract(record, '$.assurance.authenticatedAt') - 300001,
+            '$.issuedAt', json_extract(record, '$.issuedAt') - 300001,
+            '$.expiresAt', json_extract(record, '$.expiresAt') - 300001,
+            '$.absoluteExpiresAt', json_extract(record, '$.absoluteExpiresAt') - 300001)`;
+        }),
+      );
+      assert((yield* call.getSession()) !== null, "An older valid session stopped working");
+      yield* call.listPasskeys({ limit: 5 });
+
+      const stale = yield* call
+        .enrollPasskey({ ...enrollment, flowId: "older-session", commandId: "older-session" })
+        .pipe(Effect.result);
+
+      assert(
+        stale._tag === "Failure" && Schema.is(Passkey.PasskeyActionRequired)(stale.failure),
+        "An older session was allowed to enroll a new passkey",
+      );
+      yield* Effect.log("An older valid session can read but must sign in again to add a passkey.");
     }),
   );
   yield* Effect.log("Failed credential storage rolled back the customer and registration receipt.");

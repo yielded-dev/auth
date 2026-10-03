@@ -39,7 +39,9 @@ While signed in, use **Add passkey** and follow the browser's
 prompt. The saved key appears on your account; after signing out, choose **Sign in with
 a passkey**. Use `localhost:4181` consistently: passkeys are bound to that relying party
 and allowed origin. Cancellation leaves the account signed in without adding a key.
-The existing valid session authorizes enrollment without another password prompt.
+Enrollment requires authentication from the last five minutes. If the app asks you
+to sign in again, reauthenticate before adding the passkey; ordinary session reads
+and the saved-key list remain available.
 Adding a key preserves that session and its original authentication time and assurance.
 
 To send real email, copy `.env.example` to `.env`, set `AUTH_EMAIL_DELIVERY=cloudflare`,

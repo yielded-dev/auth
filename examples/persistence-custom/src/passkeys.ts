@@ -2,7 +2,7 @@ import { Passkey, Schema as AuthSchema, Sessions } from "@yielded/auth";
 import { Context, Crypto, Effect, Layer, Schema } from "effect";
 import { Base64Url } from "effect/encoding";
 
-import { requirement, sessionRequirement } from "../../shared/account/auth";
+import { requirement } from "../../shared/account/auth";
 import {
   claims,
   credentials,
@@ -175,11 +175,7 @@ export const PasskeysLive = Layer.effectContext(
           ...auth.requirement,
           maximumAgeMillis: Math.min(maximumAge, auth.requirement.maximumAgeMillis),
         })) &&
-        (yield* satisfies(
-          state,
-          evidence,
-          expected.action === "remove" ? requirement : sessionRequirement,
-        ))
+        (yield* satisfies(state, evidence, requirement))
       );
     });
 

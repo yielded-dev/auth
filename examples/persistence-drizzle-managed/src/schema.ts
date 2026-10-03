@@ -33,7 +33,7 @@ export const storage = Persistence.managed({
       Effect.succeed(
         action === "reset-password"
           ? recoveryRequirement
-          : action === "verify-address" || action === "enroll-begin" || action === "enroll-complete"
+          : action === "verify-address"
             ? sessionRequirement
             : requirement,
       ),

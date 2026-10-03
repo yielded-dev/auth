@@ -244,7 +244,9 @@ silently become a login ceremony or link an existing account. See
 
 `PasskeyActionEvidence` supplies authorization for enrollment and removal. The
 application chooses its freshness requirement; `management.maximumEvidenceAgeMillis`
-sets an upper bound, and individual action requirements can be stricter. Adding a
+sets a finite upper bound, and individual action requirements can be stricter.
+Choose a short window, such as five minutes, for adding a credential; session
+validity alone does not establish recent authentication. Adding a
 passkey preserves existing sessions without refreshing their authentication time or
 adding assurance. Removal still invalidates authentication and protects the last
 usable sign-in method.
@@ -252,5 +254,6 @@ usable sign-in method.
 The [managed example](https://github.com/yielded-dev/auth/tree/main/examples/persistence-drizzle-managed)
 shows enrollment from a signed-in account, a saved-key list, and passkey sign-in with
 Effect Atom. Its Drizzle persistence layer derives the passkey tables from the Auth
-definition. Its application policy accepts the existing valid session for enrollment;
-the browser's passkey prompt is the only confirmation step.
+definition. Its application policy requires authentication from the last five
+minutes for enrollment and asks the user to sign in again when that evidence is
+stale. Ordinary session reads and the saved-key list still accept a valid session.
