@@ -614,7 +614,17 @@ export const makeTotpModule = <
           digest: recoveryDigest(moduleId, target.revision.subjectId, Redacted.value(input.code)),
           reset: true,
           pending: target,
-        });
+        }).pipe(
+          Effect.catchTag("TotpRejected", () =>
+            completion
+              .rejectPendingCredential(input.pendingCredential)
+              .pipe(
+                Effect.mapError(mapFailure),
+                Effect.flatMap(read),
+                Effect.andThen(TotpRejected.make({})),
+              ),
+          ),
+        );
 
         return {
           value: { outcome: "reauthentication-required", invalidation },
