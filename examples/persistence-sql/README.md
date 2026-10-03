@@ -14,11 +14,25 @@ database and keys under `.data/`; accounts from the Drizzle examples are separat
 Set the Cloudflare credentials in [.env.example](.env.example) to deliver email
 from `hello@effect-agent.com`.
 
-The same app hosts the native browser-login examples at `/login`. It confirms the
-signed-in account before returning a single-use code to Electron or iOS. Native
-credentials use the separate `/auth/native` transport; the browser keeps its own
+The same app hosts the native browser-login examples at `/login`. With the default
+clients, a fresh sign-in returns to Electron or iOS automatically; an existing
+browser session first asks you to confirm the account. A manual return link
+remains if the browser blocks opening the app. Native credentials use the
+separate `/auth/native` transport; the browser keeps its own
 session. See [browser-login.ts](src/browser-login.ts) for registered clients and
 native admission. Run [the Electron example](../browser-login-electron) beside it.
+The example requires authentication within five minutes for a new native session.
+If confirmation rejects an older browser session, sign out and sign in again.
+
+The default clients use custom schemes and keep existing-session confirmation.
+To enable automatic reuse for a claimed HTTPS iOS callback, set both
+`AUTH_IOS_RETURN_URL` (the exact public HTTPS callback URL on port 443) and
+`AUTH_IOS_APP_ID` (the signed `PREFIX.bundle.identifier`). The server rejects
+partial or invalid configuration. Configure the native client with that same
+callback, and deploy the associated-domain entitlement and generated Apple
+association document on the callback host before enabling it. See the
+[browser-login guide](../../docs/src/content/docs/guide/browser-login.mdx).
+The private development origin does not establish claimed-link device support.
 
 For a physical iPhone, serve this app through a reachable HTTPS reverse proxy and
 set `AUTH_ORIGIN` to that exact origin. `AUTH_PORT` defaults to `4183`; the server

@@ -2,8 +2,8 @@
 
 Client-local iOS passkeys and browser login for `@yielded/auth`. Applications own
 authentication workflows, HTTP, sessions, and native application configuration.
-Core has no React Native dependency. Both adapters require iOS 16+; Android is
-unsupported.
+Core has no React Native dependency. Passkeys require iOS 16+; browser login's
+minimum depends on the chosen Expo SDK. Android is unsupported.
 
 Import the package root for passkeys, or `@yielded/auth-react-native/BrowserLogin`
 for browser login. Install only the optional native peers for the entrypoint you
@@ -30,8 +30,26 @@ and [API reference](../../docs/src/content/docs/reference/passkey-react-native.m
 
 ## Browser login
 
+Use the peers matching your app's Expo SDK. SDK 54 (React Native 0.81) uses
+WebBrowser `~15.0.11` and SecureStore `~15.0.8`; SDK 57 uses WebBrowser `~57.0.3`
+and SecureStore `~57.0.4`. This adapter requires iOS 16+ with SDK 54 or iOS 16.4+
+with SDK 57. For SDK 54:
+
 ```sh
-bun add @yielded/auth-react-native@beta effect react-native-inappbrowser-reborn react-native-keychain
+bun add @yielded/auth-react-native@beta effect expo-web-browser@~15.0.11 expo-secure-store@~15.0.8 react-native-url-polyfill
+```
+
+Plain React Native apps must first [install Expo Modules](https://docs.expo.dev/bare/installing-expo-modules/).
+Rebuild the native app after installing the peers.
+
+Browser login requires complete WHATWG `URL` and `URLSearchParams` implementations;
+React Native's built-in URL implementation is insufficient for callback validation.
+Load the [URL polyfill](https://github.com/charpeni/react-native-url-polyfill) in your
+application entrypoint before any auth module imports:
+
+```ts
+import "react-native-url-polyfill/auto";
+import "./app";
 ```
 
 Supply core's `BrowserLogin.Browser` and `BrowserLogin.Vault` with separate Layers:
@@ -51,8 +69,8 @@ bytes and SHA-256. React Native does not supply browser `SubtleCrypto`; do not
 provide `WebCrypto.layerWebCrypto`. Crypto belongs to the application's composition
 root, alongside its native HTTP client, and is not an additional peer of this adapter.
 
-An Expo 57 app can use [`expo-crypto`](https://docs.expo.dev/versions/v57.0.0/sdk/crypto/)
-(SDK-compatible range `~57.0.3`) in its own `native-crypto.ts`:
+An Expo 54 app can use [`expo-crypto`](https://docs.expo.dev/versions/v54.0.0/sdk/crypto/)
+(SDK-compatible range `~15.0.9`) in its own `native-crypto.ts`:
 
 ```ts
 import { Crypto, Effect, Layer, PlatformError } from "effect";
@@ -110,37 +128,52 @@ example keeps bridge failures typed and sanitized, and passes raw digest bytes
 back to core for base64url encoding. Run in the native runtime with the module
 linked; a browser debugger does not prove native crypto availability.
 
-`layerBrowser` uses the maintained
-[`react-native-inappbrowser-reborn`](https://github.com/proyecto26/react-native-inappbrowser)
-bridge's `openAuth` API, backed by `ASWebAuthenticationSession`. Register a reverse-domain
+`layerBrowser` uses [Expo WebBrowser](https://docs.expo.dev/versions/latest/sdk/webbrowser/)
+and `ASWebAuthenticationSession`. Register a reverse-domain
 custom URL scheme in `CFBundleURLTypes`, for example `com.example.app`, and register
 the exact return URL, such as `com.example.app://auth/callback`, with your server.
-The hosted page must use HTTPS. This bridge does not support HTTPS universal-link
-callbacks. Core checks state and codes; the adapter checks the full callback target.
-Do not reopen the returned URL with `Linking.openURL`.
+Custom-scheme clients retain explicit account confirmation when reusing an
+existing browser session. The hosted page must use HTTPS. Core checks state and
+codes; the adapter checks the full callback target.
 
-Each `open` owns its prompt Scope. Interruption requests `closeAuth`, discards late
+HTTPS callbacks require iOS 17.4+ and a signed `webcredentials:<callback-host>`
+[Associated Domains entitlement](https://developer.apple.com/documentation/xcode/supporting-associated-domains).
+The host's `apple-app-site-association` file must list the app's `TEAMID.bundleID`
+under `webcredentials.apps`. Register that same app ID and exact callback URL on
+the server before enabling its automatic SSO policy. Ordinary Universal Link
+delivery additionally uses `applinks`; the authentication session receives its
+callback directly. Older iOS versions fail before opening an HTTPS callback session.
+Do not reopen the returned URL with `Linking.openURL` or add a competing Linking listener.
+
+Each `open` owns its prompt Scope. Interruption requests `dismissAuthSession`, discards late
 results, and retains the process-wide busy guard until the native promise settles.
 All callers must use this adapter's single installed bridge instance. The
 `ephemeral` option requests a browser session without shared browsing data; it
 does not revoke sessions or clear the vault.
+SDK 54 can leave a failed native presentation pending; interrupt the operation to
+dismiss it and settle the bridge before trying again.
 
-`layerVault` stores the private attempt and credential slots together through
-[`react-native-keychain`](https://oblador.github.io/react-native-keychain/docs/usage/).
-Items use `WHEN_UNLOCKED_THIS_DEVICE_ONLY` with cloud synchronization disabled.
-Use a unique `service` per app, server environment, and client ID; acquire one
-vault Layer per authentication lifetime, without other writers to that service.
-Keychain writes are not cancellable: admitted operations settle before releasing
-the vault's serialization gate. The bridge does not supply a transactional or
-cross-process compare-and-set guarantee; failures never authorize an exchange retry.
+`layerVault` stores the private attempt and credential slots in one record through
+[Expo SecureStore](https://docs.expo.dev/versions/v54.0.0/sdk/securestore/).
+It uses device-only Keychain access while unlocked (`WHEN_UNLOCKED_THIS_DEVICE_ONLY`),
+with biometric gating disabled (`requireAuthentication: false`). Use a fresh,
+dedicated `service` per app, server environment, and client ID; acquire one vault
+Layer per authentication lifetime, without other writers to that service. Keep
+the service name stable across restarts.
+Native writes are not cancellable: admitted operations settle before releasing
+the vault's serialization gate. A failed write may have committed; failures never
+authorize an exchange retry. The vault provides no cross-process compare-and-set.
 
 Core owns restoring `Waiting`, persisting `Exchanging` before dispatch, and refusing
 to repeat that exchange. The vault preserves either phase without replaying it;
 `saveAttempt(undefined)` clears only the attempt. Expired credentials are omitted
-from reads. Corrupt or inaccessible storage fails closed. Credential methods retain
-`OperationHttpError`; attempt methods use `BrowserLogin.PlatformError`. Neither
-exposes native messages or private values in errors.
+from reads. Invalid JSON and native read/write errors fail closed. Credential
+methods retain `OperationHttpError`; attempt methods use `BrowserLogin.PlatformError`.
+Neither exposes native messages or private values in errors.
 
+The previous experimental Keychain vault is not imported. Before switching,
+reconcile any uncertain exchange and revoke the old development native session;
+then reset only that app/environment/client's vault and sign in afresh.
 Keychain data can survive app deletion; uninstalling is not a reliable reset.
 Keep credentials and attempts out of React state, logs, and public operation
 results. Provide the vault as the native credentials service to the shared HTTP
@@ -148,5 +181,6 @@ client. Verify the chosen React Native transport's redirect rejection and cookie
 omission on device before treating an end-to-end flow as proven.
 
 Use a signed physical-device build to verify the prompt, registered callback,
-Keychain persistence across relaunch, and cancellation. A simulator or mocked
-bridge alone does not establish those outcomes.
+SecureStore persistence across relaunch and interrupted writes, and cancellation.
+Verify your credential record sizes on device; native storage can reject large
+values. A simulator or mocked bridge alone does not establish those outcomes.

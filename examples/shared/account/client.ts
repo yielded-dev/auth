@@ -199,7 +199,10 @@ export const makeAccountClient = <Auth extends AccountAuth>(
       const signedIn = yield* passwordSignIn({ login: input.email, password: input.password }, get);
 
       if (signedIn._tag === "Authenticated" && !signedIn.session.claims.emailVerified)
-        yield* get.setResult(sendVerification, signedIn.session.claims.email);
+        // Delivery has its own pending/error state; it cannot undo authentication.
+        yield* get.setResult(sendVerification, signedIn.session.claims.email).pipe(Effect.result);
+
+      return signedIn;
     }),
   );
 

@@ -6,6 +6,8 @@ import { credentialSlots } from "../http-operation/models";
 import { OperationHttpServerConfig } from "../http-operation/OperationHttpServerConfig";
 import { make as makeHttpServer } from "../http-operation/server";
 import { TokenDigest } from "../Schema";
+import { assessAuthentication } from "../sessions/assurance";
+import { AuthenticationAuthority } from "../sessions/AuthenticationAuthority";
 import {
   AuthenticationFlowId,
   SessionAuthenticationProvenance,
@@ -14,9 +16,10 @@ import {
 import type { makeSessionModule } from "../sessions/module";
 import { makeContract } from "./contract";
 import { makeSecrets } from "./crypto";
-import type { Binding } from "./models";
 import {
-  Client,
+  type Binding,
+  type Client,
+  Clients,
   ConfigurationError,
   Indeterminate,
   Invalid,
@@ -52,15 +55,13 @@ export const make = <
       Effect.gen(function* () {
         const config = yield* Schema.decodeEffect(
           Schema.Struct({
-            clients: Schema.Array(Client).check(Schema.isMinLength(1), Schema.isMaxLength(64)),
+            clients: Clients,
             lifetimeMillis: Schema.Int.check(Schema.isBetween({ minimum: 1000, maximum: 300_000 })),
           }),
         )({ clients: options.clients, lifetimeMillis: options.lifetimeMillis ?? 120_000 }).pipe(
           Effect.mapError(() => ConfigurationError.make({})),
         );
 
-        if (new Set(config.clients.map((client) => client.clientId)).size !== config.clients.length)
-          return yield* ConfigurationError.make({});
         const store = yield* Persistence;
         const strategy = yield* sessions.SessionStrategy;
         const secrets = yield* makeSecrets;
@@ -105,7 +106,7 @@ export const make = <
             return yield* Invalid.make({});
         });
 
-        const { initiate, authorize, exchange, status, cancel } = contract.operations;
+        const { initiate, describe, authorize, exchange, status, cancel } = contract.operations;
 
         return Layer.mergeAll(
           initiate.handlerLayer(
@@ -136,8 +137,8 @@ export const make = <
               return { attemptId, expiresAtMillis };
             }),
           ),
-          authorize.handlerLayer(
-            Effect.fnUntraced(function* (input, caller) {
+          describe.handlerLayer(
+            Effect.fnUntraced(function* (input) {
               const record = yield* read(input.attemptId);
 
               const client = config.clients.find(
@@ -151,20 +152,59 @@ export const make = <
                 client === undefined
               )
                 return yield* Invalid.make({});
+
+              return {
+                clientId: client.clientId,
+                displayName: client.displayName,
+                browserSession: client.browserSession,
+                expiresAtMillis: record.expiresAtMillis,
+              };
+            }),
+          ),
+          authorize.handlerLayer(
+            Effect.fnUntraced(function* (input, caller) {
+              const record = yield* read(input.attemptId);
+
+              const client = config.clients.find(
+                (client) =>
+                  client.clientId === record.clientId && client.returnUrl === record.returnUrl,
+              );
+
+              if (
+                record.status !== "Waiting" ||
+                record.expiresAtMillis <= (yield* now) ||
+                client === undefined ||
+                (input.decision === "automatic" && client.browserSession !== "automatic")
+              )
+                return yield* Invalid.make({});
               const source = yield* strategy.inspect(input.credential);
 
               if (
                 caller._tag !== "Authenticated" ||
                 caller.subjectId !== source.session.subjectId ||
+                input.expectedSessionId !== source.session.sessionId ||
                 (client.browserSession === "reauthenticate" &&
                   DateTime.toEpochMillis(source.session.assurance.authenticatedAt) <
                     record.createdAtMillis)
               )
                 return yield* Invalid.make({});
+              const authority = yield* AuthenticationAuthority;
+              const requirement = yield* authority.requirements(source.provenance.evidence);
+
+              const assessed = yield* assessAuthentication(
+                source.provenance.evidence,
+                requirement,
+              ).pipe(Effect.mapError(() => Invalid.make({})));
+
+              if (!assessed.satisfied) return yield* Invalid.make({});
               const code = yield* secrets.random;
 
               yield* update(input.attemptId, record, {
                 status: "Authorized",
+                approval:
+                  input.decision === "automatic" && client.browserSession === "automatic"
+                    ? { decision: "automatic", appleAppId: client.appleAppId }
+                    : { decision: "continue" },
                 codeDigest: yield* secrets.digest(code),
                 source: yield* Schema.encodeEffect(sourceCodec)(source).pipe(
                   Effect.mapError(() => Unavailable.make({})),
@@ -195,6 +235,10 @@ export const make = <
                 record.status !== "Authorized" ||
                 record.expiresAtMillis <= (yield* now) ||
                 record.source === undefined ||
+                record.approval === undefined ||
+                (record.approval.decision === "automatic" &&
+                  (client.browserSession !== "automatic" ||
+                    client.appleAppId !== record.approval.appleAppId)) ||
                 record.codeDigest !== (yield* secrets.digest(Redacted.value(input.code)))
               )
                 return yield* Invalid.make({});
@@ -289,7 +333,12 @@ export const make = <
     return {
       handle: (request: Request) =>
         Effect.suspend(() => {
-          const browser = new URL(request.url).pathname === contract.routes.authorize.path;
+          const pathname = new URL(request.url).pathname;
+
+          const browser =
+            pathname === contract.routes.authorize.path ||
+            pathname === contract.routes.describe.path;
+
           const native = request.headers.get(modeHeader) === "native";
 
           if (browser === native)

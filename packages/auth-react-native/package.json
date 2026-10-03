@@ -36,25 +36,26 @@
   "devDependencies": {
     "@effect/vitest": "catalog:",
     "effect": "catalog:",
+    "expo": "catalog:",
+    "expo-secure-store": "catalog:",
+    "expo-web-browser": "catalog:",
     "react-native": "catalog:",
-    "react-native-inappbrowser-reborn": "catalog:",
-    "react-native-keychain": "catalog:",
     "react-native-passkey": "catalog:",
     "typescript": "catalog:",
     "vite-plus": "catalog:"
   },
   "peerDependencies": {
     "effect": "^4.0.0",
+    "expo-secure-store": "~15.0.8 || ~57.0.4",
+    "expo-web-browser": "~15.0.11 || ~57.0.3",
     "react-native": ">=0.81 <1",
-    "react-native-inappbrowser-reborn": "~3.7.1",
-    "react-native-keychain": "^10.0.0",
     "react-native-passkey": "~3.6.2"
   },
   "peerDependenciesMeta": {
-    "react-native-inappbrowser-reborn": {
+    "expo-secure-store": {
       "optional": true
     },
-    "react-native-keychain": {
+    "expo-web-browser": {
       "optional": true
     },
     "react-native-passkey": {

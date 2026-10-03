@@ -33,11 +33,44 @@ cannot close an external browser tab. A bounded startup queue preserves up to
 eight valid callback URLs until the client resumes. Each open expires after ten
 minutes without deleting the durable attempt.
 
-macOS requires a packaged app declaring the URL scheme in `Info.plist`. Linux
-requires a packaged app with an installed `.desktop` handler already selected
-as default. Windows supports packaged apps and development registration with
-the executable and application paths. Unsupported or unsuccessful registration
-fails before opening a browser. There is no embedded-login fallback.
+Custom-scheme callbacks require a packaged app declaring the scheme in `Info.plist`
+on macOS, or an installed `.desktop` handler already selected as default on Linux.
+Windows supports packaged apps and development registration with the executable
+and application paths. Unsupported or unsuccessful registration fails before
+opening a browser. Custom-scheme registration does not verify app ownership and
+cannot enable automatic browser-session reuse. There is no embedded-login fallback.
+
+HTTPS return URLs use Universal Links on packaged macOS apps only. The adapter
+accepts them exclusively from Electron's `continue-activity` event with
+`NSUserActivityTypeBrowsingWeb`; command-line arguments and ordinary URL events
+cannot complete that flow. It never registers a default HTTPS handler. Windows,
+Linux, unpackaged apps, and HTTPS callbacks with a nondefault port fail closed.
+
+For a return URL such as `https://links.example.com/auth/callback`:
+
+- Enable Associated Domains for the app's stable App ID and provisioning profile.
+  Sign the main app with `com.apple.developer.associated-domains` containing
+  `applinks:links.example.com`, preserving Electron's other required entitlements.
+- Serve `https://links.example.com/.well-known/apple-app-site-association` over
+  valid HTTPS without redirects. Its `applinks` entry must name the signed app's
+  `<Application Identifier Prefix>.<Bundle Identifier>` and the exact callback
+  path. Generate it from the server's registered clients as shown in the
+  [browser login guide](../../docs/src/content/docs/guide/browser-login.mdx).
+- Install the signed app locally; Developer ID apps must launch once before
+  macOS fetches their associations. Use the normal signing and notarization
+  process for distribution.
+
+Use a callback subdomain distinct from the hosted account page. Safari can keep
+same-domain links in the browser, and other browsers may not support Universal
+Links. Automatic session reuse does not guarantee automatic app launch: a user
+may still need to choose **Open in app**. Keep the HTTPS destination on HTTPS;
+never forward its callback code to an unverified custom scheme.
+
+macOS verifies the app/site association when routing the Universal Link. Electron
+has no association preflight API; a packaged flag or an application-side AASA fetch
+does not establish it. Missing signing or association configuration leaves the
+attempt waiting until timeout. The unsigned example remains a custom-scheme flow;
+signed Universal Link delivery and relaunch require separate macOS verification.
 
 The vault refuses unavailable OS encryption and Linux `basic_text` or unknown
 backends. It encrypts the entire schema-encoded record using `safeStorage`,
@@ -53,5 +86,7 @@ Keep the app's signing identity stable for macOS Keychain access. Registration
 outlives the application Scope; listeners and waiters do not.
 
 Platform details: [deep links](https://www.electronjs.org/docs/latest/tutorial/launch-app-from-url-in-another-app),
+[associated domains](https://developer.apple.com/documentation/xcode/supporting-associated-domains),
+[Universal Link routing](https://developer.apple.com/documentation/technotes/tn3155-debugging-universal-links),
 [safeStorage](https://www.electronjs.org/docs/latest/api/safe-storage),
 [IPC security](https://www.electronjs.org/docs/latest/tutorial/security).

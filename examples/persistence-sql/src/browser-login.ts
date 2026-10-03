@@ -1,6 +1,6 @@
 import { BrowserLogin, OperationHttp, OperationHttpServer, Operations } from "@yielded/auth";
 import { BrowserLoginPersistence } from "@yielded/auth-persistence";
-import { Effect, Layer } from "effect";
+import { Config, Effect, Layer, Option } from "effect";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 
 import { AppAuth } from "../../shared/account/auth";
@@ -8,6 +8,44 @@ import { nativeSession } from "../../shared/account/browser-login-contract";
 import { NativeSessionLive } from "./live";
 
 const handoff = BrowserLogin.make(AppAuth.sessions, { basePath: "/auth/browser-login" });
+
+const HandoffLive = Layer.unwrap(
+  Effect.gen(function* () {
+    const returnUrl = yield* Config.option(Config.String("AUTH_IOS_RETURN_URL"));
+    const appleAppId = yield* Config.option(Config.String("AUTH_IOS_APP_ID"));
+
+    let ios: BrowserLogin.Client = {
+      clientId: "ios",
+      displayName: "Yielded iOS example",
+      returnUrl: "dev.yielded.auth.ios://callback",
+      browserSession: "confirm",
+    };
+
+    if (Option.isSome(returnUrl) || Option.isSome(appleAppId)) {
+      if (Option.isNone(returnUrl) || Option.isNone(appleAppId))
+        return yield* BrowserLogin.ConfigurationError.make({});
+      ios = {
+        clientId: "ios",
+        displayName: "Yielded iOS example",
+        returnUrl: returnUrl.value,
+        appleAppId: appleAppId.value,
+        browserSession: "automatic",
+      };
+    }
+
+    return handoff.layer({
+      clients: [
+        {
+          clientId: "electron",
+          displayName: "Yielded Electron example",
+          returnUrl: "dev.yielded.auth://callback",
+          browserSession: "confirm",
+        },
+        ios,
+      ],
+    });
+  }),
+).pipe(Layer.provide(BrowserLoginPersistence.layer));
 
 const configuration = (origin: URL) =>
   OperationHttpServer.configurationLayer({
@@ -37,7 +75,11 @@ const configuration = (origin: URL) =>
 
 const invocation = OperationHttpServer.invocationLayer(
   Effect.fnUntraced(function* (request, credentials) {
-    if (request.headers.has("x-auth-mode") || credentials.session === undefined)
+    if (
+      new URL(request.url).pathname === handoff.routes.describe.path ||
+      request.headers.has("x-auth-mode") ||
+      credentials.session === undefined
+    )
       return Operations.guest;
 
     const session = yield* (yield* AppAuth.sessions.SessionStrategy)
@@ -98,22 +140,7 @@ export const browserLoginRoutes = (origin: URL) =>
         configuration(origin),
         invocation,
         AppAuth.sessions.sessionHandlersLayer,
-        handoff
-          .layer({
-            clients: [
-              {
-                clientId: "electron",
-                returnUrl: "dev.yielded.auth://callback",
-                browserSession: "confirm",
-              },
-              {
-                clientId: "ios",
-                returnUrl: "dev.yielded.auth.ios://callback",
-                browserSession: "confirm",
-              },
-            ],
-          })
-          .pipe(Layer.provide(BrowserLoginPersistence.layer)),
+        HandoffLive,
       ),
     ),
     Layer.provide(NativeSessionLive),

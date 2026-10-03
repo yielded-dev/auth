@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { pathToFileURL } from "node:url";
 
 import { NodeHttpClient, NodeServices } from "@effect/platform-node";
@@ -37,6 +38,10 @@ const launch = (config: Effect.Success<typeof startup>) =>
     const { join } = yield* Path.Path;
     const runPromise = Effect.runPromiseWith(yield* Effect.context<never>());
 
+    const vaultNamespace = createHash("sha256")
+      .update(`electron\n${new URL(config.hostedUrl).origin}\ndev.yielded.auth://callback`)
+      .digest("hex");
+
     yield* Effect.tryPromise({
       try: () => app.whenReady(),
       catch: () => DesktopError.make({ reason: "unavailable" }),
@@ -45,7 +50,9 @@ const launch = (config: Effect.Success<typeof startup>) =>
     const services = yield* Layer.buildWithScope(
       Layer.mergeAll(
         Layer.succeed(BrowserLogin.Browser, config.browser),
-        ElectronLogin.layerVault({ path: join(app.getPath("userData"), "auth", "vault.bin") }),
+        ElectronLogin.layerVault({
+          path: join(app.getPath("userData"), "auth", vaultNamespace, "vault.bin"),
+        }),
         // No browser fetch metadata, cookie jar or automatic redirect following.
         NodeHttpClient.layerNodeHttp,
       ),

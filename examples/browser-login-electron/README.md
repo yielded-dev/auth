@@ -11,7 +11,9 @@ The example imports `handoff` and `nativeSession` from
 The default hosted URL is `http://localhost:4183/login`, client ID `electron`, and
 return URL `dev.yielded.auth://callback`. Set `YIELDED_HOSTED_URL` **in the main
 process environment** for another compatible backend; packaged Finder launches
-do not inherit terminal environment overrides. Native requests add
+do not inherit terminal environment overrides. Each backend origin has its own
+vault, so changing this URL cannot forward an existing backend's credentials.
+Native requests add
 `x-auth-client: yielded-native` (a public admission marker, not authentication).
 Main uses Effect's Node HTTP client without cookies or redirect following. Node's
 fetch adds browser fetch metadata that this native transport correctly rejects.
@@ -73,8 +75,10 @@ when the server's completion receipt matches an independently verified stored
 session. Otherwise, ask the backend operator to revoke the possible session, or
 confirm its absolute expiry. The attempt's short timeout is not session expiry.
 After that reconciliation, quit the app and reset only its development vault at
-`<Electron userData>/auth/vault.bin` to retire that local attempt and credentials.
+`<Electron userData>/auth/<backend hash>/vault.bin` to retire that local attempt and credentials.
 Do not reset the hosted account database or another application's storage.
+The earlier unnamespaced development vault is not imported; sign in again and
+revoke any old native session through account session management.
 
 ## Checks and boundaries
 

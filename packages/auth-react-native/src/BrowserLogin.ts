@@ -3,9 +3,9 @@ import { OperationHttpError } from "@yielded/auth/OperationHttp";
 import type { NativeCredentials } from "@yielded/auth/OperationHttpClient";
 import type { CredentialSlot } from "@yielded/auth/Operations";
 import { DateTime, Effect, Layer, type Redacted, Schema, Semaphore } from "effect";
+import * as SecureStore from "expo-secure-store";
+import * as WebBrowser from "expo-web-browser";
 import { Platform } from "react-native";
-import { InAppBrowser } from "react-native-inappbrowser-reborn";
-import * as Keychain from "react-native-keychain";
 
 const failure = (reason: BrowserLogin.PlatformError["reason"]) =>
   BrowserLogin.PlatformError.make({ reason });
@@ -37,8 +37,10 @@ const openInput = Schema.Struct({
       }
     }),
   ),
-  // This peer uses callbackURLScheme, not Apple's HTTPS callback API.
-  returnUrl: BrowserLogin.ReturnUrl.check(Schema.makeFilter((text) => !text.startsWith("https:"))),
+  returnUrl: Schema.Union([
+    BrowserLogin.HttpsReturnUrl,
+    BrowserLogin.ReturnUrl.check(Schema.makeFilter((text) => !text.startsWith("https:"))),
+  ]),
   ephemeral: Schema.Boolean,
 });
 
@@ -84,7 +86,7 @@ const releaseBrowser = (lease: Lease) =>
     if (!lease.started) settle(lease);
     if (lease.settled) return;
     try {
-      InAppBrowser.closeAuth();
+      WebBrowser.dismissAuthSession();
     } catch {
       // Dismissal is best-effort. Keep admission held until native settlement even
       // if dismissal fails; never deliver a late callback to another attempt.
@@ -95,9 +97,13 @@ const prompt = (lease: Lease, input: typeof openInput.Type) =>
   Effect.callback<unknown, BrowserLogin.PlatformError>((resume, signal) => {
     lease.started = true;
     try {
-      void InAppBrowser.openAuth(input.url, input.returnUrl, {
-        ephemeralWebSession: input.ephemeral,
-      }).then(
+      // SDK 54 binds HTTPS callbacks directly; SDK 57 requires this opt-in.
+      const options = {
+        preferEphemeralSession: input.ephemeral,
+        preferUniversalLinks: true,
+      };
+
+      void WebBrowser.openAuthSessionAsync(input.url, input.returnUrl, options).then(
         (value: unknown) => {
           settle(lease);
           if (lease.listening && !signal.aborted) resume(Effect.succeed(value));
@@ -113,7 +119,8 @@ const prompt = (lease: Lease, input: typeof openInput.Type) =>
     }
   });
 
-/** iOS 16+ ASWebAuthenticationSession. Each open owns its Scope and dismissal;
+/** iOS ASWebAuthenticationSession; HTTPS callbacks require iOS 17.4+ and
+ * associated web credentials domains. Each open owns its Scope and dismissal;
  * interruption retains the shared busy guard until the native promise settles. */
 export const layerBrowser = Layer.succeed(
   BrowserLogin.Browser,
@@ -125,16 +132,23 @@ export const layerBrowser = Layer.succeed(
         Effect.mapError(() => failure("callback")),
       );
 
+      if (request.returnUrl.startsWith("https:")) {
+        // Reject before invoking Expo's fallback to callbackURLScheme on older iOS.
+        const supported = yield* Effect.try({
+          try: () => {
+            const [major = 0, minor = 0] = String(Platform.Version).split(".").map(Number);
+
+            return major > 17 || (major === 17 && minor >= 4);
+          },
+          catch: () => failure("unavailable"),
+        });
+
+        if (!supported) return yield* failure("unavailable");
+      }
+
       return yield* Effect.scoped(
         Effect.gen(function* () {
           const lease = yield* Effect.acquireRelease(acquireBrowser, releaseBrowser);
-
-          const available = yield* Effect.tryPromise({
-            try: () => InAppBrowser.isAvailable(),
-            catch: () => failure("unavailable"),
-          });
-
-          if (!available) return yield* failure("unavailable");
 
           const result = yield* Schema.decodeUnknownEffect(browserResult)(
             yield* prompt(lease, request),
@@ -142,7 +156,7 @@ export const layerBrowser = Layer.succeed(
 
           if (result.type !== "success") return yield* failure("cancelled");
 
-          // The OS matches the scheme only. Bind the full callback target here;
+          // Bind the full target even when the OS matches only the custom scheme;
           // core owns state/code validation and the exchange decision.
           return yield* Schema.decodeEffect(
             Schema.String.check(
@@ -180,14 +194,13 @@ const vaultRecord = BrowserLogin.VaultRecord;
 
 const vaultJson = Schema.fromJsonString(vaultRecord);
 
-const keychainResult = Schema.Union([
-  Schema.Literal(false),
-  Schema.Struct({ password: Schema.String.check(Schema.isMaxLength(1048576)) }),
-]);
+const vaultKey = "yielded-auth.browser-login";
+const storedValue = Schema.NullOr(Schema.String.check(Schema.isMaxLength(1048576)));
 
-/** Use a distinct service per application, server environment and client ID.
+/** Use a fresh, dedicated SecureStore service per app, server environment and client ID.
  * Build this Layer once per authentication lifetime; no other process or Layer
- * may write this Keychain service. Keychain has no cross-process CAS contract. */
+ * may write this service. Keep its name stable across restarts; SecureStore has
+ * no cross-process compare-and-set contract. */
 export const layerVault = (options: { readonly service: string }) =>
   Layer.effect(
     BrowserLogin.Vault,
@@ -198,27 +211,28 @@ export const layerVault = (options: { readonly service: string }) =>
         Schema.NonEmptyString.check(Schema.isMaxLength(256)),
       )(options.service).pipe(Effect.mapError(() => failure("storage")));
 
-      const keychainOptions = {
-        service,
-        accessible: Keychain.ACCESSIBLE.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
-        cloudSync: false,
-      };
+      const storageOptions = {
+        keychainService: service,
+        keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
+        // Biometric changes must not invalidate the exchange fence.
+        requireAuthentication: false,
+      } satisfies SecureStore.SecureStoreOptions;
 
       const gate = yield* Semaphore.make(1);
 
       const readRecord: Effect.Effect<typeof vaultRecord.Type, BrowserLogin.PlatformError> =
         Effect.gen(function* () {
           const result = yield* Effect.tryPromise({
-            try: () => Keychain.getGenericPassword(keychainOptions),
+            try: () => SecureStore.getItemAsync(vaultKey, storageOptions),
             catch: () => failure("storage"),
           }).pipe(
-            Effect.flatMap(Schema.decodeUnknownEffect(keychainResult)),
+            Effect.flatMap(Schema.decodeUnknownEffect(storedValue)),
             Effect.mapError(() => failure("storage")),
           );
 
-          if (result === false) return { credentials: {} } satisfies typeof vaultRecord.Type;
+          if (result === null) return { credentials: {} } satisfies typeof vaultRecord.Type;
 
-          return yield* Schema.decodeEffect(vaultJson)(result.password, {
+          return yield* Schema.decodeEffect(vaultJson)(result, {
             onExcessProperty: "error",
           }).pipe(Effect.mapError(() => failure("storage")));
         });
@@ -228,15 +242,15 @@ export const layerVault = (options: { readonly service: string }) =>
           Effect.mapError(() => failure("storage")),
         );
 
-        const result = yield* Effect.tryPromise({
-          try: () => Keychain.setGenericPassword("yielded-auth", encoded, keychainOptions),
+        // SecureStore updates existing iOS items with SecItemUpdate. Always replace
+        // the whole record, including clears; never delete the item before writing.
+        yield* Effect.tryPromise({
+          try: () => SecureStore.setItemAsync(vaultKey, encoded, storageOptions),
           catch: () => failure("storage"),
         });
-
-        if (result === false) return yield* failure("storage");
       });
 
-      // Keychain promises are not cancellable. Admitted operations must settle
+      // SecureStore promises are not cancellable. Admitted operations must settle
       // before releasing this gate or acknowledging an Exchanging checkpoint.
       const locked = <A, E>(work: Effect.Effect<A, E>) =>
         gate.withPermits(1)(Effect.uninterruptible(work));

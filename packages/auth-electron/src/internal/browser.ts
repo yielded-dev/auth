@@ -6,14 +6,17 @@ const unavailable = () => BrowserLogin.PlatformError.make({ reason: "unavailable
 
 const optionsSchema = Schema.Struct({
   hostedUrl: BrowserLogin.HostedUrl,
-  returnUrl: BrowserLogin.ReturnUrl.check(Schema.makeFilter((url) => !url.startsWith("https:"))),
+  returnUrl: BrowserLogin.ReturnUrl,
 });
 
 /** Acquire synchronously in the main process BEFORE app.whenReady(), under the
  * application's Scope. The host must already hold app.requestSingleInstanceLock().
  * No import-time listeners, protocol registration, or external browser launch.
- * macOS requires a packaged Info.plist; Linux requires an installed .desktop
- * handler. Windows also supports the default Electron executable in development.
+ * HTTPS callbacks require packaged macOS with signed associated domains and a
+ * matching website association. Only OS-delivered Universal Links are accepted;
+ * this adapter cannot preflight the OS association. Custom schemes require a
+ * packaged Info.plist on macOS or installed .desktop handler on Linux. Windows
+ * also supports the default Electron executable in development.
  */
 export const makeBrowser = Effect.fnUntraced(function* (options: typeof optionsSchema.Type) {
   if (process.type !== "browser" || !app.hasSingleInstanceLock()) return yield* unavailable();
@@ -22,7 +25,12 @@ export const makeBrowser = Effect.fnUntraced(function* (options: typeof optionsS
     Effect.mapError(unavailable),
   );
 
-  const scheme = new URL(config.returnUrl).protocol.slice(0, -1);
+  const target = new URL(config.returnUrl);
+  const scheme = target.protocol.slice(0, -1);
+  const universalLink = scheme === "https";
+
+  if (universalLink && (process.platform !== "darwin" || !app.isPackaged || target.port !== ""))
+    return yield* unavailable();
 
   const callbackSchema = Schema.String.check(
     Schema.isMaxLength(2304),
@@ -99,25 +107,42 @@ export const makeBrowser = Effect.fnUntraced(function* (options: typeof optionsS
     for (const arg of argv) capture(arg);
   };
 
+  const activitySchema = Schema.Struct({ webpageURL: callbackSchema });
+
+  const continueActivity = (event: Event, type: string, _userInfo: unknown, details: unknown) => {
+    if (type !== "NSUserActivityTypeBrowsingWeb" || !Schema.is(activitySchema)(details)) return;
+    event.preventDefault();
+    capture(details.webpageURL);
+  };
+
   yield* Effect.acquireRelease(
     Effect.sync(() => {
-      app.on("open-url", openUrl);
-      app.on("second-instance", secondInstance);
-      for (const arg of process.argv) capture(arg);
+      if (universalLink) app.on("continue-activity", continueActivity);
+      else {
+        app.on("open-url", openUrl);
+        app.on("second-instance", secondInstance);
+        for (const arg of process.argv) capture(arg);
+      }
     }),
     () =>
       Effect.sync(() => {
         disposed = true;
-        app.removeListener("open-url", openUrl);
-        app.removeListener("second-instance", secondInstance);
+        if (universalLink) app.removeListener("continue-activity", continueActivity);
+        else {
+          app.removeListener("open-url", openUrl);
+          app.removeListener("second-instance", secondInstance);
+        }
         queued.length = 0;
         close?.();
       }),
   );
 
-  const registration = Effect.try({
+  const prepare = Effect.try({
     try: () => {
       if (!app.isReady() || disposed) return false;
+      // Associated domains are verified by macOS when routing the callback.
+      // Registering as the default HTTPS handler would not establish ownership.
+      if (universalLink) return process.platform === "darwin" && app.isPackaged;
       if (process.platform === "linux")
         return app.isPackaged && app.isDefaultProtocolClient(scheme);
       if (process.platform === "darwin")
@@ -135,7 +160,7 @@ export const makeBrowser = Effect.fnUntraced(function* (options: typeof optionsS
       );
     },
     catch: unavailable,
-  }).pipe(Effect.flatMap((registered) => (registered ? Effect.void : Effect.fail(unavailable()))));
+  }).pipe(Effect.flatMap((available) => (available ? Effect.void : Effect.fail(unavailable()))));
 
   return BrowserLogin.Browser.of({
     open: Effect.fnUntraced(function* (input) {
@@ -143,7 +168,7 @@ export const makeBrowser = Effect.fnUntraced(function* (options: typeof optionsS
         Effect.mapError(unavailable),
       );
 
-      yield* registration;
+      yield* prepare;
 
       return yield* Effect.callback<string, BrowserLogin.PlatformError>((resume) => {
         if (receive !== undefined) {
@@ -153,9 +178,16 @@ export const makeBrowser = Effect.fnUntraced(function* (options: typeof optionsS
         }
         let active = true;
 
+        const cleanup = () => {
+          if (!active) return;
+          active = false;
+          receive = undefined;
+          close = undefined;
+        };
+
         const finish = (result: Effect.Effect<string, BrowserLogin.PlatformError>) => {
           if (active) {
-            active = false;
+            cleanup();
             resume(result);
           }
         };
@@ -173,11 +205,7 @@ export const makeBrowser = Effect.fnUntraced(function* (options: typeof optionsS
           }
         }
 
-        return Effect.sync(() => {
-          active = false;
-          receive = undefined;
-          close = undefined;
-        });
+        return Effect.sync(cleanup);
       }).pipe(
         Effect.timeout("10 minutes"),
         Effect.catchTag("TimeoutError", () =>

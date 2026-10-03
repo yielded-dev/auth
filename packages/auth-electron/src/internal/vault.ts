@@ -118,7 +118,7 @@ export const layerVault = (options: { readonly path: string }) =>
 
             const committed = yield* fs.open(
               process.platform === "win32" ? destination : directory,
-              { flag: "r" },
+              { flag: process.platform === "win32" ? "r+" : "r" },
             );
 
             yield* committed.sync;

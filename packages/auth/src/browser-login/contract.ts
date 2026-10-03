@@ -4,8 +4,11 @@ import { HookDenied } from "../hooks/models";
 import { make as httpContract, route } from "../http-operation/contract";
 import { makeOperation } from "../operations/operation";
 import { SessionError } from "../sessions/errors";
+import { SessionId } from "../sessions/models";
 import {
   Binding,
+  AuthorizationDecision,
+  Description,
   Indeterminate,
   Initiate,
   Invalid,
@@ -41,7 +44,9 @@ export const makeContract = <
     ...common,
     payload: Schema.Struct({
       attemptId: Random,
-      decision: Schema.Literal("continue"),
+      decision: AuthorizationDecision,
+      /** Bind consent to the displayed session or the explicit sign-in result. Never authority. */
+      expectedSessionId: SessionId,
       credential: Schema.RedactedFromValue(Schema.NonEmptyString),
     }),
     success: Schema.Struct({
@@ -49,6 +54,14 @@ export const makeContract = <
     }),
     access: "authenticated",
     replay: "single-use",
+  });
+
+  const describe = makeOperation(`${namespace}/browser-login/describe`, {
+    ...common,
+    payload: Schema.Struct({ attemptId: Random }),
+    success: Description,
+    access: "any",
+    replay: "read-only",
   });
 
   const exchange = makeOperation(`${namespace}/browser-login/exchange`, {
@@ -78,6 +91,7 @@ export const makeContract = <
 
   const http = httpContract({
     initiate: route(initiate, { path: `${options.basePath}/initiate` }),
+    describe: route(describe, { path: `${options.basePath}/describe` }),
     authorize: route(authorize, {
       path: `${options.basePath}/authorize`,
       credentials: { credential: "session" },
@@ -90,7 +104,7 @@ export const makeContract = <
   return {
     namespace,
     session,
-    operations: { initiate, authorize, exchange, status, cancel },
+    operations: { initiate, describe, authorize, exchange, status, cancel },
     ...http,
   };
 };
