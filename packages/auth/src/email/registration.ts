@@ -253,7 +253,7 @@ export const makeEmailRegistration = <
               Effect.mapError(() => EmailUnavailable.make({})),
             );
 
-          yield* dispatch.dispatch.pipe(Effect.mapError(() => EmailUnavailable.make({})));
+          yield* dispatch.schedule.pipe(Effect.mapError(() => EmailUnavailable.make({})));
 
           return dispatch.receipt;
         }),

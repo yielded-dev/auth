@@ -86,6 +86,7 @@ export const phoneConsumer = Effect.gen(function* () {
 
   const base = Layer.mergeAll(
     WebCrypto.layerWebCrypto,
+    Proofs.ProofDispatchScheduler.layerInline,
     Hooks.LifecycleHooks.empty,
     Auth.RequestBindingConfig.layer({ keyring, lifetimeMillis: 120_000, generation: 1 }),
     sender,

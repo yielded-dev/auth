@@ -28,6 +28,7 @@ const policy: Proofs.ProofPolicy = {
 
 const base = Layer.mergeAll(
   WebCrypto.layerWebCrypto,
+  Proofs.ProofDispatchScheduler.layerInline,
   Hooks.LifecycleHooks.empty,
   Proofs.ProofKeys.layer({
     activeKeyId: "current",

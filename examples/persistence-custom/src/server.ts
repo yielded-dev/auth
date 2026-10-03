@@ -4,6 +4,7 @@ import { Effect, FileSystem, Layer, Path } from "effect";
 import { FetchHttpClient, HttpRouter, HttpServerResponse } from "effect/http";
 
 import { DeliveryLive } from "../../shared/account/delivery";
+import { ProofDispatchLive } from "../../shared/account/proof-dispatch";
 import { AppAuth } from "./auth";
 import { KeysLive } from "./data";
 import { AuthLive } from "./live";
@@ -44,6 +45,7 @@ const PageRoutes = Layer.unwrap(
 );
 
 const ApplicationLive = AuthLive.pipe(
+  Layer.provide(ProofDispatchLive),
   Layer.provide([
     AccountStore.layer.pipe(Layer.provide(Hooks.LifecycleHooks.empty)),
     KeysLive,

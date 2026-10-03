@@ -226,7 +226,7 @@ export const makePhoneOtp = <
           })
           .pipe(Effect.flatMap(readProofCommit), Effect.mapError(phoneFailure));
 
-        yield* dispatch.dispatch.pipe(Effect.mapError(phoneFailure));
+        yield* dispatch.schedule.pipe(Effect.mapError(phoneFailure));
 
         return {
           value: { ...dispatch.receipt, flowId: input.flowId },

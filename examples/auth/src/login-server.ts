@@ -43,7 +43,7 @@ const origin = "https://app.example.com";
 /** Construct once at the application's composition root. Supply durable Email
  * and OAuth registration authorities, ProofPersistence/abuse budgets, shared
  * session persistence/AuthenticationAuthority, each strategy's SessionClaims,
- * EmailSignInTargets and EmailDelivery to Routes. Drizzle D1/SQLite DO
+ * EmailSignInTargets, EmailDelivery and ProofDispatchScheduler to Routes. Drizzle D1/SQLite DO
  * adapters implement the transaction ports; no example memory store is installed.
  * Every unsupplied service remains visible in the returned Layer type. */
 export const makeServer = (config: {

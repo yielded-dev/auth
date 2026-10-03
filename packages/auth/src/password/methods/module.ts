@@ -661,7 +661,7 @@ const makePasswordWithManagement = <
               Effect.mapError(() => PasswordUnavailable.make({})),
             );
 
-          yield* dispatch.dispatch.pipe(Effect.mapError(() => PasswordUnavailable.make({})));
+          yield* dispatch.schedule.pipe(Effect.mapError(() => PasswordUnavailable.make({})));
 
           return dispatch.receipt;
         }),

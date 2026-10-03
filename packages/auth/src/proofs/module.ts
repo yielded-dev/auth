@@ -1,4 +1,4 @@
-import { Context, DateTime, Effect, Layer, Redacted, Schema, type Types } from "effect";
+import { Cause, Context, DateTime, Effect, Layer, Redacted, Schema, type Types } from "effect";
 
 import { hasCommitScope, type PreparedCommit } from "../hooks/commit";
 import { LifecycleHooks } from "../hooks/LifecycleHooks";
@@ -9,6 +9,7 @@ import {
   lifecycleEvent,
   lifecycleSnapshot,
 } from "../hooks/models";
+import { reportAuthFailure } from "../internal/diagnostics";
 import type { AuthOperationResult } from "../operations/credentials";
 import { makeOperation, operationGroup } from "../operations/operation";
 import type { ProofCompletionPlan } from "./completion";
@@ -48,6 +49,7 @@ import {
   ProofVersion,
 } from "./models";
 import { type ProofPolicy, validateProofPolicy } from "./policy";
+import { ProofDispatchScheduler } from "./ProofDispatchScheduler";
 import { ProofPersistence, type ProofRecord } from "./ProofPersistence";
 import { SmsProofDelivery } from "./SmsProofDelivery";
 
@@ -208,6 +210,7 @@ export const makeProofModule = <
         );
 
         const store = yield* ProofPersistence;
+        const scheduler = yield* ProofDispatchScheduler;
 
         // Bind only owned services; dispatch still observes its execution-time commit scope.
         const dispatchServices = Context.make(ProofPersistence, store).pipe(
@@ -323,28 +326,41 @@ export const makeProofModule = <
             commit: store.issue(
               { record, policy, eligible: eligible && before._tag === "Success", supersedes },
               (decision, journal) => {
-                if (decision._tag !== "Issued")
-                  return journal.prepare({
-                    receipt: decision.receipt,
-                    dispatch: Effect.succeed("not-dispatched" as const),
-                  });
                 if (
-                  decision.record.proofId !== record.proofId ||
-                  decision.record.verifier.digest !== record.verifier.digest ||
-                  decision.record.verifier.keyId !== record.verifier.keyId ||
-                  decision.record.version !== record.version ||
-                  decision.record.fingerprint !== record.fingerprint
+                  decision._tag === "Issued" &&
+                  (decision.record.proofId !== record.proofId ||
+                    decision.record.verifier.digest !== record.verifier.digest ||
+                    decision.record.verifier.keyId !== record.verifier.keyId ||
+                    decision.record.version !== record.version ||
+                    decision.record.fingerprint !== record.fingerprint)
                 )
                   throw ProofUnavailable.make({});
-                if (before._tag !== "Success") throw ProofUnavailable.make({});
-                journal.stage(before.success);
+                if (decision._tag === "Issued") {
+                  if (before._tag !== "Success") throw ProofUnavailable.make({});
+                  journal.stage(before.success);
+                }
 
-                const prepared = makeProofDispatch(deliveryKey, record, message, policy);
+                const prepared =
+                  decision._tag === "Issued"
+                    ? makeProofDispatch(deliveryKey, record, message, policy)
+                    : { receipt: decision.receipt, dispatch: Effect.void };
+
+                const work = prepared.dispatch.pipe(
+                  Effect.provide(dispatchServices),
+                  Effect.asVoid,
+                  Effect.catchCause((cause) =>
+                    reportAuthFailure("proof-delivery", cause).pipe(
+                      Effect.andThen(Cause.hasInterrupts(cause) ? Effect.interrupt : Effect.void),
+                    ),
+                  ),
+                  Effect.withTracerEnabled(false),
+                );
 
                 return journal.prepare(
                   Object.freeze({
-                    ...prepared,
-                    dispatch: prepared.dispatch.pipe(Effect.provide(dispatchServices)),
+                    receipt: prepared.receipt,
+                    // Admission is identical for issued, suppressed and replayed receipts.
+                    schedule: noAmbient().pipe(Effect.andThen(() => scheduler.schedule(work))),
                   }),
                 );
               },
@@ -555,7 +571,7 @@ export const makeProofModule = <
     yield* noAmbient();
     const dispatch = yield* readProofCommit(yield* (yield* Proofs).prepareIssue(input));
 
-    yield* dispatch.dispatch;
+    yield* dispatch.schedule;
 
     return dispatch.receipt;
   });

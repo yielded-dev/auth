@@ -1,5 +1,5 @@
 import { BunRuntime } from "@effect/platform-bun";
-import { Auth, EmailDelivery, Email, Hooks, Operations, WebCrypto } from "@yielded/auth";
+import { Auth, EmailDelivery, Email, Hooks, Operations, Proofs, WebCrypto } from "@yielded/auth";
 import { Effect, Layer, Redacted } from "effect";
 import { Base64Url } from "effect/encoding";
 import { HttpRouter, HttpServerResponse } from "effect/http";
@@ -24,7 +24,11 @@ const program = Effect.gen(function* () {
       Layer.provide(notify.layer.pipe(Layer.provide(notifier))),
     );
 
-    const base = Layer.mergeAll(WebCrypto.layerWebCrypto, hooks);
+    const base = Layer.mergeAll(
+      WebCrypto.layerWebCrypto,
+      hooks,
+      Proofs.ProofDispatchScheduler.layerInline,
+    );
 
     yield* Effect.gen(function* () {
       const model = yield* makeEmailConsumer;

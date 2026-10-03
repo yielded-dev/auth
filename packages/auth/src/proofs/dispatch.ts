@@ -11,7 +11,8 @@ import { ProofPersistence, type ProofRecord } from "./ProofPersistence";
 /** Private process-local continuation. Its closure is neither an outbox nor an RPC value. */
 export interface PreparedProofDispatch<R = never> {
   readonly receipt: ProofRequestReceipt;
-  readonly dispatch: Effect.Effect<ProofDeliveryStatus, ProofCapabilityUnsupported, R>;
+  /** Host admission only, after reading the committed receipt; never provider acceptance. */
+  readonly schedule: Effect.Effect<void, ProofCapabilityUnsupported | ProofUnavailable, R>;
 }
 
 export interface ProofIssuePlan {
@@ -30,7 +31,14 @@ export const makeProofDispatch = <DeliveryId>(
   record: ProofRecord,
   message: ProofDeliveryMessage,
   policy: ProofPolicy,
-): PreparedProofDispatch<ProofPersistence | DeliveryId> => {
+): {
+  readonly receipt: ProofRequestReceipt;
+  readonly dispatch: Effect.Effect<
+    ProofDeliveryStatus,
+    ProofCapabilityUnsupported,
+    ProofPersistence | DeliveryId
+  >;
+} => {
   message = Object.freeze({
     ...message,
     recipient: Object.freeze(LoginIdentifier.make(message.recipient)),

@@ -17,7 +17,7 @@ const AccountClaims = Schema.Struct({
 
 /** Call once at the application's composition root with its decoded configuration.
  * The returned Layer requires the application's persistence and account authorities
- * plus SmsDelivery. Each adapter can provide several related services together.
+ * plus SmsDelivery and ProofDispatchScheduler. Each adapter can provide several related services together.
  */
 export const makeApplicationAuth = (configuration: {
   readonly relyingParty: {
@@ -74,7 +74,7 @@ export const makeApplicationAuth = (configuration: {
   // yield* auth.signOut();
 
   // Application composition:
-  // const AuthDependenciesLive = Layer.mergeAll(PersistenceLive, AccountsLive, SmsLive);
+  // const AuthDependenciesLive = Layer.mergeAll(PersistenceLive, AccountsLive, SmsLive, ProofDispatchLive);
   // const AppLive = AuthRoutes.pipe(
   //   Layer.provide(AuthDependenciesLive),
   // );

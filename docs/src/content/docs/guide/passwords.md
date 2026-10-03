@@ -100,6 +100,7 @@ import { authorizePasswordChange, registerAccount, resolvePasswordClaims } from 
 import { PasswordPersistenceLive, ProofPersistenceLive } from "./auth-persistence";
 import { checkPassword } from "./password-screening";
 import { EmailLive } from "./email";
+import { ProofDispatchLive } from "./proof-dispatch";
 
 export const PasswordLive = Layer.mergeAll(
   PasswordCrypto.layer().pipe(
@@ -113,6 +114,7 @@ export const PasswordLive = Layer.mergeAll(
   Layer.succeed(Password.CompromisedPasswords, { check: checkPassword }),
   Layer.succeed(Password.PasswordActionEvidence, { verify: authorizePasswordChange }),
   EmailLive,
+  ProofDispatchLive,
 );
 
 export const AuthLive = AppAuth.layer.pipe(
@@ -202,13 +204,19 @@ completion submission. Completion changes the password; sign in separately for a
 
 ### Delivery and retry boundaries
 
-Email delivery awaits provider acceptance, which does not prove inbox delivery.
+Your host's `Proofs.ProofDispatchScheduler` admits delivery after the proof commits.
+Public requests must not wait for provider acceptance: use a bounded scheduler whose
+scope outlives the request, as shown in [email delivery](./email-delivery#compose-auth).
+The scheduler can start work before the response is sent; a strict post-response
+start requires a host hook. Application hooks and persistence can still vary in latency.
+
+Provider acceptance does not prove inbox delivery.
 The transport distinguishes definite rejection from uncertain acceptance. Neither
 Auth nor the transport should automatically resend an uncertain message; this email
 service makes no deduplication promise and requires `maximumDeliveryAttempts: 1`.
 
 An exact `requestReset` retry can recover a generic receipt, not guarantee another
-send. Dispatch is a process-local continuation after persistence commits, not a
+send. Scheduled dispatch is a process-local continuation after persistence commits, not a
 durable outbox. A crash can leave an unsent proof. Let the user check their inbox
 and, if needed, explicitly start a new flow under the configured cooldown and attempt
 limits. A consumed proof or an unknown commit outcome does not authorize repeating

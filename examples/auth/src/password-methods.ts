@@ -1,5 +1,5 @@
 import { BunRuntime } from "@effect/platform-bun";
-import { Auth, EmailDelivery, Hooks, Operations, Password, WebCrypto } from "@yielded/auth";
+import { Auth, EmailDelivery, Hooks, Operations, Password, Proofs, WebCrypto } from "@yielded/auth";
 import * as PasswordCrypto from "@yielded/auth-crypto/Password";
 import { DateTime, Effect, Layer, Redacted } from "effect";
 import { Base64Url } from "effect/encoding";
@@ -16,7 +16,12 @@ const hashing = PasswordCrypto.layer().pipe(
   Layer.provide(WebCrypto.layerWebCrypto),
 );
 
-const base = Layer.mergeAll(WebCrypto.layerWebCrypto, Hooks.LifecycleHooks.empty, hashing);
+const base = Layer.mergeAll(
+  WebCrypto.layerWebCrypto,
+  Hooks.LifecycleHooks.empty,
+  hashing,
+  Proofs.ProofDispatchScheduler.layerInline,
+);
 
 const screening = Layer.succeed(Password.CompromisedPasswords, {
   // Public local fixture only; production must supply a maintained corpus/checker.

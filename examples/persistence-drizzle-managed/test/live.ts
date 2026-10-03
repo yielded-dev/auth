@@ -7,6 +7,7 @@ import { SqlClient } from "effect/sql";
 
 import { AppAuth } from "../../shared/account/auth";
 import { AuthApi } from "../../shared/account/contract";
+import { ProofDispatchLive } from "../../shared/account/proof-dispatch";
 import { DatabaseLive, KeysLive } from "../src/data";
 import { AuthLive } from "../src/live";
 
@@ -26,6 +27,7 @@ const program = Effect.gen(function* () {
   const delivery = Layer.succeed(EmailDelivery.EmailDelivery, { send: () => Effect.void });
 
   const application = AuthLive.pipe(
+    Layer.provide(ProofDispatchLive),
     Layer.provide([
       DatabaseLive,
       KeysLive,

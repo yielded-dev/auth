@@ -318,7 +318,7 @@ export const makePhoneLifecycle = <
       })
       .pipe(Effect.flatMap(readProofCommit), Effect.mapError(phoneFailure));
 
-    yield* dispatch.dispatch.pipe(Effect.mapError(phoneFailure));
+    yield* dispatch.schedule.pipe(Effect.mapError(phoneFailure));
 
     return { ...dispatch.receipt, flowId: input.flowId, actionChallenge: current.challenge };
   });
