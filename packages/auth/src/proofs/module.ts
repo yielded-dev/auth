@@ -1,5 +1,6 @@
 import { Cause, Context, DateTime, Effect, Layer, Redacted, Schema, type Types } from "effect";
 
+import { defaultLayer } from "../auth/defaults";
 import { hasCommitScope, type PreparedCommit } from "../hooks/commit";
 import { LifecycleHooks } from "../hooks/LifecycleHooks";
 import {
@@ -506,7 +507,7 @@ export const makeProofModule = <
           }),
         });
       }),
-    );
+    ).pipe(Layer.provide(defaultLayer(ProofDispatchScheduler, ProofDispatchScheduler.layer)));
 
   const emailLayer = makeLayer(EmailProofDelivery, "email").pipe(
     Layer.provide(emailProofDeliveryLayer(options)),

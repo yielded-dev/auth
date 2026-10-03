@@ -100,7 +100,6 @@ import { authorizePasswordChange, registerAccount, resolvePasswordClaims } from 
 import { PasswordPersistenceLive, ProofPersistenceLive } from "./auth-persistence";
 import { checkPassword } from "./password-screening";
 import { EmailLive } from "./email";
-import { ProofDispatchLive } from "./proof-dispatch";
 
 export const PasswordLive = Layer.mergeAll(
   PasswordCrypto.layer().pipe(
@@ -114,7 +113,6 @@ export const PasswordLive = Layer.mergeAll(
   Layer.succeed(Password.CompromisedPasswords, { check: checkPassword }),
   Layer.succeed(Password.PasswordActionEvidence, { verify: authorizePasswordChange }),
   EmailLive,
-  ProofDispatchLive,
 );
 
 export const AuthLive = AppAuth.layer.pipe(
@@ -204,11 +202,11 @@ completion submission. Completion changes the password; sign in separately for a
 
 ### Delivery and retry boundaries
 
-Your host's `Proofs.ProofDispatchScheduler` admits delivery after the proof commits.
-Public requests must not wait for provider acceptance: use a bounded scheduler whose
-scope outlives the request, as shown in [email delivery](./email-delivery#compose-auth).
-The scheduler can start work before the response is sent; a strict post-response
-start requires a host hook. Application hooks and persistence can still vary in latency.
+Auth's built-in worker admits delivery after the proof commits, so public requests
+do not wait for provider acceptance. No scheduler setup is needed; build Auth in an
+application scope that outlives requests, as shown in [email delivery](./email-delivery#compose-auth).
+Work may start before the response is sent. Application hooks and persistence can
+still vary in latency.
 
 Provider acceptance does not prove inbox delivery.
 The transport distinguishes definite rejection from uncertain acceptance. Neither

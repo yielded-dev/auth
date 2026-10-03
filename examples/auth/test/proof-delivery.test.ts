@@ -4,7 +4,6 @@ import { Deferred, Effect, Fiber, Layer, Logger, Redacted } from "effect";
 import { TestClock } from "effect/testing";
 import { expect } from "vite-plus/test";
 
-import { ProofDispatchLive } from "../../shared/account/proof-dispatch";
 import { makeExampleProofAuthority } from "../src/proof-consumer";
 
 // Human-requested security regression: provider latency must not reveal proof eligibility.
@@ -44,6 +43,51 @@ const input = (requestId: string, eligible = true) => ({
   eligible,
 });
 
+it.effect("delivers outside the request scope without an application scheduler", () =>
+  Effect.gen(function* () {
+    const providerEntered = yield* Deferred.make<void>();
+    const providerRelease = yield* Deferred.make<void>();
+    const providerCompleted = yield* Deferred.make<void>();
+
+    const delivery = Proofs.SmsProofDelivery.layer({ vendorId: "test", idempotencyMillis: 0 }, () =>
+      Effect.gen(function* () {
+        yield* Deferred.succeed(providerEntered, undefined);
+        yield* Deferred.await(providerRelease);
+        yield* Deferred.succeed(providerCompleted, undefined);
+
+        return { _tag: "Accepted" as const };
+      }),
+    );
+
+    const live = proofs.handlersLayer.pipe(
+      Layer.provide(proofs.smsLayer),
+      Layer.provide([base, authority, delivery]),
+    );
+
+    yield* Effect.gen(function* () {
+      const response = yield* proofs.operations.Request.invoke(invocation, input("default")).pipe(
+        Effect.scoped,
+        Effect.timeout("1 second"),
+        Effect.result,
+        Effect.forkChild,
+      );
+
+      yield* Deferred.await(providerEntered);
+      yield* TestClock.adjust("1 second");
+      const result = yield* Fiber.join(response);
+
+      expect(result._tag).toBe("Success");
+      if (result._tag !== "Success") return;
+      expect(result.success.requestId).toBe("default");
+      expect(yield* Deferred.isDone(providerCompleted)).toBe(false);
+
+      // The request scope has closed; the application's default worker is still alive.
+      yield* Deferred.succeed(providerRelease, undefined);
+      yield* Deferred.await(providerCompleted);
+    }).pipe(Effect.provide(live));
+  }),
+);
+
 it.effect("keeps delivery alive after a task interrupts while retaining scoped shutdown", () =>
   Effect.gen(function* () {
     const firstStarted = yield* Deferred.make<void>();
@@ -78,7 +122,7 @@ it.effect("keeps delivery alive after a task interrupts while retaining scoped s
       yield* Deferred.await(inFlight);
 
       return scheduler;
-    }).pipe(Effect.provide(ProofDispatchLive));
+    }).pipe(Effect.provide(Proofs.ProofDispatchScheduler.layer));
 
     expect(yield* Deferred.isDone(finalized)).toBe(true);
     expect(yield* scheduler.schedule(Effect.void).pipe(Effect.flip)).toBeInstanceOf(

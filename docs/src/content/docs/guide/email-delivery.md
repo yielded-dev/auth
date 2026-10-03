@@ -5,8 +5,8 @@ description: Connect your email provider to Auth with an Effect service.
 
 Auth creates and renders reset/sign-in links or codes. Your application provides
 `EmailDelivery` through a Layer using any email provider. It receives `to`,
-`subject`, and redacted `text`/optional `html` bodies. Your host also supplies
-`Proofs.ProofDispatchScheduler` to admit delivery outside the request's wait for a response.
+`subject`, and redacted `text`/optional `html` bodies. Auth queues delivery through
+a built-in worker, so public receipts do not wait for the provider.
 
 The transport's `send` returns `Effect<void, EmailNotAccepted | EmailAcceptanceUnknown>`.
 Success means the provider accepted the message, not that it reached the inbox.
@@ -132,39 +132,40 @@ const EmailLive = Layer.effect(
 ```
 
 Build this Layer per request, where Alchemy supplies `RuntimeContext`; never cache
-it across requests. `SendEmailError` does not establish rejection certainty, so
-it maps to uncertainty. Configure sender permissions and destination eligibility.
+it across requests. Keep that request's Auth scope alive through the Worker's
+background-work lifetime, as described below. `SendEmailError` does not establish
+rejection certainty, so it maps to uncertainty. Configure sender permissions and
+destination eligibility.
 
 ## Compose Auth
 
-Use your chosen `EmailLive` and host scheduler alongside your application services:
+Provide your chosen `EmailLive` alongside your application services:
 
 ```ts
-import { ProofDispatchLive } from "./proof-dispatch";
-
-const AuthLive = AppAuth.layer.pipe(
-  Layer.provide([EmailLive, ProofDispatchLive]),
-  Layer.provide(AuthDependencies),
-);
+const AuthLive = AppAuth.layer.pipe(Layer.provide(EmailLive), Layer.provide(AuthDependencies));
 ```
 
-The [account application's scheduler](https://github.com/yielded-dev/auth/blob/main/examples/shared/account/proof-dispatch.ts)
-uses one application-scoped worker and a bounded queue. Admission never waits for
-provider acceptance; a full queue returns `ProofUnavailable`. Every committed receipt,
-including suppressed and replayed requests, uses the same admission path.
+Build `AuthLive` once in your server's application scope. Auth supplies one shared
+delivery worker automatically; there is no scheduler to implement or wire up.
+It accepts up to 64 pending tasks, runs one at a time, and requests cancellation
+after ten seconds of execution. A full queue returns `ProofUnavailable` without waiting for the
+provider. Every committed receipt uses the same admission path, including suppression
+and replay.
 
-The scheduler's `schedule(work)` accepts a private `Effect<void>` with no remaining
-dependencies. Keep it in memory, never serialize or log it, and do not automatically
-retry it. Build the scheduler and delivery services in a scope that outlives requests.
-For Workers, the host must keep that scope alive through its background-work lifetime;
-providing `AuthLive` only inside a request scope is insufficient.
+The worker stops with the application scope; a scope that closes at the end of each
+request also cancels its delivery. Workers and other hosts that suspend after returning
+a response must keep the scope alive using their background-work mechanism. This also
+applies when a provider requires request-local services, as in the Alchemy example.
 
-A queued task may start before the response is sent. If your host requires strictly
-post-response execution, release the work from its response-completion hook. Persistence
-and application hooks can still vary in latency; Auth does not promise constant-time requests.
-`Proofs.ProofDispatchScheduler.layerInline` is an explicit option for CLI or trusted
-workflows that need delivery to finish before continuing. It exposes provider latency
-and should not serve public requests that must conceal account eligibility.
+A queued task may start before the response is sent. Persistence and application
+hooks can still vary in latency; Auth does not promise constant-time requests.
+For host-specific scheduling, override `Proofs.ProofDispatchScheduler` when constructing
+`AuthLive`. A host requiring strictly post-response execution must release work from
+its completion hook.
+
+For CLI or trusted workflows that must await delivery, explicitly provide
+`Proofs.ProofDispatchScheduler.layerInline`. It exposes provider latency and should
+not serve public requests that must conceal account eligibility.
 
 Keep bodies and capability URLs out of logs and telemetry. Disable transport/SDK
 retries and use `maximumDeliveryAttempts: 1`; the service promises no deduplication.

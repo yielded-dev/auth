@@ -116,7 +116,6 @@ import { FetchHttpClient } from "effect/http";
 import { AppAuth } from "./auth";
 import { AuthDependencies } from "./auth-dependencies";
 import { PhonePersistenceLive, ProofPersistenceLive } from "./auth-persistence";
-import { ProofDispatchLive } from "./proof-dispatch";
 
 const TwilioConfigLive = Layer.effect(
   Twilio.TwilioConfig,
@@ -142,7 +141,6 @@ export const PhoneLive = Layer.mergeAll(
     resolve: ({ credential }) => Effect.succeed({ phoneNumber: credential.phoneNumber }),
   }),
   SmsLive,
-  ProofDispatchLive,
 );
 
 export const AuthLive = AppAuth.layer.pipe(
@@ -161,12 +159,11 @@ requires no Twilio SDK.
 
 `AuthDependencies` is defined in the [shared application composition](../reference/adapters#compose-the-application-layer).
 It supplies session storage, account authority, request-binding configuration, and
-`ProofKeys`. Web Crypto and empty lifecycle hooks have defaults. Database storage,
-destination policy, claims, and delivery have no automatic implementations.
-`ProofDispatchLive` is your `Proofs.ProofDispatchScheduler` Layer: use bounded,
-nonblocking admission and an execution scope that outlives requests so SMS provider
-latency does not hold up the response. The [shared scheduling example](./email-delivery#compose-auth)
-also applies to SMS. Inline scheduling is only an explicit trusted-workflow fallback.
+`ProofKeys`. Web Crypto, empty lifecycle hooks, and a bounded delivery worker have
+defaults. Database storage, destination policy, claims, and delivery have no automatic
+implementations. Build Auth in an application scope that outlives requests; the built-in
+worker keeps SMS provider latency outside the response path without extra wiring.
+See [delivery lifetime and overrides](./email-delivery#compose-auth), which also apply to SMS.
 
 <details>
 <summary>Customize the SMS message</summary>

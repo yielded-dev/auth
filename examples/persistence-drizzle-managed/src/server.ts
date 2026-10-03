@@ -4,7 +4,6 @@ import { Effect, FileSystem, Layer, Path } from "effect";
 import { FetchHttpClient, HttpRouter, HttpServerResponse } from "effect/http";
 
 import { AppAuth } from "../../shared/account/auth";
-import { ProofDispatchLive } from "../../shared/account/proof-dispatch";
 import { DatabaseLive, KeysLive } from "./data";
 import { DeliveryLive } from "./delivery";
 import { AuthLive } from "./live";
@@ -44,7 +43,6 @@ const PageRoutes = Layer.unwrap(
 );
 
 const ApplicationLive = AuthLive.pipe(
-  Layer.provide(ProofDispatchLive),
   Layer.provide([DatabaseLive, KeysLive, DeliveryLive, ScreeningLive]),
   Layer.provide([FetchHttpClient.layer, BunServices.layer]),
 );
