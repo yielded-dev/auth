@@ -127,6 +127,18 @@ can provide persistence and registration. `AuthDependencies` supplies the shared
 For sign-in-only `Password.make()`, supply hashing, password persistence, and claims
 alongside those shared services. Keep normalization stable for stored credentials.
 
+Share one `PasswordKdfAdmission.layer()` instance across hashers in each runtime.
+By default it runs one KDF callback and accepts up to 16 waiting calls, each with a
+5000ms acquisition deadline. A full queue or expired wait fails with
+`PasswordKdfBusy`; interrupted waiters leave the queue. Once admitted to run, work
+retains its permit through completion and cleanup, even if its caller is interrupted.
+The deadline does not limit running KDF work.
+
+Configure `concurrency`, `maxQueued`, and `maxWaitMilliseconds` on the Layer;
+`maxQueued: 0` enables fail-fast admission. Size concurrency for your host's KDF
+memory and CPU budget. These are process-local limits, without a strict FIFO
+ordering guarantee; applications still need ingress rate limits.
+
 ## Recover a password
 
 Recovery uses `requestReset` → `verifyReset` → `completeReset` and requires an
