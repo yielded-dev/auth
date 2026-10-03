@@ -128,9 +128,18 @@ public prerelease is installed as `@yielded/auth@beta`.
 
 ## CI and review
 
-CI runs static checks, tests, and builds in separate jobs with a required `ready`
-fan-in on pull requests. Vite Task cache entries are reused only when their inputs
-match; Vitest's mutable result cache is disabled.
+Every pull request reports the required `ready` check. Contributor docs, changesets,
+and auxiliary workflows need formatting and workflow validation; published docs
+and the root README also get a docs check/build. Source, dependencies, CI setup,
+unknown paths, release PRs, and pushes to `main` run the full static, test, and build
+gates. Renames and incomplete diffs conservatively select the full gate.
+
+CI uses Vite+ for installation and commands, caches package downloads, and restores
+Vite Task results after installation. Vite fingerprints task inputs before reuse;
+successful tasks survive a later failure. Astro outputs include generated types,
+and Vitest's mutable result cache stays disabled. Timed-out commands restart once;
+Vitest retries only timeout errors, up to twice. Dependency and compiler setup can
+also retry one failed attempt.
 
 Effect Agent reviews use `GITHUB_TOKEN` and the repository secret `OPENAI_API_KEY`.
 Set `PR_REVIEW_ENABLED=true` after the workflow reaches `main`.
