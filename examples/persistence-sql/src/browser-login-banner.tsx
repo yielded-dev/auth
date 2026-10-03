@@ -1,24 +1,43 @@
 import { useAtom, useAtomValue } from "@effect/atom-react";
 import { BrowserLogin, type OperationHttp, OperationHttpClient } from "@yielded/auth";
-import { Effect, Layer, Redacted, Schema } from "effect";
+import { Context, Effect, Layer, Redacted, Schema } from "effect";
 import { FetchHttpClient } from "effect/http";
-import { Atom } from "effect/reactivity";
+import { Atom, type AtomRegistry } from "effect/reactivity";
 
 import { handoff } from "../../shared/account/browser-login-contract";
 import type { AccountClient } from "../../shared/account/client";
+
+type AuthenticationAction<Action> =
+  Action extends Atom.AtomResultFn<infer Input, infer Result, infer Error>
+    ? (input: Input) => Effect.Effect<Result, Error>
+    : never;
+
+export class AccountAuthentication extends Context.Service<
+  AccountAuthentication,
+  {
+    readonly [Action in "createAccount" | "signIn" | "signInWithPasskey"]: AuthenticationAction<
+      AccountClient[Action]
+    >;
+  } & {
+    readonly session: Effect.Effect<
+      Atom.Success<AccountClient["auth"]["session"]>,
+      Atom.Failure<AccountClient["auth"]["session"]>
+    >;
+  }
+>()("sql-example/AccountAuthentication") {}
 
 const requestedAttempt = new URL(window.location.href).searchParams.get("attempt");
 const attemptId = Schema.is(BrowserLogin.Random)(requestedAttempt) ? requestedAttempt : null;
 
 export const returningToApp = attemptId !== null;
 
-const runtime = Atom.runtime(
-  OperationHttpClient.layer({
-    baseUrl: window.location.origin,
-    csrfHeader: "x-auth-csrf",
-    csrfValue: "operation",
-  }).pipe(Layer.provide(FetchHttpClient.layer)),
-);
+const transport = OperationHttpClient.layer({
+  baseUrl: window.location.origin,
+  csrfHeader: "x-auth-csrf",
+  csrfValue: "operation",
+}).pipe(Layer.provide(FetchHttpClient.layer));
+
+const runtime = Atom.runtime(transport);
 
 const submitted = Atom.make(false);
 const callback = Atom.make<Redacted.Redacted<string> | null>(null);
@@ -38,16 +57,19 @@ const authorize = runtime.fn<OperationHttp.RouteInput<typeof handoff.routes.auth
   }),
 );
 
-export const withBrowserLogin = (client: AccountClient) => {
+export const makeBrowserLogin = (
+  authentication: Layer.Layer<AccountAuthentication, never, AtomRegistry.AtomRegistry>,
+) => {
+  const runtime = Atom.runtime(Layer.merge(transport, authentication));
+
   const initialize = runtime
     .atom((get) =>
       Effect.gen(function* () {
         if (attemptId === null) return null;
 
         // Capture only the initial session. Later authentication uses the explicit workflows below.
-        const initial = yield* get
-          .resultOnce(client.auth.session, { suspendOnWaiting: true })
-          .pipe(Effect.result);
+        const account = yield* AccountAuthentication;
+        const initial = yield* account.session.pipe(Effect.result);
 
         const transport = yield* OperationHttpClient.Client;
         const description = yield* transport.call(handoff.routes.describe, { attemptId });
@@ -70,53 +92,80 @@ export const withBrowserLogin = (client: AccountClient) => {
     )
     .pipe(Atom.keepAlive);
 
-  const complete = <Input, Result extends Atom.Success<AccountClient["signIn"]> | undefined, Error>(
-    action: Atom.AtomResultFn<Input, Result, Error>,
-  ) =>
-    client.runtime.fn<Input>()(
-      Effect.fnUntraced(function* (input, get) {
-        const description = yield* get.result(initialize).pipe(Effect.result);
-        const result = yield* get.setResult(action, input);
+  const complete = runtime.fn<Atom.Success<AccountClient["signIn"]> | undefined>()(
+    Effect.fnUntraced(function* (result, get) {
+      const description = yield* get.result(initialize).pipe(Effect.result);
 
-        if (
-          result?._tag === "Authenticated" &&
-          attemptId !== null &&
-          description._tag === "Success" &&
-          description.success !== null
-        )
-          // Keep return failures visible in the banner without undoing sign-in.
-          yield* get
-            .setResult(authorize, {
-              attemptId,
-              decision: "continue",
-              expectedSessionId: result.session.sessionId,
-            })
-            .pipe(Effect.result);
+      if (
+        result?._tag === "Authenticated" &&
+        attemptId !== null &&
+        description._tag === "Success" &&
+        description.success !== null
+      )
+        // Keep return failures visible in the banner without undoing sign-in.
+        yield* get
+          .setResult(authorize, {
+            attemptId,
+            decision: "continue",
+            expectedSessionId: result.session.sessionId,
+          })
+          .pipe(Effect.result);
+    }),
+  );
 
-        return result;
-      }),
-    );
+  const createAccount = runtime.fn<
+    Parameters<AccountAuthentication["Service"]["createAccount"]>[0]
+  >()(
+    Effect.fnUntraced(function* (input, get) {
+      yield* get.result(initialize).pipe(Effect.result);
+      const account = yield* AccountAuthentication;
+      const result = yield* account.createAccount(input);
+
+      yield* get.setResult(complete, result);
+
+      return result;
+    }),
+  );
+
+  const signIn = runtime.fn<Parameters<AccountAuthentication["Service"]["signIn"]>[0]>()(
+    Effect.fnUntraced(function* (input, get) {
+      yield* get.result(initialize).pipe(Effect.result);
+      const account = yield* AccountAuthentication;
+      const result = yield* account.signIn(input);
+
+      yield* get.setResult(complete, result);
+
+      return result;
+    }),
+  );
+
+  const signInWithPasskey = runtime.fn<void>()(
+    Effect.fnUntraced(function* (_, get) {
+      yield* get.result(initialize).pipe(Effect.result);
+      const account = yield* AccountAuthentication;
+      const result = yield* account.signInWithPasskey();
+
+      yield* get.setResult(complete, result);
+
+      return result;
+    }),
+  );
 
   return {
     initialize,
-    client:
-      attemptId === null
-        ? client
-        : {
-            ...client,
-            createAccount: complete(client.createAccount),
-            signIn: complete(client.signIn),
-            signInWithPasskey: complete(client.signInWithPasskey),
-          },
+    createAccount,
+    signIn,
+    signInWithPasskey,
   };
 };
 
 export function BrowserLoginBanner({
+  client,
   login,
 }: {
-  readonly login: ReturnType<typeof withBrowserLogin>;
+  readonly client: AccountClient;
+  readonly login: ReturnType<typeof makeBrowserLogin>;
 }) {
-  const { client } = login;
   const initialized = useAtomValue(login.initialize);
   const session = useAtomValue(client.auth.session);
   const [result, proceed] = useAtom(authorize);
