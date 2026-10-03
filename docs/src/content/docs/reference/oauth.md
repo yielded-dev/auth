@@ -309,5 +309,9 @@ Missing fields remain absent; GitHub nullable values remain null. GitHub's `/use
 email is not asserted verified. Adapters do not fetch additional email or UserInfo
 endpoints or retain unknown fields. Connected-grant refresh need not update profiles.
 
+The OIDC adapter also includes Google's `hd` hosted-domain claim in `providerData`
+for verified Google ID tokens. Applications can use it to restrict access to a
+Google Workspace or Cloud organization. Other issuers' private `hd` claims remain ignored.
+
 Detailed signatures and invariants live beside the
 [OAuth source](https://github.com/yielded-dev/auth/tree/main/packages/auth/src/oauth).

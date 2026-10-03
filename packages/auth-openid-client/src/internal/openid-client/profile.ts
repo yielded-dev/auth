@@ -1,14 +1,14 @@
-import { OAuthProtocolRejected, type OAuthDisplayProfile } from "@yielded/auth/OAuth";
+import {
+  OAuthProtocolRejected,
+  type OAuthDisplayProfile,
+  type OAuthIssuer,
+} from "@yielded/auth/OAuth";
 import { Effect, Schema } from "effect";
 
 const text = Schema.String.check(Schema.isMaxLength(256));
 const url = Schema.String.check(Schema.isMaxLength(2048));
 
-/** Standard OpenID Connect user claims returned in a verified ID token. This
- * does not request additional scopes or fetch UserInfo. Protocol claims and
- * credentials are excluded; values such as email_verified describe the provider's
- * assertion and never authorize local account linking by themselves. */
-export const OidcUserProfile = Schema.Struct({
+const standardOidcUserProfile = Schema.Struct({
   name: Schema.optionalKey(text),
   given_name: Schema.optionalKey(text),
   family_name: Schema.optionalKey(text),
@@ -41,15 +41,27 @@ export const OidcUserProfile = Schema.Struct({
   ),
 });
 
+/** Standard OpenID Connect user claims, plus Google's optional hosted domain.
+ * The adapter projects these from verified ID tokens without requesting additional
+ * scopes or fetching UserInfo. Protocol claims and credentials are excluded;
+ * provider assertions never authorize local account linking by themselves. */
+export const OidcUserProfile = Schema.Struct({
+  ...standardOidcUserProfile.fields,
+  /** Hosted domain for a Google Workspace or Cloud organization. The adapter
+   * reads it from verified Google ID tokens; other issuers' `hd` claims are ignored. */
+  hd: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(253))),
+});
+
 export type OidcUserProfile = typeof OidcUserProfile.Type;
 
 export const decodeOidcProfile = Effect.fn("OpenIdClient.decodeProfile")(function* (
   claims: unknown,
+  issuer: typeof OAuthIssuer.Type,
 ): Effect.fn.Return<OAuthDisplayProfile | undefined, OAuthProtocolRejected> {
-  // oxlint-disable-next-line no-restricted-properties -- Select standard user claims from an already verified ID token.
-  const profile = yield* Schema.decodeUnknownEffect(OidcUserProfile)(claims).pipe(
-    Effect.mapError(() => OAuthProtocolRejected.make({})),
-  );
+  // oxlint-disable-next-line no-restricted-properties -- Project claims from an ID token already verified against this issuer.
+  const profile = yield* Schema.decodeUnknownEffect(
+    issuer === "https://accounts.google.com" ? OidcUserProfile : standardOidcUserProfile,
+  )(claims).pipe(Effect.mapError(() => OAuthProtocolRejected.make({})));
 
   if (Object.keys(profile).length === 0) return undefined;
   const displayName = profile.name?.trim() || profile.preferred_username;

@@ -134,9 +134,15 @@ match; Vitest's mutable result cache is disabled.
 
 Effect Agent reviews use `GITHUB_TOKEN` and the repository secret `OPENAI_API_KEY`.
 Set `PR_REVIEW_ENABLED=true` after the workflow reaches `main`.
-The `pr-review-forks` environment requires maintainer
-approval; `pr-review` handles same-repository and authorized `@effect-agent review`
-comments. Both execute trusted default-branch code, never PR-head code.
+Automatic reviews follow completed pull-request CI runs after success or failure;
+cancelled runs, drafts, generated release metadata, and stale PR heads are skipped.
+For forks requiring GitHub workflow approval, click **Approve workflows to run** once:
+CI runs first, then review starts without another approval. All reviews use `pr-review`,
+which must have no required reviewers; `pr-review-forks` is no longer used.
+Authorized `@effect-agent review` comments start reviews without waiting for CI.
+Reviews execute trusted default-branch code and read PR source through GitHub's API;
+they never execute PR-head code or consume CI artifacts or caches. Approving CI does
+not grant that CI job repository secrets.
 
 ## Documentation
 
