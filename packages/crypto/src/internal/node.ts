@@ -1,6 +1,6 @@
 import * as crypto from "node:crypto";
 
-import { Effect } from "effect";
+import { Effect, Result } from "effect";
 
 import { CryptoUnavailable, UnsupportedAlgorithm } from "../Errors";
 import type { Limits } from "../Kdf";
@@ -12,9 +12,11 @@ const argon2: Argon2 = Effect.fnUntraced(function* (input: Argon2Parameters) {
   // Namespace import keeps this module loadable on Node versions without Argon2.
   if (typeof crypto.argon2 !== "function") return yield* UnsupportedAlgorithm.make({});
 
-  return yield* Effect.tryPromise({
-    try: () =>
-      new Promise<Uint8Array>((resolve, reject) => {
+  // Node cannot cancel this work. Keep borrowed buffers and admission until the
+  // callback completes, including when its caller has requested interruption.
+  return yield* Effect.callback<Uint8Array, CryptoUnavailable>((resume) => {
+    const registration = Result.try({
+      try: () =>
         crypto.argon2(
           "argon2id",
           {
@@ -27,11 +29,14 @@ const argon2: Argon2 = Effect.fnUntraced(function* (input: Argon2Parameters) {
             secret: input.secret,
             associatedData: input.associatedData,
           },
-          (error, key) => (error === null ? resolve(key) : reject(error)),
-        );
-      }),
-    catch: () => CryptoUnavailable.make({}),
-  });
+          (error, key) =>
+            resume(error === null ? Effect.succeed(key) : Effect.fail(CryptoUnavailable.make({}))),
+        ),
+      catch: () => CryptoUnavailable.make({}),
+    });
+
+    if (Result.isFailure(registration)) resume(Effect.fail(registration.failure));
+  }).pipe(Effect.uninterruptible);
 });
 
 /** Node-compatible WebCrypto/Argon2id with the portable XChaCha20-Poly1305 extension. */

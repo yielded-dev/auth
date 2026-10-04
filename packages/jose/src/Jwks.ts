@@ -11,6 +11,7 @@ import {
   Scope,
   Semaphore,
   Stream,
+  SynchronizedRef,
 } from "effect";
 import { FetchHttpClient, HttpClient } from "effect/http";
 
@@ -68,9 +69,15 @@ export interface RemoteOptions {
 }
 
 const readSet = (input: unknown) =>
-  Effect.suspend(() =>
-    Schema.decodeUnknownEffect(KeySet)(KeyInput.keySet(input), { reportInput: false }),
-  ).pipe(
+  Effect.try({
+    try: () => KeyInput.keySet(input),
+    catch: () => InvalidKey.make({}),
+  }).pipe(
+    Effect.flatMap((captured) =>
+      Schema.decodeUnknownEffect(KeySet)(captured, { reportInput: false }).pipe(
+        Effect.mapError(() => InvalidKey.make({})),
+      ),
+    ),
     Effect.map((set) => {
       for (const key of set.keys) {
         KeyInput.detach(key);
@@ -81,17 +88,19 @@ const readSet = (input: unknown) =>
 
       return Object.freeze(KeyInput.detach(set));
     }),
-    Effect.mapError(() => InvalidKey.make({})),
-    Effect.catchDefect(() => InvalidKey.make({})),
   );
 
 const readSelection = (input: Selection) =>
-  Effect.suspend(() =>
-    Schema.decodeUnknownEffect(Selection)(KeyInput.object(input), { reportInput: false }),
-  ).pipe(
+  Effect.try({
+    try: () => KeyInput.object(input),
+    catch: () => InvalidKey.make({}),
+  }).pipe(
+    Effect.flatMap((captured) =>
+      Schema.decodeUnknownEffect(Selection)(captured, { reportInput: false }).pipe(
+        Effect.mapError(() => InvalidKey.make({})),
+      ),
+    ),
     Effect.map(KeyInput.detach),
-    Effect.mapError(() => InvalidKey.make({})),
-    Effect.catchDefect(() => InvalidKey.make({})),
   );
 
 const select = Effect.fnUntraced(function* (set: KeySet, selection: Selection) {
@@ -137,6 +146,23 @@ interface Snapshot {
   readonly expiresAt: number;
 }
 
+type RemoteState =
+  | { readonly _tag: "Closed" }
+  | {
+      readonly _tag: "Open";
+      readonly cache: Snapshot | undefined;
+      readonly pending: Deferred.Deferred<Snapshot, JwksUnavailable> | undefined;
+      readonly lastAttempt: number;
+    };
+
+type Admission =
+  | { readonly _tag: "Rejected"; readonly reason: "closed" | "cooldown" }
+  | { readonly _tag: "Cached"; readonly snapshot: Snapshot }
+  | {
+      readonly _tag: "Join" | "Start";
+      readonly result: Deferred.Deferred<Snapshot, JwksUnavailable>;
+    };
+
 /**
  * One trusted HTTPS endpoint per Layer. The supplied client owns egress policy
  * and must not follow redirects; FetchHttpClient is configured to reject them.
@@ -164,20 +190,24 @@ export const layerRemote = (
       }).pipe(Effect.mapError(() => JwksUnavailable.make({ reason: "configuration" })));
 
       const client = HttpClient.withScope(yield* HttpClient.HttpClient);
-      let cache: Snapshot | undefined;
-      let pending: Deferred.Deferred<Snapshot, JwksUnavailable> | undefined;
-      let lastAttempt = -Infinity;
-      let closed = false;
+
+      const state = yield* SynchronizedRef.make<RemoteState>({
+        _tag: "Open",
+        cache: undefined,
+        pending: undefined,
+        lastAttempt: -Infinity,
+      });
+
       const permits = yield* Semaphore.make(options.maxWaiters);
 
       const scope = yield* Effect.acquireRelease(Scope.make(), (scope) =>
         Effect.gen(function* () {
-          closed = true;
-          cache = undefined;
+          const previous = yield* SynchronizedRef.getAndSet(state, { _tag: "Closed" });
+
           // A scoped fiber can be interrupted before its first instruction, so
           // its onExit handler alone cannot release pending lookup waiters.
-          if (pending !== undefined)
-            yield* Deferred.fail(pending, JwksUnavailable.make({ reason: "closed" }));
+          if (previous._tag === "Open" && previous.pending !== undefined)
+            yield* Deferred.fail(previous.pending, JwksUnavailable.make({ reason: "closed" }));
           yield* Scope.close(scope, Exit.void);
         }),
       );
@@ -229,47 +259,89 @@ export const layerRemote = (
         }),
       );
 
-      const refresh = Effect.uninterruptibleMask((restore) =>
-        Effect.gen(function* () {
-          if (closed) return yield* JwksUnavailable.make({ reason: "closed" });
-          if (pending !== undefined) return yield* restore(Deferred.await(pending));
-          const now = yield* Clock.currentTimeMillis;
+      const refresh = (missingFrom?: Snapshot) =>
+        Effect.uninterruptibleMask((restore) =>
+          Effect.gen(function* () {
+            const now = yield* restore(Clock.currentTimeMillis);
+            const result = yield* Deferred.make<Snapshot, JwksUnavailable>();
 
-          if (now - lastAttempt < options.cooldownMs)
-            return yield* JwksUnavailable.make({ reason: "cooldown" });
-          lastAttempt = now;
-          const result = yield* Deferred.make<Snapshot, JwksUnavailable>();
+            // Recheck cache and ownership together after the caller's snapshot.
+            // A missing key bypasses only the snapshot that failed selection.
+            const admission = yield* SynchronizedRef.modify(
+              state,
+              (current): readonly [Admission, RemoteState] => {
+                if (current._tag === "Closed")
+                  return [{ _tag: "Rejected", reason: "closed" }, current];
+                if (
+                  current.cache !== undefined &&
+                  current.cache !== missingFrom &&
+                  current.cache.expiresAt > now
+                )
+                  return [{ _tag: "Cached", snapshot: current.cache }, current];
+                if (current.pending !== undefined)
+                  return [{ _tag: "Join", result: current.pending }, current];
+                if (now - current.lastAttempt < options.cooldownMs)
+                  return [{ _tag: "Rejected", reason: "cooldown" }, current];
 
-          pending = result;
-          yield* fetch.pipe(
-            Effect.onExit((exit) =>
-              Effect.gen(function* () {
-                if (Exit.isSuccess(exit) && !closed) cache = exit.value;
-                pending = undefined;
-                yield* Deferred.done(result, exit);
-              }),
-            ),
-            Effect.forkIn(scope, { uninterruptible: false }),
-          );
+                return [
+                  { _tag: "Start", result },
+                  { ...current, pending: result, lastAttempt: now },
+                ];
+              },
+            );
 
-          return yield* restore(Deferred.await(result));
-        }),
-      );
+            if (admission._tag === "Rejected")
+              return yield* JwksUnavailable.make({ reason: admission.reason });
+            if (admission._tag === "Cached") return admission.snapshot;
+            if (admission._tag === "Join") return yield* restore(Deferred.await(admission.result));
+
+            // Admission through fork registration is uninterruptible. Network
+            // work and waiter suspension never run under the state lock.
+            yield* fetch.pipe(
+              Effect.onExit((exit) =>
+                SynchronizedRef.updateEffect(state, (current) =>
+                  current._tag === "Closed"
+                    ? Effect.succeed(current)
+                    : Deferred.done(result, exit).pipe(
+                        // Keep pending ownership until publication, serialized
+                        // with shutdown so a closed owner cannot publish success.
+                        Effect.as({
+                          ...current,
+                          cache: Exit.isSuccess(exit) ? exit.value : current.cache,
+                          pending: undefined,
+                        }),
+                      ),
+                ),
+              ),
+              Effect.forkIn(scope, { uninterruptible: false }),
+            );
+
+            return yield* restore(Deferred.await(result));
+          }),
+        );
 
       const resolve = Effect.fnUntraced(function* (input: Selection) {
-        if (closed) return yield* JwksUnavailable.make({ reason: "closed" });
+        if ((yield* SynchronizedRef.get(state))._tag === "Closed")
+          return yield* JwksUnavailable.make({ reason: "closed" });
         const selection = yield* readSelection(input);
         const now = yield* Clock.currentTimeMillis;
-        const current = cache !== undefined && cache.expiresAt > now ? cache : yield* refresh;
+        const snapshot = yield* SynchronizedRef.get(state);
+
+        if (snapshot._tag === "Closed") return yield* JwksUnavailable.make({ reason: "closed" });
+
+        const current =
+          snapshot.cache !== undefined && snapshot.cache.expiresAt > now
+            ? snapshot.cache
+            : yield* refresh();
 
         const candidate = yield* select(current.keys, selection).pipe(
           Effect.catchTag("JoseKeyNotFound", () =>
-            Effect.gen(function* () {
-              if ((yield* Clock.currentTimeMillis) - lastAttempt < options.cooldownMs)
-                return yield* KeyNotFound.make({});
-
-              return yield* select((yield* refresh).keys, selection);
-            }),
+            refresh(current).pipe(
+              Effect.mapError((error) =>
+                error.reason === "cooldown" ? KeyNotFound.make({}) : error,
+              ),
+              Effect.flatMap((snapshot) => select(snapshot.keys, selection)),
+            ),
           ),
         );
 

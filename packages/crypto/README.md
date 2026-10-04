@@ -20,9 +20,10 @@ an implementation through a direct backend import:
 
 All backend Layers require one shared `KdfAdmission` Layer. Waiting is bounded;
 once admitted, derivation retains its permit until actual work and cleanup finish,
-including interruption. Portable Argon2id yields through Effect between batches
-and clears its work buffers before returning, but still runs on the calling
-thread. JavaScript cannot guarantee zeroization or constant-time execution.
+including interruption. Portable Argon2id yields through Effect between batches,
+accepts interruption, and clears its work buffers before releasing admission. It
+still runs on the calling thread. JavaScript cannot guarantee zeroization or
+constant-time execution.
 
 Secret inputs, derived bytes and decrypted plaintext use `Redacted`. Backend
 errors contain classifications without native causes or secret payloads. Keep

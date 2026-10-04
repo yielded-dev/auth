@@ -1,4 +1,4 @@
-import { Effect, Result, Schema } from "effect";
+import { Effect, Schema, type Scope } from "effect";
 import { Base64 as Base64Encoding, Base64Url as Base64UrlEncoding } from "effect/encoding";
 
 import type { PasswordHashingConfig } from "./configuration";
@@ -68,13 +68,16 @@ const decodeBytes = Effect.fn("PasswordHash.decodeBytes")(function* (
   minimum: number,
   maximum: number,
 ) {
-  const decoded = Result.getOrUndefined(
-    url
-      ? Base64UrlEncoding.decode(input)
-      : Base64Encoding.decode(input.padEnd(Math.ceil(input.length / 4) * 4, "=")),
+  const decoded = yield* Effect.acquireRelease(
+    Effect.fromResult(
+      url
+        ? Base64UrlEncoding.decode(input)
+        : Base64Encoding.decode(input.padEnd(Math.ceil(input.length / 4) * 4, "=")),
+    ).pipe(Effect.mapError(() => PasswordVerifierInvalid.make({ reason: "malformed" }))),
+    (bytes) => Effect.sync(() => bytes.fill(0)),
+    { interruptible: true },
   );
 
-  if (decoded === undefined) return yield* PasswordVerifierInvalid.make({ reason: "malformed" });
   if (
     decoded.length < minimum ||
     decoded.length > maximum ||
@@ -91,7 +94,7 @@ const decodeBytes = Effect.fn("PasswordHash.decodeBytes")(function* (
 export const parsePasswordHash = Effect.fn("parsePasswordHash")(function* (
   input: string,
   config: PasswordHashingConfig,
-): Effect.fn.Return<ParsedPasswordHash, PasswordVerifierInvalid> {
+): Effect.fn.Return<ParsedPasswordHash, PasswordVerifierInvalid, Scope.Scope> {
   yield* Schema.decodeEffect(Bounded)(input).pipe(
     Effect.mapError(() => PasswordVerifierInvalid.make({ reason: "malformed" })),
   );

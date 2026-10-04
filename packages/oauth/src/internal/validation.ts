@@ -97,7 +97,9 @@ export const Resources = Schema.Array(Resource).check(Schema.isMaxLength(64));
 
 export const RequestOptions = Schema.Struct({
   timeoutMs: Schema.Finite.check(Schema.isBetween({ minimum: 1, maximum: 60000 })),
-  maxResponseBytes: integer(1, 1048576),
+  maxResponseBytes: integer(1, 1048576).pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed(1048576)),
+  ),
 });
 
 export const Verifier = Schema.Redacted(
@@ -195,6 +197,8 @@ export const ProtocolEndpoint = Endpoint.check(
   ),
 );
 
+// Keep exceptions from hostile input access and erased Redacted values inside
+// schema decoding; service execution must remain outside these catches.
 export const configuration = <S extends Schema.Constraint>(
   schema: S,
   input: unknown,

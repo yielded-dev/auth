@@ -1,6 +1,6 @@
 import { it } from "@effect/vitest";
 import { Jwe, Jwk, Jws } from "@yielded/jose";
-import { Effect, Redacted } from "effect";
+import { Crypto, Effect, PlatformError, Redacted } from "effect";
 import * as jose from "jose";
 import { expect } from "vite-plus/test";
 
@@ -102,6 +102,37 @@ it.effect("rejects payload tampering and disallowed algorithms", () =>
       (yield* Jws.verify(Redacted.make(token), key, { algorithms: ["RS256"] }).pipe(Effect.flip))
         ._tag,
     ).toBe("JoseAlgorithmNotAllowed");
+  }).pipe(Effect.provide(cryptoLayer)),
+);
+
+// Reproduced at 5199d99: RNG PlatformError escaped JweError with its native cause.
+it.effect("classifies JWE RNG failures without exposing native causes", () =>
+  Effect.gen(function* () {
+    const key = yield* Jwk.importSecret(Redacted.make(secretJwk), "dir");
+    const random = yield* Crypto.Crypto;
+
+    const error = yield* Jwe.encrypt(Redacted.make(utf8("payload")), key, {
+      alg: "dir",
+      enc: "A256GCM",
+    }).pipe(
+      Effect.provideService(Crypto.Crypto, {
+        ...random,
+        randomBytes: () =>
+          Effect.fail(
+            PlatformError.systemError({
+              _tag: "Unknown",
+              module: "Crypto",
+              method: "randomBytes",
+              cause: "private-rng-canary",
+            }),
+          ),
+      }),
+      Effect.flip,
+    );
+
+    expect(error._tag).toBe("CryptoUnavailable");
+    expect(JSON.stringify(error)).not.toContain("private-rng-canary");
+    expect(String(error)).not.toContain("private-rng-canary");
   }).pipe(Effect.provide(cryptoLayer)),
 );
 

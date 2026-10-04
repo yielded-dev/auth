@@ -49,21 +49,24 @@ export type ProviderOptions<R = never> = Pick<Options<R>, "timeoutSeconds"> &
   (ProviderRegistration<R> | { readonly registrations: ReadonlyArray<ProviderRegistration<R>> });
 
 const resolve = <R>(providers: ReadonlyArray<Provider<R>>) =>
-  providers.map((input) =>
-    input.protocol === "oidc"
-      ? {
-          ...resolveProvider(input),
-          scopes: input.scopes === undefined ? ["openid"] : input.scopes,
-          idTokenSignedResponseAlg:
-            input.idTokenSignedResponseAlg === undefined
-              ? ("RS256" as const)
-              : input.idTokenSignedResponseAlg,
-        }
-      : {
-          ...resolveProvider(input),
-          scopes: input.scopes === undefined ? [] : input.scopes,
-          pkceS256: input.pkceS256 === undefined ? (true as const) : input.pkceS256,
-        },
+  Effect.forEach(
+    providers,
+    Effect.fnUntraced(function* (input) {
+      return input.protocol === "oidc"
+        ? {
+            ...(yield* resolveProvider(input)),
+            scopes: input.scopes === undefined ? ["openid"] : input.scopes,
+            idTokenSignedResponseAlg:
+              input.idTokenSignedResponseAlg === undefined
+                ? ("RS256" as const)
+                : input.idTokenSignedResponseAlg,
+          }
+        : {
+            ...(yield* resolveProvider(input)),
+            scopes: input.scopes === undefined ? [] : input.scopes,
+            pkceS256: input.pkceS256 === undefined ? (true as const) : input.pkceS256,
+          };
+    }),
   );
 
 /** Declare an OIDC or OAuth provider for Http.layer. No I/O runs until its
@@ -119,8 +122,12 @@ export const provider = <R = never>(
 export const layer = <R = never>(options: Options<R>) =>
   Layer.effect(
     OAuthProtocol,
-    resolveOptions(() => ({
-      providers: resolve(options.providers),
-      timeoutSeconds: options.timeoutSeconds === undefined ? 10 : options.timeoutSeconds,
-    })).pipe(Effect.flatMap(makeOpenIdConnectOAuthProtocol<R>)),
+    resolveOptions(() =>
+      resolve(options.providers).pipe(
+        Effect.map((providers) => ({
+          providers,
+          timeoutSeconds: options.timeoutSeconds === undefined ? 10 : options.timeoutSeconds,
+        })),
+      ),
+    ).pipe(Effect.flatMap(makeOpenIdConnectOAuthProtocol<R>)),
   );

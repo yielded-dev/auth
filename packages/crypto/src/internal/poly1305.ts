@@ -12,12 +12,11 @@ export class Poly1305 {
   readonly blockLen = 16;
   readonly outputLen = 16;
   private buffer = new Uint8Array(16);
-  private r = new Uint16Array(10); // Allocating 1 array with .subarray() here is slower than 3
+  private r = new Uint16Array(10);
   private h = new Uint16Array(10);
   private pad = new Uint16Array(8);
   private pos = 0;
 
-  // Can be speed-up using BigUint64Array, at the cost of complexity
   constructor(key: Uint8Array) {
     const t0 = u8to16(key, 0);
     const t1 = u8to16(key, 2);

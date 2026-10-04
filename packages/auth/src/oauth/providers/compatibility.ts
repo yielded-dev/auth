@@ -1,11 +1,12 @@
-import { Predicate, Schema } from "effect";
+import { type Effect, Predicate, Schema } from "effect";
 
+import type { OAuthProtocolRejected, OAuthUnavailable } from "../signInErrors";
 import type {
   OpenIdConnectConnectedOAuthProvider,
   OpenIdConnectConnectedProtocolOptions,
 } from "./connected/models";
 
-/** Pure private provider rules, never part of the generic public options. */
+/** Private provider receipt rules, never part of the generic public options. */
 export interface TokenCompatibility {
   readonly inspectReceipt: (
     receipt: {
@@ -18,7 +19,7 @@ export interface TokenCompatibility {
       readonly refreshRequired: boolean;
       readonly operation: "authorization_code" | "refresh_token";
     },
-  ) => void;
+  ) => Effect.Effect<void, OAuthProtocolRejected | OAuthUnavailable>;
 }
 
 /** First-party rules travel with the exact provider generation. The symbol stays
@@ -32,8 +33,6 @@ export const TokenCompatibility = Schema.declare<TokenCompatibility>(
     Predicate.isFunction(input.inspectReceipt),
 );
 
-export class DefiniteTokenRejection extends Error {}
-
 export interface ConnectedCompatibility extends TokenCompatibility {
   readonly authorizationScopes: (
     scopes: ReadonlyArray<string>,
@@ -42,7 +41,7 @@ export interface ConnectedCompatibility extends TokenCompatibility {
   readonly decodeScopes: (
     receipt: string | undefined,
     expected: ReadonlyArray<string>,
-  ) => ReadonlyArray<string>;
+  ) => Effect.Effect<ReadonlyArray<string>, OAuthUnavailable>;
   readonly includeRefreshScope: boolean;
 }
 

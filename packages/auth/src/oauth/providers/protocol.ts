@@ -50,6 +50,8 @@ const plainIdentitySchema = Schema.Struct({
 const unavailable = () => OAuthUnavailable.make({});
 const rejected = () => OAuthProtocolRejected.make({});
 
+// Final containment for application callbacks and supplied platform services.
+// Expected validation failures are typed; defects never establish non-issuance.
 const unavailableOnDefect = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   effect.pipe(
     Effect.tapCause((cause) =>

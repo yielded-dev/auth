@@ -20,6 +20,7 @@ export const parse = <S extends Schema.Constraint>(
 ) =>
   Effect.suspend(() => Schema.decodeUnknownEffect(schema)(input, { reportInput: false })).pipe(
     Effect.mapError(() => InvalidToken.make({ reason })),
+    // Arbitrary nested input can still invoke foreign getters during decoding.
     Effect.catchDefect(() => InvalidToken.make({ reason })),
   );
 

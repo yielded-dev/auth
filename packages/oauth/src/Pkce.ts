@@ -15,7 +15,6 @@ export const random = Effect.fnUntraced(
     return Redacted.make(Base64Url.encode(bytes));
   },
   Effect.mapError(() => Unavailable.make({})),
-  Effect.catchDefect(() => Unavailable.make({})),
 );
 
 export const challenge = Effect.fnUntraced(
@@ -29,7 +28,6 @@ export const challenge = Effect.fnUntraced(
     return Base64Url.encode(digest);
   },
   Effect.mapError(() => Unavailable.make({})),
-  Effect.catchDefect(() => Unavailable.make({})),
 );
 
 export const make = Effect.fnUntraced(function* () {

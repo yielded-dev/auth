@@ -1,24 +1,21 @@
-import { Effect, Layer, Predicate, Redacted, Schema, Stream, Tracer } from "effect";
+import { Effect, Layer, Predicate, Redacted, Result, Schema, Stream, Tracer } from "effect";
 import { Base64 } from "effect/encoding";
 import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
 
 import { OAuthConnectedProfile } from "../permissionProfile";
-import {
-  DefiniteTokenRejection,
-  tokenCompatibility,
-  type ConnectedCompatibility,
-} from "../providers/compatibility";
+import { tokenCompatibility, type ConnectedCompatibility } from "../providers/compatibility";
 import { makeConnectedProtocolWithCompatibility } from "../providers/connected/protocol";
 import {
   OpenIdConnectConfigurationError,
   type OpenIdConnectOAuthProvider,
 } from "../providers/models";
+import { resolveOptions } from "../providers/options";
 import { makeOpenIdConnectOAuthProtocol } from "../providers/protocol";
 import { ProviderRevocation } from "../providers/ProviderRevocation";
 import { OAuthGeneration } from "../schema";
-import { OAuthUnavailable } from "../signInErrors";
+import { OAuthProtocolRejected, OAuthUnavailable } from "../signInErrors";
 import { OAuthCallbackId, OAuthIssuer, OAuthRedirectUri } from "../signInModels";
-import { snapshotOAuthSync } from "../signInSnapshot";
+import { freezeOAuth } from "../signInSnapshot";
 import { decodeGitHubIdentity, gitHubOAuthAppProviderKey } from "./identity";
 import type {
   GitHubOAuthAppConnectedProtocolOptions,
@@ -60,26 +57,43 @@ const connectedGenerations = Schema.Array(
 ).check(Schema.isMinLength(1), Schema.isMaxLength(64));
 
 const timeout = Schema.Finite.check(Schema.isBetween({ minimum: 1, maximum: 30 }));
-const isTimeout = Schema.is(timeout);
 
-const capture = <S extends Schema.Codec<unknown, unknown, never, never>>(
+const captureResult = <S extends Schema.Codec<unknown, unknown, never, never>>(
+  schema: S,
+  value: S["Type"],
+) => {
+  const codec = Schema.fromJsonString(Schema.toCodecJson(Schema.toType(schema)));
+
+  return Schema.encodeResult(codec)(value).pipe(
+    Result.flatMap(Schema.decodeResult(codec)),
+    Result.map((saved) => {
+      freezeOAuth(saved);
+
+      return saved;
+    }),
+    Result.mapError(invalid),
+  );
+};
+
+const capture = Effect.fnUntraced(function* <
+  S extends Schema.Codec<unknown, unknown, never, never>,
+>(
   schema: S,
   registrations: S["Type"],
   options: {
     readonly timeoutSeconds: number;
   },
-) =>
-  Effect.try({
-    try: () => {
-      const result = snapshotOAuthSync(schema, registrations);
-      const timeoutSeconds = options.timeoutSeconds;
+) {
+  const saved = yield* resolveOptions(() =>
+    Effect.fromResult(captureResult(schema, registrations)),
+  );
 
-      if (!isTimeout(timeoutSeconds)) throw invalid();
+  const timeoutSeconds = yield* Schema.decodeEffect(timeout)(options.timeoutSeconds).pipe(
+    Effect.mapError(invalid),
+  );
 
-      return { registrations: result, timeoutSeconds };
-    },
-    catch: invalid,
-  });
+  return { registrations: saved, timeoutSeconds };
+});
 
 const provider = (
   registration: GitHubOAuthAppGeneration,
@@ -107,11 +121,11 @@ const csvCell = Schema.String.check(Schema.isPattern(/^[A-Za-z0-9_:-]{1,256}$/))
 const isCell = Schema.is(csvCell);
 
 /** GitHub's receipt is comma-delimited, unlike the generic OAuth scope string. */
-const scopes = (
+const scopes = Effect.fnUntraced(function* (
   receipt: string | undefined,
   expected: ReadonlyArray<string>,
-): ReadonlyArray<string> => {
-  if (receipt === undefined || receipt.length > 16447) throw unavailable();
+): Effect.fn.Return<ReadonlyArray<string>, OAuthUnavailable> {
+  if (receipt === undefined || receipt.length > 16447) return yield* unavailable();
 
   const result =
     receipt === "" ? [] : receipt.split(",").map((cell) => cell.replace(/^[ \t]+|[ \t]+$/g, ""));
@@ -123,10 +137,10 @@ const scopes = (
     result.length !== expected.length ||
     result.some((cell) => !expected.includes(cell))
   )
-    throw unavailable();
+    return yield* unavailable();
 
   return result;
-};
+});
 
 const token = Schema.NonEmptyString.check(Schema.isMaxLength(16384));
 const expiry = Schema.Finite.check(Schema.isGreaterThan(0));
@@ -141,9 +155,9 @@ const receiptSchema = Schema.Struct({
 });
 
 // oxlint-disable-next-line no-restricted-properties -- Inspect the bounded raw receipt before the maintained parser can coerce expiry fields.
-const decodeReceipt = Schema.decodeUnknownSync(receiptSchema);
+const decodeReceipt = Schema.decodeUnknownEffect(receiptSchema);
 
-const encodeRevocation = Schema.encodeSync(
+const encodeRevocation = Schema.encodeEffect(
   Schema.fromJsonString(Schema.Struct({ access_token: token })),
 );
 
@@ -154,7 +168,7 @@ const terminalReceipt = Schema.Struct({
 });
 
 // oxlint-disable-next-line no-restricted-properties -- Fully validate the raw terminal receipt before classifying a provider rejection.
-const decodeTerminalReceipt = Schema.decodeUnknownSync(terminalReceipt);
+const decodeTerminalReceipt = Schema.decodeUnknownEffect(terminalReceipt);
 
 const successKeys = [
   "access_token",
@@ -167,39 +181,40 @@ const successKeys = [
 ];
 
 const compatibility: ConnectedCompatibility = Object.freeze<ConnectedCompatibility>({
-  inspectReceipt: ({ body, status, contentType }, input) => {
+  inspectReceipt: Effect.fnUntraced(function* ({ body, status, contentType }, input) {
     if (contentType?.split(";", 1)[0]?.trim().toLowerCase() !== "application/json")
-      throw unavailable();
-    if (!Predicate.isObject(body)) throw unavailable();
+      return yield* unavailable();
+    if (!Predicate.isObject(body)) return yield* unavailable();
     if (Object.hasOwn(body, "error")) {
-      if (successKeys.some((key) => Object.hasOwn(body, key))) throw unavailable();
-      const terminal = decodeTerminalReceipt(body);
+      if (successKeys.some((key) => Object.hasOwn(body, key))) return yield* unavailable();
+      const terminal = yield* decodeTerminalReceipt(body).pipe(Effect.mapError(unavailable));
 
       if (
         (status === 200 || status === 400) &&
         terminal.error ===
           (input.operation === "authorization_code" ? "bad_verification_code" : "bad_refresh_token")
       ) {
-        throw new DefiniteTokenRejection();
+        return yield* OAuthProtocolRejected.make({});
       }
-      throw unavailable();
+
+      return yield* unavailable();
     }
     if (
       status !== 200 ||
       ["error_description", "error_uri", "id_token"].some((key) => Object.hasOwn(body, key))
     )
-      throw unavailable();
-    const receipt = decodeReceipt(body);
+      return yield* unavailable();
+    const receipt = yield* decodeReceipt(body).pipe(Effect.mapError(unavailable));
 
-    scopes(receipt.scope, input.scopes);
+    yield* scopes(receipt.scope, input.scopes);
     if (
       input.refreshRequired &&
       (receipt.refresh_token === undefined ||
         receipt.expires_in === undefined ||
         receipt.refresh_token_expires_in === undefined)
     )
-      throw unavailable();
-  },
+      return yield* unavailable();
+  }),
   authorizationScopes: (permissions, refresh) =>
     refresh ? [...permissions, "offline_access"] : permissions,
   decodeScopes: scopes,
@@ -226,15 +241,16 @@ const revocationLayer = (options: Pick<GitHubOAuthAppConnectedProtocolOptions, "
             return yield* unavailable();
           const url = `https://api.github.com/applications/${encodeURIComponent(input.clientId)}/grant`;
 
+          const body = yield* encodeRevocation({
+            access_token: Redacted.value(input.material.accessToken),
+          }).pipe(Effect.mapError(unavailable));
+
           const request = HttpClientRequest.delete(url).pipe(
             HttpClientRequest.setHeaders({
               ...headers,
               Authorization: `Basic ${Base64.encode(`${input.clientId}:${Redacted.value(input.authentication.secret)}`)}`,
             }),
-            HttpClientRequest.bodyText(
-              encodeRevocation({ access_token: Redacted.value(input.material.accessToken) }),
-              "application/json",
-            ),
+            HttpClientRequest.bodyText(body, "application/json"),
           );
 
           yield* Effect.gen(function* () {
@@ -261,7 +277,7 @@ const revocationLayer = (options: Pick<GitHubOAuthAppConnectedProtocolOptions, "
             }),
             Effect.provideService(Tracer.DisablePropagation, true),
             Effect.mapError(unavailable),
-            Effect.catchDefect(unavailable),
+            // The connected protocol contains and reports unexpected transport defects.
             Effect.timeoutOrElse({
               duration: timeoutSeconds * 1000,
               orElse: () => Effect.fail(unavailable()),
@@ -278,20 +294,24 @@ const revocationLayer = (options: Pick<GitHubOAuthAppConnectedProtocolOptions, "
 export const gitHubOAuthAppProvider = (
   registration: GitHubOAuthAppGeneration,
 ): OpenIdConnectOAuthProvider => {
-  let saved: GitHubOAuthAppGeneration;
-
   try {
-    saved = snapshotOAuthSync(generation, registration);
+    return signInProvider(Result.getOrThrowWith(captureResult(generation, registration), invalid));
   } catch {
     throw invalid();
   }
-
-  return {
-    ...provider(saved),
-    scopes: ["read:user"],
-    [tokenCompatibility]: compatibility,
-  };
 };
+
+const signInProvider = (registration: GitHubOAuthAppGeneration): OpenIdConnectOAuthProvider => ({
+  ...provider(registration),
+  scopes: ["read:user"],
+  [tokenCompatibility]: compatibility,
+});
+
+/** Effect callers share validation without entering the synchronous public boundary. */
+export const makeGitHubOAuthAppProvider = (registration: GitHubOAuthAppGeneration) =>
+  resolveOptions(() => Effect.fromResult(captureResult(generation, registration))).pipe(
+    Effect.map(signInProvider),
+  );
 
 export const makeGitHubOAuthAppProtocol = Effect.fn("makeGitHubOAuthAppProtocol")(function* (
   options: GitHubOAuthAppProtocolOptions,
@@ -303,7 +323,7 @@ export const makeGitHubOAuthAppProtocol = Effect.fn("makeGitHubOAuthAppProtocol"
 
   return yield* makeOpenIdConnectOAuthProtocol({
     ...saved,
-    providers: saved.registrations.map(gitHubOAuthAppProvider),
+    providers: saved.registrations.map(signInProvider),
   });
 });
 

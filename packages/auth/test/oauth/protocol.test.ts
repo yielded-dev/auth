@@ -120,6 +120,27 @@ const exchange = Effect.fn("test.exchange")(function* (
   });
 });
 
+// At baseline 5199d99, invalid provider.configure input dies instead of failing in typed E.
+it.effect("fails invalid GitHub provider configuration through the typed error channel", () =>
+  expectTag(
+    GitHub.provider({
+      clientId: "invalid client id",
+      clientSecret: Redacted.make("fixture-secret"),
+    })
+      .configure({
+        provider: OAuthProviderKey.make("github"),
+        callbacks: [
+          {
+            callbackId: OAuthCallbackId.make("github"),
+            redirectUri: OAuthRedirectUri.make("https://app.test/callback"),
+          },
+        ],
+      })
+      .pipe(Effect.provide(platform)),
+    "OpenIdConnectConfigurationError",
+  ),
+);
+
 describe("OAuth protocol credential and resource lifetimes", () => {
   it.live(
     "finishes captured retired generations and never substitutes the active credentials",

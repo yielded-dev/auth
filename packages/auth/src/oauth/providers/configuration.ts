@@ -142,8 +142,15 @@ const forbiddenHeaders = new Set([
 const configError = (reason: OpenIdConnectConfigurationError["reason"]) =>
   OpenIdConnectConfigurationError.make({ reason });
 
-const protocolUrl = (value: string, allowLoopback: boolean): URL => {
-  const url = new URL(value);
+const protocolUrl = Effect.fnUntraced(function* (
+  value: string,
+  allowLoopback: boolean,
+  malformedReason: OpenIdConnectConfigurationError["reason"],
+) {
+  const url = yield* Effect.try({
+    try: () => new URL(value),
+    catch: () => configError(malformedReason),
+  });
 
   if (
     (url.protocol !== "https:" &&
@@ -158,22 +165,30 @@ const protocolUrl = (value: string, allowLoopback: boolean): URL => {
     // oxlint-disable-next-line no-control-regex -- Reject ambiguous protocol URL control characters.
     /[\s\\\u0000-\u001f\u007f]/u.test(value)
   )
-    throw configError("metadata");
+    return yield* configError("metadata");
 
   return url;
-};
+});
 
 /** Provider endpoints always require HTTPS. */
-export const endpoint = (value: string): URL => protocolUrl(value, false);
+export const endpoint = (
+  value: string,
+  malformedReason: OpenIdConnectConfigurationError["reason"] = "metadata",
+) => protocolUrl(value, false, malformedReason);
 
 /** Local development callbacks may use HTTP on an exact loopback host. */
-export const callbackEndpoint = (value: string): URL => protocolUrl(value, true);
+export const callbackEndpoint = (
+  value: string,
+  malformedReason: OpenIdConnectConfigurationError["reason"] = "metadata",
+) => protocolUrl(value, true, malformedReason);
 
-const checkParameters = (parameters: Readonly<Record<string, string>> | undefined) => {
+const checkParameters = Effect.fnUntraced(function* (
+  parameters: Readonly<Record<string, string>> | undefined,
+) {
   for (const key of Object.keys(parameters ?? {})) {
-    if (reserved.has(key.toLowerCase())) throw configError("parameters");
+    if (reserved.has(key.toLowerCase())) return yield* configError("parameters");
   }
-};
+});
 
 export type Provider<R> = OpenIdConnectOidcProvider | OpenIdConnectOAuthProvider<R>;
 
@@ -235,69 +250,63 @@ export const installConfigurations = Effect.fn("OpenIdConnect.installConfigurati
         };
   });
 
-  yield* Effect.try({
-    try: () => {
-      const generations = new Set<string>();
-      const active = new Set<string>();
-      const names = new Set<string>();
+  const generations = new Set<string>();
+  const active = new Set<string>();
+  const names = new Set<string>();
 
-      for (const provider of providers) {
-        const generation = `${provider.provider.length}:${provider.provider}:${provider.configurationGeneration}`;
+  for (const provider of providers) {
+    const generation = `${provider.provider.length}:${provider.provider}:${provider.configurationGeneration}`;
 
-        if (generations.has(generation)) throw configError("generation");
-        generations.add(generation);
-        names.add(provider.provider);
-        if (provider.issuance === "active") {
-          if (active.has(provider.provider)) throw configError("generation");
-          active.add(provider.provider);
-        }
-        const issuer = endpoint(provider.issuer);
+    if (generations.has(generation)) return yield* configError("generation");
+    generations.add(generation);
+    names.add(provider.provider);
+    if (provider.issuance === "active") {
+      if (active.has(provider.provider)) return yield* configError("generation");
+      active.add(provider.provider);
+    }
+    const issuer = yield* endpoint(provider.issuer, "provider");
 
-        if (provider.issuer.includes("?") || issuer.pathname.includes("/.well-known/"))
-          throw configError("issuer");
-        if (new Set(provider.scopes).size !== provider.scopes.length)
-          throw configError("parameters");
-        if ((provider.protocol === "oidc") !== provider.scopes.includes("openid"))
-          throw configError("parameters");
-        checkParameters(provider.authorizationParameters);
-        checkParameters(provider.tokenParameters);
-        const callbacks = new Set<string>();
+    if (provider.issuer.includes("?") || issuer.pathname.includes("/.well-known/"))
+      return yield* configError("issuer");
+    if (new Set(provider.scopes).size !== provider.scopes.length)
+      return yield* configError("parameters");
+    if ((provider.protocol === "oidc") !== provider.scopes.includes("openid"))
+      return yield* configError("parameters");
+    yield* checkParameters(provider.authorizationParameters);
+    yield* checkParameters(provider.tokenParameters);
+    const callbacks = new Set<string>();
 
-        for (const callback of provider.callbacks) {
-          const url = callbackEndpoint(callback.redirectUri);
+    for (const callback of provider.callbacks) {
+      const url = yield* callbackEndpoint(callback.redirectUri, "provider");
 
-          if (
-            url.href !== callback.redirectUri ||
-            callback.redirectUri.includes("?") ||
-            callbacks.has(callback.callbackId)
-          )
-            throw configError("callback");
-          callbacks.add(callback.callbackId);
-          for (const other of providers) {
-            if (provider.issuer === other.issuer) continue;
-            if (
-              provider.responseIssuerMode === "required" &&
-              other.responseIssuerMode === "required"
-            )
-              continue;
-            if (other.callbacks.some((candidate) => candidate.redirectUri === callback.redirectUri))
-              throw configError("callback");
-          }
-        }
-        if (provider.protocol === "oauth") {
-          endpoint(provider.identitySource.url);
-          for (const key of Object.keys(provider.identitySource.headers ?? {})) {
-            if (forbiddenHeaders.has(key.toLowerCase())) throw configError("identity-source");
-          }
-          new Headers(provider.identitySource.headers);
-        }
-        freezeOAuth(provider);
+      if (
+        url.href !== callback.redirectUri ||
+        callback.redirectUri.includes("?") ||
+        callbacks.has(callback.callbackId)
+      )
+        return yield* configError("callback");
+      callbacks.add(callback.callbackId);
+      for (const other of providers) {
+        if (provider.issuer === other.issuer) continue;
+        if (provider.responseIssuerMode === "required" && other.responseIssuerMode === "required")
+          continue;
+        if (other.callbacks.some((candidate) => candidate.redirectUri === callback.redirectUri))
+          return yield* configError("callback");
       }
-      if (active.size !== names.size) throw configError("generation");
-    },
-    catch: (error) =>
-      Schema.is(OpenIdConnectConfigurationError)(error) ? error : configError("provider"),
-  });
+    }
+    if (provider.protocol === "oauth") {
+      yield* endpoint(provider.identitySource.url, "provider");
+      for (const key of Object.keys(provider.identitySource.headers ?? {})) {
+        if (forbiddenHeaders.has(key.toLowerCase())) return yield* configError("identity-source");
+      }
+      yield* Effect.try({
+        try: () => new Headers(provider.identitySource.headers),
+        catch: () => configError("provider"),
+      });
+    }
+    freezeOAuth(provider);
+  }
+  if (active.size !== names.size) return yield* configError("generation");
   const installed: InstalledProvider<R>[] = [];
 
   for (const provider of providers) {
@@ -327,48 +336,42 @@ export const installConfigurations = Effect.fn("OpenIdConnect.installConfigurati
       Effect.mapError(() => configError("metadata")),
     );
 
-    yield* Effect.try({
-      try: () => {
-        if (metadata.issuer !== provider.issuer) throw configError("issuer");
-        if (
-          (metadata.authorization_response_iss_parameter_supported === true) !==
-          (provider.responseIssuerMode === "required")
-        )
-          throw configError("metadata");
-        const auth = endpoint(metadata.authorization_endpoint);
+    if (metadata.issuer !== provider.issuer) return yield* configError("issuer");
+    if (
+      (metadata.authorization_response_iss_parameter_supported === true) !==
+      (provider.responseIssuerMode === "required")
+    )
+      return yield* configError("metadata");
+    const auth = yield* endpoint(metadata.authorization_endpoint);
 
-        for (const key of auth.searchParams.keys()) {
-          if (reserved.has(key.toLowerCase())) throw configError("parameters");
-        }
-        endpoint(metadata.token_endpoint);
+    for (const key of auth.searchParams.keys()) {
+      if (reserved.has(key.toLowerCase())) return yield* configError("parameters");
+    }
+    yield* endpoint(metadata.token_endpoint);
 
-        const supportedAuthentication =
-          metadata.token_endpoint_auth_methods_supported ??
-          (provider.protocol === "oidc" ? ["client_secret_basic"] : undefined);
+    const supportedAuthentication =
+      metadata.token_endpoint_auth_methods_supported ??
+      (provider.protocol === "oidc" ? ["client_secret_basic"] : undefined);
 
-        if (
-          supportedAuthentication !== undefined &&
-          !supportedAuthentication.includes(provider.authentication.method)
-        )
-          throw configError("authentication");
+    if (
+      supportedAuthentication !== undefined &&
+      !supportedAuthentication.includes(provider.authentication.method)
+    )
+      return yield* configError("authentication");
 
-        if (provider.protocol === "oidc") {
-          if (
-            !metadata.code_challenge_methods_supported?.includes("S256") ||
-            !metadata.response_types_supported?.includes("code") ||
-            !metadata.id_token_signing_alg_values_supported?.includes("RS256") ||
-            metadata.jwks_uri === undefined
-          )
-            throw configError("metadata");
-          endpoint(metadata.jwks_uri);
-        } else {
-          endpoint(provider.identitySource.url);
-        }
-        freezeOAuth(metadata);
-      },
-      catch: (error) =>
-        Schema.is(OpenIdConnectConfigurationError)(error) ? error : configError("metadata"),
-    });
+    if (provider.protocol === "oidc") {
+      if (
+        !metadata.code_challenge_methods_supported?.includes("S256") ||
+        !metadata.response_types_supported?.includes("code") ||
+        !metadata.id_token_signing_alg_values_supported?.includes("RS256") ||
+        metadata.jwks_uri === undefined
+      )
+        return yield* configError("metadata");
+      yield* endpoint(metadata.jwks_uri);
+    } else {
+      yield* endpoint(provider.identitySource.url);
+    }
+    freezeOAuth(metadata);
 
     const native = yield* install(
       {

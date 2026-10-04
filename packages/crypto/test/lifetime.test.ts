@@ -2,12 +2,74 @@ import { it } from "@effect/vitest";
 import type { KdfBusy, OperationError } from "@yielded/crypto/Errors";
 import { Kdf } from "@yielded/crypto/Kdf";
 import * as KdfAdmission from "@yielded/crypto/KdfAdmission";
+import * as Portable from "@yielded/crypto/Portable";
 import * as WebCrypto from "@yielded/crypto/WebCrypto";
-import { Deferred, Effect, Fiber, Layer, Redacted } from "effect";
+import { Deferred, Effect, Fiber, Layer, Redacted, Scheduler } from "effect";
 import { TestClock } from "effect/testing";
 import { expect } from "vite-plus/test";
 
 import { utf8 } from "./backends";
+
+// d36318f retained native-work masking around the owned portable implementation.
+// Control the scheduler to request cancellation between real Argon2 batches;
+// wall-clock timing cannot distinguish cancellation from completing the full KDF.
+it.effect("cancels portable Argon2 at a batch boundary and releases admission", () =>
+  Effect.gen(function* () {
+    const kdf = yield* Kdf;
+    const tasks: Array<() => void> = [];
+
+    const scheduler: Scheduler.Scheduler = {
+      executionMode: "sync",
+      shouldYield: () => false,
+      makeDispatcher: () => ({
+        scheduleTask: (task) => tasks.push(task),
+        flush: () => {
+          while (tasks.length > 0) tasks.shift()!();
+        },
+      }),
+    };
+
+    const input = {
+      password: Redacted.make(utf8("password")),
+      salt: utf8("somesalt"),
+      memoryKiB: 8192,
+      passes: 2,
+      parallelism: 1,
+      length: 32,
+    };
+
+    const fiber = yield* kdf
+      .argon2id(input)
+      .pipe(
+        Effect.provideService(Scheduler.Scheduler, scheduler),
+        Effect.forkChild({ startImmediately: true }),
+      );
+
+    const suspended = tasks.length > 0 && fiber.pollUnsafe() === undefined;
+
+    const interruption = yield* Fiber.interrupt(fiber).pipe(
+      Effect.forkChild({ startImmediately: true }),
+    );
+
+    for (const task of tasks.splice(0)) task();
+    const stoppedAtBoundary = fiber.pollUnsafe() !== undefined;
+
+    // Finish queued work before asserting so a failing regression cannot leak it.
+    while (tasks.length > 0) tasks.shift()!();
+    yield* Fiber.join(interruption);
+    const reused = yield* kdf.argon2id({ ...input, memoryKiB: 8, passes: 1 });
+
+    expect(suspended).toBe(true);
+    expect(stoppedAtBoundary).toBe(true);
+    expect(Redacted.value(reused)).toHaveLength(32);
+  }).pipe(
+    Effect.provide(
+      Portable.layer(globalThis.crypto.subtle).pipe(
+        Layer.provide(KdfAdmission.layer({ concurrency: 1, maxQueued: 0 })),
+      ),
+    ),
+  ),
+);
 
 // Admission must be retained until native KDF completion.
 // A real backend operation is held at its nonabortable WebCrypto promise boundary;

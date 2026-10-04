@@ -14,8 +14,13 @@ type HashFailure = PasswordHashingUnavailable | PasswordInputInvalid | PasswordK
 
 /** Byte-preserving KDF capability. Text normalization belongs to trusted credential
  * provenance, never the algorithm identifier. Rehash legacy passwords with mode none.
- * Replacements must retain admission until actual work completion, including native
- * callbacks. Portable async KDFs yield microtasks; they are not off-thread workers.
+ * Replacements must retain admission through computation and cleanup. KDF backends
+ * own masks around nonabortable native calls until actual completion. Portable KDFs
+ * can stop between batches; they are not off-thread workers.
+ * Operations read secrets only when run. Erased passwords fail with
+ * PasswordHashingUnavailable; erased verifiers fail with PasswordVerifierInvalid.
+ * Scoped buffer ownership permits cancellation during interruptible derivation;
+ * noncancelable native work must finish before its backend releases ownership.
  */
 export class PasswordHashing extends Context.Service<
   PasswordHashing,

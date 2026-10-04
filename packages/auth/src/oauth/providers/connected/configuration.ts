@@ -6,11 +6,12 @@ import { OAuthConnectedProfile } from "../../permissionProfile";
 import { OAuthProviderKey, OAuthGeneration } from "../../schema";
 import { OAuthUnavailable } from "../../signInErrors";
 import { OAuthCallbackId, OAuthIssuer, OAuthRedirectUri } from "../../signInModels";
-import { freezeOAuth, snapshotOAuthSync } from "../../signInSnapshot";
+import { freezeOAuth } from "../../signInSnapshot";
 import type { ConnectedOptions, ProviderConnectedOAuth } from "../compatibility";
 import { callbackEndpoint, endpoint } from "../configuration";
 import { OpenIdConnectConfigurationError, type OpenIdConnectAuthentication } from "../models";
 import { install, type NativeProvider } from "../native";
+import { resolveOptions } from "../options";
 import type {
   OpenIdConnectConnectedOAuthProvider,
   OpenIdConnectConnectedOidcProvider,
@@ -228,15 +229,13 @@ const metadataSchema = Schema.Struct({
   authorization_response_iss_parameter_supported: Schema.optionalKey(Schema.Boolean),
 });
 
-/** The issuance flag selects new authorization only; retained profile content is immutable. */
+const equivalentProfile = Schema.toEquivalence(OAuthConnectedProfile);
+
+/** Compare captured, validated profiles. The issuance flag selects new authorization only. */
 export const sameConnectedProfile = (
   registered: OAuthConnectedProfile,
   saved: OAuthConnectedProfile,
-) =>
-  Schema.encodeSync(Schema.fromJsonString(OAuthConnectedProfile))({
-    ...registered,
-    issuance: saved.issuance,
-  }) === Schema.encodeSync(Schema.fromJsonString(OAuthConnectedProfile))(saved);
+) => equivalentProfile({ ...registered, issuance: saved.issuance }, saved);
 
 export const installConnectedConfigurations = Effect.fn(
   "OpenIdConnect.installConnectedConfigurations",
@@ -245,15 +244,17 @@ export const installConnectedConfigurations = Effect.fn(
     Effect.mapError(() => configurationError("provider")),
   );
 
-  const providers: ConnectedProvider<R>[] = yield* Effect.try({
-    try: () =>
+  const providers: ConnectedProvider<R>[] = yield* resolveOptions(() =>
+    Effect.sync(() =>
       options.providers.map((provider): ConnectedProvider<R> => {
         const detached = {
           authentication: copyAuth(provider.authentication),
           callbacks: provider.callbacks.map((value) => ({ ...value })),
-          profiles: provider.profiles.map((value) =>
-            snapshotOAuthSync(OAuthConnectedProfile, value),
-          ),
+          profiles: provider.profiles.map((value) => ({
+            ...value,
+            scopes: [...value.scopes],
+            resources: [...value.resources],
+          })),
           ...(provider.authorizationParameters
             ? { authorizationParameters: { ...provider.authorizationParameters } }
             : {}),
@@ -281,141 +282,131 @@ export const installConnectedConfigurations = Effect.fn(
               },
             };
       }),
-    catch: () => configurationError("provider"),
-  });
+    ),
+  );
 
-  yield* Effect.try({
-    try: () => {
-      const generations = new Set<string>(),
-        active = new Set<string>(),
-        aliases = new Map<string, string>(),
-        registrations = new Map<string, string>();
+  const generations = new Set<string>(),
+    active = new Set<string>(),
+    aliases = new Map<string, string>(),
+    registrations = new Map<string, string>();
 
-      let profileCount = 0;
+  let profileCount = 0;
 
-      for (const provider of providers) {
-        const generationKey = tupleKey([provider.provider, provider.configurationGeneration]);
+  for (const provider of providers) {
+    const generationKey = tupleKey([provider.provider, provider.configurationGeneration]);
+
+    if (
+      generations.has(generationKey) ||
+      (provider.issuance === "active" && active.has(provider.provider))
+    )
+      return yield* configurationError("generation");
+    generations.add(generationKey);
+    if (provider.issuance === "active") active.add(provider.provider);
+    const issuer = yield* endpoint(provider.issuer, "provider");
+
+    if (provider.issuer.includes("?")) return yield* configurationError("issuer");
+
+    const aliasKey = tupleKey([issuer.href, provider.clientId]),
+      alias = tupleKey([provider.provider, provider.clientRegistrationId]);
+
+    if (aliases.has(aliasKey) && aliases.get(aliasKey) !== alias)
+      return yield* configurationError("provider");
+    aliases.set(aliasKey, alias);
+
+    const registration = tupleKey([provider.provider, issuer.href, provider.clientRegistrationId]);
+
+    if (registrations.has(registration) && registrations.get(registration) !== provider.clientId)
+      return yield* configurationError("provider");
+    registrations.set(registration, provider.clientId);
+    const callbacks = new Set<string>();
+
+    for (const callback of provider.callbacks) {
+      const url = yield* callbackEndpoint(callback.redirectUri, "provider");
+
+      if (
+        callbacks.has(callback.callbackId) ||
+        callback.redirectUri.includes("?") ||
+        url.href !== callback.redirectUri
+      )
+        return yield* configurationError("callback");
+      callbacks.add(callback.callbackId);
+    }
+    for (const parameters of [
+      provider.authorizationParameters,
+      provider.tokenParameters,
+      provider.refreshParameters,
+    ])
+      for (const key of Object.keys(parameters ?? {}))
+        if (reserved.has(key.toLowerCase())) return yield* configurationError("parameters");
+
+    const profiles = new Set<string>(),
+      activeProfiles = new Set<string>();
+
+    for (const profile of provider.profiles) {
+      if (++profileCount > 64) return yield* configurationError("provider");
+      const key = tupleKey([profile.key, profile.generation]);
+
+      if (
+        profiles.has(key) ||
+        (profile.issuance === "active" && activeProfiles.has(profile.key)) ||
+        profile.provider !== provider.provider ||
+        profile.clientRegistrationId !== provider.clientRegistrationId ||
+        new Set(profile.scopes).size !== profile.scopes.length ||
+        new Set(profile.resources).size !== profile.resources.length ||
+        profile.refreshAheadMillis >= profile.maximumAccessLifetimeMillis ||
+        (provider.protocol === "oidc" && !profile.scopes.includes("openid")) ||
+        (provider.resourceIndicators === "unsupported" && profile.resources.length !== 0) ||
+        (profile.retention === "access-only" && profile.refresh !== "unsupported") ||
+        (profile.retention === "access-and-refresh" &&
+          (profile.refresh === "unsupported" ||
+            profile.maximumRefreshLifetimeMillis === undefined ||
+            (provider.authentication.method === "none" && profile.refresh !== "rotating"))) ||
+        (profile.revocation === "cohort" &&
+          (provider.revocation.mode === "unsupported" ||
+            (provider.revocation.mode === "rfc7009" &&
+              profile.retention === "access-and-refresh" &&
+              provider.revocation.tokenTypes !== "access-and-refresh")))
+      )
+        return yield* configurationError("provider");
+      profiles.add(key);
+      if (profile.issuance === "active") activeProfiles.add(profile.key);
+      for (const resource of profile.resources) {
+        const uri = yield* Effect.try({
+          try: () => new URL(resource),
+          catch: () => configurationError("provider"),
+        });
 
         if (
-          generations.has(generationKey) ||
-          (provider.issuance === "active" && active.has(provider.provider))
+          resource.includes("#") ||
+          // oxlint-disable-next-line no-control-regex -- Preserve exact resource URIs and reject ambiguous control characters.
+          /[\s\\\u0000-\u001f\u007f]/u.test(resource) ||
+          uri.username !== "" ||
+          uri.password !== ""
         )
-          throw configurationError("generation");
-        generations.add(generationKey);
-        if (provider.issuance === "active") active.add(provider.provider);
-        const issuer = endpoint(provider.issuer);
-
-        if (provider.issuer.includes("?")) throw configurationError("issuer");
-
-        const aliasKey = tupleKey([issuer.href, provider.clientId]),
-          alias = tupleKey([provider.provider, provider.clientRegistrationId]);
-
-        if (aliases.has(aliasKey) && aliases.get(aliasKey) !== alias)
-          throw configurationError("provider");
-        aliases.set(aliasKey, alias);
-
-        const registration = tupleKey([
-          provider.provider,
-          issuer.href,
-          provider.clientRegistrationId,
-        ]);
-
-        if (
-          registrations.has(registration) &&
-          registrations.get(registration) !== provider.clientId
-        )
-          throw configurationError("provider");
-        registrations.set(registration, provider.clientId);
-        const callbacks = new Set<string>();
-
-        for (const callback of provider.callbacks) {
-          const url = callbackEndpoint(callback.redirectUri);
-
-          if (
-            callbacks.has(callback.callbackId) ||
-            callback.redirectUri.includes("?") ||
-            url.href !== callback.redirectUri
-          )
-            throw configurationError("callback");
-          callbacks.add(callback.callbackId);
-        }
-        for (const parameters of [
-          provider.authorizationParameters,
-          provider.tokenParameters,
-          provider.refreshParameters,
-        ])
-          for (const key of Object.keys(parameters ?? {}))
-            if (reserved.has(key.toLowerCase())) throw configurationError("parameters");
-
-        const profiles = new Set<string>(),
-          activeProfiles = new Set<string>();
-
-        for (const profile of provider.profiles) {
-          if (++profileCount > 64) throw configurationError("provider");
-          const key = tupleKey([profile.key, profile.generation]);
-
-          if (
-            profiles.has(key) ||
-            (profile.issuance === "active" && activeProfiles.has(profile.key)) ||
-            profile.provider !== provider.provider ||
-            profile.clientRegistrationId !== provider.clientRegistrationId ||
-            new Set(profile.scopes).size !== profile.scopes.length ||
-            new Set(profile.resources).size !== profile.resources.length ||
-            profile.refreshAheadMillis >= profile.maximumAccessLifetimeMillis ||
-            (provider.protocol === "oidc" && !profile.scopes.includes("openid")) ||
-            (provider.resourceIndicators === "unsupported" && profile.resources.length !== 0) ||
-            (profile.retention === "access-only" && profile.refresh !== "unsupported") ||
-            (profile.retention === "access-and-refresh" &&
-              (profile.refresh === "unsupported" ||
-                profile.maximumRefreshLifetimeMillis === undefined ||
-                (provider.authentication.method === "none" && profile.refresh !== "rotating"))) ||
-            (profile.revocation === "cohort" &&
-              (provider.revocation.mode === "unsupported" ||
-                (provider.revocation.mode === "rfc7009" &&
-                  profile.retention === "access-and-refresh" &&
-                  provider.revocation.tokenTypes !== "access-and-refresh")))
-          )
-            throw configurationError("provider");
-          profiles.add(key);
-          if (profile.issuance === "active") activeProfiles.add(profile.key);
-          for (const resource of profile.resources) {
-            const uri = new URL(resource);
-
-            if (
-              resource.includes("#") ||
-              // oxlint-disable-next-line no-control-regex -- Preserve exact resource URIs and reject ambiguous control characters.
-              /[\s\\\u0000-\u001f\u007f]/u.test(resource) ||
-              uri.username !== "" ||
-              uri.password !== ""
-            )
-              throw configurationError("parameters");
-          }
-        }
-        if (provider.protocol === "oauth") {
-          endpoint(provider.authorizationEndpoint);
-          endpoint(provider.tokenEndpoint);
-          endpoint(provider.identitySource.url);
-          const headers = new Set<string>();
-
-          for (const [name, value] of Object.entries(provider.identitySource.headers ?? {})) {
-            const lower = name.toLowerCase();
-
-            if (forbiddenHeaders.has(lower) || headers.has(lower) || /[\r\n]/u.test(value))
-              throw configurationError("identity-source");
-            headers.add(lower);
-          }
-        }
-        if (provider.revocation.mode === "rfc7009") {
-          if (provider.protocol === "oauth" && provider.revocation.endpoint === undefined)
-            throw configurationError("metadata");
-          if (provider.revocation.endpoint) endpoint(provider.revocation.endpoint);
-        }
-        freezeOAuth(provider);
+          return yield* configurationError("parameters");
       }
-    },
-    catch: (error) =>
-      Schema.is(OpenIdConnectConfigurationError)(error) ? error : configurationError("provider"),
-  });
+    }
+    if (provider.protocol === "oauth") {
+      yield* endpoint(provider.authorizationEndpoint, "provider");
+      yield* endpoint(provider.tokenEndpoint, "provider");
+      yield* endpoint(provider.identitySource.url, "provider");
+      const headers = new Set<string>();
+
+      for (const [name, value] of Object.entries(provider.identitySource.headers ?? {})) {
+        const lower = name.toLowerCase();
+
+        if (forbiddenHeaders.has(lower) || headers.has(lower) || /[\r\n]/u.test(value))
+          return yield* configurationError("identity-source");
+        headers.add(lower);
+      }
+    }
+    if (provider.revocation.mode === "rfc7009") {
+      if (provider.protocol === "oauth" && provider.revocation.endpoint === undefined)
+        return yield* configurationError("metadata");
+      if (provider.revocation.endpoint) yield* endpoint(provider.revocation.endpoint, "provider");
+    }
+    freezeOAuth(provider);
+  }
   const installed: InstalledConnectedProvider<R>[] = [];
 
   for (const provider of providers) {
@@ -447,64 +438,58 @@ export const installConnectedConfigurations = Effect.fn(
       Effect.mapError(() => configurationError("metadata")),
     );
 
-    yield* Effect.try({
-      try: () => {
-        if (metadata.issuer !== provider.issuer) throw configurationError("issuer");
-        if (
-          (metadata.authorization_response_iss_parameter_supported === true) !==
-          (provider.responseIssuerMode === "required")
-        )
-          throw configurationError("metadata");
-        const authorization = endpoint(metadata.authorization_endpoint);
+    if (metadata.issuer !== provider.issuer) return yield* configurationError("issuer");
+    if (
+      (metadata.authorization_response_iss_parameter_supported === true) !==
+      (provider.responseIssuerMode === "required")
+    )
+      return yield* configurationError("metadata");
+    const authorization = yield* endpoint(metadata.authorization_endpoint);
 
-        for (const key of authorization.searchParams.keys())
-          if (reserved.has(key.toLowerCase())) throw configurationError("parameters");
-        const token = endpoint(metadata.token_endpoint);
+    for (const key of authorization.searchParams.keys())
+      if (reserved.has(key.toLowerCase())) return yield* configurationError("parameters");
+    const token = yield* endpoint(metadata.token_endpoint);
 
-        for (const key of token.searchParams.keys())
-          if (reserved.has(key.toLowerCase())) throw configurationError("parameters");
+    for (const key of token.searchParams.keys())
+      if (reserved.has(key.toLowerCase())) return yield* configurationError("parameters");
 
-        const tokenAuthentication =
-          metadata.token_endpoint_auth_methods_supported ??
-          (provider.protocol === "oidc" ? ["client_secret_basic"] : undefined);
+    const tokenAuthentication =
+      metadata.token_endpoint_auth_methods_supported ??
+      (provider.protocol === "oidc" ? ["client_secret_basic"] : undefined);
 
-        if (tokenAuthentication && !tokenAuthentication.includes(provider.authentication.method))
-          throw configurationError("authentication");
-        if (provider.protocol === "oidc") {
-          if (
-            !metadata.code_challenge_methods_supported?.includes("S256") ||
-            !metadata.response_types_supported?.includes("code") ||
-            !metadata.id_token_signing_alg_values_supported?.includes("RS256") ||
-            metadata.jwks_uri === undefined ||
-            (provider.profiles.some((profile) => profile.retention === "access-and-refresh") &&
-              !metadata.grant_types_supported?.includes("refresh_token"))
-          )
-            throw configurationError("metadata");
-          endpoint(metadata.jwks_uri);
-        } else endpoint(provider.identitySource.url);
-        if (provider.revocation.mode === "rfc7009") {
-          if (
-            !metadata.revocation_endpoint ||
-            (provider.revocation.endpoint !== undefined &&
-              provider.revocation.endpoint !== metadata.revocation_endpoint)
-          )
-            throw configurationError("metadata");
+    if (tokenAuthentication && !tokenAuthentication.includes(provider.authentication.method))
+      return yield* configurationError("authentication");
+    if (provider.protocol === "oidc") {
+      if (
+        !metadata.code_challenge_methods_supported?.includes("S256") ||
+        !metadata.response_types_supported?.includes("code") ||
+        !metadata.id_token_signing_alg_values_supported?.includes("RS256") ||
+        metadata.jwks_uri === undefined ||
+        (provider.profiles.some((profile) => profile.retention === "access-and-refresh") &&
+          !metadata.grant_types_supported?.includes("refresh_token"))
+      )
+        return yield* configurationError("metadata");
+      yield* endpoint(metadata.jwks_uri);
+    } else yield* endpoint(provider.identitySource.url);
+    if (provider.revocation.mode === "rfc7009") {
+      if (
+        !metadata.revocation_endpoint ||
+        (provider.revocation.endpoint !== undefined &&
+          provider.revocation.endpoint !== metadata.revocation_endpoint)
+      )
+        return yield* configurationError("metadata");
 
-          const auth =
-            metadata.revocation_endpoint_auth_methods_supported ??
-            (provider.protocol === "oidc" ? ["client_secret_basic"] : undefined);
+      const auth =
+        metadata.revocation_endpoint_auth_methods_supported ??
+        (provider.protocol === "oidc" ? ["client_secret_basic"] : undefined);
 
-          if (auth && !auth.includes(provider.revocation.authentication.method))
-            throw configurationError("authentication");
-          const revoke = endpoint(metadata.revocation_endpoint);
+      if (auth && !auth.includes(provider.revocation.authentication.method))
+        return yield* configurationError("authentication");
+      const revoke = yield* endpoint(metadata.revocation_endpoint);
 
-          for (const key of revoke.searchParams.keys())
-            if (reserved.has(key.toLowerCase())) throw configurationError("parameters");
-        }
-      },
-      catch: (error) =>
-        Schema.is(OpenIdConnectConfigurationError)(error) ? error : configurationError("metadata"),
-    });
+      for (const key of revoke.searchParams.keys())
+        if (reserved.has(key.toLowerCase())) return yield* configurationError("parameters");
+    }
 
     const native = yield* install(
       {

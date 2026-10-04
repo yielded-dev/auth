@@ -25,21 +25,28 @@ export interface Options<R = never> {
 export const layer = <R = never>(options: Options<R>) =>
   Layer.effect(
     OAuthConnectedProtocol,
-    resolveOptions(() => ({
-      providers: options.providers.map((input) =>
-        input.protocol === "oidc"
-          ? {
-              ...resolveProvider(input),
-              idTokenSignedResponseAlg:
-                input.idTokenSignedResponseAlg === undefined
-                  ? ("RS256" as const)
-                  : input.idTokenSignedResponseAlg,
-            }
-          : {
-              ...resolveProvider(input),
-              pkceS256: input.pkceS256 === undefined ? (true as const) : input.pkceS256,
-            },
+    resolveOptions(() =>
+      Effect.forEach(
+        options.providers,
+        Effect.fnUntraced(function* (input) {
+          return input.protocol === "oidc"
+            ? {
+                ...(yield* resolveProvider(input)),
+                idTokenSignedResponseAlg:
+                  input.idTokenSignedResponseAlg === undefined
+                    ? ("RS256" as const)
+                    : input.idTokenSignedResponseAlg,
+              }
+            : {
+                ...(yield* resolveProvider(input)),
+                pkceS256: input.pkceS256 === undefined ? (true as const) : input.pkceS256,
+              };
+        }),
+      ).pipe(
+        Effect.map((providers) => ({
+          providers,
+          timeoutSeconds: options.timeoutSeconds === undefined ? 10 : options.timeoutSeconds,
+        })),
       ),
-      timeoutSeconds: options.timeoutSeconds === undefined ? 10 : options.timeoutSeconds,
-    })).pipe(Effect.flatMap(makeOpenIdConnectConnectedProtocol<R>)),
+    ).pipe(Effect.flatMap(makeOpenIdConnectConnectedProtocol<R>)),
   );

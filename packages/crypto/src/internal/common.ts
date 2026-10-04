@@ -23,7 +23,7 @@ export const importError = (cause: unknown) =>
     ? InvalidInput.make({ reason: "key" })
     : nativeError(cause);
 
-/** Copy views exactly; never mutate a caller's key or expose native diagnostics. */
+/** Own a secret copy through cleanup. Native users must join work that cannot be cancelled. */
 export const withSecret = <A, E, R>(
   value: Redacted.Redacted<Uint8Array>,
   use: (owned: Uint8Array<ArrayBuffer>) => Effect.Effect<A, E, R>,
@@ -35,7 +35,7 @@ export const withSecret = <A, E, R>(
     }),
     use,
     (owned) => Effect.sync(() => owned.fill(0)),
-  ).pipe(Effect.uninterruptible);
+  );
 
 export const copy = (value: Uint8Array) =>
   Effect.try({

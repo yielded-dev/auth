@@ -3,11 +3,12 @@ import { Context, Effect, Layer } from "effect";
 
 import { PasswordConfigurationError, PasswordKdfBusy } from "./errors";
 
-/** Share ONE Layer instance across hashers in a runtime. This bounds actual
- * nonabortable work, not distributed guesses. Callbacks must finish only after
- * their underlying computation finishes: an already-detached Promise is unsafe.
- * Work includes allocation, derive, comparison and cleanup. Waiting is bounded
- * and interruptible; once work starts, it retains its permit through cleanup.
+/** Share one Layer instance across hashers in a runtime to bound active derivations.
+ * The permit covers allocation, derivation, comparison and cleanup. Waiting is
+ * bounded and interruptible; running work remains interruptible through admission.
+ * KDF backends protect nonabortable native calls until actual completion, so their
+ * resources and the permit remain owned through cleanup. Portable work can stop
+ * between batches. Admission cannot safely account for detached native work.
  */
 export class PasswordKdfAdmission extends Context.Service<
   PasswordKdfAdmission,

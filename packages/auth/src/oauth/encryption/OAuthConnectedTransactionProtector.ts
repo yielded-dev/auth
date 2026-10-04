@@ -1,4 +1,4 @@
-import { Schema } from "effect";
+import { Effect, Schema } from "effect";
 
 import {
   OAuthConnectedTransactionContext,
@@ -6,8 +6,8 @@ import {
   OAuthConnectedSealedTransaction,
 } from "../connectedModels";
 import { OAuthUnavailable } from "../signInErrors";
-import { snapshotOAuthSync } from "../signInSnapshot";
 import { type OAuthTransactionKeyring } from "../transactionKeyring";
+import { encodeUtf8 } from "./payload";
 import { transactionEncryption } from "./transaction-encryption";
 
 const codec = Schema.fromJsonString(
@@ -19,26 +19,16 @@ const codec = Schema.fromJsonString(
   ]),
 );
 
-const encoder = new TextEncoder();
-
-const aad = (context: OAuthConnectedTransactionContext, keyId: string) => {
-  const value = Schema.encodeSync(codec)([
+const aad = Effect.fnUntraced(function* (context: OAuthConnectedTransactionContext, keyId: string) {
+  const value = yield* Schema.encodeEffect(codec)([
     "effect-auth/oauth-connected-aead/v1",
     "oauth-xchacha20poly1305-v1",
     keyId,
-    snapshotOAuthSync(OAuthConnectedTransactionContext, context),
-  ]);
+    context,
+  ]).pipe(Effect.mapError(() => OAuthUnavailable.make({})));
 
-  if (value.length > 262144) throw OAuthUnavailable.make({});
-  const bytes = encoder.encode(value);
-
-  if (bytes.length > 262144) {
-    bytes.fill(0);
-    throw OAuthUnavailable.make({});
-  }
-
-  return bytes;
-};
+  return yield* encodeUtf8(value, 262144);
+});
 
 export const make = (keyring: OAuthTransactionKeyring) =>
   transactionEncryption(

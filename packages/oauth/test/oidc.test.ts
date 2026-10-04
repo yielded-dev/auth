@@ -6,7 +6,8 @@
 import { createHash } from "node:crypto";
 
 import { it } from "@effect/vitest";
-import { DateTime, Deferred, Effect, Fiber, Redacted, Scope, Exit } from "effect";
+import { Signature } from "@yielded/crypto/Signature";
+import { Cause, DateTime, Deferred, Effect, Fiber, Redacted, Scope, Exit } from "effect";
 import { HttpClient } from "effect/http";
 import { TestClock } from "effect/testing";
 import * as jose from "jose";
@@ -343,3 +344,96 @@ it.effect("captures verification policy before JWKS I/O", () =>
     expect((yield* Fiber.join(fiber)).subject).toBe("provider-subject");
   }).pipe(Effect.scoped, Effect.provide(cryptoLayer)),
 );
+
+// Regression at 5199d99: owner closure left signature work running; gate cleanup to expose it.
+for (const termination of ["owner closure", "caller interruption"] as const) {
+  it.effect(`${termination} interrupts and joins active OIDC verification`, () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(seconds * 1000);
+      const keys = yield* generate;
+      const jwk = yield* Effect.promise(() => jose.exportJWK(keys.publicKey));
+
+      const owner = yield* Effect.acquireRelease(Scope.make(), (scope) =>
+        Scope.close(scope, Exit.void),
+      );
+
+      const verifier = yield* Oidc.makeVerifier({
+        metadata,
+        clientId: "client",
+        timeoutMs: 1000,
+      }).pipe(
+        Effect.provideService(Scope.Scope, owner),
+        Effect.provideService(
+          HttpClient.HttpClient,
+          transport(() => Response.json({ keys: [{ ...jwk, kid: "key" }] })),
+        ),
+      );
+
+      const signatures = yield* Signature;
+      const entered = yield* Deferred.make<void>();
+      const cleanupStarted = yield* Deferred.make<void>();
+      const allowCleanup = yield* Deferred.make<void>();
+      let cleanupFinished = false;
+      let terminationFinished = false;
+
+      yield* Effect.addFinalizer(() => Deferred.succeed(allowCleanup, undefined));
+
+      const gated = Signature.of({
+        ...signatures,
+        verify: (input) =>
+          signatures.verify(input).pipe(
+            Effect.tap(() => Deferred.succeed(entered, undefined)),
+            Effect.andThen(Effect.never),
+            Effect.ensuring(
+              Effect.gen(function* () {
+                yield* Deferred.succeed(cleanupStarted, undefined);
+                yield* Deferred.await(allowCleanup);
+                cleanupFinished = true;
+              }),
+            ),
+          ),
+      });
+
+      const token = yield* sign(keys.privateKey, { ...claims, nonce: "wrong-nonce" });
+
+      const active = yield* verifier
+        .verify(token, verification)
+        .pipe(Effect.provideService(Signature, gated), Effect.forkChild);
+
+      yield* Deferred.await(entered);
+
+      const terminating = yield* (
+        termination === "owner closure" ? Scope.close(owner, Exit.void) : Fiber.interrupt(active)
+      ).pipe(
+        Effect.tap(() =>
+          Effect.sync(() => {
+            terminationFinished = true;
+          }),
+        ),
+        Effect.forkChild,
+      );
+
+      expect(
+        yield* Effect.raceFirst(
+          Deferred.await(cleanupStarted).pipe(Effect.as("cleanup")),
+          Fiber.join(terminating).pipe(Effect.as("terminated")),
+        ),
+      ).toBe("cleanup");
+      expect(terminationFinished).toBe(false);
+      yield* Deferred.succeed(allowCleanup, undefined);
+      yield* Fiber.join(terminating);
+      expect(cleanupFinished).toBe(true);
+
+      if (termination === "owner closure") {
+        expect((yield* Fiber.join(active).pipe(Effect.flip))._tag).toBe("OAuthUnavailable");
+      } else {
+        const exit = yield* Fiber.await(active);
+
+        expect(Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause)).toBe(true);
+        expect(
+          (yield* verifier.verify(yield* sign(keys.privateKey, claims), verification)).subject,
+        ).toBe("provider-subject");
+      }
+    }).pipe(Effect.scoped, Effect.provide(cryptoLayer)),
+  );
+}

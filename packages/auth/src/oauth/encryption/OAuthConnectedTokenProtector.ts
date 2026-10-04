@@ -8,8 +8,7 @@ import {
 import type { OAuthConnectedTokenKeyring } from "../OAuthConnectedTokenProtector";
 import { OAuthUnavailable } from "../signInErrors";
 import { OAuthEncryptionKeyId } from "../signInModels";
-import { snapshotOAuthSync } from "../signInSnapshot";
-import { payloadEncryption } from "./payload";
+import { encodeUtf8, payloadEncryption } from "./payload";
 
 const contextCodec = Schema.fromJsonString(
   Schema.Tuple([
@@ -20,11 +19,10 @@ const contextCodec = Schema.fromJsonString(
   ]),
 );
 
-const encoder = new TextEncoder();
-
-const validate = (context: OAuthConnectedProtectionContext, input: OAuthConnectedTokenMaterial) => {
-  const material = snapshotOAuthSync(OAuthConnectedTokenMaterial, input);
-
+const validate = Effect.fnUntraced(function* (
+  context: OAuthConnectedProtectionContext,
+  material: OAuthConnectedTokenMaterial,
+) {
   const token =
     context.namespace === "effect-auth/oauth-connected-token-context/v1" ? context : context.token;
 
@@ -32,29 +30,21 @@ const validate = (context: OAuthConnectedProtectionContext, input: OAuthConnecte
     (token.configuration.protocol === "oidc") !== (material.continuation._tag === "Oidc") ||
     (token.configuration.profile.retention === "access-only" && material.refreshToken !== undefined)
   )
-    throw OAuthUnavailable.make({});
+    return yield* OAuthUnavailable.make({});
 
   return material;
-};
+});
 
-const aad = (context: OAuthConnectedProtectionContext, keyId: string) => {
-  const json = Schema.encodeSync(contextCodec)([
+const aad = Effect.fnUntraced(function* (context: OAuthConnectedProtectionContext, keyId: string) {
+  const json = yield* Schema.encodeEffect(contextCodec)([
     "effect-auth/oauth-connected-token-aead/v1",
     "oauth-connected-xchacha20poly1305-v1",
     keyId,
     context,
-  ]);
+  ]).pipe(Effect.mapError(() => OAuthUnavailable.make({})));
 
-  if (json.length > 262144) throw OAuthUnavailable.make({});
-  const bytes = encoder.encode(json);
-
-  if (bytes.length > 262144) {
-    bytes.fill(0);
-    throw OAuthUnavailable.make({});
-  }
-
-  return bytes;
-};
+  return yield* encodeUtf8(json, 262144);
+});
 
 export const make = (keyring: OAuthConnectedTokenKeyring) =>
   payloadEncryption(

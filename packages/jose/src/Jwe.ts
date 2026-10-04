@@ -1,5 +1,5 @@
 import { Aead } from "@yielded/crypto/Aead";
-import type { OperationError } from "@yielded/crypto/Errors";
+import { CryptoUnavailable, type OperationError } from "@yielded/crypto/Errors";
 import { Crypto, Effect, Redacted, Schema } from "effect";
 import { Base64Url } from "effect/encoding";
 
@@ -37,12 +37,12 @@ const readHeader = Effect.fnUntraced(function* (input: unknown) {
   return yield* parse(Header, raw, "header");
 });
 
-/** Generates a fresh 96-bit IV through Effect Crypto for each invocation. */
+/** Generates a fresh 96-bit IV; random-source failures become CryptoUnavailable. */
 export const encrypt = Effect.fnUntraced(function* (
   plaintext: Redacted.Redacted<Uint8Array>,
   key: SecretKey,
   input: Header,
-) {
+): Effect.fn.Return<Redacted.Redacted<string>, JweError, Aead | Crypto.Crypto> {
   const header = yield* readHeader(input);
 
   if (key.algorithm !== "dir") return yield* InvalidKey.make({});
@@ -59,7 +59,11 @@ export const encrypt = Effect.fnUntraced(function* (
 
   if (protectedPart.length > 4096) return yield* InvalidToken.make({ reason: "header" });
   const random = yield* Crypto.Crypto;
-  const nonce = yield* random.randomBytes(12);
+
+  const nonce = yield* random
+    .randomBytes(12)
+    .pipe(Effect.mapError(() => CryptoUnavailable.make({})));
+
   const aead = yield* Aead;
 
   const sealed = yield* aead.encrypt({

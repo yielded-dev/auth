@@ -10,9 +10,9 @@ crypto services in `Jws.Requirements` and Effect `Crypto`. Runtime Layers belong
 to the application. `Oidc.discover` retrieves metadata from the exact trusted
 issuer's OIDC discovery endpoint.
 
-Closing a client's scope cancels and joins its active operations; pending results
-and subsequent calls fail with `OAuthUnavailable`. Caller interruption cancels and
-joins that operation while leaving the client usable.
+Closing either factory's scope cancels and joins its active operations; pending
+results and subsequent calls fail with `OAuthUnavailable`. Caller interruption
+cancels and joins that operation while leaving the client or verifier usable.
 
 `client.codeGrant` and `client.refreshGrant` return private `TokenReceipt` values.
 Inspect `Redacted.value(receipt.body)` for provider-specific receipt rules, then
@@ -33,8 +33,10 @@ The application owns registered callbacks, expected state and response issuer,
 provider generations, permissions, identity callbacks, grant retention and durable
 receipts. This package makes one request per exchange, refresh or revocation.
 `OAuthRejected` identifies a complete HTTP 400 `invalid_grant` or an authenticated
-claim rejection. Malformed responses, transport, key and signature failures are
-`OAuthUnavailable`; they do not authorize repeating a possibly committed request.
+claim rejection. Malformed responses and expected transport, key and signature
+failures are `OAuthUnavailable`; they do not authorize repeating a possibly
+committed request. Implementation defects, including those in injected services,
+remain in Effect's defect channel.
 
 Provider endpoints require HTTPS and exact response URLs. Redirects, cookies and
 HTTP tracing are disabled for Fetch; custom HttpClients must preserve cancellation

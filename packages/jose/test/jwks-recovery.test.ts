@@ -1,6 +1,17 @@
 import { it } from "@effect/vitest";
 import { Jwks, Jws } from "@yielded/jose";
-import { Context, Deferred, Effect, Exit, Fiber, Layer, Redacted, Scheduler, Scope } from "effect";
+import {
+  Clock,
+  Context,
+  Deferred,
+  Effect,
+  Exit,
+  Fiber,
+  Layer,
+  Redacted,
+  Scheduler,
+  Scope,
+} from "effect";
 import { HttpClient, HttpClientError, HttpClientResponse } from "effect/http";
 import { TestClock } from "effect/testing";
 import * as jose from "jose";
@@ -269,6 +280,331 @@ it.effect.each([
     yield* TestClock.adjust(10);
     expect((yield* set.resolve({ algorithm: "ES256", kid: "one" })).jwk.kid).toBe("one");
     expect(requests).toBe(3);
+  }).pipe(Effect.scoped, Effect.provide(cryptoLayer)),
+);
+
+// Reproduced at 5199d99: callers passed the pending check before yielding to
+// Clock, then each started a GET. Gate that read through the public Clock service.
+it.effect("coalesces lookups that interleave during refresh admission", () =>
+  Effect.gen(function* () {
+    let requests = 0;
+    let arrivals = 0;
+    const arrived = yield* Deferred.make<void>();
+    const release = yield* Deferred.make<void>();
+    const clock = yield* Clock.Clock;
+
+    const client = HttpClient.make((request) =>
+      Effect.sync(() => {
+        requests++;
+
+        return HttpClientResponse.fromWeb(
+          request,
+          new Response(JSON.stringify({ keys: [publicJwk] })),
+        );
+      }),
+    );
+
+    const context = yield* Layer.build(
+      Jwks.layerRemote({ url: "https://issuer.example/keys", cooldownMs: 0 }).pipe(
+        Layer.provide(Layer.succeed(HttpClient.HttpClient, client)),
+      ),
+    );
+
+    const set = Context.get(context, Jwks.Jwks);
+
+    const lookups = yield* Effect.forEach([0, 1], () => {
+      let reads = 0;
+
+      const controlled: Clock.Clock = {
+        currentTimeMillis: Effect.gen(function* () {
+          if (++reads === 2) {
+            if (++arrivals === 2) yield* Deferred.succeed(arrived, undefined);
+            yield* Deferred.await(release);
+          }
+
+          return yield* clock.currentTimeMillis;
+        }),
+        currentTimeMillisUnsafe: () => clock.currentTimeMillisUnsafe(),
+        currentTimeNanos: clock.currentTimeNanos,
+        currentTimeNanosUnsafe: () => clock.currentTimeNanosUnsafe(),
+        monotonicTimeNanos: clock.monotonicTimeNanos,
+        monotonicTimeNanosUnsafe: () => clock.monotonicTimeNanosUnsafe(),
+        sleep: (duration) => clock.sleep(duration),
+      };
+
+      return Effect.forkChild(
+        set.resolve({ algorithm: "ES256" }).pipe(Effect.provideService(Clock.Clock, controlled)),
+      );
+    });
+
+    yield* Deferred.await(arrived);
+    yield* Deferred.succeed(release, undefined);
+    const keys = yield* Effect.forEach(lookups, Fiber.join);
+
+    expect(keys.map((key) => key.jwk)).toEqual([publicJwk, publicJwk]);
+    expect(requests).toBe(1);
+  }).pipe(Effect.scoped, Effect.provide(cryptoLayer)),
+);
+
+// Reproduced at 5199d99: closing during the admission Clock read missed the
+// not-yet-published Deferred; the later fork into the closed Scope never ran.
+it.effect("completes a lookup when its Scope closes during refresh admission", () =>
+  Effect.gen(function* () {
+    let requests = 0;
+    const completed = yield* Deferred.make<void>();
+
+    const scope = yield* Effect.acquireRelease(Scope.make(), (scope) =>
+      Scope.close(scope, Exit.void),
+    );
+
+    const client = HttpClient.make(() =>
+      Effect.sync(() => {
+        requests++;
+      }).pipe(Effect.andThen(Effect.never)),
+    );
+
+    const context = yield* Layer.buildWithScope(
+      Jwks.layerRemote({ url: "https://issuer.example/keys" }).pipe(
+        Layer.provide(Layer.succeed(HttpClient.HttpClient, client)),
+      ),
+      scope,
+    );
+
+    const clock = yield* Clock.Clock;
+    let reads = 0;
+
+    const controlled: Clock.Clock = {
+      currentTimeMillis: Effect.gen(function* () {
+        if (++reads === 2) yield* Scope.close(scope, Exit.void);
+
+        return yield* clock.currentTimeMillis;
+      }),
+      currentTimeMillisUnsafe: () => clock.currentTimeMillisUnsafe(),
+      currentTimeNanos: clock.currentTimeNanos,
+      currentTimeNanosUnsafe: () => clock.currentTimeNanosUnsafe(),
+      monotonicTimeNanos: clock.monotonicTimeNanos,
+      monotonicTimeNanosUnsafe: () => clock.monotonicTimeNanosUnsafe(),
+      sleep: (duration) => clock.sleep(duration),
+    };
+
+    const lookup = yield* Effect.forkChild(
+      Context.get(context, Jwks.Jwks)
+        .resolve({ algorithm: "ES256" })
+        .pipe(
+          Effect.provideService(Clock.Clock, controlled),
+          Effect.flip,
+          Effect.tap(() => Deferred.succeed(completed, undefined)),
+        ),
+      { startImmediately: true },
+    );
+
+    // The child has completed or suspended when startImmediately returns.
+    expect(yield* Deferred.isDone(completed)).toBe(true);
+    expect(yield* Fiber.join(lookup)).toMatchObject({
+      _tag: "JoseJwksUnavailable",
+      reason: "closed",
+    });
+    expect(requests).toBe(0);
+  }).pipe(
+    Effect.scoped,
+    Effect.provideService(Scheduler.PreventSchedulerYield, true),
+    Effect.provide(cryptoLayer),
+  ),
+);
+
+it.effect("uses a fresh cache after a delayed cache-miss decision", () =>
+  Effect.gen(function* () {
+    let requests = 0;
+    const entered = yield* Deferred.make<void>();
+    const release = yield* Deferred.make<void>();
+    const clock = yield* Clock.Clock;
+    let reads = 0;
+
+    const controlled: Clock.Clock = {
+      currentTimeMillis: Effect.gen(function* () {
+        if (++reads === 2) {
+          yield* Deferred.succeed(entered, undefined);
+          yield* Deferred.await(release);
+        }
+
+        return yield* clock.currentTimeMillis;
+      }),
+      currentTimeMillisUnsafe: () => clock.currentTimeMillisUnsafe(),
+      currentTimeNanos: clock.currentTimeNanos,
+      currentTimeNanosUnsafe: () => clock.currentTimeNanosUnsafe(),
+      monotonicTimeNanos: clock.monotonicTimeNanos,
+      monotonicTimeNanosUnsafe: () => clock.monotonicTimeNanosUnsafe(),
+      sleep: (duration) => clock.sleep(duration),
+    };
+
+    const client = HttpClient.make((request) =>
+      Effect.sync(() => {
+        requests++;
+
+        return HttpClientResponse.fromWeb(
+          request,
+          new Response(JSON.stringify({ keys: [publicJwk] })),
+        );
+      }),
+    );
+
+    const context = yield* Layer.build(
+      Jwks.layerRemote({ url: "https://issuer.example/keys" }).pipe(
+        Layer.provide(Layer.succeed(HttpClient.HttpClient, client)),
+      ),
+    );
+
+    const set = Context.get(context, Jwks.Jwks);
+
+    const delayed = yield* Effect.forkChild(
+      set.resolve({ algorithm: "ES256" }).pipe(Effect.provideService(Clock.Clock, controlled)),
+    );
+
+    yield* Deferred.await(entered);
+    expect((yield* set.resolve({ algorithm: "ES256" })).jwk).toEqual(publicJwk);
+    yield* Deferred.succeed(release, undefined);
+    expect((yield* Fiber.join(delayed)).jwk).toEqual(publicJwk);
+    expect(requests).toBe(1);
+  }).pipe(Effect.scoped, Effect.provide(cryptoLayer)),
+);
+
+it.live("orders refresh publication with owner shutdown", () =>
+  Effect.gen(function* () {
+    let requests = 0;
+    let reads = 0;
+    let publishing = false;
+    let steps = 0;
+    let lookupId: number | undefined;
+    let paused = false;
+    let released = false;
+    const tasks: Array<() => void> = [];
+    const outcomes: Array<string> = [];
+    const scheduler = yield* Scheduler.Scheduler;
+    const dispatcher = scheduler.makeDispatcher();
+
+    const controlledScheduler: Scheduler.Scheduler = {
+      executionMode: scheduler.executionMode,
+      shouldYield: (fiber) => {
+        // Installed Effect: step 26 pauses the old Ref implementation between
+        // clearing pending and Deferred.done. Never pause result consumption:
+        // ambiguous selection completes synchronously once publication occurs.
+        if (publishing && fiber.id !== lookupId && ++steps === 26) {
+          paused = true;
+
+          return true;
+        }
+
+        return false;
+      },
+      makeDispatcher: () => ({
+        scheduleTask: (task, priority) => {
+          if (paused && !released) tasks.push(task);
+          else dispatcher.scheduleTask(task, priority);
+        },
+        flush: () => dispatcher.flush(),
+      }),
+    };
+
+    const clock = yield* Clock.Clock;
+
+    const controlledClock: Clock.Clock = {
+      currentTimeMillis: Effect.sync(() => {
+        if (++reads === 3) publishing = true;
+
+        return 0;
+      }),
+      currentTimeMillisUnsafe: () => clock.currentTimeMillisUnsafe(),
+      currentTimeNanos: clock.currentTimeNanos,
+      currentTimeNanosUnsafe: () => clock.currentTimeNanosUnsafe(),
+      monotonicTimeNanos: clock.monotonicTimeNanos,
+      monotonicTimeNanosUnsafe: () => clock.monotonicTimeNanosUnsafe(),
+      sleep: (duration) => clock.sleep(duration),
+    };
+
+    const scope = yield* Effect.acquireRelease(Scope.make(), (scope) =>
+      Scope.close(scope, Exit.void),
+    );
+
+    const client = HttpClient.make((request) =>
+      Effect.sync(() => {
+        requests++;
+
+        return HttpClientResponse.fromWeb(
+          request,
+          new Response(JSON.stringify({ keys: [publicJwk, publicJwk] })),
+        );
+      }),
+    );
+
+    const context = yield* Layer.buildWithScope(
+      Jwks.layerRemote({ url: "https://issuer.example/keys" }).pipe(
+        Layer.provide(Layer.succeed(HttpClient.HttpClient, client)),
+      ),
+      scope,
+    );
+
+    const set = Context.get(context, Jwks.Jwks);
+
+    const lookup = yield* Effect.forkChild(
+      Effect.gen(function* () {
+        lookupId = yield* Effect.fiberId;
+
+        return yield* set.resolve({ algorithm: "ES256" });
+      }).pipe(
+        Effect.provideService(Clock.Clock, controlledClock),
+        Effect.provideService(Scheduler.Scheduler, controlledScheduler),
+        Effect.flip,
+        Effect.tap((error) =>
+          Effect.sync(() => {
+            outcomes.push(
+              `lookup:${error._tag === "JoseJwksUnavailable" ? error.reason : error._tag}`,
+            );
+          }),
+        ),
+      ),
+    );
+
+    while (!paused && outcomes.length === 0) yield* Effect.yieldNow;
+    const unpublished = outcomes.length === 0;
+
+    const closing = yield* Effect.forkChild(
+      Scope.close(scope, Exit.void).pipe(
+        Effect.provideService(Scheduler.PreventSchedulerYield, true),
+      ),
+      { startImmediately: true },
+    );
+
+    const probe = yield* Effect.forkChild(
+      set.resolve({ algorithm: "ES256" }).pipe(
+        Effect.flip,
+        Effect.tap((error) =>
+          Effect.sync(() => {
+            outcomes.push(
+              `probe:${error._tag === "JoseJwksUnavailable" ? error.reason : error._tag}`,
+            );
+          }),
+        ),
+        Effect.provideService(Scheduler.PreventSchedulerYield, true),
+      ),
+      { startImmediately: true },
+    );
+
+    released = true;
+    for (const task of tasks) task();
+    yield* Fiber.join(closing);
+    const error = yield* Fiber.join(lookup);
+
+    expect(yield* Fiber.join(probe)).toMatchObject({
+      _tag: "JoseJwksUnavailable",
+      reason: "closed",
+    });
+    expect(paused && unpublished).toBe(true);
+    expect(requests).toBe(1);
+    expect(outcomes).toEqual(
+      error._tag === "JoseAmbiguousKey"
+        ? ["lookup:JoseAmbiguousKey", "probe:closed"]
+        : expect.arrayContaining(["lookup:closed", "probe:closed"]),
+    );
   }).pipe(Effect.scoped, Effect.provide(cryptoLayer)),
 );
 

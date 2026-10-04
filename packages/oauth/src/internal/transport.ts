@@ -57,7 +57,6 @@ export const request = Effect.fnUntraced(
       }),
       Effect.provideService(Tracer.DisablePropagation, true),
       Effect.mapError(() => Unavailable.make({})),
-      Effect.catchDefect(() => Unavailable.make({})),
       Effect.timeoutOrElse({ duration: options.timeoutMs, orElse: () => Unavailable.make({}) }),
     ),
 );
@@ -65,26 +64,25 @@ export const request = Effect.fnUntraced(
 export const isJson = (contentType: string | null) =>
   contentType?.split(";", 1)[0]?.trim().toLowerCase() === "application/json";
 
-export const json = Effect.fnUntraced(
-  function* (response: Effect.Success<ReturnType<typeof request>>) {
-    if (!isJson(response.contentType)) return yield* Unavailable.make({});
-    const bytes = yield* V.reveal(response.bytes);
+export const json = Effect.fnUntraced(function* (
+  response: Effect.Success<ReturnType<typeof request>>,
+) {
+  if (!isJson(response.contentType)) return yield* Unavailable.make({});
+  const bytes = yield* V.reveal(response.bytes);
 
-    const text = yield* Effect.try({
-      try: () => new TextDecoder("utf-8", { fatal: true }).decode(bytes),
-      catch: () => Unavailable.make({}),
-    });
+  const text = yield* Effect.try({
+    try: () => new TextDecoder("utf-8", { fatal: true }).decode(bytes),
+    catch: () => Unavailable.make({}),
+  });
 
-    const body = yield* V.decode(Json, text);
+  const body = yield* V.decode(Json, text);
 
-    return {
-      status: response.status,
-      contentType: response.contentType,
-      body: Redacted.make(V.freeze(body)),
-    };
-  },
-  Effect.catchDefect(() => Unavailable.make({})),
-);
+  return {
+    status: response.status,
+    contentType: response.contentType,
+    body: Redacted.make(V.freeze(body)),
+  };
+});
 
 const Json = Schema.fromJsonString(V.JsonObject);
 

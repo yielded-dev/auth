@@ -23,8 +23,9 @@ const Configuration = Schema.Struct({
 });
 
 /**
- * Waiting is interruptible and bounded; admitted work is not detached on
- * interruption. The permit's scope covers native completion and buffer cleanup.
+ * Waiting is interruptible and bounded. The permit covers work and its cleanup;
+ * backends protect nonabortable native calls until actual completion. Owned
+ * interruptible work can stop and release its resources without finishing a KDF.
  * Nested work in the same fiber shares its permit; forked fibers must acquire
  * their own. This lets callers cover preparation and cleanup around a KDF call.
  * Defaults: one running derivation, sixteen waiting, five-second acquisition wait.
@@ -63,11 +64,11 @@ export const layer = (options: Options = {}): Layer.Layer<KdfAdmission, InvalidI
       return KdfAdmission.of({
         run: <A, E, R>(work: Effect.Effect<A, E, R>) =>
           Effect.withFiber((fiber) => {
-            if (owners.has(fiber.id)) return Effect.uninterruptible(work);
+            if (owners.has(fiber.id)) return work;
 
             const owned = Effect.acquireUseRelease(
               Effect.sync(() => owners.add(fiber.id)),
-              () => Effect.uninterruptible(work),
+              () => work,
               () => Effect.sync(() => owners.delete(fiber.id)),
             );
 

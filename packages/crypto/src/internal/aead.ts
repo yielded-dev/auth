@@ -62,7 +62,7 @@ export const makeAead = (subtle: SubtleCrypto, xchacha?: XChaCha): Aead["Service
             });
 
             return new Uint8Array(encrypted);
-          });
+          }).pipe(Effect.uninterruptible);
         }),
       );
     }),
@@ -111,7 +111,7 @@ export const makeAead = (subtle: SubtleCrypto, xchacha?: XChaCha): Aead["Service
           });
 
           return new Uint8Array(decrypted);
-        });
+        }).pipe(Effect.uninterruptible);
       });
 
       return Redacted.make(plaintext);

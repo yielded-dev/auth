@@ -67,7 +67,7 @@ export const makeKdf = Effect.fnUntraced(function* (
               });
 
               return Redacted.make(new Uint8Array(result));
-            }),
+            }).pipe(Effect.uninterruptible),
           );
         }),
       ),
@@ -101,7 +101,7 @@ export const makeKdf = Effect.fnUntraced(function* (
               });
 
               return Redacted.make(new Uint8Array(result));
-            }),
+            }).pipe(Effect.uninterruptible),
           );
         }),
       ),

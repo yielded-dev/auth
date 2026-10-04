@@ -14,6 +14,7 @@ import { Base64Url } from "effect/encoding";
 import { HttpClient, HttpClientRequest } from "effect/http";
 
 import { ConfigurationError, Rejected, Unavailable } from "./Errors";
+import * as Ownership from "./internal/ownership";
 import * as Transport from "./internal/transport";
 import * as V from "./internal/validation";
 import { JsonObject, Metadata, type RequestOptions } from "./OAuth";
@@ -84,196 +85,169 @@ const IdClaims = Schema.Struct({
 
 /** OIDC discovery uses the trusted issuer identifier, retaining its exact
  * spelling for claim comparison even if its network URL normalizes. */
-export const discover = Effect.fnUntraced(
-  function* (
-    input: string,
-    inputOptions: RequestOptions,
-  ): Effect.fn.Return<Metadata, ConfigurationError | Unavailable, HttpClient.HttpClient> {
-    const issuer = yield* V.configuration(V.Issuer, input, "issuer");
+export const discover = Effect.fnUntraced(function* (
+  input: string,
+  inputOptions: RequestOptions,
+): Effect.fn.Return<Metadata, ConfigurationError | Unavailable, HttpClient.HttpClient> {
+  const issuer = yield* V.configuration(V.Issuer, input, "issuer");
 
-    const options = yield* V.configuration(V.RequestOptions, {
-      maxResponseBytes: 1048576,
-      ...inputOptions,
-    });
+  const options = yield* V.configuration(V.RequestOptions, inputOptions);
 
-    const url = new URL(issuer);
+  const url = new URL(issuer);
 
-    url.pathname = `${url.pathname.replace(/\/$/u, "")}/.well-known/openid-configuration`;
-    const http = yield* Transport.capture;
+  url.pathname = `${url.pathname.replace(/\/$/u, "")}/.well-known/openid-configuration`;
+  const http = yield* Transport.capture;
 
-    const response = yield* Transport.request(
-      http,
-      HttpClientRequest.get(url.href).pipe(HttpClientRequest.acceptJson),
-      options,
-    );
+  const response = yield* Transport.request(
+    http,
+    HttpClientRequest.get(url.href).pipe(HttpClientRequest.acceptJson),
+    options,
+  );
 
-    if (response.status !== 200) return yield* Unavailable.make({});
-    const document = yield* Transport.json(response);
-    const metadata = yield* V.configuration(Metadata, yield* V.reveal(document.body), "metadata");
+  if (response.status !== 200) return yield* Unavailable.make({});
+  const document = yield* Transport.json(response);
+  const metadata = yield* V.configuration(Metadata, yield* V.reveal(document.body), "metadata");
 
-    if (metadata.issuer !== issuer) return yield* ConfigurationError.make({ reason: "issuer" });
+  if (metadata.issuer !== issuer) return yield* ConfigurationError.make({ reason: "issuer" });
 
-    return V.freeze(metadata);
-  },
-  Effect.catchDefect(() => Unavailable.make({})),
-);
+  return V.freeze(metadata);
+});
 
 const claimFailure = () => Rejected.make({ reason: "claims" });
 
-/** RS256-only signed ID tokens. The issuer's bounded JWKS cache belongs to the
- * caller's Scope; no process cache or automatic exchange retry is created. */
-export const makeVerifier = Effect.fnUntraced(
-  function* (
-    input: VerifierOptions,
-  ): Effect.fn.Return<
-    Verifier,
-    ConfigurationError | Unavailable,
-    HttpClient.HttpClient | Scope.Scope
-  > {
-    const options = yield* V.configuration(
-      Configuration,
-      { maxResponseBytes: 1048576, ...input },
-      "metadata",
+/** RS256-only signed ID tokens. Verification and the bounded JWKS cache belong
+ * to the caller's Scope. Owner closure cancels and joins active verification,
+ * returning Unavailable; caller interruption joins its operation without closing
+ * the verifier. No process cache or automatic exchange retry is created. */
+export const makeVerifier = Effect.fnUntraced(function* (
+  input: VerifierOptions,
+): Effect.fn.Return<
+  Verifier,
+  ConfigurationError | Unavailable,
+  HttpClient.HttpClient | Scope.Scope
+> {
+  const options = yield* V.configuration(Configuration, input, "metadata");
+
+  const metadata = V.freeze(options.metadata);
+
+  if (
+    metadata.jwks_uri === undefined ||
+    !metadata.code_challenge_methods_supported?.includes("S256") ||
+    !metadata.response_types_supported?.includes("code") ||
+    !metadata.id_token_signing_alg_values_supported?.includes("RS256")
+  )
+    return yield* ConfigurationError.make({ reason: "metadata" });
+  const http = yield* Transport.capture;
+
+  const context = yield* Layer.build(
+    Jwks.layerRemote({
+      url: metadata.jwks_uri,
+      timeoutMs: options.timeoutMs,
+      maxResponseBytes: options.maxResponseBytes,
+    }).pipe(Layer.provide(Layer.succeed(HttpClient.HttpClient, http))),
+  ).pipe(Effect.mapError(() => Unavailable.make({})));
+
+  const keys = Context.get(context, Jwks.Jwks);
+  const { use } = yield* Ownership.make;
+
+  const verify = Effect.fnUntraced(function* (
+    token: Redacted.Redacted<string>,
+    input: VerificationInput,
+  ): Effect.fn.Return<Verified, Rejected | Unavailable, Jws.Requirements | Crypto.Crypto> {
+    // Capture caller policy and secret values before key lookup or cryptography.
+    const policy = yield* V.decode(VerifyInput, input);
+    const start = DateTime.toEpochMillis(policy.verificationStartedAt);
+    const expectedNonce = yield* V.reveal(policy.nonce);
+
+    const accessToken =
+      policy.accessToken === undefined ? undefined : yield* V.reveal(policy.accessToken);
+
+    const code = policy.code === undefined ? undefined : yield* V.reveal(policy.code);
+
+    // Jwt verifies the signature before any registered/application claim checks.
+    // Unauthenticated malformed/key/signature failures must never burn a receipt.
+    const verified = yield* Jwt.verifyWithKeySet(JsonObject, token, {
+      algorithms: ["RS256"],
+      issuer: metadata.issuer,
+      audience: options.clientId,
+      requiredClaims: ["iss", "sub", "aud", "exp", "iat"],
+      clockTolerance: 0,
+    }).pipe(
+      Effect.provideService(Jwks.Jwks, keys),
+      Effect.mapError((error) =>
+        error._tag === "JoseClaimValidationFailed" ? claimFailure() : Unavailable.make({}),
+      ),
     );
 
-    const metadata = V.freeze(options.metadata);
+    const claims = yield* V.decode(IdClaims, verified.claims).pipe(Effect.mapError(claimFailure));
+
+    const now = (yield* Clock.currentTimeMillis) / 1000;
+    const audience = typeof claims.aud === "string" ? claims.aud : claims.aud[0];
 
     if (
-      metadata.jwks_uri === undefined ||
-      !metadata.code_challenge_methods_supported?.includes("S256") ||
-      !metadata.response_types_supported?.includes("code") ||
-      !metadata.id_token_signing_alg_values_supported?.includes("RS256")
+      start < 0 ||
+      start > now * 1000 ||
+      claims.iss !== metadata.issuer ||
+      audience !== options.clientId ||
+      (claims.azp !== undefined && claims.azp !== options.clientId) ||
+      claims.exp <= now ||
+      claims.iat > now ||
+      (claims.nbf !== undefined && claims.nbf > now) ||
+      (claims.auth_time !== undefined && claims.auth_time > now)
     )
-      return yield* ConfigurationError.make({ reason: "metadata" });
-    const http = yield* Transport.capture;
+      return yield* claimFailure();
+    if (policy.previous === undefined) {
+      if (
+        claims.nonce !== expectedNonce ||
+        (policy.maxAgeSeconds !== undefined &&
+          (claims.auth_time === undefined ||
+            claims.auth_time + policy.maxAgeSeconds < Math.floor(now)))
+      )
+        return yield* claimFailure();
+    } else if (
+      claims.sub !== policy.previous.subject ||
+      (claims.nonce !== undefined && claims.nonce !== expectedNonce) ||
+      (claims.auth_time !== undefined && claims.auth_time !== policy.previous.authTime)
+    )
+      return yield* claimFailure();
+    for (const [hash, secret] of [
+      [claims.at_hash, accessToken],
+      [claims.c_hash, code],
+    ] as const) {
+      if (hash === undefined) continue;
+      if (secret === undefined) return yield* claimFailure();
+      const crypto = yield* Crypto.Crypto;
 
-    const context = yield* Layer.build(
-      Jwks.layerRemote({
-        url: metadata.jwks_uri,
-        timeoutMs: options.timeoutMs,
-        maxResponseBytes: options.maxResponseBytes,
-      }).pipe(Layer.provide(Layer.succeed(HttpClient.HttpClient, http))),
-    ).pipe(Effect.mapError(() => Unavailable.make({})));
+      const digest = yield* crypto
+        .digest("SHA-256", new TextEncoder().encode(secret))
+        .pipe(Effect.mapError(() => Unavailable.make({})));
 
-    const keys = Context.get(context, Jwks.Jwks);
-    let closed = false;
+      if (digest.length !== 32) return yield* Unavailable.make({});
+      if (hash !== Base64Url.encode(digest.subarray(0, 16))) return yield* claimFailure();
+    }
+    // Re-read time after optional digest I/O so expired tokens cannot escape.
+    const finished = (yield* Clock.currentTimeMillis) / 1000;
 
-    yield* Effect.addFinalizer(() =>
-      Effect.sync(() => {
-        closed = true;
-      }),
-    );
+    if (
+      claims.exp <= finished ||
+      (policy.previous === undefined &&
+        policy.maxAgeSeconds !== undefined &&
+        claims.auth_time !== undefined &&
+        claims.auth_time + policy.maxAgeSeconds < Math.floor(finished))
+    )
+      return yield* claimFailure();
 
-    const verify = Effect.fnUntraced(
-      function* (
-        token: Redacted.Redacted<string>,
-        input: VerificationInput,
-      ): Effect.fn.Return<Verified, Rejected | Unavailable, Jws.Requirements | Crypto.Crypto> {
-        if (closed) return yield* Unavailable.make({});
+    return {
+      claims: Redacted.make(V.freeze(verified.claims)),
+      subject: claims.sub,
+      ...(claims.auth_time === undefined
+        ? {}
+        : {
+            authTime: claims.auth_time,
+            upstreamAuthenticatedAt: DateTime.makeUnsafe(Math.min(start, claims.auth_time * 1000)),
+          }),
+    };
+  }, use);
 
-        // Capture caller policy and secret values before key lookup or cryptography.
-        const policy = yield* V.decode(VerifyInput, input);
-        const start = DateTime.toEpochMillis(policy.verificationStartedAt);
-        const expectedNonce = yield* V.reveal(policy.nonce);
-
-        const accessToken =
-          policy.accessToken === undefined ? undefined : yield* V.reveal(policy.accessToken);
-
-        const code = policy.code === undefined ? undefined : yield* V.reveal(policy.code);
-
-        // Jwt verifies the signature before any registered/application claim checks.
-        // Unauthenticated malformed/key/signature failures must never burn a receipt.
-        const verified = yield* Jwt.verifyWithKeySet(JsonObject, token, {
-          algorithms: ["RS256"],
-          issuer: metadata.issuer,
-          audience: options.clientId,
-          requiredClaims: ["iss", "sub", "aud", "exp", "iat"],
-          clockTolerance: 0,
-        }).pipe(
-          Effect.provideService(Jwks.Jwks, keys),
-          Effect.mapError((error) =>
-            error._tag === "JoseClaimValidationFailed" ? claimFailure() : Unavailable.make({}),
-          ),
-        );
-
-        const claims = yield* V.decode(IdClaims, verified.claims).pipe(
-          Effect.mapError(claimFailure),
-        );
-
-        const now = (yield* Clock.currentTimeMillis) / 1000;
-        const audience = typeof claims.aud === "string" ? claims.aud : claims.aud[0];
-
-        if (
-          start < 0 ||
-          start > now * 1000 ||
-          claims.iss !== metadata.issuer ||
-          audience !== options.clientId ||
-          (claims.azp !== undefined && claims.azp !== options.clientId) ||
-          claims.exp <= now ||
-          claims.iat > now ||
-          (claims.nbf !== undefined && claims.nbf > now) ||
-          (claims.auth_time !== undefined && claims.auth_time > now)
-        )
-          return yield* claimFailure();
-        if (policy.previous === undefined) {
-          if (
-            claims.nonce !== expectedNonce ||
-            (policy.maxAgeSeconds !== undefined &&
-              (claims.auth_time === undefined ||
-                claims.auth_time + policy.maxAgeSeconds < Math.floor(now)))
-          )
-            return yield* claimFailure();
-        } else if (
-          claims.sub !== policy.previous.subject ||
-          (claims.nonce !== undefined && claims.nonce !== expectedNonce) ||
-          (claims.auth_time !== undefined && claims.auth_time !== policy.previous.authTime)
-        )
-          return yield* claimFailure();
-        for (const [hash, secret] of [
-          [claims.at_hash, accessToken],
-          [claims.c_hash, code],
-        ] as const) {
-          if (hash === undefined) continue;
-          if (secret === undefined) return yield* claimFailure();
-          const crypto = yield* Crypto.Crypto;
-
-          const digest = yield* crypto
-            .digest("SHA-256", new TextEncoder().encode(secret))
-            .pipe(Effect.mapError(() => Unavailable.make({})));
-
-          if (digest.length !== 32) return yield* Unavailable.make({});
-          if (hash !== Base64Url.encode(digest.subarray(0, 16))) return yield* claimFailure();
-        }
-        // Re-read time after optional digest I/O so expired tokens cannot escape.
-        const finished = (yield* Clock.currentTimeMillis) / 1000;
-
-        if (closed) return yield* Unavailable.make({});
-        if (
-          claims.exp <= finished ||
-          (policy.previous === undefined &&
-            policy.maxAgeSeconds !== undefined &&
-            claims.auth_time !== undefined &&
-            claims.auth_time + policy.maxAgeSeconds < Math.floor(finished))
-        )
-          return yield* claimFailure();
-
-        return {
-          claims: Redacted.make(V.freeze(verified.claims)),
-          subject: claims.sub,
-          ...(claims.auth_time === undefined
-            ? {}
-            : {
-                authTime: claims.auth_time,
-                upstreamAuthenticatedAt: DateTime.makeUnsafe(
-                  Math.min(start, claims.auth_time * 1000),
-                ),
-              }),
-        };
-      },
-      Effect.catchDefect(() => Unavailable.make({})),
-    );
-
-    return { verify };
-  },
-  Effect.catchDefect(() => Unavailable.make({})),
-);
+  return { verify };
+});

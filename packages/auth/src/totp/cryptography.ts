@@ -124,7 +124,7 @@ export const make = Effect.gen(function* () {
     ) {
       const selected = yield* keys.current;
 
-      if (Redacted.value(selected.key).length !== 32 || secret.length !== 20) return yield* fail();
+      if (secret.length !== 20) return yield* fail();
       const nonce = yield* random(12);
 
       const additionalData = yield* Schema.encodeEffect(bindingCodec)(binding).pipe(
@@ -155,8 +155,7 @@ export const make = Effect.gen(function* () {
     ) {
       const key = yield* keys.get(envelope.keyId);
 
-      if (Redacted.value(key).length !== 32 || envelope.revision !== binding.revision)
-        return yield* fail();
+      if (envelope.revision !== binding.revision) return yield* fail();
 
       const nonce = yield* Effect.fromResult(Base64Url.decode(envelope.nonce)).pipe(
         Effect.mapError(fail),

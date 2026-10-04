@@ -34,6 +34,8 @@ import type { OpenIdConnectConnectedProtocolOptions } from "./models";
 const unavailable = () => OAuthUnavailable.make({});
 const rejected = () => OAuthProtocolRejected.make({});
 
+// Final containment for application callbacks and supplied platform services.
+// Expected validation failures are typed; defects never establish non-issuance.
 const safe = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   effect.pipe(
     Effect.tapCause((cause) =>
@@ -97,25 +99,26 @@ interface GrantMetadata {
   readonly refreshExpiresIn?: number;
 }
 
-const receiptMetadata = <R>(entry: InstalledConnectedProvider<R>, receipt: OAuth.TokenReceipt) =>
-  Effect.try({
-    try: (): GrantMetadata => {
-      const body = Redacted.value(receipt.body);
-      const decoded = Schema.decodeUnknownSync(rawMetadataSchema)(body);
-      let refreshExpiresIn: number | undefined;
+const receiptMetadata = Effect.fnUntraced(function* <R>(
+  entry: InstalledConnectedProvider<R>,
+  receipt: OAuth.TokenReceipt,
+): Effect.fn.Return<GrantMetadata, Schema.SchemaError> {
+  const body = Redacted.value(receipt.body);
 
-      if (entry.provider.refreshExpiry !== "unreported") {
-        refreshExpiresIn = Schema.decodeUnknownSync(rawRefreshExpiry)(
-          body[entry.provider.refreshExpiry.field],
-        );
-        if (refreshExpiresIn === 0 && entry.provider.refreshExpiry.zero === "unreported")
-          refreshExpiresIn = undefined;
-      }
+  const decoded = yield* Schema.decodeUnknownEffect(rawMetadataSchema)(body);
 
-      return { expiresIn: decoded.expires_in, scope: decoded.scope, refreshExpiresIn };
-    },
-    catch: unavailable,
-  });
+  let refreshExpiresIn: number | undefined;
+
+  if (entry.provider.refreshExpiry !== "unreported") {
+    refreshExpiresIn = yield* Schema.decodeUnknownEffect(rawRefreshExpiry)(
+      body[entry.provider.refreshExpiry.field],
+    );
+    if (refreshExpiresIn === 0 && entry.provider.refreshExpiry.zero === "unreported")
+      refreshExpiresIn = undefined;
+  }
+
+  return { expiresIn: decoded.expires_in, scope: decoded.scope, refreshExpiresIn };
+}, Effect.mapError(unavailable));
 
 const sameStrings = (left: ReadonlyArray<string>, right: ReadonlyArray<string>) =>
   left.length === right.length &&
@@ -207,10 +210,7 @@ export const makeConnectedProtocolWithCompatibility = Effect.fn(
   ) {
     const scopes =
       compatibility !== undefined
-        ? yield* Effect.try({
-            try: () => compatibility.decodeScopes(metadata.scope, profile.scopes),
-            catch: unavailable,
-          })
+        ? yield* compatibility.decodeScopes(metadata.scope, profile.scopes)
         : metadata.scope === undefined
           ? profile.scopes
           : yield* Schema.decodeEffect(M.OAuthConnectedScopes)(metadata.scope.split(" ")).pipe(

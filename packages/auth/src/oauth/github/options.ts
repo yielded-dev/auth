@@ -16,7 +16,7 @@ import { type OAuthUnavailable } from "../signInErrors";
 import { gitHubOAuthAppProviderKey } from "./identity";
 import type { GitHubOAuthAppConnectedProtocolOptions, GitHubOAuthAppGeneration } from "./models";
 import {
-  gitHubOAuthAppProvider,
+  makeGitHubOAuthAppProvider,
   makeGitHubOAuthAppConnectedProtocol,
   makeGitHubOAuthAppProtocol,
 } from "./protocol";
@@ -39,9 +39,8 @@ export type ConnectedRegistration = Registration &
 export type ConnectedOptions = Transport &
   (ConnectedRegistration | { readonly registrations: ReadonlyArray<ConnectedRegistration> });
 
-const registration = (input: Registration): GitHubOAuthAppGeneration => ({
-  ...input,
-  ...resolveRegistration(input, "github"),
+const registration = Effect.fnUntraced(function* (input: Registration) {
+  return { ...input, ...(yield* resolveRegistration(input, "github")) };
 });
 
 export type ProviderRegistration = Pick<GitHubOAuthAppGeneration, "clientId" | "clientSecret"> &
@@ -74,21 +73,32 @@ export const accessProfile = (options: {
   });
 
 /** Declare GitHub for Http.layer. The host supplies its provider key and
- * callback destinations. Retired registrations remain available to finish flows. */
+ * callback destinations. Retired registrations remain available to finish flows.
+ * Invalid registrations fail configure with OpenIdConnectConfigurationError. */
 export const provider = (
   options: ProviderOptions,
 ): ProviderDefinition<OpenIdConnectConfigurationError | OAuthUnavailable, Requirements> => ({
   configure: Effect.fn("GitHub.provider.configure")(function* (binding) {
     const registrations = yield* resolveOptions(() =>
-      ("registrations" in options ? options.registrations : [options]).map((input) => ({
-        ...input,
-        ...resolveRegistration({ ...input, callbacks: binding.callbacks }, binding.provider),
-      })),
+      Effect.forEach(
+        "registrations" in options ? options.registrations : [options],
+        Effect.fnUntraced(function* (input) {
+          return {
+            ...input,
+            ...(yield* resolveRegistration(
+              { ...input, callbacks: binding.callbacks },
+              binding.provider,
+            )),
+          };
+        }),
+      ),
     );
 
+    const providers = yield* Effect.forEach(registrations, makeGitHubOAuthAppProvider);
+
     const protocol = yield* makeOpenIdConnectOAuthProtocol({
-      providers: registrations.map((input) => ({
-        ...gitHubOAuthAppProvider(input),
+      providers: providers.map((input) => ({
+        ...input,
         provider: binding.provider,
       })),
       timeoutSeconds: options.timeoutSeconds ?? 10,
@@ -118,12 +128,17 @@ export const provider = (
 export const layer = (options: Options) =>
   Layer.effect(
     OAuthProtocol,
-    resolveOptions(() => ({
-      registrations: ("registrations" in options ? options.registrations : [options]).map(
+    resolveOptions(() =>
+      Effect.forEach(
+        "registrations" in options ? options.registrations : [options],
         registration,
+      ).pipe(
+        Effect.map((registrations) => ({
+          registrations,
+          timeoutSeconds: options.timeoutSeconds === undefined ? 10 : options.timeoutSeconds,
+        })),
       ),
-      timeoutSeconds: options.timeoutSeconds === undefined ? 10 : options.timeoutSeconds,
-    })).pipe(Effect.flatMap(makeGitHubOAuthAppProtocol)),
+    ).pipe(Effect.flatMap(makeGitHubOAuthAppProtocol)),
   );
 
 /** Configure GitHub API connections with the same callback/rotation defaults as
@@ -131,13 +146,20 @@ export const layer = (options: Options) =>
 export const layerConnected = (options: ConnectedOptions) =>
   Layer.effect(
     OAuthConnectedProtocol,
-    resolveOptions(() => ({
-      registrations: ("registrations" in options ? options.registrations : [options]).map(
-        (input) => ({
-          ...registration(input),
-          profiles: input.profiles,
+    resolveOptions(() =>
+      Effect.forEach(
+        "registrations" in options ? options.registrations : [options],
+        Effect.fnUntraced(function* (input) {
+          return {
+            ...(yield* registration(input)),
+            profiles: input.profiles,
+          };
         }),
+      ).pipe(
+        Effect.map((registrations) => ({
+          registrations,
+          timeoutSeconds: options.timeoutSeconds === undefined ? 10 : options.timeoutSeconds,
+        })),
       ),
-      timeoutSeconds: options.timeoutSeconds === undefined ? 10 : options.timeoutSeconds,
-    })).pipe(Effect.flatMap(makeGitHubOAuthAppConnectedProtocol)),
+    ).pipe(Effect.flatMap(makeGitHubOAuthAppConnectedProtocol)),
   );

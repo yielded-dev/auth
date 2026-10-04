@@ -105,12 +105,16 @@ export type SigningKey = PrivateKey | SecretKey;
 export type VerificationKey = PublicKey | SecretKey;
 
 const read = <S extends Schema.Constraint>(schema: S, input: unknown) =>
-  Effect.suspend(() =>
-    Schema.decodeUnknownEffect(schema)(KeyInput.jwk(input), { reportInput: false }),
-  ).pipe(
+  Effect.try({
+    try: () => KeyInput.jwk(input),
+    catch: () => InvalidKey.make({}),
+  }).pipe(
+    Effect.flatMap((captured) =>
+      Schema.decodeUnknownEffect(schema)(captured, { reportInput: false }).pipe(
+        Effect.mapError(() => InvalidKey.make({})),
+      ),
+    ),
     Effect.map(KeyInput.detach),
-    Effect.mapError(() => InvalidKey.make({})),
-    Effect.catchDefect(() => InvalidKey.make({})),
   );
 
 const bytes = (value: string) => decode(value).pipe(Effect.mapError(() => InvalidKey.make({})));

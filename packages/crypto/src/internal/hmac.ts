@@ -29,7 +29,7 @@ export const makeHmac = (subtle: SubtleCrypto): Hmac["Service"] =>
           });
 
           return new Uint8Array(result);
-        }),
+        }).pipe(Effect.uninterruptible),
       );
     }),
     verify: Effect.fnUntraced(function* (input) {
@@ -53,7 +53,7 @@ export const makeHmac = (subtle: SubtleCrypto): Hmac["Service"] =>
             try: () => subtle.verify("HMAC", key, tag, data),
             catch: nativeError,
           });
-        }),
+        }).pipe(Effect.uninterruptible),
       );
     }),
   });

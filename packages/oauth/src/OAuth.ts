@@ -1,9 +1,10 @@
-import { Effect, Fiber, Redacted, Schema, type Scope } from "effect";
+import { Effect, Redacted, Schema, type Scope } from "effect";
 import { Base64 } from "effect/encoding";
 import type { HttpClient } from "effect/http";
 import { HttpClientRequest } from "effect/http";
 
 import { ConfigurationError, Rejected, Unavailable } from "./Errors";
+import * as Ownership from "./internal/ownership";
 import * as Transport from "./internal/transport";
 import * as V from "./internal/validation";
 
@@ -211,43 +212,42 @@ const successFields = [
  * finite nonnegative numbers and whole decimal strings (for example "60.5").
  * Whitespace, exponent/prefix syntax and nonfinite values are rejected. Raw
  * receipt extensions/scopes are untouched; no request, retry or claim verification. */
-export const tokens = Effect.fnUntraced(
-  function* (input: TokenReceipt): Effect.fn.Return<TokenSet, Rejected | Unavailable> {
-    const receipt = yield* V.decode(TokenReceipt, input);
+export const tokens = Effect.fnUntraced(function* (
+  input: TokenReceipt,
+): Effect.fn.Return<TokenSet, Rejected | Unavailable> {
+  const receipt = yield* V.decode(TokenReceipt, input);
 
-    if (!Transport.isJson(receipt.contentType)) return yield* Unavailable.make({});
-    const raw = yield* V.reveal(receipt.body);
+  if (!Transport.isJson(receipt.contentType)) return yield* Unavailable.make({});
+  const raw = yield* V.reveal(receipt.body);
 
-    if (Object.hasOwn(raw, "error")) {
-      if (successFields.some((key) => Object.hasOwn(raw, key))) return yield* Unavailable.make({});
-      const terminal = yield* V.decode(Terminal, raw);
+  if (Object.hasOwn(raw, "error")) {
+    if (successFields.some((key) => Object.hasOwn(raw, key))) return yield* Unavailable.make({});
+    const terminal = yield* V.decode(Terminal, raw);
 
-      if (receipt.status === 400 && terminal.error === "invalid_grant")
-        return yield* Rejected.make({ reason: "invalid_grant" });
+    if (receipt.status === 400 && terminal.error === "invalid_grant")
+      return yield* Rejected.make({ reason: "invalid_grant" });
 
-      return yield* Unavailable.make({});
-    }
-    if (
-      receipt.status !== 200 ||
-      Object.hasOwn(raw, "error_description") ||
-      Object.hasOwn(raw, "error_uri")
-    )
-      return yield* Unavailable.make({});
-    const value = yield* V.decode(RawToken, raw);
+    return yield* Unavailable.make({});
+  }
+  if (
+    receipt.status !== 200 ||
+    Object.hasOwn(raw, "error_description") ||
+    Object.hasOwn(raw, "error_uri")
+  )
+    return yield* Unavailable.make({});
+  const value = yield* V.decode(RawToken, raw);
 
-    return {
-      tokenType: "bearer",
-      accessToken: Redacted.make(value.access_token),
-      ...(value.refresh_token === undefined
-        ? {}
-        : { refreshToken: Redacted.make(value.refresh_token) }),
-      ...(value.id_token === undefined ? {} : { idToken: Redacted.make(value.id_token) }),
-      ...(value.expires_in === undefined ? {} : { expiresIn: value.expires_in }),
-      ...(value.scope === undefined ? {} : { scope: value.scope }),
-    };
-  },
-  Effect.catchDefect(() => Unavailable.make({})),
-);
+  return {
+    tokenType: "bearer",
+    accessToken: Redacted.make(value.access_token),
+    ...(value.refresh_token === undefined
+      ? {}
+      : { refreshToken: Redacted.make(value.refresh_token) }),
+    ...(value.id_token === undefined ? {} : { idToken: Redacted.make(value.id_token) }),
+    ...(value.expires_in === undefined ? {} : { expiresIn: value.expires_in }),
+    ...(value.scope === undefined ? {} : { scope: value.scope }),
+  };
+});
 
 const parameters = (input: Parameters) => {
   const values = new URLSearchParams(input.parameters);
@@ -304,185 +304,151 @@ const authenticated = Effect.fnUntraced(function* (
  * active at construction is captured. Owner closure cancels and joins active
  * operations, then rejects their results as unavailable; caller interruption
  * cancels and joins its operation without closing the client. */
-export const make = Effect.fnUntraced(
-  function* (
-    input: ClientOptions,
-  ): Effect.fn.Return<
-    Client,
-    ConfigurationError | Unavailable,
-    HttpClient.HttpClient | Scope.Scope
-  > {
-    const options = yield* V.configuration(
-      ClientOptionsSchema,
-      { maxResponseBytes: 1048576, ...input },
-      "metadata",
+export const make = Effect.fnUntraced(function* (
+  input: ClientOptions,
+): Effect.fn.Return<Client, ConfigurationError | Unavailable, HttpClient.HttpClient | Scope.Scope> {
+  const options = yield* V.configuration(ClientOptionsSchema, input, "metadata");
+
+  const authentication = yield* detachAuthentication(options.authentication);
+
+  const revocationAuthentication =
+    options.revocationAuthentication === undefined
+      ? authentication
+      : yield* detachAuthentication(options.revocationAuthentication);
+
+  const metadata = V.freeze(options.metadata);
+
+  const supported =
+    metadata.token_endpoint_auth_methods_supported ??
+    (metadata.jwks_uri === undefined ? undefined : ["client_secret_basic"]);
+
+  const revokeSupported =
+    metadata.revocation_endpoint_auth_methods_supported ??
+    (metadata.jwks_uri === undefined ? undefined : ["client_secret_basic"]);
+
+  if (
+    (supported !== undefined && !supported.includes(authentication.method)) ||
+    (options.revocationAuthentication !== undefined &&
+      metadata.revocation_endpoint !== undefined &&
+      revokeSupported !== undefined &&
+      !revokeSupported.includes(revocationAuthentication.method))
+  )
+    return yield* ConfigurationError.make({ reason: "authentication" });
+  const { available, use } = yield* Ownership.make;
+  const http = yield* Transport.capture;
+  const profile = options.profile === undefined ? undefined : V.freeze(options.profile);
+
+  yield* Effect.addFinalizer(() =>
+    Effect.sync(() => {
+      if (authentication.method !== "none") Redacted.wipeUnsafe(authentication.secret);
+      if (revocationAuthentication.method !== "none")
+        Redacted.wipeUnsafe(revocationAuthentication.secret);
+    }),
+  );
+
+  const send = Effect.fnUntraced(function* (body: URLSearchParams) {
+    yield* available;
+
+    const request = yield* authenticated(
+      new URL(metadata.token_endpoint).href,
+      options.clientId,
+      authentication,
+      body,
     );
 
-    const authentication = yield* detachAuthentication(options.authentication);
+    return yield* Transport.json(yield* Transport.request(http, request, options));
+  });
 
-    const revocationAuthentication =
-      options.revocationAuthentication === undefined
-        ? authentication
-        : yield* detachAuthentication(options.revocationAuthentication);
+  const authorizationUrl = Effect.fnUntraced(function* (input: AuthorizationInput) {
+    yield* available;
+    const value = yield* V.configuration(Authorization, input);
+    const url = new URL(metadata.authorization_endpoint);
+    const body = parameters(value);
 
-    const metadata = V.freeze(options.metadata);
+    body.set("client_id", options.clientId);
+    body.set("redirect_uri", value.redirectUri);
+    body.set("response_type", "code");
+    body.set("response_mode", "query");
+    body.set("scope", value.scopes.join(" "));
+    body.set("state", yield* V.reveal(value.state));
+    body.set("code_challenge", value.codeChallenge);
+    body.set("code_challenge_method", "S256");
+    if (value.nonce !== undefined) body.set("nonce", yield* V.reveal(value.nonce));
+    if (value.maxAgeSeconds !== undefined) body.set("max_age", String(value.maxAgeSeconds));
+    for (const [key, item] of body) url.searchParams.append(key, item);
+    if (url.href.length > 16384) return yield* ConfigurationError.make({ reason: "parameters" });
 
-    const supported =
-      metadata.token_endpoint_auth_methods_supported ??
-      (metadata.jwks_uri === undefined ? undefined : ["client_secret_basic"]);
+    return Redacted.make(url.href);
+  }, use);
 
-    const revokeSupported =
-      metadata.revocation_endpoint_auth_methods_supported ??
-      (metadata.jwks_uri === undefined ? undefined : ["client_secret_basic"]);
+  const codeGrant = Effect.fnUntraced(function* (input: CodeGrantInput) {
+    yield* available;
+    const value = yield* V.configuration(CodeGrant, input);
+    const body = parameters(value);
 
-    if (
-      (supported !== undefined && !supported.includes(authentication.method)) ||
-      (options.revocationAuthentication !== undefined &&
-        metadata.revocation_endpoint !== undefined &&
-        revokeSupported !== undefined &&
-        !revokeSupported.includes(revocationAuthentication.method))
-    )
+    body.set("grant_type", "authorization_code");
+    body.set("code", yield* V.reveal(value.code));
+    body.set("code_verifier", yield* V.reveal(value.pkceVerifier));
+    body.set("redirect_uri", value.redirectUri);
+
+    return yield* send(body);
+  }, use);
+
+  const refreshGrant = Effect.fnUntraced(function* (input: RefreshGrantInput) {
+    yield* available;
+    const value = yield* V.configuration(RefreshGrant, input);
+    const body = parameters(value);
+
+    body.set("grant_type", "refresh_token");
+    body.set("refresh_token", yield* V.reveal(value.refreshToken));
+    if (value.scopes !== undefined) body.set("scope", value.scopes.join(" "));
+
+    return yield* send(body);
+  }, use);
+
+  const fetchProfile = Effect.fnUntraced(function* (input: Redacted.Redacted<string>) {
+    yield* available;
+    if (profile === undefined) return yield* ConfigurationError.make({ reason: "endpoint" });
+    const token = yield* V.reveal(yield* V.decode(Bearer, input));
+
+    const request = HttpClientRequest.get(new URL(profile.url).href).pipe(
+      HttpClientRequest.acceptJson,
+      HttpClientRequest.setHeaders(profile.headers ?? {}),
+      HttpClientRequest.setHeader("authorization", `Bearer ${token}`),
+    );
+
+    const response = yield* Transport.request(http, request, options);
+
+    if (response.status !== 200) return yield* Unavailable.make({});
+
+    return yield* V.reveal((yield* Transport.json(response)).body);
+  }, use);
+
+  const revoke = Effect.fnUntraced(function* (input: RevocationInput) {
+    yield* available;
+    if (metadata.revocation_endpoint === undefined)
+      return yield* ConfigurationError.make({ reason: "endpoint" });
+    if (revokeSupported !== undefined && !revokeSupported.includes(revocationAuthentication.method))
       return yield* ConfigurationError.make({ reason: "authentication" });
-    const scope = yield* Effect.scope;
-    const http = yield* Transport.capture;
-    const profile = options.profile === undefined ? undefined : V.freeze(options.profile);
+    const value = yield* V.configuration(Revocation, input);
 
-    yield* Effect.addFinalizer(() =>
-      Effect.sync(() => {
-        if (authentication.method !== "none") Redacted.wipeUnsafe(authentication.secret);
-        if (revocationAuthentication.method !== "none")
-          Redacted.wipeUnsafe(revocationAuthentication.secret);
+    const request = yield* authenticated(
+      new URL(metadata.revocation_endpoint).href,
+      options.clientId,
+      revocationAuthentication,
+      new URLSearchParams({
+        token: yield* V.reveal(value.token),
+        token_type_hint: value.tokenTypeHint,
       }),
     );
 
-    const available = Effect.suspend(() =>
-      scope.state._tag === "Closed" ? Effect.fail(Unavailable.make({})) : Effect.void,
-    );
+    const response = yield* Transport.request(http, request, options);
 
-    // The scope owns each operation, and its caller always joins or interrupts it.
-    // Await the exit so owner cancellation stays an unknown outcome, not rejection.
-    const use = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-      Effect.acquireUseRelease(
-        available.pipe(Effect.andThen(Effect.forkIn(effect, scope, { uninterruptible: false }))),
-        (fiber) =>
-          Effect.gen(function* () {
-            const exit = yield* Fiber.await(fiber);
+    if (response.status !== 200) return yield* Unavailable.make({});
+  }, use);
 
-            yield* available;
-
-            return yield* exit;
-          }),
-        Fiber.interrupt,
-      );
-
-    const send = Effect.fnUntraced(function* (body: URLSearchParams) {
-      yield* available;
-
-      const request = yield* authenticated(
-        new URL(metadata.token_endpoint).href,
-        options.clientId,
-        authentication,
-        body,
-      );
-
-      return yield* Transport.json(yield* Transport.request(http, request, options));
-    });
-
-    const authorizationUrl = Effect.fnUntraced(function* (input: AuthorizationInput) {
-      yield* available;
-      const value = yield* V.configuration(Authorization, input);
-      const url = new URL(metadata.authorization_endpoint);
-      const body = parameters(value);
-
-      body.set("client_id", options.clientId);
-      body.set("redirect_uri", value.redirectUri);
-      body.set("response_type", "code");
-      body.set("response_mode", "query");
-      body.set("scope", value.scopes.join(" "));
-      body.set("state", yield* V.reveal(value.state));
-      body.set("code_challenge", value.codeChallenge);
-      body.set("code_challenge_method", "S256");
-      if (value.nonce !== undefined) body.set("nonce", yield* V.reveal(value.nonce));
-      if (value.maxAgeSeconds !== undefined) body.set("max_age", String(value.maxAgeSeconds));
-      for (const [key, item] of body) url.searchParams.append(key, item);
-      if (url.href.length > 16384) return yield* ConfigurationError.make({ reason: "parameters" });
-
-      return Redacted.make(url.href);
-    }, use);
-
-    const codeGrant = Effect.fnUntraced(function* (input: CodeGrantInput) {
-      yield* available;
-      const value = yield* V.configuration(CodeGrant, input);
-      const body = parameters(value);
-
-      body.set("grant_type", "authorization_code");
-      body.set("code", yield* V.reveal(value.code));
-      body.set("code_verifier", yield* V.reveal(value.pkceVerifier));
-      body.set("redirect_uri", value.redirectUri);
-
-      return yield* send(body);
-    }, use);
-
-    const refreshGrant = Effect.fnUntraced(function* (input: RefreshGrantInput) {
-      yield* available;
-      const value = yield* V.configuration(RefreshGrant, input);
-      const body = parameters(value);
-
-      body.set("grant_type", "refresh_token");
-      body.set("refresh_token", yield* V.reveal(value.refreshToken));
-      if (value.scopes !== undefined) body.set("scope", value.scopes.join(" "));
-
-      return yield* send(body);
-    }, use);
-
-    const fetchProfile = Effect.fnUntraced(function* (input: Redacted.Redacted<string>) {
-      yield* available;
-      if (profile === undefined) return yield* ConfigurationError.make({ reason: "endpoint" });
-      const token = yield* V.reveal(yield* V.decode(Bearer, input));
-
-      const request = HttpClientRequest.get(new URL(profile.url).href).pipe(
-        HttpClientRequest.acceptJson,
-        HttpClientRequest.setHeaders(profile.headers ?? {}),
-        HttpClientRequest.setHeader("authorization", `Bearer ${token}`),
-      );
-
-      const response = yield* Transport.request(http, request, options);
-
-      if (response.status !== 200) return yield* Unavailable.make({});
-
-      return yield* V.reveal((yield* Transport.json(response)).body);
-    }, use);
-
-    const revoke = Effect.fnUntraced(function* (input: RevocationInput) {
-      yield* available;
-      if (metadata.revocation_endpoint === undefined)
-        return yield* ConfigurationError.make({ reason: "endpoint" });
-      if (
-        revokeSupported !== undefined &&
-        !revokeSupported.includes(revocationAuthentication.method)
-      )
-        return yield* ConfigurationError.make({ reason: "authentication" });
-      const value = yield* V.configuration(Revocation, input);
-
-      const request = yield* authenticated(
-        new URL(metadata.revocation_endpoint).href,
-        options.clientId,
-        revocationAuthentication,
-        new URLSearchParams({
-          token: yield* V.reveal(value.token),
-          token_type_hint: value.tokenTypeHint,
-        }),
-      );
-
-      const response = yield* Transport.request(http, request, options);
-
-      if (response.status !== 200) return yield* Unavailable.make({});
-    }, use);
-
-    return { metadata, authorizationUrl, codeGrant, refreshGrant, fetchProfile, revoke };
-  },
-  Effect.catchDefect(() => Unavailable.make({})),
-);
+  return { metadata, authorizationUrl, codeGrant, refreshGrant, fetchProfile, revoke };
+});
 
 const Bearer = Schema.Redacted(V.text(16384).check(Schema.isPattern(/^[A-Za-z0-9._~+/-]+=*$/u)), {
   disallowJsonEncode: true,

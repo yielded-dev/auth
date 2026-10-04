@@ -9,7 +9,9 @@ import { make } from "./encryption/OAuthConnectedTransactionProtector";
 import type { OAuthUnavailable } from "./signInErrors";
 import type { OAuthTransactionKeyring } from "./transactionKeyring";
 
-/** Separate connected purpose. Key retention includes original claim horizons. */
+/** Separate connected purpose. Key retention includes original claim horizons.
+ * Layer teardown cancels and joins active operations before wiping keys;
+ * later calls fail with OAuthUnavailable. */
 export class OAuthConnectedTransactionProtector extends Context.Service<
   OAuthConnectedTransactionProtector,
   {

@@ -1,10 +1,10 @@
 import { Aead } from "@yielded/crypto/Aead";
-import { Crypto, Effect, Redacted, Result, Schema } from "effect";
+import { Crypto, Effect, Fiber, Redacted, Result, Schema, type Scope } from "effect";
 import { Base64Url } from "effect/encoding";
 
 import { OAuthConfigurationError, OAuthUnavailable } from "../signInErrors";
 import { OAuthEncryptionKeyId } from "../signInModels";
-import { snapshotOAuthSync } from "../signInSnapshot";
+import { snapshotOAuth, snapshotOAuthSync } from "../signInSnapshot";
 import type { OAuthTransactionKeyring } from "../transactionKeyring";
 
 const keyringSchema = Schema.Struct({
@@ -20,27 +20,49 @@ const keyringSchema = Schema.Struct({
 const encoder = new TextEncoder();
 const fail = () => OAuthUnavailable.make({});
 
-export const decodeBase64 = (value: string, maximum: number, exact?: number) => {
+/** Ownership starts when acquisition returns; cancellation stays available while waiting. */
+const ownBytes = <E, R>(acquire: Effect.Effect<Uint8Array, E, R>) =>
+  Effect.acquireRelease(acquire, (bytes) => Effect.sync(() => bytes.fill(0)), {
+    interruptible: true,
+  });
+
+const unwrap = <A>(value: Redacted.Redacted<A>) =>
+  Effect.try({ try: () => Redacted.value(value), catch: fail });
+
+export const encodeUtf8 = Effect.fnUntraced(function* (value: string, maximum: number) {
+  if (value.length > maximum) return yield* fail();
+  const bytes = yield* ownBytes(Effect.sync(() => encoder.encode(value)));
+
+  if (bytes.length > maximum) return yield* fail();
+
+  return bytes;
+});
+
+export const decodeBase64 = Effect.fnUntraced(function* (
+  value: string,
+  maximum: number,
+  exact?: number,
+) {
   if (
     value.length > Math.ceil((maximum * 4) / 3) ||
     value.length % 4 === 1 ||
     !/^[A-Za-z0-9_-]+$/.test(value)
   )
-    throw fail();
-  const bytes = Result.getOrUndefined(Base64Url.decode(value));
+    return yield* fail();
+
+  const bytes = yield* ownBytes(
+    Effect.fromResult(Base64Url.decode(value)).pipe(Effect.mapError(fail)),
+  );
 
   if (
-    !bytes ||
     bytes.length > maximum ||
     (exact !== undefined && bytes.length !== exact) ||
     Base64Url.encode(bytes) !== value
-  ) {
-    bytes?.fill(0);
-    throw fail();
-  }
+  )
+    return yield* fail();
 
   return bytes;
-};
+});
 
 type Envelope = {
   readonly format: string;
@@ -57,185 +79,157 @@ export const payloadEncryption = <C, P, S extends Envelope>(
     readonly envelope: Schema.Codec<S, unknown, never, never>;
     readonly format: S["format"];
     readonly maximumPlaintextBytes: number;
-    readonly aad: (context: C, keyId: string) => Uint8Array;
-    readonly validate: (context: C, plaintext: P) => P;
+    readonly aad: (
+      context: C,
+      keyId: string,
+    ) => Effect.Effect<Uint8Array, OAuthUnavailable, Scope.Scope>;
+    readonly validate: (
+      context: C,
+      plaintext: P,
+    ) => Effect.Effect<P, OAuthUnavailable, Scope.Scope>;
   },
   keyring: OAuthTransactionKeyring,
 ) => {
-  let captured: typeof keyringSchema.Type | undefined;
+  // Preserve the constructor-time detached snapshot, even if the caller changes
+  // or wipes its configuration before building the Layer.
+  const captured = Result.try({
+    try: () => snapshotOAuthSync(keyringSchema, keyring),
+    catch: () => OAuthConfigurationError.make({ reason: "keyring" }),
+  });
 
-  try {
-    captured = snapshotOAuthSync(keyringSchema, keyring);
-  } catch {
-    /* Layer validates. */
-  }
   const codec = Schema.fromJsonString(options.plaintext);
 
   return Effect.gen(function* () {
-    if (!captured) return yield* OAuthConfigurationError.make({ reason: "keyring" });
-    const configuration = captured;
+    const configuration = yield* Effect.fromResult(captured);
     const crypto = yield* Crypto.Crypto;
     const aead = yield* Aead;
+    const scope = yield* Effect.scope;
 
-    const keys = yield* Effect.try({
-      try: () => {
-        const map = new Map<string, Uint8Array>();
+    if (
+      new Set(configuration.keys.map((entry) => entry.id)).size !== configuration.keys.length ||
+      !configuration.keys.some((entry) => entry.id === configuration.activeKeyId)
+    )
+      return yield* OAuthConfigurationError.make({ reason: "keyring" });
 
-        try {
-          for (const entry of configuration.keys) {
-            if (map.has(entry.id)) throw fail();
-            map.set(entry.id, decodeBase64(Redacted.value(entry.material), 32, 32));
-          }
-          if (!map.has(configuration.activeKeyId)) throw fail();
+    const keys = yield* Effect.forEach(configuration.keys, (entry) =>
+      Effect.gen(function* () {
+        const material = yield* unwrap(entry.material);
 
-          return map;
-        } catch (error) {
-          for (const bytes of map.values()) bytes.fill(0);
-          throw error;
-        }
-      },
-      catch: () => OAuthConfigurationError.make({ reason: "keyring" }),
+        return { id: entry.id, bytes: yield* decodeBase64(material, 32, 32) };
+      }).pipe(Effect.mapError(() => OAuthConfigurationError.make({ reason: "keyring" }))),
+    );
+
+    const copyKey = Effect.fnUntraced(function* (id: string) {
+      const key = keys.find((entry) => entry.id === id);
+
+      if (key === undefined) return yield* fail();
+      const bytes = yield* ownBytes(Effect.sync(() => new Uint8Array(key.bytes)));
+
+      return Redacted.make(bytes);
     });
 
-    yield* Effect.addFinalizer(() =>
-      Effect.sync(() => {
-        for (const bytes of keys.values()) bytes.fill(0);
-        keys.clear();
-      }),
-    );
+    // Teardown interrupts and joins active operations before retained keys are
+    // wiped. Each operation also owns a copy, never a mutable keyring alias.
+    const run = <A>(work: Effect.Effect<A, OAuthUnavailable, Scope.Scope>) =>
+      Effect.suspend(() =>
+        scope.state._tag === "Closed"
+          ? Effect.fail(fail())
+          : Effect.acquireUseRelease(
+              Effect.forkIn(Effect.scoped(work), scope),
+              Fiber.join,
+              Fiber.interrupt,
+            ).pipe(
+              Effect.catchCause((cause) =>
+                scope.state._tag === "Closed" ? Effect.fail(fail()) : Effect.failCause(cause),
+              ),
+              Effect.flatMap((value) =>
+                scope.state._tag === "Closed" ? Effect.fail(fail()) : Effect.succeed(value),
+              ),
+            ),
+      );
 
     return {
       seal: (context: C, value: P) =>
-        Effect.suspend(() => {
-          const allocated: Uint8Array[] = [];
+        run(
+          Effect.gen(function* () {
+            const detached = yield* snapshotOAuth(options.context, context);
 
-          const retain = (bytes: Uint8Array) => {
-            allocated.push(bytes);
+            const plaintext = yield* options.validate(
+              detached,
+              yield* snapshotOAuth(options.plaintext, value),
+            );
 
-            return bytes;
-          };
+            const json = yield* Schema.encodeEffect(codec)(plaintext).pipe(Effect.mapError(fail));
+            const bytes = yield* encodeUtf8(json, options.maximumPlaintextBytes);
+            const additionalData = yield* options.aad(detached, configuration.activeKeyId);
+            const key = yield* copyKey(configuration.activeKeyId);
+            const nonce = yield* ownBytes(crypto.randomBytes(24).pipe(Effect.mapError(fail)));
 
-          return Effect.gen(function* () {
-            const input = yield* Effect.try({
-              try: () => {
-                const detached = snapshotOAuthSync(options.context, context);
-
-                const plaintext = options.validate(
-                  detached,
-                  snapshotOAuthSync(options.plaintext, value),
-                );
-
-                const bytes = retain(encoder.encode(Schema.encodeSync(codec)(plaintext)));
-                const additionalData = retain(options.aad(detached, configuration.activeKeyId));
-
-                if (bytes.length > options.maximumPlaintextBytes) throw fail();
-                const key = keys.get(configuration.activeKeyId);
-
-                if (!key) throw fail();
-
-                return { bytes, additionalData, key: Redacted.make(key) };
-              },
-              catch: fail,
-            });
-
-            const nonce = retain(yield* crypto.randomBytes(24).pipe(Effect.mapError(fail)));
-
-            const ciphertext = retain(
-              yield* aead
+            const ciphertext = yield* ownBytes(
+              aead
                 .encrypt({
                   algorithm: "XChaCha20-Poly1305",
-                  key: input.key,
+                  key,
                   nonce,
-                  additionalData: input.additionalData,
-                  plaintext: Redacted.make(input.bytes),
+                  additionalData,
+                  plaintext: Redacted.make(bytes),
                 })
                 .pipe(Effect.mapError(fail)),
             );
 
-            return yield* Effect.try({
-              try: () =>
-                snapshotOAuthSync(
-                  options.envelope,
-                  Schema.decodeUnknownSync(Schema.toType(options.envelope))({
-                    format: options.format,
-                    keyId: configuration.activeKeyId,
-                    nonce: Base64Url.encode(nonce),
-                    ciphertext: Redacted.make(Base64Url.encode(ciphertext)),
-                  }),
-                ),
-              catch: fail,
-            });
-          }).pipe(
-            Effect.ensuring(
-              Effect.sync(() => {
-                for (const bytes of allocated) bytes.fill(0);
-              }),
-            ),
-          );
-        }),
+            // The generic envelope is an external Schema boundary, not an assertion.
+            const sealed = yield* Schema.decodeUnknownEffect(Schema.toType(options.envelope))({
+              format: options.format,
+              keyId: configuration.activeKeyId,
+              nonce: Base64Url.encode(nonce),
+              ciphertext: Redacted.make(Base64Url.encode(ciphertext)),
+            }).pipe(Effect.mapError(fail));
+
+            return yield* snapshotOAuth(options.envelope, sealed);
+          }),
+        ),
       open: (context: C, envelope: S) =>
-        Effect.suspend(() => {
-          const allocated: Uint8Array[] = [];
+        run(
+          Effect.gen(function* () {
+            const detached = yield* snapshotOAuth(options.context, context);
+            const sealed = yield* snapshotOAuth(options.envelope, envelope);
+            const key = yield* copyKey(sealed.keyId);
+            const nonce = yield* decodeBase64(sealed.nonce, 24, 24);
 
-          const retain = (bytes: Uint8Array) => {
-            allocated.push(bytes);
-
-            return bytes;
-          };
-
-          return Effect.gen(function* () {
-            const input = yield* Effect.try({
-              try: () => {
-                const detached = snapshotOAuthSync(options.context, context);
-                const sealed = snapshotOAuthSync(options.envelope, envelope);
-                const key = keys.get(sealed.keyId);
-
-                if (!key) throw fail();
-
-                return {
-                  context: detached,
-                  key: Redacted.make(key),
-                  nonce: retain(decodeBase64(sealed.nonce, 24, 24)),
-                  ciphertext: retain(
-                    decodeBase64(
-                      Redacted.value(sealed.ciphertext),
-                      options.maximumPlaintextBytes + 16,
-                    ),
-                  ),
-                  additionalData: retain(options.aad(detached, sealed.keyId)),
-                };
-              },
-              catch: fail,
-            });
-
-            const plaintext = retain(
-              Redacted.value(
-                yield* aead
-                  .decrypt({ algorithm: "XChaCha20-Poly1305", ...input })
-                  .pipe(Effect.mapError(fail)),
-              ),
+            const ciphertext = yield* decodeBase64(
+              yield* unwrap(sealed.ciphertext),
+              options.maximumPlaintextBytes + 16,
             );
 
-            return yield* Effect.try({
-              try: () => {
-                if (plaintext.length > options.maximumPlaintextBytes) throw fail();
-                const json = new TextDecoder("utf-8", { fatal: true }).decode(plaintext);
-                const value = Schema.decodeSync(codec)(json);
+            const additionalData = yield* options.aad(detached, sealed.keyId);
 
-                if (Schema.encodeSync(codec)(value) !== json) throw fail();
+            const plaintext = yield* ownBytes(
+              aead
+                .decrypt({
+                  algorithm: "XChaCha20-Poly1305",
+                  key,
+                  nonce,
+                  ciphertext,
+                  additionalData,
+                })
+                .pipe(Effect.mapError(fail), Effect.flatMap(unwrap)),
+            );
 
-                return options.validate(input.context, value);
-              },
+            if (plaintext.length > options.maximumPlaintextBytes) return yield* fail();
+
+            const json = yield* Effect.try({
+              try: () => new TextDecoder("utf-8", { fatal: true }).decode(plaintext),
               catch: fail,
             });
-          }).pipe(
-            Effect.ensuring(
-              Effect.sync(() => {
-                for (const bytes of allocated) bytes.fill(0);
-              }),
-            ),
-          );
-        }),
+
+            const value = yield* Schema.decodeEffect(codec)(json).pipe(Effect.mapError(fail));
+            const canonical = yield* Schema.encodeEffect(codec)(value).pipe(Effect.mapError(fail));
+
+            if (canonical !== json) return yield* fail();
+
+            return yield* options.validate(detached, value);
+          }),
+        ),
     };
   });
 };

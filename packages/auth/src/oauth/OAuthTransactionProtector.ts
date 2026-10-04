@@ -9,8 +9,10 @@ import type {
 } from "./signInModels";
 import type { OAuthTransactionKeyring } from "./transactionKeyring";
 
-/** Dedicated transaction encryption. Retain retired keys through every pending
- * and claimed flow horizon and deployment convergence; binder signing keys have
+/** Dedicated transaction encryption. Layer teardown cancels and joins active
+ * operations before wiping keys; calls after teardown fail with OAuthUnavailable.
+ * Retain retired keys through every pending and claimed flow horizon and
+ * deployment convergence; binder signing keys have
  * an independent retention obligation. Never reuse session or connected-token keys.
  * Redacted prevents formatting, not memory disclosure or JavaScript zeroization.
  */

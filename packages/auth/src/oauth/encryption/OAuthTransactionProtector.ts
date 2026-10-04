@@ -1,4 +1,4 @@
-import { Schema } from "effect";
+import { Effect, Schema } from "effect";
 
 import { OAuthUnavailable } from "../signInErrors";
 import {
@@ -7,8 +7,8 @@ import {
   OAuthTransactionSecrets,
   OAuthSignInTransactionContext,
 } from "../signInModels";
-import { snapshotOAuthSync } from "../signInSnapshot";
 import { type OAuthTransactionKeyring } from "../transactionKeyring";
+import { encodeUtf8 } from "./payload";
 import { transactionEncryption } from "./transaction-encryption";
 const c = OAuthSignInTransactionContext.fields;
 
@@ -39,12 +39,8 @@ const aadCodec = Schema.fromJsonString(
   ]),
 );
 
-const encoder = new TextEncoder();
-
-const aad = (context: OAuthSignInTransactionContext, keyId: string) => {
-  const v = snapshotOAuthSync(OAuthSignInTransactionContext, context);
-
-  const encoded = Schema.encodeSync(aadCodec)([
+const aad = Effect.fnUntraced(function* (v: OAuthSignInTransactionContext, keyId: string) {
+  const encoded = yield* Schema.encodeEffect(aadCodec)([
     "effect-auth/oauth-sign-in-aead/v1",
     "oauth-xchacha20poly1305-v1",
     keyId,
@@ -67,18 +63,10 @@ const aad = (context: OAuthSignInTransactionContext, keyId: string) => {
     v.issuedAtMillis,
     v.expiresAtMillis,
     v.claimLifetimeMillis,
-  ]);
+  ]).pipe(Effect.mapError(() => OAuthUnavailable.make({})));
 
-  if (encoded.length > 16384) throw OAuthUnavailable.make({});
-  const bytes = encoder.encode(encoded);
-
-  if (bytes.length > 16384) {
-    bytes.fill(0);
-    throw OAuthUnavailable.make({});
-  }
-
-  return bytes;
-};
+  return yield* encodeUtf8(encoded, 16384);
+});
 
 export const make = (keyring: OAuthTransactionKeyring) =>
   transactionEncryption(OAuthSignInTransactionContext, aad, keyring, OAuthTransactionSecrets);

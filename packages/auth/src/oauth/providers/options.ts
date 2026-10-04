@@ -53,20 +53,25 @@ const registration = Schema.Union([
   }),
 ]);
 
-export const resolveRegistration = (input: RegistrationOptions, provider: string) => {
-  const saved = Schema.decodeSync(registration)(input);
+const invalid = () => OpenIdConnectConfigurationError.make({ reason: "provider" });
+
+export const resolveRegistration = Effect.fnUntraced(function* (
+  input: RegistrationOptions,
+  provider: string,
+) {
+  const saved = yield* Schema.decodeEffect(registration)(input);
 
   return {
     configurationGeneration: saved.configurationGeneration,
     issuance: saved.issuance,
     callbacks: saved.callbacks ?? [
       {
-        callbackId: saved.callbackId ?? Schema.decodeSync(OAuthCallbackId)(provider),
+        callbackId: saved.callbackId ?? (yield* Schema.decodeEffect(OAuthCallbackId)(provider)),
         redirectUri: saved.redirectUri,
       },
     ],
   };
-};
+}, Effect.mapError(invalid));
 
 type AuthenticationOptions =
   | {
@@ -121,23 +126,25 @@ export type ProviderOptions<P> = P extends { readonly protocol: "oauth" | "oidc"
         : { readonly pkceS256?: true })
   : never;
 
-export const resolveProvider = <
+export const resolveProvider = Effect.fnUntraced(function* <
   P extends {
     readonly provider: string;
     readonly issuer: string;
     readonly responseIssuerMode?: "required" | "unsupported";
   } & RegistrationOptions &
     AuthenticationOptions,
->(
-  input: P,
-) => {
-  const credentials = Schema.decodeSync(authentication)(input);
+>(input: P) {
+  const credentials = yield* Schema.decodeEffect(authentication)(input).pipe(
+    Effect.mapError(invalid),
+  );
 
   return {
     ...input,
-    ...resolveRegistration(input, input.provider),
-    provider: Schema.decodeSync(OAuthProviderKey)(input.provider),
-    issuer: Schema.decodeSync(OAuthIssuer)(input.issuer),
+    ...(yield* resolveRegistration(input, input.provider)),
+    provider: yield* Schema.decodeEffect(OAuthProviderKey)(input.provider).pipe(
+      Effect.mapError(invalid),
+    ),
+    issuer: yield* Schema.decodeEffect(OAuthIssuer)(input.issuer).pipe(Effect.mapError(invalid)),
     responseIssuerMode:
       input.responseIssuerMode === undefined ? ("required" as const) : input.responseIssuerMode,
     authentication: credentials.authentication ?? {
@@ -145,11 +152,9 @@ export const resolveProvider = <
       secret: credentials.clientSecret,
     },
   };
-};
+});
 
-/** Configuration errors never retain input values or credentials. */
-export const resolveOptions = <A>(resolve: () => A) =>
-  Effect.try({
-    try: resolve,
-    catch: () => OpenIdConnectConfigurationError.make({ reason: "provider" }),
-  });
+/** Capture caller-owned objects, including throwing getters or erased secrets.
+ * Owned validation stays typed; unexpected input defects never retain credentials. */
+export const resolveOptions = <A, E, R>(resolve: () => Effect.Effect<A, E, R>) =>
+  Effect.suspend(resolve).pipe(Effect.catchDefect(() => Effect.fail(invalid())));

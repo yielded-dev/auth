@@ -113,7 +113,7 @@ export const makeSignature = (subtle: SubtleCrypto): Signature["Service"] => {
           });
 
           return new Uint8Array(result);
-        }),
+        }).pipe(Effect.uninterruptible),
       );
     }),
     verify: Effect.fnUntraced(function* (input) {

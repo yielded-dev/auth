@@ -1,4 +1,4 @@
-import { Effect, Redacted, type Schema } from "effect";
+import { Effect, Redacted, type Schema, type Scope } from "effect";
 
 import { OAuthUnavailable } from "../signInErrors";
 import { OAuthSealedTransaction, type OAuthTransactionSecrets } from "../signInModels";
@@ -10,7 +10,7 @@ export const transactionEncryption = <
   S extends OAuthTransactionSecrets,
 >(
   context: Schema.Codec<C, unknown, never, never>,
-  aad: (context: C, keyId: string) => Uint8Array,
+  aad: (context: C, keyId: string) => Effect.Effect<Uint8Array, OAuthUnavailable, Scope.Scope>,
   keyring: OAuthTransactionKeyring,
   plaintext: Schema.Codec<S, unknown, never, never>,
   envelope: {
@@ -26,14 +26,21 @@ export const transactionEncryption = <
       envelope: envelope.schema,
       format: "oauth-xchacha20poly1305-v1",
       maximumPlaintextBytes: envelope.maximumPlaintextBytes,
-      validate: (context, secrets) => {
+      validate: Effect.fnUntraced(function* (context: C, secrets: S) {
         if ((context.protocol === "oidc") !== (secrets.oidcNonce !== undefined))
-          throw OAuthUnavailable.make({});
+          return yield* OAuthUnavailable.make({});
         for (const raw of [secrets.state, secrets.oidcNonce])
-          if (raw !== undefined) decodeBase64(Redacted.value(raw), 32, 32).fill(0);
+          if (raw !== undefined) {
+            const value = yield* Effect.try({
+              try: () => Redacted.value(raw),
+              catch: () => OAuthUnavailable.make({}),
+            });
+
+            yield* decodeBase64(value, 32, 32);
+          }
 
         return secrets;
-      },
+      }),
     },
     keyring,
   ).pipe(

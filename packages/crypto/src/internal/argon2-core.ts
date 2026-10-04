@@ -27,10 +27,7 @@ function mul(a: number, b: number) {
   return { h: high, l: low };
 }
 
-// High 32 bits of unsigned u32 multiply, via the same 16-bit limb split as `mul` below.
-// Kept single-purpose and number-returning so V8 inlines it (object-returning
-// helpers here cost 2.2x of the whole derivation, measured; small helpers
-// returning one number are free — see rotr* usage everywhere).
+// High 32 bits of unsigned u32 multiply, via the same 16-bit limb split as `mul`.
 function mulHi(a: number, b: number): number {
   const aL = a & 0xffff,
     aH = a >>> 16,
@@ -42,7 +39,6 @@ function mulHi(a: number, b: number): number {
   return (Math.imul(aH, bH) + (Math.imul(aH, bL) >>> 16) + (carry >>> 16)) | 0;
 }
 
-// Temporary block buffer.
 // 1024-byte block: 256 u32 = 128 interleaved low/high halves = RFC's
 // 8x8 matrix of 16-byte registers.
 
