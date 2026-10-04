@@ -107,7 +107,6 @@ use registration first, then connect provider access after authentication.
 
 Under the HTTP middleware, use the regular Auth API:
 
-{/* prettier-ignore */}
 ```ts
 const auth = yield* AppAuth;
 const session = yield* auth.requireSession();
@@ -116,7 +115,6 @@ const connections = yield* auth.listAccountConnections({ limit: 20 });
 
 The server-side connected service handles refresh and token use:
 
-{/* prettier-ignore */}
 ```ts
 const access = yield* AppAuth.strategies.social.access.ConnectedAccess;
 yield* access.withAccessToken(invocation, { grantId, profileKey: profile.key }, readProfile);

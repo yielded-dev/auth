@@ -147,62 +147,107 @@ function chachaCore(
 /**
  * hchacha hashes key and nonce into key' and nonce' for xchacha20.
  */
-// prettier-ignore
-function hchacha(
-  s: Uint32Array, k: Uint32Array, i: Uint32Array, out: Uint32Array
-): void {
-  let x00 = s[0], x01 = s[1], x02 = s[2], x03 = s[3],
-      x04 = k[0], x05 = k[1], x06 = k[2], x07 = k[3],
-      x08 = k[4], x09 = k[5], x10 = k[6], x11 = k[7],
-      x12 = i[0], x13 = i[1], x14 = i[2], x15 = i[3];
+function hchacha(s: Uint32Array, k: Uint32Array, i: Uint32Array, out: Uint32Array): void {
+  let x00 = s[0],
+    x01 = s[1],
+    x02 = s[2],
+    x03 = s[3],
+    x04 = k[0],
+    x05 = k[1],
+    x06 = k[2],
+    x07 = k[3],
+    x08 = k[4],
+    x09 = k[5],
+    x10 = k[6],
+    x11 = k[7],
+    x12 = i[0],
+    x13 = i[1],
+    x14 = i[2],
+    x15 = i[3];
 
   for (let r = 0; r < 20; r += 2) {
-    x00 = (x00 + x04) | 0; x12 = rotl(x12 ^ x00, 16);
-    x08 = (x08 + x12) | 0; x04 = rotl(x04 ^ x08, 12);
-    x00 = (x00 + x04) | 0; x12 = rotl(x12 ^ x00, 8);
-    x08 = (x08 + x12) | 0; x04 = rotl(x04 ^ x08, 7);
+    x00 = (x00 + x04) | 0;
+    x12 = rotl(x12 ^ x00, 16);
+    x08 = (x08 + x12) | 0;
+    x04 = rotl(x04 ^ x08, 12);
+    x00 = (x00 + x04) | 0;
+    x12 = rotl(x12 ^ x00, 8);
+    x08 = (x08 + x12) | 0;
+    x04 = rotl(x04 ^ x08, 7);
 
-    x01 = (x01 + x05) | 0; x13 = rotl(x13 ^ x01, 16);
-    x09 = (x09 + x13) | 0; x05 = rotl(x05 ^ x09, 12);
-    x01 = (x01 + x05) | 0; x13 = rotl(x13 ^ x01, 8);
-    x09 = (x09 + x13) | 0; x05 = rotl(x05 ^ x09, 7);
+    x01 = (x01 + x05) | 0;
+    x13 = rotl(x13 ^ x01, 16);
+    x09 = (x09 + x13) | 0;
+    x05 = rotl(x05 ^ x09, 12);
+    x01 = (x01 + x05) | 0;
+    x13 = rotl(x13 ^ x01, 8);
+    x09 = (x09 + x13) | 0;
+    x05 = rotl(x05 ^ x09, 7);
 
-    x02 = (x02 + x06) | 0; x14 = rotl(x14 ^ x02, 16);
-    x10 = (x10 + x14) | 0; x06 = rotl(x06 ^ x10, 12);
-    x02 = (x02 + x06) | 0; x14 = rotl(x14 ^ x02, 8);
-    x10 = (x10 + x14) | 0; x06 = rotl(x06 ^ x10, 7);
+    x02 = (x02 + x06) | 0;
+    x14 = rotl(x14 ^ x02, 16);
+    x10 = (x10 + x14) | 0;
+    x06 = rotl(x06 ^ x10, 12);
+    x02 = (x02 + x06) | 0;
+    x14 = rotl(x14 ^ x02, 8);
+    x10 = (x10 + x14) | 0;
+    x06 = rotl(x06 ^ x10, 7);
 
-    x03 = (x03 + x07) | 0; x15 = rotl(x15 ^ x03, 16);
-    x11 = (x11 + x15) | 0; x07 = rotl(x07 ^ x11, 12);
-    x03 = (x03 + x07) | 0; x15 = rotl(x15 ^ x03, 8)
-    x11 = (x11 + x15) | 0; x07 = rotl(x07 ^ x11, 7);
+    x03 = (x03 + x07) | 0;
+    x15 = rotl(x15 ^ x03, 16);
+    x11 = (x11 + x15) | 0;
+    x07 = rotl(x07 ^ x11, 12);
+    x03 = (x03 + x07) | 0;
+    x15 = rotl(x15 ^ x03, 8);
+    x11 = (x11 + x15) | 0;
+    x07 = rotl(x07 ^ x11, 7);
 
-    x00 = (x00 + x05) | 0; x15 = rotl(x15 ^ x00, 16);
-    x10 = (x10 + x15) | 0; x05 = rotl(x05 ^ x10, 12);
-    x00 = (x00 + x05) | 0; x15 = rotl(x15 ^ x00, 8);
-    x10 = (x10 + x15) | 0; x05 = rotl(x05 ^ x10, 7);
+    x00 = (x00 + x05) | 0;
+    x15 = rotl(x15 ^ x00, 16);
+    x10 = (x10 + x15) | 0;
+    x05 = rotl(x05 ^ x10, 12);
+    x00 = (x00 + x05) | 0;
+    x15 = rotl(x15 ^ x00, 8);
+    x10 = (x10 + x15) | 0;
+    x05 = rotl(x05 ^ x10, 7);
 
-    x01 = (x01 + x06) | 0; x12 = rotl(x12 ^ x01, 16);
-    x11 = (x11 + x12) | 0; x06 = rotl(x06 ^ x11, 12);
-    x01 = (x01 + x06) | 0; x12 = rotl(x12 ^ x01, 8);
-    x11 = (x11 + x12) | 0; x06 = rotl(x06 ^ x11, 7);
+    x01 = (x01 + x06) | 0;
+    x12 = rotl(x12 ^ x01, 16);
+    x11 = (x11 + x12) | 0;
+    x06 = rotl(x06 ^ x11, 12);
+    x01 = (x01 + x06) | 0;
+    x12 = rotl(x12 ^ x01, 8);
+    x11 = (x11 + x12) | 0;
+    x06 = rotl(x06 ^ x11, 7);
 
-    x02 = (x02 + x07) | 0; x13 = rotl(x13 ^ x02, 16);
-    x08 = (x08 + x13) | 0; x07 = rotl(x07 ^ x08, 12);
-    x02 = (x02 + x07) | 0; x13 = rotl(x13 ^ x02, 8);
-    x08 = (x08 + x13) | 0; x07 = rotl(x07 ^ x08, 7);
+    x02 = (x02 + x07) | 0;
+    x13 = rotl(x13 ^ x02, 16);
+    x08 = (x08 + x13) | 0;
+    x07 = rotl(x07 ^ x08, 12);
+    x02 = (x02 + x07) | 0;
+    x13 = rotl(x13 ^ x02, 8);
+    x08 = (x08 + x13) | 0;
+    x07 = rotl(x07 ^ x08, 7);
 
-    x03 = (x03 + x04) | 0; x14 = rotl(x14 ^ x03, 16)
-    x09 = (x09 + x14) | 0; x04 = rotl(x04 ^ x09, 12);
-    x03 = (x03 + x04) | 0; x14 = rotl(x14 ^ x03, 8);
-    x09 = (x09 + x14) | 0; x04 = rotl(x04 ^ x09, 7);
+    x03 = (x03 + x04) | 0;
+    x14 = rotl(x14 ^ x03, 16);
+    x09 = (x09 + x14) | 0;
+    x04 = rotl(x04 ^ x09, 12);
+    x03 = (x03 + x04) | 0;
+    x14 = rotl(x14 ^ x03, 8);
+    x09 = (x09 + x14) | 0;
+    x04 = rotl(x04 ^ x09, 7);
   }
   let oi = 0;
 
-  out[oi++] = x00; out[oi++] = x01;
-  out[oi++] = x02; out[oi++] = x03;
-  out[oi++] = x12; out[oi++] = x13;
-  out[oi++] = x14; out[oi++] = x15;
+  out[oi++] = x00;
+  out[oi++] = x01;
+  out[oi++] = x02;
+  out[oi++] = x03;
+  out[oi++] = x12;
+  out[oi++] = x13;
+  out[oi++] = x14;
+  out[oi++] = x15;
 }
 
 const sigma = Uint32Array.from([0x61707865, 0x3320646e, 0x79622d32, 0x6b206574]);

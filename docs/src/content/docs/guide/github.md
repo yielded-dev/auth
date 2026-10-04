@@ -44,7 +44,6 @@ GitHub sign-in requests `read:user`; no email address or repository access is re
 
 ## Sign in
 
-<!-- prettier-ignore -->
 ```ts
 const auth = yield* AppAuth;
 const started = yield* auth.signIn({

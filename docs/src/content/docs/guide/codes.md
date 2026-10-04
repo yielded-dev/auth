@@ -31,7 +31,6 @@ needed. Supply shared `ProofKeys` through [AuthDependencies](../reference/adapte
 
 ## Start the flow and send a code
 
-<!-- prettier-ignore -->
 ```ts
 const auth = yield* AppAuth;
 const started = yield* auth.beginSignIn({ flowId });
@@ -39,7 +38,6 @@ const started = yield* auth.beginSignIn({ flowId });
 
 The next request sends the code:
 
-<!-- prettier-ignore -->
 ```ts
 const auth = yield* AppAuth;
 const sent = yield* auth.signIn({
@@ -63,7 +61,6 @@ those fields; never make the browser read an HttpOnly cookie or send it as JSON.
 
 ## Verify the code
 
-<!-- prettier-ignore -->
 ```ts
 const auth = yield* AppAuth;
 const verified = yield* auth.verifySignIn({
@@ -81,7 +78,6 @@ privately delivered to the originating client.
 
 ## Complete sign-in
 
-<!-- prettier-ignore -->
 ```ts
 const auth = yield* AppAuth;
 const result = yield* auth.completeSignIn({

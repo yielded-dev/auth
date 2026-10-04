@@ -68,7 +68,6 @@ accounts and storage, and `server.ts` serves the routes.
 Inside an Effect route covered by the [auth middleware](./http-and-client#application-routes),
 call the service with your validated input:
 
-<!-- prettier-ignore -->
 ```ts
 const auth = yield* AppAuth;
 const result = yield* auth.signIn({ email, password });

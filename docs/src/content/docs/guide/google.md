@@ -44,7 +44,6 @@ The default `openid` scope is enough for sign-in.
 
 ## Sign in
 
-<!-- prettier-ignore -->
 ```ts
 const auth = yield* AppAuth;
 const started = yield* auth.signIn({

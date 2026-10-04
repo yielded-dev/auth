@@ -90,7 +90,6 @@ your router. For application routes that call auth, use the middleware shown in 
 [router composition](docs/src/content/docs/guide/http-and-client.mdx#configure-the-server).
 Inside an existing Effect handler, call the service directly:
 
-<!-- prettier-ignore -->
 ```ts
 const auth = yield* AppAuth;
 const result = yield* auth.signIn({ email, password });

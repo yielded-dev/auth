@@ -37,7 +37,6 @@ reset support does not automatically publish those endpoints.
 
 ## Register an account
 
-<!-- prettier-ignore -->
 ```ts
 const auth = yield* AppAuth;
 const result = yield* auth.register({
@@ -62,7 +61,6 @@ and its services explicitly.
 
 With `Effect` imported from `effect`, handle only the expected rejection:
 
-<!-- prettier-ignore -->
 ```ts
 const auth = yield* AppAuth;
 const result = yield* auth.signIn({ email, password }).pipe(
@@ -79,7 +77,6 @@ must be completed before granting access.
 
 ## Change a password
 
-<!-- prettier-ignore -->
 ```ts
 const auth = yield* AppAuth;
 const result = yield* auth.changePassword({ commandId, currentPassword, newPassword });
@@ -180,7 +177,6 @@ customized independently of the transport.
 
 Start recovery inside an Effect request handler:
 
-<!-- prettier-ignore -->
 ```ts
 const auth = yield* AppAuth;
 const requested = yield* auth.requestReset({ flowId, requestId, email, locale: "en" });
@@ -207,7 +203,6 @@ and response-header boundaries. For codes, use the saved reference and entered c
 
 In the next request, verify the submitted secret:
 
-<!-- prettier-ignore -->
 ```ts
 const auth = yield* AppAuth;
 const verified = yield* auth.verifyReset({ flowId, email, reference, secret });
@@ -216,7 +211,6 @@ const verified = yield* auth.verifyReset({ flowId, email, reference, secret });
 Retain `verified.continuation.continuationId`. Its matching credential is issued
 through the private `proof-continuation` channel. Complete with the same flow and email:
 
-<!-- prettier-ignore -->
 ```ts
 const auth = yield* AppAuth;
 const result = yield* auth.completeReset({

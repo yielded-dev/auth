@@ -31,18 +31,30 @@ function G1b(
   x: number,
 ) {
   // NOTE: V is LE here
-  const Xl = msg[x], Xh = msg[x + 1]; // prettier-ignore
-  let Al = BBUF[2 * a], Ah = BBUF[2 * a + 1]; // prettier-ignore
-  let Bl = BBUF[2 * b], Bh = BBUF[2 * b + 1]; // prettier-ignore
-  let Cl = BBUF[2 * c], Ch = BBUF[2 * c + 1]; // prettier-ignore
-  let Dl = BBUF[2 * d], Dh = BBUF[2 * d + 1]; // prettier-ignore
+  const Xl = msg[x],
+    Xh = msg[x + 1];
+
+  let Al = BBUF[2 * a],
+    Ah = BBUF[2 * a + 1];
+
+  let Bl = BBUF[2 * b],
+    Bh = BBUF[2 * b + 1];
+
+  let Cl = BBUF[2 * c],
+    Ch = BBUF[2 * c + 1];
+
+  let Dl = BBUF[2 * d],
+    Dh = BBUF[2 * d + 1];
+
   // v[a] = (v[a] + v[b] + x) | 0;
   const ll = u64.add3L(Al, Bl, Xl);
 
   Ah = u64.add3H(ll, Ah, Bh, Xh);
   Al = ll | 0;
+
   // v[d] = rotr(v[d] ^ v[a], 32)
-  let xh = Dh ^ Ah, xl = Dl ^ Al; // prettier-ignore
+  let xh = Dh ^ Ah,
+    xl = Dl ^ Al;
 
   Dh = u64.rotr32H(xh, xl);
   Dl = u64.rotr32L(xh, xl);
@@ -74,18 +86,30 @@ function G2b(
   x: number,
 ) {
   // NOTE: V is LE here
-  const Xl = msg[x], Xh = msg[x + 1]; // prettier-ignore
-  let Al = BBUF[2 * a], Ah = BBUF[2 * a + 1]; // prettier-ignore
-  let Bl = BBUF[2 * b], Bh = BBUF[2 * b + 1]; // prettier-ignore
-  let Cl = BBUF[2 * c], Ch = BBUF[2 * c + 1]; // prettier-ignore
-  let Dl = BBUF[2 * d], Dh = BBUF[2 * d + 1]; // prettier-ignore
+  const Xl = msg[x],
+    Xh = msg[x + 1];
+
+  let Al = BBUF[2 * a],
+    Ah = BBUF[2 * a + 1];
+
+  let Bl = BBUF[2 * b],
+    Bh = BBUF[2 * b + 1];
+
+  let Cl = BBUF[2 * c],
+    Ch = BBUF[2 * c + 1];
+
+  let Dl = BBUF[2 * d],
+    Dh = BBUF[2 * d + 1];
+
   // v[a] = (v[a] + v[b] + x) | 0;
   const ll = u64.add3L(Al, Bl, Xl);
 
   Ah = u64.add3H(ll, Ah, Bh, Xh);
   Al = ll | 0;
+
   // v[d] = rotr(v[d] ^ v[a], 16)
-  let xh = Dh ^ Ah, xl = Dl ^ Al; // prettier-ignore
+  let xh = Dh ^ Ah,
+    xl = Dl ^ Al;
 
   Dh = u64.rotrSH(xh, xl, 16);
   Dl = u64.rotrSL(xh, xl, 16);

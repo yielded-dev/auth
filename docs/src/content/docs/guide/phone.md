@@ -36,7 +36,6 @@ or `policy` only to change that behavior. Keys and delivery come from Layers.
 
 With `Effect` imported from `effect`, supply the request's host-verified network key:
 
-<!-- prettier-ignore -->
 ```ts
 const auth = yield* AppAuth;
 const started = yield* auth.signIn({ phoneNumber, locale: "en" }).pipe(
@@ -57,7 +56,6 @@ from private request credentials. In a shared action, map it with
 `requestFields: { requestBinding: "request-binding" }`; the named server and client
 calls then take only the public fields.
 
-<!-- prettier-ignore -->
 ```ts
 const auth = yield* AppAuth;
 const result = yield* auth.completeSignIn({

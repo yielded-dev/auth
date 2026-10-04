@@ -32,7 +32,11 @@ function mul(a: number, b: number) {
 // helpers here cost 2.2x of the whole derivation, measured; small helpers
 // returning one number are free — see rotr* usage everywhere).
 function mulHi(a: number, b: number): number {
-  const aL = a & 0xffff, aH = a >>> 16, bL = b & 0xffff, bH = b >>> 16; // prettier-ignore
+  const aL = a & 0xffff,
+    aH = a >>> 16,
+    bL = b & 0xffff,
+    bH = b >>> 16;
+
   const carry = (Math.imul(aL, bL) >>> 16) + (Math.imul(aH, bL) & 0xffff) + Math.imul(aL, bH);
 
   return (Math.imul(aH, bH) + (Math.imul(aH, bL) >>> 16) + (carry >>> 16)) | 0;
@@ -47,55 +51,67 @@ function mulHi(a: number, b: number): number {
 // `Math.imul` is the low product half, `mulHi` the high half, then a split 64-bit add with the
 // doubling folded in. RFC 9106 Figure 19 GB rotates by 32, 24, 16, and 63 bits after each XOR.
 function G(A2_BUF: Uint32Array, a: number, b: number, c: number, d: number) {
-  let Al = A2_BUF[2*a], Ah = A2_BUF[2*a + 1]; // prettier-ignore
-  let Bl = A2_BUF[2*b], Bh = A2_BUF[2*b + 1]; // prettier-ignore
-  let Cl = A2_BUF[2*c], Ch = A2_BUF[2*c + 1]; // prettier-ignore
-  let Dl = A2_BUF[2*d], Dh = A2_BUF[2*d + 1]; // prettier-ignore
-  let ml = 0, mh = 0, rl = 0, xh = 0, xl = 0; // prettier-ignore
+  let Al = A2_BUF[2 * a],
+    Ah = A2_BUF[2 * a + 1];
+
+  let Bl = A2_BUF[2 * b],
+    Bh = A2_BUF[2 * b + 1];
+
+  let Cl = A2_BUF[2 * c],
+    Ch = A2_BUF[2 * c + 1];
+
+  let Dl = A2_BUF[2 * d],
+    Dh = A2_BUF[2 * d + 1];
+
+  let ml = 0,
+    mh = 0,
+    rl = 0,
+    xh = 0,
+    xl = 0;
 
   // A = blamka(A, B); D = rotr64(D ^ A, 32)
   ml = Math.imul(Al, Bl);
-  mh = mulHi(Al, Bl); // prettier-ignore
+  mh = mulHi(Al, Bl);
   rl = (Al >>> 0) + (Bl >>> 0) + ((ml << 1) >>> 0);
   Ah = (Ah + Bh + ((mh << 1) | (ml >>> 31)) + ((rl / 0x100000000) | 0)) | 0;
-  Al = rl | 0; // prettier-ignore
+  Al = rl | 0;
   xh = Dh ^ Ah;
-  xl = Dl ^ Al; // prettier-ignore
+  xl = Dl ^ Al;
   Dh = rotr32H(xh, xl);
-  Dl = rotr32L(xh, xl); // prettier-ignore
+  Dl = rotr32L(xh, xl);
 
   // C = blamka(C, D); B = rotr64(B ^ C, 24)
   ml = Math.imul(Cl, Dl);
-  mh = mulHi(Cl, Dl); // prettier-ignore
+  mh = mulHi(Cl, Dl);
   rl = (Cl >>> 0) + (Dl >>> 0) + ((ml << 1) >>> 0);
   Ch = (Ch + Dh + ((mh << 1) | (ml >>> 31)) + ((rl / 0x100000000) | 0)) | 0;
-  Cl = rl | 0; // prettier-ignore
+  Cl = rl | 0;
   xh = Bh ^ Ch;
-  xl = Bl ^ Cl; // prettier-ignore
+  xl = Bl ^ Cl;
   Bh = rotrSH(xh, xl, 24);
-  Bl = rotrSL(xh, xl, 24); // prettier-ignore
+  Bl = rotrSL(xh, xl, 24);
 
   // A = blamka(A, B); D = rotr64(D ^ A, 16)
   ml = Math.imul(Al, Bl);
-  mh = mulHi(Al, Bl); // prettier-ignore
+  mh = mulHi(Al, Bl);
   rl = (Al >>> 0) + (Bl >>> 0) + ((ml << 1) >>> 0);
   Ah = (Ah + Bh + ((mh << 1) | (ml >>> 31)) + ((rl / 0x100000000) | 0)) | 0;
-  Al = rl | 0; // prettier-ignore
+  Al = rl | 0;
   xh = Dh ^ Ah;
-  xl = Dl ^ Al; // prettier-ignore
+  xl = Dl ^ Al;
   Dh = rotrSH(xh, xl, 16);
-  Dl = rotrSL(xh, xl, 16); // prettier-ignore
+  Dl = rotrSL(xh, xl, 16);
 
   // C = blamka(C, D); B = rotr64(B ^ C, 63)
   ml = Math.imul(Cl, Dl);
-  mh = mulHi(Cl, Dl); // prettier-ignore
+  mh = mulHi(Cl, Dl);
   rl = (Cl >>> 0) + (Dl >>> 0) + ((ml << 1) >>> 0);
   Ch = (Ch + Dh + ((mh << 1) | (ml >>> 31)) + ((rl / 0x100000000) | 0)) | 0;
-  Cl = rl | 0; // prettier-ignore
+  Cl = rl | 0;
   xh = Bh ^ Ch;
-  xl = Bl ^ Cl; // prettier-ignore
+  xl = Bl ^ Cl;
   Bh = rotrBH(xh, xl, 63);
-  Bl = rotrBL(xh, xl, 63); // prettier-ignore
+  Bl = rotrBL(xh, xl, 63);
 
   A2_BUF[2 * a] = Al;
   A2_BUF[2 * a + 1] = Ah;
@@ -110,11 +126,24 @@ function G(A2_BUF: Uint32Array, a: number, b: number, c: number, d: number) {
 // Argon2 permutation over 16 register indices into `A2_BUF`, not the register values themselves.
 // RFC 9106 Figure 17: these arguments are the 16 `v0..v15` 64-bit word
 // indices inside eight 16-byte inputs, not copied word values.
-// prettier-ignore
 function P(
   A2_BUF: Uint32Array,
-  v00: number, v01: number, v02: number, v03: number, v04: number, v05: number, v06: number, v07: number,
-  v08: number, v09: number, v10: number, v11: number, v12: number, v13: number, v14: number, v15: number,
+  v00: number,
+  v01: number,
+  v02: number,
+  v03: number,
+  v04: number,
+  v05: number,
+  v06: number,
+  v07: number,
+  v08: number,
+  v09: number,
+  v10: number,
+  v11: number,
+  v12: number,
+  v13: number,
+  v14: number,
+  v15: number,
 ) {
   // RFC 9106 Figure 18: first apply GB across rows, then across columns of the 8x8 register matrix.
   G(A2_BUF, v00, v04, v08, v12);
@@ -138,18 +167,46 @@ function block(
   for (let i = 0; i < 256; i++) A2_BUF[i] = x[xPos + i] ^ x[yPos + i];
   // rows (8 consecutive 16-register groups)
   for (let i = 0; i < 128; i += 16) {
-    // prettier-ignore
-    P(A2_BUF,
-      i, i + 1, i + 2, i + 3, i + 4, i + 5, i + 6, i + 7,
-      i + 8, i + 9, i + 10, i + 11, i + 12, i + 13, i + 14, i + 15
+    P(
+      A2_BUF,
+      i,
+      i + 1,
+      i + 2,
+      i + 3,
+      i + 4,
+      i + 5,
+      i + 6,
+      i + 7,
+      i + 8,
+      i + 9,
+      i + 10,
+      i + 11,
+      i + 12,
+      i + 13,
+      i + 14,
+      i + 15,
     );
   }
   // columns (8 strided 16-register groups)
   for (let i = 0; i < 16; i += 2) {
-    // prettier-ignore
-    P(A2_BUF,
-      i, i + 1, i + 16, i + 17, i + 32, i + 33, i + 48, i + 49,
-      i + 64, i + 65, i + 80, i + 81, i + 96, i + 97, i + 112, i + 113
+    P(
+      A2_BUF,
+      i,
+      i + 1,
+      i + 16,
+      i + 17,
+      i + 32,
+      i + 33,
+      i + 48,
+      i + 49,
+      i + 64,
+      i + 65,
+      i + 80,
+      i + 81,
+      i + 96,
+      i + 97,
+      i + 112,
+      i + 113,
     );
   }
 
