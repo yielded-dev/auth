@@ -1,6 +1,6 @@
 import { Effect } from "effect";
 
-import { AuthenticationFailed, CryptoUnavailable, InvalidInput } from "../Errors";
+import { AuthenticationFailed, InvalidInput } from "../Errors";
 import type { XChaCha } from "./aead";
 import { decrypt, encrypt } from "./xchacha-core";
 
@@ -8,21 +8,16 @@ import { decrypt, encrypt } from "./xchacha-core";
 const maximumPlaintextBytes = 0xffffffff * 64;
 
 export const xchacha: XChaCha = {
-  encrypt: ({ key, nonce, additionalData, data }) =>
-    data.length > maximumPlaintextBytes
-      ? Effect.fail(InvalidInput.make({ reason: "data" }))
-      : Effect.try({
-          try: () => encrypt(key, nonce, additionalData, data),
-          catch: () => CryptoUnavailable.make({}),
-        }),
+  encrypt: Effect.fnUntraced(function* ({ key, nonce, additionalData, data }) {
+    if (data.length > maximumPlaintextBytes) return yield* InvalidInput.make({ reason: "data" });
+
+    return encrypt(key, nonce, additionalData, data);
+  }),
   decrypt: Effect.fnUntraced(function* ({ key, nonce, additionalData, data }) {
     if (data.length - 16 > maximumPlaintextBytes)
       return yield* InvalidInput.make({ reason: "data" });
 
-    const plaintext = yield* Effect.try({
-      try: () => decrypt(key, nonce, additionalData, data),
-      catch: () => CryptoUnavailable.make({}),
-    });
+    const plaintext = decrypt(key, nonce, additionalData, data);
 
     if (plaintext === undefined) return yield* AuthenticationFailed.make({});
 

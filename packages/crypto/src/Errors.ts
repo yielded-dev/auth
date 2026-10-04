@@ -10,6 +10,7 @@ export class UnsupportedAlgorithm extends Schema.TaggedError<UnsupportedAlgorith
   {},
 ) {}
 
+/** A native backend failed without a more specific classification. */
 export class CryptoUnavailable extends Schema.TaggedError<CryptoUnavailable>()(
   "CryptoUnavailable",
   {},
