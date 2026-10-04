@@ -1,5 +1,5 @@
 import { Context, Duration, Effect, Layer, Redacted, Schema } from "effect";
-import { RateLimiter } from "effect/persistence";
+import * as RateLimiter from "effect/persistence/RateLimiter";
 
 import { defaultLayer } from "../auth/defaults";
 import { ProofConfigurationError, ProofIngressDenied, ProofUnavailable } from "./errors";
