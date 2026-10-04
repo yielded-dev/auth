@@ -117,14 +117,13 @@ export const browserLoginRoutes = (origin: URL) =>
           ]);
         }),
       ).pipe(
-        Layer.provide(
+        HttpRouter.provideRequest(
           Layer.mergeAll(
-            configuration(origin),
-            invocation,
             AppAuth.sessions.sessionHandlersLayer,
             browserLogin.layer.pipe(Layer.provide(BrowserLoginPersistence.layer)),
           ),
         ),
+        Layer.provide(Layer.mergeAll(configuration(origin), invocation)),
         Layer.provide(NativeSessionLive),
       );
     }),
