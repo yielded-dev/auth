@@ -83,6 +83,7 @@ export {
   OAuthConnectedPrepareBegin,
   OAuthConnectedPreparedAccess,
   OAuthConnectedTransactionSecrets,
+  OAuthConnectedSealedTransaction,
   OAuthConnectedBusy,
   OAuthConnectedClaim,
   OAuthConnectedClaimDecision,

@@ -4,7 +4,7 @@ import {
   OAuthConnectedTransactionContext,
   OAuthConnectedTransactionSecrets,
   OAuthUnavailable,
-  OAuthSealedTransaction,
+  OAuthConnectedSealedTransaction,
   snapshotOAuthSync,
 } from "@yielded/auth/OAuth";
 import { Layer, Schema } from "effect";
@@ -14,8 +14,8 @@ import { transactionEncryption } from "./transaction-encryption";
 const codec = Schema.fromJsonString(
   Schema.Tuple([
     Schema.Literal("effect-auth/oauth-connected-aead/v1"),
-    OAuthSealedTransaction.fields.format,
-    OAuthSealedTransaction.fields.keyId,
+    OAuthConnectedSealedTransaction.fields.format,
+    OAuthConnectedSealedTransaction.fields.keyId,
     OAuthConnectedTransactionContext,
   ]),
 );
@@ -49,5 +49,6 @@ export const connectedTransactionLayer = (keyring: OAuthTransactionKeyring) =>
       aad,
       keyring,
       OAuthConnectedTransactionSecrets,
+      { schema: OAuthConnectedSealedTransaction, maximumPlaintextBytes: 100 * 1024 },
     ),
   );

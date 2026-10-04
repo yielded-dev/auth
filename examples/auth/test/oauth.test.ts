@@ -159,6 +159,7 @@ const advance = Effect.fnUntraced(function* (duration: Duration.Input) {
 const harness = (
   settings: {
     actionEvidence?: OAuthConnectedActionEvidence["Service"];
+    authorizationUrl?: (value: Redacted.Redacted<string>) => Redacted.Redacted<string>;
     failedRefresh?: boolean;
     unknownGrantCommit?: boolean;
     onRequest?: (operation: string) => Effect.Effect<void>;
@@ -239,9 +240,21 @@ const harness = (
       });
 
       if (configured.connected === undefined) return yield* OAuthUnavailable.make({});
+      const connected = configured.connected;
 
       return Context.make(OAuthProtocol, configured).pipe(
-        Context.add(OAuthConnectedProtocol, configured.connected),
+        Context.add(OAuthConnectedProtocol, {
+          ...connected,
+          prepareAuthorization: (input) =>
+            connected.prepareAuthorization(input).pipe(
+              Effect.map((prepared) => ({
+                ...prepared,
+                authorizationUrl:
+                  settings.authorizationUrl?.(prepared.authorizationUrl) ??
+                  prepared.authorizationUrl,
+              })),
+            ),
+        }),
       );
     }),
   );
@@ -405,6 +418,10 @@ it.effect("libSQL persistence rejects ambient transactions", () =>
 // Requested regression seam: resolve an internally generated connected target
 // before verifying independent evidence, then execute that exact retained target.
 it.effect("connected preparation retains its exact target until authorized execution", () => {
+  // 29aef9a retained the URL inside a smaller transaction envelope. Exercise the
+  // protocol's admitted string bound, including worst-case JSON escaping.
+  let authorizationUrl = Redacted.make("");
+
   let target:
     | Parameters<OAuthConnectedActionEvidence["Service"]["verify"]>[0]["challenge"]
     | undefined;
@@ -412,6 +429,13 @@ it.effect("connected preparation retains its exact target until authorized execu
   let verifications = 0;
 
   const h = harness({
+    authorizationUrl: (value) => {
+      authorizationUrl = Redacted.make(
+        `${Redacted.value(value)}&padding=`.padEnd(16_384, "\u0000"),
+      );
+
+      return authorizationUrl;
+    },
     actionEvidence: {
       verify: Effect.fnUntraced(function* ({ invocation, challenge, proof }) {
         verifications++;
@@ -507,6 +531,7 @@ it.effect("connected preparation retains its exact target until authorized execu
     ).toBe("OAuthRejected");
     const result = yield* connected.begin(signedIn.caller, command);
 
+    expect(Redacted.value(result.value.authorizationUrl)).toBe(Redacted.value(authorizationUrl));
     expect(verifications).toBe(1);
     expect(result.value.expiresAtMillis).toBe(prepared.value.expiresAtMillis);
     expect(
@@ -528,7 +553,9 @@ it.effect("connected preparation retains its exact target until authorized execu
 
     expect(rows[0]?.state).toBe("Pending");
     expect(JSON.stringify(rows)).not.toContain(Redacted.value(issued.credential));
-    expect(JSON.stringify(rows)).not.toContain(result.value.authorizationUrl);
+    expect(rows[0]?.snapshot).not.toContain(
+      JSON.stringify(Redacted.value(result.value.authorizationUrl)),
+    );
   }).pipe(Effect.provide(h.live));
 });
 

@@ -59,7 +59,6 @@ import {
   OAuthClaimId,
   OAuthExternalIdentity,
   OAuthReturnTarget,
-  OAuthSealedTransaction,
   OAuthSignInAuthorization,
   OAuthTransactionSecrets,
 } from "./signInModels";
@@ -461,9 +460,9 @@ export const makeOAuthConnected = <const Id extends string>(
           context,
           secrets: snapshotOAuthSync(M.OAuthConnectedTransactionSecrets, {
             ...prepared.secrets,
-            authorizationUrl: Redacted.make(prepared.authorizationUrl),
+            authorizationUrl: prepared.authorizationUrl,
           }),
-        }).pipe(Effect.flatMap((value) => snapshotOAuth(OAuthSealedTransaction, value)));
+        }).pipe(Effect.flatMap((value) => snapshotOAuth(M.OAuthConnectedSealedTransaction, value)));
 
         const flow = snapshotOAuthSync(M.OAuthConnectedPendingFlow, {
           context,
@@ -567,7 +566,7 @@ export const makeOAuthConnected = <const Id extends string>(
           request,
           flow,
           context,
-          authorizationUrl: Redacted.value(secrets.authorizationUrl),
+          authorizationUrl: secrets.authorizationUrl,
         };
       }, connectedSafe);
 

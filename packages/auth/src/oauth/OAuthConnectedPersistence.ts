@@ -65,6 +65,9 @@ export class OAuthConnectedPersistence extends Context.Service<
       | undefined,
       OAuthUnavailable
     >;
+    /** Promote the exact retained Prepared flow to Pending under current action
+     * authority. Reject missing, changed, expired or already-issued preparations;
+     * never insert a replacement flow or refresh its binding and deadlines. */
     readonly issue: <A>(
       input: {
         readonly flow: M.OAuthConnectedPendingFlow;

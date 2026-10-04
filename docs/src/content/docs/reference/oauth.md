@@ -172,6 +172,11 @@ proof authorization to receive the retained authorization URL and move the origi
 binder into `request-binding`. Keep flow and command IDs across retries. Duplicate
 preparations and uncertain commits never authorize issuing a replacement credential.
 Disconnect preserves its existing durable command replay and revocation receipts.
+
+Custom persistence adapters must implement `prepare` and `inspectPrepared`, and
+change `issue` to atomically promote the exact retained preparation to `Pending`.
+Use `OAuthConnectedSealedTransaction` for connected flow storage and transaction
+protectors; its bounded envelope includes the retained authorization URL.
 Unclaimed connected-management flows from before this cutover must be restarted;
 retain grants, exchange receipts and unresolved revocation work. Ordinary sign-in
 flow envelopes are unchanged.

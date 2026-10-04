@@ -1,12 +1,12 @@
 // oxlint-disable-next-line import/extensions -- Noble exposes only its explicit .js subpath.
 import { xchacha20poly1305 } from "@noble/ciphers/chacha.js";
+import type { OAuthTransactionSecrets } from "@yielded/auth/OAuth";
 import {
   type OAuthTransactionKeyring,
   OAuthConfigurationError,
   OAuthUnavailable,
   OAuthEncryptionKeyId,
   OAuthSealedTransaction,
-  OAuthTransactionSecrets,
   snapshotOAuthSync,
 } from "@yielded/auth/OAuth";
 import { Crypto, Effect, Redacted, Result, Schema } from "effect";
@@ -72,6 +72,10 @@ export const transactionEncryption = <
   aad: (context: C, keyId: string) => Uint8Array,
   keyring: OAuthTransactionKeyring,
   secretSchema: Schema.Codec<S, unknown, never, never>,
+  envelope: {
+    readonly schema: Schema.Codec<OAuthSealedTransaction, unknown, never, never>;
+    readonly maximumPlaintextBytes: number;
+  } = { schema: OAuthSealedTransaction, maximumPlaintextBytes: 16384 },
 ) => {
   const secretCodec = Schema.fromJsonString(secretSchema);
   let captured: typeof keyringSchema.Type | undefined;
@@ -132,14 +136,15 @@ export const transactionEncryption = <
             try {
               plaintext = encoder.encode(Schema.encodeSync(secretCodec)(retained.secrets));
               associated = aad(retained.context, configuration.activeKeyId);
-              if (plaintext.length > 16384 || nonce.length !== 24) throw OAuthUnavailable.make({});
+              if (plaintext.length > envelope.maximumPlaintextBytes || nonce.length !== 24)
+                throw OAuthUnavailable.make({});
               ciphertext = xchacha20poly1305(
                 keys.get(configuration.activeKeyId)!,
                 nonce,
                 associated,
               ).encrypt(plaintext);
 
-              return snapshotOAuthSync(OAuthSealedTransaction, {
+              return snapshotOAuthSync(envelope.schema, {
                 format: "oauth-xchacha20poly1305-v1",
                 keyId: configuration.activeKeyId,
                 nonce: Base64Url.encode(nonce),
@@ -160,7 +165,7 @@ export const transactionEncryption = <
           Effect.try({
             try: () => {
               const context = snapshotOAuthSync(contextSchema, input.context);
-              const sealed = snapshotOAuthSync(OAuthSealedTransaction, input.sealed);
+              const sealed = snapshotOAuthSync(envelope.schema, input.sealed);
               const key = keys.get(sealed.keyId);
 
               if (!key) throw OAuthUnavailable.make({});
@@ -171,10 +176,14 @@ export const transactionEncryption = <
 
               try {
                 nonce = decodeBase64(sealed.nonce, 24, 24);
-                ciphertext = decodeBase64(Redacted.value(sealed.ciphertext), 16400);
+                ciphertext = decodeBase64(
+                  Redacted.value(sealed.ciphertext),
+                  envelope.maximumPlaintextBytes + 16,
+                );
                 associated = aad(context, sealed.keyId);
                 plaintext = xchacha20poly1305(key, nonce, associated).decrypt(ciphertext);
-                if (plaintext.length > 16384) throw OAuthUnavailable.make({});
+                if (plaintext.length > envelope.maximumPlaintextBytes)
+                  throw OAuthUnavailable.make({});
                 const json = new TextDecoder("utf-8", { fatal: true }).decode(plaintext);
                 const secrets = Schema.decodeSync(secretCodec)(json);
 

@@ -153,14 +153,29 @@ export type OAuthConnectedTransactionContext = typeof OAuthConnectedTransactionC
 /** The authorization URL contains state and remains encrypted during preparation. */
 export const OAuthConnectedTransactionSecrets = Schema.Struct({
   ...OAuthTransactionSecrets.fields,
-  authorizationUrl: Schema.RedactedFromValue(OAuthAuthorizationUrl),
+  authorizationUrl: OAuthAuthorizationUrl,
 });
 
 export type OAuthConnectedTransactionSecrets = typeof OAuthConnectedTransactionSecrets.Type;
 
+/** 100 KiB plaintext covers the URL's worst-case JSON escaping plus transaction
+ * secrets. Include the 16-byte authentication tag in the base64url bound. */
+export const OAuthConnectedSealedTransaction = Schema.Struct({
+  ...OAuthSealedTransaction.fields,
+  ciphertext: Schema.RedactedFromValue(
+    Schema.String.check(
+      Schema.isMinLength(22),
+      Schema.isMaxLength(Math.ceil(((100 * 1024 + 16) * 4) / 3)),
+      Schema.isPattern(/^[A-Za-z0-9_-]+$/),
+    ),
+  ),
+});
+
+export type OAuthConnectedSealedTransaction = typeof OAuthConnectedSealedTransaction.Type;
+
 export const OAuthConnectedPendingFlow = Schema.Struct({
   context: OAuthConnectedTransactionContext,
-  sealed: OAuthSealedTransaction,
+  sealed: OAuthConnectedSealedTransaction,
   retentionUntilMillis: OAuthInstant,
 });
 
