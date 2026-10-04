@@ -104,7 +104,7 @@ jobs:
           persist-credentials: false
 
       - name: Review the pull request
-        uses: yielded-dev/agent/action@7363c88eb26221c0a5e526f0a23b3473f27ee65e # action-v1
+        uses: yielded-dev/agent/action@efdbfccff8dab95afdecdf28c1aeda2cea4fabf1 # action-v1
         with:
           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
           github-token: ${{ github.token }}
@@ -117,6 +117,7 @@ jobs:
           expected-head: ${{ needs.resolve.outputs.head || '' }}
           guidance-file: .github/review-guidance.md
           model: gpt-6.1-sol
+          web-search: "true"
           priority: fast
           base-cost-usd: "20.00"
           max-cost-usd: "25.00"
