@@ -49,6 +49,7 @@
     "mcp-authorization",
     "modular-auth-persistence",
     "native-browser-login",
+    "native-proof-admission-import",
     "oauth-consent-cookie",
     "one-authentication-workflow",
     "openid-client-keep-hd",
