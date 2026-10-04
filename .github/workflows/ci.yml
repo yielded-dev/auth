@@ -242,7 +242,7 @@ jobs:
   ready:
     name: ready
     needs: [changes, checks, test, build, docs]
-    if: ${{ always() && github.event_name == 'pull_request' }}
+    if: ${{ !cancelled() && github.event_name == 'pull_request' }}
     runs-on: ubuntu-latest
     timeout-minutes: 3
     steps:
