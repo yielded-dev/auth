@@ -1,10 +1,10 @@
 import { it } from "@effect/vitest";
-import { Email, Hooks, Proofs } from "@yielded/auth";
+import { Auth, Email, Hooks, Proofs } from "@yielded/auth";
 import { makeStorageMappings } from "@yielded/auth-persistence/Adapter";
 import { TokenDigest } from "@yielded/auth/Schema";
 import { getTableColumns, sql } from "drizzle-orm";
 import { integer, sqliteTable, text, type SQLiteTable } from "drizzle-orm/sqlite-core";
-import { Effect, Layer, Schema } from "effect";
+import { Context, Effect, Layer, Schema } from "effect";
 import { SqlClient } from "effect/sql";
 import { expect } from "vite-plus/test";
 
@@ -33,6 +33,14 @@ const registrations = sqliteTable("email_registrations", {
 });
 
 const moduleId = "mailbox";
+
+const { RegistrationAuthority } = Auth.make("test/email-registration", {
+  claims: Registration,
+  strategies: {
+    registration: Email.makeRegistration({ namespace: moduleId, registration: Registration }),
+  },
+}).strategies.registration;
+
 const identifier = { namespace: "email", value: "owner@example.invalid" };
 const fingerprint = TokenDigest.make("owner-registration");
 const columns = getTableColumns(storage.schema.identifiers);
@@ -173,7 +181,9 @@ const services = (mode: "interactive" | "d1") =>
         proofs: Sqlite.makeProofPersistenceServices(proofMapping),
       });
 
-const continuation = Effect.fnUntraced(function* (store: Proofs.ProofPersistence["Service"]) {
+const continuation = Effect.gen(function* () {
+  const store = yield* Proofs.ProofPersistence;
+
   const record: Proofs.ProofRecord = {
     moduleId: `${moduleId}/registration`,
     purpose: Proofs.ProofPurpose.make("email-code-registration"),
@@ -227,23 +237,23 @@ const continuation = Effect.fnUntraced(function* (store: Proofs.ProofPersistence
   } satisfies Proofs.ProofCompletionPlan;
 });
 
-const complete = (
-  authority: Effect.Success<ReturnType<typeof services>>["registration"]["registrationAuthority"],
-  completion: Proofs.ProofCompletionPlan,
-) =>
-  authority
-    .registerWithProof(
-      {
-        moduleId,
-        commandId: Email.EmailCommandId.make("register-owner"),
-        identifier,
-        registration: { displayName: "Mailbox owner" },
-        fingerprint,
-        completion,
-      },
-      (value, journal) => journal.prepare(value),
-    )
-    .pipe(Effect.flatMap((prepared) => prepared.read));
+const complete = Effect.fnUntraced(function* (completion: Proofs.ProofCompletionPlan) {
+  const authority = yield* RegistrationAuthority;
+
+  const prepared = yield* authority.registerWithProof(
+    {
+      moduleId,
+      commandId: Email.EmailCommandId.make("register-owner"),
+      identifier,
+      registration: { displayName: "Mailbox owner" },
+      fingerprint,
+      completion,
+    },
+    (value, journal) => journal.prepare(value),
+  );
+
+  return yield* prepared.read;
+});
 
 const state = Effect.gen(function* () {
   const client = yield* SqlClient.SqlClient;
@@ -260,11 +270,24 @@ const state = Effect.gen(function* () {
   };
 });
 
-const layers = (beforeBatch?: Parameters<typeof d1Database>[0]) =>
-  Layer.mergeAll(
-    Sqlite.databaseLayer.pipe(Layer.provideMerge(database)),
-    d1Database(beforeBatch),
-    Hooks.LifecycleHooks.empty,
+const layers = (mode: "interactive" | "d1", beforeBatch?: Parameters<typeof d1Database>[0]) =>
+  Layer.effectContext(
+    Effect.gen(function* () {
+      yield* seed;
+      const { registration, proofs } = yield* services(mode);
+
+      return Context.make(RegistrationAuthority, registration.registrationAuthority).pipe(
+        Context.add(Proofs.ProofPersistence, proofs.proofPersistence),
+      );
+    }),
+  ).pipe(
+    Layer.provideMerge(
+      Layer.mergeAll(
+        Sqlite.databaseLayer.pipe(Layer.provideMerge(database)),
+        d1Database(beforeBatch),
+        Hooks.LifecycleHooks.empty,
+      ),
+    ),
   );
 
 it.effect.each([
@@ -276,19 +299,15 @@ it.effect.each([
   "$mode mailbox registration replaces only the unverified binding (disabled prior subject: $disabled)",
   ({ mode, disabled }) =>
     Effect.gen(function* () {
-      yield* seed;
       if (disabled) {
         const client = yield* SqlClient.SqlClient;
 
         yield* client`update subjects set active = 0 where id = 'squatter'`;
       }
-      const { registration, proofs } = yield* services(mode);
-      const completion = yield* continuation(proofs.proofPersistence);
+      const completion = yield* continuation;
       const before = yield* state;
 
-      expect((yield* complete(registration.registrationAuthority, completion))._tag).toBe(
-        "Registered",
-      );
+      expect((yield* complete(completion))._tag).toBe("Registered");
       const after = yield* state;
 
       expect(after.identifier[0]).toMatchObject({
@@ -309,33 +328,25 @@ it.effect.each([
       expect(after.email[0]!.subject_id).toBe("mailbox-owner");
       expect(after.receipts).toHaveLength(1);
       expect(after.continuations).toEqual([{ consumed: 1 }]);
-      expect((yield* complete(registration.registrationAuthority, completion))._tag).toBe(
-        "Rejected",
-      );
+      expect((yield* complete(completion))._tag).toBe("Rejected");
       expect(yield* state).toEqual(after);
-    }).pipe(Effect.provide(layers())),
+    }).pipe(Effect.provide(layers(mode))),
 );
 
 it.effect.each(["interactive", "d1"] as const)(
   "%s protected-write failure preserves the old subject and usable proof",
   (mode) =>
     Effect.gen(function* () {
-      yield* seed;
-      const { registration, proofs } = yield* services(mode);
-      const completion = yield* continuation(proofs.proofPersistence);
+      const completion = yield* continuation;
       const before = yield* state;
       const client = yield* SqlClient.SqlClient;
 
       yield* client`create trigger reject_email before insert on proof_test_emailCredentials begin select raise(abort, 'protected-write failure'); end`;
-      expect(
-        (yield* complete(registration.registrationAuthority, completion).pipe(Effect.result))._tag,
-      ).toBe("Failure");
+      expect((yield* complete(completion).pipe(Effect.result))._tag).toBe("Failure");
       expect(yield* state).toEqual(before);
       yield* client`drop trigger reject_email`;
-      expect((yield* complete(registration.registrationAuthority, completion))._tag).toBe(
-        "Registered",
-      );
-    }).pipe(Effect.provide(layers())),
+      expect((yield* complete(completion))._tag).toBe("Registered");
+    }).pipe(Effect.provide(layers(mode))),
 );
 
 it.effect("D1 rejects a verified binding committed after registration planning", () => {
@@ -350,15 +361,11 @@ it.effect("D1 rejects a verified binding committed after registration planning",
   });
 
   return Effect.gen(function* () {
-    yield* seed;
-    const { registration, proofs } = yield* services("d1");
-    const completion = yield* continuation(proofs.proofPersistence);
+    const completion = yield* continuation;
 
     interfere = true;
 
-    const result = yield* complete(registration.registrationAuthority, completion).pipe(
-      Effect.result,
-    );
+    const result = yield* complete(completion).pipe(Effect.result);
 
     expect(result._tag === "Failure" || result.success._tag === "Rejected").toBe(true);
     const saved = yield* state;
@@ -372,5 +379,5 @@ it.effect("D1 rejects a verified binding committed after registration planning",
     expect(saved.email).toEqual([]);
     expect(saved.receipts).toEqual([]);
     expect(saved.continuations).toEqual([{ consumed: 0 }]);
-  }).pipe(Effect.provide(layers(beforeBatch)));
+  }).pipe(Effect.provide(layers("d1", beforeBatch)));
 });
