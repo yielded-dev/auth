@@ -24,9 +24,15 @@ export const cryptoLayer = Layer.merge(
   PlatformCrypto.layer().pipe(Layer.provide(KdfAdmission.layer())),
 );
 
-export const independentJwt = (claims: Readonly<Record<string, unknown>>) =>
-  Effect.promise(() =>
-    new jose.CompactSign(utf8(JSON.stringify(claims)))
-      .setProtectedHeader({ alg: "HS256", typ: "JWT" })
-      .sign(secret),
-  ).pipe(Effect.map(Redacted.make));
+export const independentJws = (
+  payload: Uint8Array,
+  header: jose.CompactJWSHeaderParameters = { alg: "HS256" },
+) =>
+  Effect.promise(() => new jose.CompactSign(payload).setProtectedHeader(header).sign(secret)).pipe(
+    Effect.map(Redacted.make),
+  );
+
+export const independentJwt = (
+  claims: Readonly<Record<string, unknown>>,
+  header: jose.CompactJWSHeaderParameters = { alg: "HS256", typ: "JWT" },
+) => independentJws(utf8(JSON.stringify(claims)), header);

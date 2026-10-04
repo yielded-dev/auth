@@ -110,7 +110,8 @@ redacted JSON claims. It performs no signature or claim-policy checks.
 
 Private keys require complete RSA CRT parameters, P-256 coordinates and scalar,
 or Ed25519 public and private bytes. Native key parsing validates the components.
-Public imports and JWKS reject private keys. Key metadata is snapshotted;
+Public imports and JWKS reject private keys. Imports and key sets capture their
+own properties once and ignore inherited key material and metadata;
 `alg`, `use`, and `key_ops` restrict operations. JWKS select one public key by
 algorithm, optional `kid`, use and operations; missing or ambiguous selections fail.
 
@@ -121,17 +122,17 @@ Supply the platform's Effect Crypto Layer alongside the reusable crypto backend.
 
 ## Verification policy and limits
 
-| Option or profile    | Behavior                                                                                                            |
-| -------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| JWS/JWT algorithms   | `HS256`, `RS256`, `PS256`, `ES256`, `EdDSA` using Ed25519; `algorithms` must be a nonempty allowlist                |
-| Keys                 | HS256 requires at least 32 bytes; RSA JWK imports from 2048 to 8192 bits; ES256 uses P-256; EdDSA uses Ed25519      |
-| JWE                  | `dir` with `A256GCM`, a 32-byte key and 16-byte authentication tag                                                  |
-| `issuer`, `audience` | Optional exact expected string or nonempty list; configured values require the corresponding claim                  |
-| `subject`, `typ`     | Optional expected subject and token type; type comparison normalizes case and the `application/` prefix             |
-| `exp`, `nbf`         | Checked whenever present; use `requiredClaims` to require their presence                                            |
-| `clockTolerance`     | Nonnegative seconds, default `0`; time comes from Effect Clock                                                      |
-| `maxTokenAge`        | Optional nonnegative seconds; requires `iat`, rejects future issuance and excessive age                             |
-| Input limits         | Compact tokens up to 64 KiB of ASCII; protected segment up to 4 KiB; signing/encryption payloads up to 45,000 bytes |
+| Option or profile    | Behavior                                                                                                                            |
+| -------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| JWS/JWT algorithms   | `HS256`, `RS256`, `PS256`, `ES256`, `EdDSA` using Ed25519; `algorithms` must be a nonempty allowlist                                |
+| Keys                 | HS256 requires at least 32 bytes; RSA JWK imports from 2048 to 8192 bits; ES256 uses P-256; EdDSA uses Ed25519                      |
+| JWE                  | `dir` with `A256GCM`, a 32-byte key and 16-byte authentication tag                                                                  |
+| `issuer`, `audience` | Optional exact expected string or nonempty list; configured values require the corresponding claim                                  |
+| `subject`, `typ`     | Optional expected subject and token type; type comparison ignores case and treats a bare subtype such as `JWT` as `application/jwt` |
+| `exp`, `nbf`         | Checked whenever present; use `requiredClaims` to require their presence                                                            |
+| `clockTolerance`     | Nonnegative seconds, default `0`; time comes from Effect Clock                                                                      |
+| `maxTokenAge`        | Optional nonnegative seconds; requires `iat`, rejects future issuance and excessive age                                             |
+| Input limits         | Compact tokens up to 64 KiB of ASCII; protected segment up to 4 KiB; signing/encryption payloads up to 45,000 bytes                 |
 
 JSON serialization, multiple signatures/recipients, unsecured `none`, other
 algorithms, detached/unencoded payloads, critical extensions, compression,

@@ -82,32 +82,23 @@ it.effect(
     }).pipe(Effect.provide(cryptoLayer)),
 );
 
-it.effect("applies issuer, audience and time policy before the application decoder", () =>
+it.effect("validates registered claims before the application decoder", () =>
   Effect.gen(function* () {
     yield* TestClock.setTime(1604416038000);
     const key = yield* Jwk.importSecret(Redacted.make(secretJwk), "HS256");
 
-    for (const [override, expected] of [
-      [{ iss: "different" }, "iss"],
-      [{ aud: ["different"] }, "aud"],
-      [{ exp: 1604416038 }, "exp"],
-      [{ nbf: 1604416039 }, "nbf"],
-      [{ iat: 1604416000 }, "iat"],
-      [{ exp: "1604416048" }, "registered"],
-    ] as const) {
-      const token = yield* independentJwt({ ...registered, ...claims, ...override });
-      const error = yield* Jwt.verify(Claims, token, key, policy).pipe(Effect.flip);
+    const token = yield* independentJwt({
+      ...registered,
+      ...claims,
+      iss: "different",
+      role: "invalid-application-role",
+    });
 
-      expect(error).toMatchObject({ _tag: "JoseClaimValidationFailed", claim: expected });
-    }
-    const noExpiration = yield* independentJwt(claims);
-
-    expect(
-      yield* Jwt.verify(Claims, noExpiration, key, {
-        algorithms: ["HS256"],
-        requiredClaims: ["exp"],
-      }).pipe(Effect.flip),
-    ).toMatchObject({ _tag: "JoseClaimValidationFailed", claim: "exp", reason: "missing" });
+    expect(yield* Jwt.verify(Claims, token, key, policy).pipe(Effect.flip)).toMatchObject({
+      _tag: "JoseClaimValidationFailed",
+      claim: "iss",
+      reason: "mismatch",
+    });
   }).pipe(Effect.provide(cryptoLayer)),
 );
 

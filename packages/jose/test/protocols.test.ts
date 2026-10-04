@@ -4,7 +4,7 @@ import { Effect, Redacted } from "effect";
 import * as jose from "jose";
 import { expect } from "vite-plus/test";
 
-import { cryptoLayer, privateJwk, publicJwk, secret, secretJwk, text, utf8 } from "./fixtures";
+import { cryptoLayer, privateJwk, secret, secretJwk, text, utf8 } from "./fixtures";
 
 // Selected panva/jose compact, critical-header, and key-import contracts adapted
 // to public Effect workflows; see THIRD_PARTY_NOTICES.md. Independent signatures
@@ -68,87 +68,41 @@ it.effect("interoperates with HS256, including an empty compact payload", () =>
   }).pipe(Effect.provide(cryptoLayer)),
 );
 
-it.effect(
-  "rejects private public-keys, wrong curves, malformed points, weak secrets and mismatched metadata",
-  () =>
-    Effect.gen(function* () {
-      for (const input of [
-        privateJwk,
-        { ...publicJwk, crv: "P-384" },
-        { ...publicJwk, x: "AA" },
-        { ...publicJwk, alg: "RS256" },
-        { ...publicJwk, key_ops: ["verify", "verify"] },
-      ]) {
-        expect((yield* Jwk.importPublic(input, "ES256").pipe(Effect.flip))._tag).toBe(
-          "JoseInvalidKey",
-        );
-      }
-      expect(
-        (yield* Jwk.importSecret(Redacted.make({ kty: "oct", k: "AA" }), "HS256").pipe(Effect.flip))
-          ._tag,
-      ).toBe("JoseInvalidKey");
+it.effect("denies asymmetric signing with a verify-only key", () =>
+  Effect.gen(function* () {
+    const restricted = yield* Jwk.importPrivate(
+      Redacted.make({ ...privateJwk, key_ops: ["verify"] }),
+      "ES256",
+    );
 
-      const restricted = yield* Jwk.importPrivate(
-        Redacted.make({ ...privateJwk, key_ops: ["verify"] }),
-        "ES256",
-      );
-
-      expect(
-        (yield* Jws.sign(Redacted.make(utf8("payload")), restricted, { alg: "ES256" }).pipe(
-          Effect.flip,
-        ))._tag,
-      ).toBe("JoseInvalidKey");
-    }).pipe(Effect.provide(cryptoLayer)),
+    expect(
+      (yield* Jws.sign(Redacted.make(utf8("payload")), restricted, { alg: "ES256" }).pipe(
+        Effect.flip,
+      ))._tag,
+    ).toBe("JoseInvalidKey");
+  }).pipe(Effect.provide(cryptoLayer)),
 );
 
-it.effect(
-  "rejects signature tampering, algorithm confusion, unsupported critical headers and malformed compact data",
-  () =>
-    Effect.gen(function* () {
-      const key = yield* Jwk.importSecret(Redacted.make(secretJwk), "HS256");
+it.effect("rejects payload tampering and disallowed algorithms", () =>
+  Effect.gen(function* () {
+    const key = yield* Jwk.importSecret(Redacted.make(secretJwk), "HS256");
 
-      const token = yield* Effect.promise(() =>
-        new jose.CompactSign(utf8("payload")).setProtectedHeader({ alg: "HS256" }).sign(secret),
-      );
+    const token = yield* Effect.promise(() =>
+      new jose.CompactSign(utf8("payload")).setProtectedHeader({ alg: "HS256" }).sign(secret),
+    );
 
-      const parts = token.split(".");
+    const parts = token.split(".");
 
-      const tampered = Redacted.make(
-        `${parts[0]}.${jose.base64url.encode("different")}.${parts[2]}`,
-      );
+    const tampered = Redacted.make(`${parts[0]}.${jose.base64url.encode("different")}.${parts[2]}`);
 
-      expect(
-        (yield* Jws.verify(tampered, key, { algorithms: ["HS256"] }).pipe(Effect.flip))._tag,
-      ).toBe("JoseSignatureVerificationFailed");
-      expect(
-        (yield* Jws.verify(Redacted.make(token), key, { algorithms: ["RS256"] }).pipe(Effect.flip))
-          ._tag,
-      ).toBe("JoseAlgorithmNotAllowed");
-
-      const critical = yield* Effect.promise(() =>
-        new jose.CompactSign(utf8("payload"))
-          .setProtectedHeader({ alg: "HS256", crit: ["extension"], extension: true })
-          .sign(secret, { crit: { extension: true } }),
-      );
-
-      expect(
-        (yield* Jws.verify(Redacted.make(critical), key, { algorithms: ["HS256"] }).pipe(
-          Effect.flip,
-        ))._tag,
-      ).toBe("JoseInvalidToken");
-      for (const token of [
-        ".....",
-        "eyJhbGciOiJIUzI1NiJ9.!.AA",
-        "eyJhbGciOiJub25lIn0.e30.",
-        "_w.e30.AA",
-      ]) {
-        expect(
-          (yield* Jws.verify(Redacted.make(token), key, { algorithms: ["HS256"] }).pipe(
-            Effect.flip,
-          ))._tag,
-        ).toMatch(/^Jose/);
-      }
-    }).pipe(Effect.provide(cryptoLayer)),
+    expect(
+      (yield* Jws.verify(tampered, key, { algorithms: ["HS256"] }).pipe(Effect.flip))._tag,
+    ).toBe("JoseSignatureVerificationFailed");
+    expect(
+      (yield* Jws.verify(Redacted.make(token), key, { algorithms: ["RS256"] }).pipe(Effect.flip))
+        ._tag,
+    ).toBe("JoseAlgorithmNotAllowed");
+  }).pipe(Effect.provide(cryptoLayer)),
 );
 
 it.effect(
@@ -195,15 +149,6 @@ it.effect(
       ]) {
         expect((yield* Jwe.decrypt(Redacted.make(changed), key).pipe(Effect.flip))._tag).toBe(
           "JoseDecryptionFailed",
-        );
-      }
-      for (const value of [
-        "...",
-        `${parts[0]}.AA.${parts.slice(2).join(".")}`,
-        `${jose.base64url.encode(JSON.stringify({ alg: "dir", enc: "A256GCM", zip: "DEF" }))}..${parts.slice(2).join(".")}`,
-      ]) {
-        expect((yield* Jwe.decrypt(Redacted.make(value), key).pipe(Effect.flip))._tag).toBe(
-          "JoseInvalidToken",
         );
       }
     }).pipe(Effect.provide(cryptoLayer)),

@@ -4,6 +4,7 @@ import { Effect, Redacted, Schema } from "effect";
 import { InvalidKey } from "./Errors";
 import { algorithms } from "./internal/algorithms";
 import { decode, reveal } from "./internal/encoding";
+import * as KeyInput from "./internal/keyInput";
 
 export const AsymmetricAlgorithm = Schema.Literals(["RS256", "PS256", "ES256", "EdDSA"]);
 export type AsymmetricAlgorithm = typeof AsymmetricAlgorithm.Type;
@@ -104,7 +105,10 @@ export type SigningKey = PrivateKey | SecretKey;
 export type VerificationKey = PublicKey | SecretKey;
 
 const read = <S extends Schema.Constraint>(schema: S, input: unknown) =>
-  Effect.suspend(() => Schema.decodeUnknownEffect(schema)(input, { reportInput: false })).pipe(
+  Effect.suspend(() =>
+    Schema.decodeUnknownEffect(schema)(KeyInput.jwk(input), { reportInput: false }),
+  ).pipe(
+    Effect.map(KeyInput.detach),
     Effect.mapError(() => InvalidKey.make({})),
     Effect.catchDefect(() => InvalidKey.make({})),
   );

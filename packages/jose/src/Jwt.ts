@@ -81,8 +81,12 @@ const checkClaims = Effect.fnUntraced(function* (
     if (!expected.includes(registered.iss))
       return yield* ClaimValidationFailed.make({ claim: "iss", reason: "mismatch" });
   }
-  if (options.subject !== undefined && options.subject !== registered.sub)
-    return yield* ClaimValidationFailed.make({ claim: "sub", reason: "mismatch" });
+  if (options.subject !== undefined) {
+    if (registered.sub === undefined)
+      return yield* ClaimValidationFailed.make({ claim: "sub", reason: "missing" });
+    if (options.subject !== registered.sub)
+      return yield* ClaimValidationFailed.make({ claim: "sub", reason: "mismatch" });
+  }
   if (options.audience !== undefined) {
     if (registered.aud === undefined)
       return yield* ClaimValidationFailed.make({ claim: "aud", reason: "missing" });
@@ -92,7 +96,12 @@ const checkClaims = Effect.fnUntraced(function* (
     if (!expected.some((audience) => actual.includes(audience)))
       return yield* ClaimValidationFailed.make({ claim: "aud", reason: "mismatch" });
   }
-  const normalizedType = (value: string) => value.toLowerCase().replace(/^application\//, "");
+
+  const normalizedType = (value: string) => {
+    const type = value.toLowerCase();
+
+    return type.includes("/") ? type : `application/${type}`;
+  };
 
   if (
     options.typ !== undefined &&

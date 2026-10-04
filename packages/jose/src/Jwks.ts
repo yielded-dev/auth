@@ -16,6 +16,7 @@ import { FetchHttpClient, HttpClient } from "effect/http";
 
 import { AmbiguousKey, InvalidKey, JwksUnavailable, KeyNotFound, type KeyError } from "./Errors";
 import { json } from "./internal/encoding";
+import * as KeyInput from "./internal/keyInput";
 import { AsymmetricAlgorithm, importPublic, type PublicKey, PublicJwk } from "./Jwk";
 
 export const KeySet = Schema.Struct({
@@ -67,22 +68,30 @@ export interface RemoteOptions {
 }
 
 const readSet = (input: unknown) =>
-  Effect.suspend(() => Schema.decodeUnknownEffect(KeySet)(input, { reportInput: false })).pipe(
+  Effect.suspend(() =>
+    Schema.decodeUnknownEffect(KeySet)(KeyInput.keySet(input), { reportInput: false }),
+  ).pipe(
     Effect.map((set) => {
       for (const key of set.keys) {
+        KeyInput.detach(key);
         if (key.key_ops !== undefined) Object.freeze(key.key_ops);
         Object.freeze(key);
       }
+      Object.freeze(set.keys);
 
-      return Object.freeze({ keys: Object.freeze(set.keys) });
+      return Object.freeze(KeyInput.detach(set));
     }),
     Effect.mapError(() => InvalidKey.make({})),
     Effect.catchDefect(() => InvalidKey.make({})),
   );
 
 const readSelection = (input: Selection) =>
-  Schema.decodeEffect(Selection)(input, { reportInput: false }).pipe(
+  Effect.suspend(() =>
+    Schema.decodeUnknownEffect(Selection)(KeyInput.object(input), { reportInput: false }),
+  ).pipe(
+    Effect.map(KeyInput.detach),
     Effect.mapError(() => InvalidKey.make({})),
+    Effect.catchDefect(() => InvalidKey.make({})),
   );
 
 const select = Effect.fnUntraced(function* (set: KeySet, selection: Selection) {
