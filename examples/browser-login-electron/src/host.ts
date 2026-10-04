@@ -15,6 +15,7 @@ const headers = (prefix: string): Readonly<Record<Operations.CredentialSlot, str
   "request-binding": `${prefix}request-binding`,
   "session-step-up": `${prefix}session-step-up`,
   "password-intent": `${prefix}password-intent`,
+  "connected-intent": `${prefix}connected-intent`,
 });
 
 export const makeHost = Effect.fnUntraced(function* (hostedUrl: string) {

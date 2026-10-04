@@ -180,17 +180,8 @@ export const layerBrowser = Layer.succeed(
   }),
 );
 
-const slots = [
-  "session",
-  "pending-proof",
-  "proof-continuation",
-  "registration",
-  "request-binding",
-  "session-step-up",
-  "password-intent",
-] as const satisfies ReadonlyArray<CredentialSlot>;
-
 const vaultRecord = BrowserLogin.VaultRecord;
+const slots = vaultRecord.fields.credentials.key.literals;
 
 const vaultJson = Schema.fromJsonString(vaultRecord);
 

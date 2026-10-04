@@ -16,17 +16,8 @@ import {
 } from "effect";
 import { app, safeStorage } from "electron";
 
-const slots = [
-  "session",
-  "pending-proof",
-  "proof-continuation",
-  "registration",
-  "request-binding",
-  "session-step-up",
-  "password-intent",
-] as const satisfies ReadonlyArray<CredentialSlot>;
-
 const recordSchema = BrowserLogin.VaultRecord;
+const slots = recordSchema.fields.credentials.key.literals;
 
 const recordJson = Schema.fromJsonString(recordSchema);
 const failure = () => BrowserLogin.PlatformError.make({ reason: "storage" });
