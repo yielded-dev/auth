@@ -20,15 +20,15 @@ import * as Management from "./oauth-connected-management";
 import { settle } from "./oauth-connected-settlement";
 import * as SignIn from "./oauth-connected-sign-in";
 import * as S from "./oauth-connected-state";
-import { capturedOAuthService } from "./oauth-input";
-import { CurrentOAuthTransaction } from "./oauth-owner";
-import { captureOAuthMapping } from "./oauth-state";
 import {
   coordinateOAuthOwner,
   makeOAuthExecution,
   type OAuthExecution,
   type OAuthTargetConfiguration,
-} from "./oauth-target";
+} from "./oauth-execution";
+import { CurrentOAuthTransaction } from "./oauth-owner";
+import { capturedOAuthService } from "./oauth-service";
+import { captureOAuthMapping } from "./oauth-state";
 
 const captured = <T extends S.Authority>(mapping: T): T => {
   const retained = captureOAuthMapping(mapping),

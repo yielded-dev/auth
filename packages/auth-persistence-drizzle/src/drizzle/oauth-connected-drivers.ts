@@ -21,7 +21,7 @@ import {
   makeTargetOAuthConnectedServices,
   makeTargetOAuthConnectedRevocationServices,
 } from "./oauth-connected-target";
-import { type OAuthCoordinatorError, type OAuthTargetConfiguration } from "./oauth-target";
+import { type OAuthCoordinatorError, type OAuthTargetConfiguration } from "./oauth-execution";
 import type { SuppliedService } from "./SuppliedService";
 // oxlint-disable-next-line no-explicit-any -- inspect the actual installed native transaction callback without erasing it.
 type TransactionOf<D> = D extends { readonly transaction: (...args: any[]) => any }

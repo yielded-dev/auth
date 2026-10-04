@@ -9,7 +9,7 @@ import type { Table } from "drizzle-orm";
 import { Effect, Context } from "effect";
 
 import { nativeDatabase } from "./native-database";
-import { makeOAuthConnectedTarget } from "./oauth-connected-drivers";
+import type { OAuthCoordinatorError, OAuthTargetConfiguration } from "./oauth-execution";
 import type {
   OAuthAccountsMapping,
   OAuthRegistrationAuthority,
@@ -18,7 +18,6 @@ import type {
   OAuthSignInMapping,
 } from "./oauth-model";
 import {
-  type OAuthCoordinatorError,
   coordinateTargetOAuthAccounts,
   coordinateTargetOAuthSignIn,
   coordinateTargetOAuthRegistrationIntents,
@@ -27,7 +26,6 @@ import {
   makeTargetOAuthRegistrationServices,
   makeTargetOAuthSignInServices,
   makeTargetOAuthAccountsServices,
-  type OAuthTargetConfiguration,
 } from "./oauth-target";
 import type { SuppliedService } from "./SuppliedService";
 
@@ -37,7 +35,7 @@ type TransactionOf<D> = D extends { readonly transaction: (...args: any[]) => an
   : never;
 
 /** Driver-specific entry points instantiate both the database and table family. */
-export const makeOAuthTarget = <
+export const makeOAuthIdentityTarget = <
   DatabaseId,
   D,
   T extends Table,
@@ -524,7 +522,6 @@ export const makeOAuthTarget = <
   }
 
   return {
-    ...makeOAuthConnectedTarget<DatabaseId, D, T, {}, Synchronous>(databaseService, configuration),
     coordinateOAuthSignIn,
     coordinateOAuthRegistrationIntents,
     coordinateOAuthAccounts,

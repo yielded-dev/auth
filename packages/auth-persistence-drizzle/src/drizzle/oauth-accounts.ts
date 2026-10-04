@@ -32,7 +32,6 @@ import {
 } from "./oauth-flow";
 import type { OAuthEligibilityFact } from "./oauth-model";
 import { both, col, copiedRow, equal, CurrentOAuthTransaction } from "./oauth-owner";
-import { acquireTuple, readTuple } from "./oauth-registration";
 import {
   invariant,
   oauthIdentityKey,
@@ -41,6 +40,7 @@ import {
   storage,
   validAction,
 } from "./oauth-state";
+import { acquireTuple, readTuple } from "./oauth-tuple";
 
 const contextStorage = storage(OAuthLinkTransactionContext);
 const unlinkedStorage = storage(OAuthUnlinked);

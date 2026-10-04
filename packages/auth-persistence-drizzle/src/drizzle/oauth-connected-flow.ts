@@ -10,8 +10,8 @@ import { Effect } from "effect";
 
 import * as S from "./oauth-connected-state";
 import { both, copiedRow, equal, CurrentOAuthTransaction } from "./oauth-owner";
-import { acquireTuple, readTuple } from "./oauth-registration";
 import { digest, invariant, oauthIdentityKey, sameIdentity, sameRevision } from "./oauth-state";
+import { acquireTuple, readTuple } from "./oauth-tuple";
 
 export type Input<K extends keyof OAuthConnectedPersistence["Service"]> = Parameters<
   OAuthConnectedPersistence["Service"][K]

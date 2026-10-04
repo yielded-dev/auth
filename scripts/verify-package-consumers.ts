@@ -1,10 +1,9 @@
 import { NodeRuntime, NodeServices } from "@effect/platform-node";
 import { Console, Effect, FileSystem, Path, Schema, Stream } from "effect";
 import { ChildProcess } from "effect/process";
-import { build } from "esbuild";
 import ts from "typescript-twoslash";
-import { build as viteBuild } from "vite-plus";
 
+import { buildConsumer, initialChunks, type Bundler } from "./consumer-bundles.ts";
 import { PublishManifest, withPublishManifests } from "./release-publish.ts";
 
 class PackageConsumerError extends Schema.TaggedError<PackageConsumerError>()(
@@ -63,125 +62,6 @@ const comparisons = [
 const probes = [...new Set([...comparisons.flat(), "contracts-all", "root", "persistence"])];
 const bundlers = ["esbuild", "vite"] as const;
 
-type Bundler = (typeof bundlers)[number];
-
-interface Chunk {
-  readonly fileName: string;
-  readonly code: string;
-  readonly imports: ReadonlyArray<string>;
-  readonly modules: ReadonlyArray<string>;
-  readonly entry: boolean;
-}
-
-const esbuildConsumer = Effect.fn("packageConsumers.esbuild")(function* (
-  stage: string,
-  probe: string,
-) {
-  const path = yield* Path.Path;
-
-  const result = yield* Effect.tryPromise({
-    try: () =>
-      build({
-        absWorkingDir: stage,
-        entryPoints: [`fixtures/${probe}.ts`],
-        outdir: `bundles/esbuild/${probe}`,
-        entryNames: "entry",
-        outExtension: { ".js": ".mjs" },
-        bundle: true,
-        splitting: true,
-        treeShaking: true,
-        minify: true,
-        format: "esm",
-        platform: "browser",
-        target: "es2022",
-        write: false,
-        metafile: true,
-        logLevel: "silent",
-      }),
-    catch: (cause) =>
-      new PackageConsumerError({ message: `Cannot bundle esbuild consumer ${probe}`, cause }),
-  });
-
-  const chunks: Array<Chunk> = [];
-
-  for (const file of result.outputFiles) {
-    const output = result.metafile.outputs[path.relative(stage, file.path)];
-
-    if (output === undefined || output.imports.some((item) => item.external))
-      return yield* new PackageConsumerError({
-        message: `${probe} has missing metadata or external imports`,
-      });
-    chunks.push({
-      fileName: path.basename(file.path),
-      code: file.text,
-      imports: output.imports
-        .filter((item) => item.kind !== "dynamic-import")
-        .map((item) => path.basename(item.path)),
-      modules: Object.entries(output.inputs)
-        .filter(([, input]) => input.bytesInOutput > 0)
-        .map(([file]) => file),
-      entry: output.entryPoint === `fixtures/${probe}.ts`,
-    });
-  }
-
-  return chunks;
-});
-
-const viteConsumer = Effect.fn("packageConsumers.vite")(function* (stage: string, probe: string) {
-  const path = yield* Path.Path;
-
-  const result = yield* Effect.tryPromise({
-    try: () =>
-      viteBuild({
-        configFile: false,
-        root: stage,
-        logLevel: "silent",
-        build: {
-          target: "es2022",
-          minify: true,
-          write: false,
-          lib: { entry: path.join(stage, `fixtures/${probe}.ts`), formats: ["es"] },
-          rolldownOptions: {
-            output: { entryFileNames: "entry.mjs", chunkFileNames: "[name]-[hash].mjs" },
-          },
-        },
-      }),
-    catch: (cause) =>
-      new PackageConsumerError({ message: `Cannot bundle Vite consumer ${probe}`, cause }),
-  });
-
-  const chunks: Array<Chunk> = [];
-
-  for (const bundle of Array.isArray(result) ? result : [result]) {
-    if (!("output" in bundle))
-      return yield* new PackageConsumerError({
-        message: `Vite consumer ${probe} unexpectedly started a watcher`,
-      });
-    for (const file of bundle.output) {
-      if (file.type !== "chunk") continue;
-      if (
-        [...file.imports, ...file.dynamicImports].some(
-          (name) => !bundle.output.some((output) => output.fileName === name),
-        )
-      )
-        return yield* new PackageConsumerError({
-          message: `Vite consumer ${probe} retained external imports`,
-        });
-      chunks.push({
-        fileName: file.fileName,
-        code: file.code,
-        imports: file.imports,
-        modules: Object.entries(file.modules)
-          .filter(([, value]) => value.renderedLength > 0)
-          .map(([file]) => file),
-        entry: file.isEntry,
-      });
-    }
-  }
-
-  return chunks;
-});
-
 const bundleConsumer = Effect.fn("packageConsumers.bundle")(function* (
   stage: string,
   probe: string,
@@ -190,20 +70,13 @@ const bundleConsumer = Effect.fn("packageConsumers.bundle")(function* (
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
 
-  const chunks = yield* bundler === "esbuild"
-    ? esbuildConsumer(stage, probe)
-    : viteConsumer(stage, probe);
+  const { chunks } = yield* buildConsumer(stage, probe, bundler);
 
   const retained = chunks.flatMap((chunk) => chunk.modules);
-  const initial = new Set(chunks.filter((chunk) => chunk.entry).map((chunk) => chunk.fileName));
+  const initial = initialChunks(chunks);
 
-  if (initial.size !== 1)
+  if (chunks.filter((chunk) => chunk.entry).length !== 1)
     return yield* new PackageConsumerError({ message: `${bundler}/${probe} must emit one entry` });
-  // Count all statically reachable chunks, not just the entry file.
-  for (const name of initial) {
-    for (const imported of chunks.find((chunk) => chunk.fileName === name)?.imports ?? [])
-      initial.add(imported);
-  }
   const implementation = (file: string) => file.split("packages/auth/dist/")[1];
 
   const unwanted = retained.filter((file) => {
