@@ -270,12 +270,134 @@ const bundleConsumer = Effect.fn("packageConsumers.bundle")(function* (
   };
 });
 
+const checkCryptoConsumers = Effect.fn("packageConsumers.crypto")(function* (
+  repositoryRoot: string,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+
+  const stage = yield* fs
+    .makeTempDirectoryScoped({ prefix: "yielded-crypto-consumers-" })
+    .pipe(Effect.flatMap((directory) => fs.realPath(directory)));
+
+  const source = path.join(repositoryRoot, "packages/crypto");
+  const destination = path.join(stage, "packages/crypto");
+
+  const manifest = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(PublishManifest))(
+    yield* fs.readFileString(path.join(source, "package.json")),
+  );
+
+  if (manifest.exports === undefined)
+    return yield* new PackageConsumerError({ message: "Crypto exports are missing" });
+
+  yield* fs.makeDirectory(destination, { recursive: true });
+  yield* fs.makeDirectory(path.join(stage, "fixtures"), { recursive: true });
+  yield* fs.copyFile(path.join(repositoryRoot, "package.json"), path.join(stage, "package.json"));
+  yield* fs.copyFile(path.join(source, "package.json"), path.join(destination, "package.json"));
+  yield* fs.copy(path.join(source, "dist"), path.join(destination, "dist"));
+
+  for (const [name, target] of [
+    ["@yielded/crypto", destination],
+    ["effect", yield* fs.realPath(path.join(source, "node_modules/effect"))],
+  ] as const) {
+    const link = path.join(stage, "node_modules", name);
+
+    yield* fs.makeDirectory(path.dirname(link), { recursive: true });
+    yield* fs.symlink(target, link);
+  }
+
+  const namespaces = ["Aead", "Errors", "Hmac", "Kdf", "KdfAdmission", "Signature"];
+  const contracts = [".", ...namespaces.map((name) => `./${name}`)];
+  const backends = Object.keys(manifest.exports).filter((key) => !contracts.includes(key));
+
+  // This stage never installs Auth. Contracts must also load before backend dependencies exist.
+  yield* withPublishManifests(stage, () =>
+    Effect.gen(function* () {
+      for (const [probe, entries] of [
+        ["crypto-contracts", contracts],
+        ["crypto-backends", backends],
+      ] as const) {
+        if (probe === "crypto-backends") {
+          for (const name of Object.keys(manifest.dependencies ?? {})) {
+            if (/^@yielded\/auth(?:$|[-/])/.test(name))
+              return yield* new PackageConsumerError({
+                message: `Standalone crypto must not install Auth dependency ${name}`,
+              });
+            const link = path.join(stage, "node_modules", name);
+
+            if (yield* fs.exists(link)) continue;
+            yield* fs.makeDirectory(path.dirname(link), { recursive: true });
+            yield* fs.symlink(yield* fs.realPath(path.join(source, "node_modules", name)), link);
+          }
+        }
+
+        const names = entries.map((key) =>
+          key === "." ? "@yielded/crypto" : `@yielded/crypto${key.slice(1)}`,
+        );
+
+        const declarations = path.join(stage, "fixtures", `${probe}.ts`);
+
+        yield* fs.writeFileString(
+          declarations,
+          names.map((name, index) => `export * as Crypto${index} from "${name}";`).join("\n"),
+        );
+        yield* checkDeclarations(stage, [declarations]);
+
+        // Only the direct NodeCrypto entry may pull native imports into a consumer.
+        yield* fs.writeFileString(
+          path.join(stage, "fixtures", `${probe}-browser.ts`),
+          names
+            .filter((name) => name !== "@yielded/crypto/NodeCrypto")
+            .map((name, index) => `export * as Crypto${index} from "${name}";`)
+            .join("\n"),
+        );
+        yield* esbuildConsumer(stage, `${probe}-browser`);
+
+        const child = yield* ChildProcess.make(
+          "node",
+          [
+            "--input-type=module",
+            "--eval",
+            `import assert from "node:assert/strict";
+const root = await import("@yielded/crypto");
+assert.deepEqual(Object.keys(root).sort(), ${JSON.stringify(namespaces)});
+for (const name of ${JSON.stringify(namespaces)}) {
+  assert.equal(root[name], await import("@yielded/crypto/" + name));
+}
+for (const name of ${JSON.stringify(names)}) await import(name);`,
+          ],
+          { cwd: stage, stdout: "pipe", stderr: "pipe" },
+        );
+
+        const [stdout, stderr, code] = yield* Effect.all(
+          [
+            Stream.mkString(Stream.decodeText(child.stdout)),
+            Stream.mkString(Stream.decodeText(child.stderr)),
+            child.exitCode,
+          ],
+          { concurrency: 3 },
+        );
+
+        if (code !== 0)
+          return yield* new PackageConsumerError({
+            message: `${probe} consumer exited ${code}: ${stdout}${stderr}`,
+          });
+        yield* Console.log(
+          `${probe}: ${names.length} published exports load and type-check without Auth; browser imports exclude NodeCrypto.`,
+        );
+      }
+    }),
+  );
+});
+
 /** Exercise the publisher's manifests in isolation: no source files or optional adapter peers. */
 export const verifyPackageConsumers = Effect.fn("verifyPackageConsumers")(function* (
   repositoryRoot: string,
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+
+  yield* checkCryptoConsumers(repositoryRoot);
 
   // TypeScript resolves package symlinks to real paths, including macOS /var aliases.
   const stage = yield* fs

@@ -1,0 +1,41 @@
+import { defineConfig } from "vite-plus";
+
+export default defineConfig({
+  pack: {
+    tsconfig: "tsconfig.build.json",
+    entry: [
+      "src/index.ts",
+      "src/Aead.ts",
+      "src/Errors.ts",
+      "src/Hmac.ts",
+      "src/Kdf.ts",
+      "src/KdfAdmission.ts",
+      "src/Signature.ts",
+      "src/WebCrypto.ts",
+      "src/NodeCrypto.ts",
+      "src/Portable.ts",
+    ],
+    dts: true,
+    unbundle: true,
+    plugins: [
+      {
+        // Match core: retain actual ESM namespaces and avoid synthetic helper exports.
+        name: "preserve-public-namespaces",
+        resolveId: {
+          order: "pre",
+          handler(source, importer) {
+            if (
+              importer !== undefined &&
+              /\/src\/index(?:\.d)?\.ts$/.test(importer) &&
+              /^\.\/[A-Z]\w*(?:\.ts)?$/.test(source)
+            ) {
+              return { id: source.replace(/(?:\.ts)?$/, ".mjs"), external: true };
+            }
+          },
+        },
+      },
+    ],
+    sourcemap: true,
+  },
+  test: { cache: false, silent: "passed-only", include: ["test/**/*.test.ts"] },
+});

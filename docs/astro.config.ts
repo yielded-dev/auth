@@ -58,6 +58,7 @@ export default defineConfig({
           items: [
             { label: "Public modules", slug: "reference/modules" },
             { label: "Adapters & persistence", slug: "reference/adapters" },
+            { label: "Reusable cryptography", slug: "reference/crypto" },
             { label: "HTTP & action contracts", slug: "reference/http" },
             { label: "Client & Atom", slug: "reference/client" },
             { label: "OAuth", slug: "reference/oauth" },

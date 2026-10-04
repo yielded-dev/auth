@@ -62,6 +62,12 @@ this boundary for runtime imports and declarations. The purity check rejects
 production paths that reach test-only code.
 SDK adapters live in companion packages, and `sideEffects: []` requires import-time code to stay free of I/O.
 
+`@yielded/crypto` owns reusable cryptography services and explicit runtime Layers;
+it must not depend on or import Auth packages. Its root exposes `Aead`, `Errors`,
+`Hmac`, `Kdf`, `KdfAdmission`, and `Signature`; select backends through direct
+`/WebCrypto`, `/Portable`, or `/NodeCrypto` imports. Auth currently retains its
+existing cryptography services and `@yielded/auth-crypto` adapters.
+
 The package build preserves implementation modules and native root/group namespaces
 in both JavaScript and declarations. Every namespace target is also an explicit
 pack entry. The resolver leaves sibling imports external to root and group entries
@@ -71,8 +77,10 @@ retain their initialization even when only one API is used.
 
 `vp run check:package-consumers` requires built packages and runs during `build`.
 It loads and type-checks every core export with only Effect installed, then every
-default persistence export without Drizzle installed. It stages the publisher's
-manifests and built files with the selected adapters' required dependencies,
+default persistence export without Drizzle installed. A separate crypto stage loads
+and type-checks its published exports without Auth, adding Noble dependencies only
+for backend checks. Browser resolution excludes native imports outside `/NodeCrypto`.
+It stages the publisher's manifests and built files with the selected adapters' required dependencies,
 compares equivalent root/group/direct consumers through esbuild and Vite/Rolldown,
 checks their declarations, and runs native ESM and bundled consumers. It protects
 narrow identity imports, browser contracts, deferred client loading, and root
@@ -108,7 +116,7 @@ Before enabling automated releases:
 3. Configure npm trusted publishing for each published package, including
    `@yielded/auth`, `@yielded/auth-persistence`, `@yielded/auth-persistence-drizzle`,
    `@yielded/auth-simplewebauthn`, `@yielded/auth-react-native`, `@yielded/auth-electron`,
-   `@yielded/auth-openid-client`, `@yielded/auth-crypto`,
+   `@yielded/auth-openid-client`, `@yielded/auth-crypto`, `@yielded/crypto`,
    and `@yielded/drizzle-effect-v4-patch`, repository
    `yielded-dev/auth`, workflow `release.yml`. The first npm publication may
    require a manually authenticated owner before trusted publishing can be set.

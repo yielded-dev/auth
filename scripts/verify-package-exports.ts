@@ -3,6 +3,7 @@ import { Console, Effect, FileSystem, Path, Schema } from "effect";
 import ts from "typescript-twoslash";
 
 const coreDependencies = new Set(["effect"]);
+const authPackage = /^@yielded\/auth(?:$|[-/])/;
 
 const Dependencies = Schema.Record(Schema.String, Schema.String);
 
@@ -101,6 +102,17 @@ export const verifyPackageExports = Effect.fn("verifyPackageExports")(
     );
 
     for (const pkg of packages) {
+      if (pkg.manifest.name === "@yielded/crypto") {
+        for (const dependency of Object.keys({
+          ...pkg.manifest.dependencies,
+          ...pkg.manifest.optionalDependencies,
+          ...pkg.manifest.peerDependencies,
+          ...pkg.manifest.devDependencies,
+        })) {
+          if (authPackage.test(dependency))
+            report(pkg.file, `Reusable crypto must not depend on Auth package ${dependency}`);
+        }
+      }
       if (pkg.manifest.name === "@yielded/auth-persistence") {
         for (const dependency of Object.keys({
           ...pkg.manifest.dependencies,
@@ -357,6 +369,8 @@ export const verifyPackageExports = Effect.fn("verifyPackageExports")(
               imports.push({ specifier: node.arguments[0].text, typeOnly: false });
           });
           for (const { specifier, typeOnly } of imports) {
+            if (manifest.name === "@yielded/crypto" && authPackage.test(specifier))
+              report(file, `Reusable crypto must not import Auth module ${specifier}`);
             if (manifest.name === "@yielded/auth-persistence" && /drizzle/i.test(specifier))
               report(
                 file,
