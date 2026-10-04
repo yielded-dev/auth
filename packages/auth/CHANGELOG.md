@@ -1,5 +1,43 @@
 # @yielded/auth
 
+## 0.1.0-beta.15
+
+### Minor Changes
+
+- [#71](https://github.com/yielded-dev/auth/pull/71) [`ac61865`](https://github.com/yielded-dev/auth/commit/ac61865b374c03e2046cbfb3e8fb6a824893fb4e) Thanks [@danieljvdm](https://github.com/danieljvdm)! - Add system-browser sign-in for Electron and iOS apps with separate native sessions and configurable browser-session reuse. Keep Apple association setup optional and application-owned.
+
+### Patch Changes
+
+- [#73](https://github.com/yielded-dev/auth/pull/73) [`27126ab`](https://github.com/yielded-dev/auth/commit/27126ab493f71260416c623380ab3fcbe0ed8596) Thanks [@danieljvdm](https://github.com/danieljvdm)! - Prepare connected OAuth flows before verifying independent exact-action evidence, and resolve begin, callback and disconnect targets through private server services. **BEHAVIOR CHANGE:** call `prepareBegin` before `begin`, retain its private `connected-intent` credential and original command inputs, map credentials through Operation HTTP, and update custom persistence and transaction protectors for prepared flows and their connected envelopes.
+
+- [#79](https://github.com/yielded-dev/auth/pull/79) [`1650b34`](https://github.com/yielded-dev/auth/commit/1650b34275537a11fe629bc0fd7d749c023a05f0) Thanks [@danieljvdm](https://github.com/danieljvdm)! - Queue overlapping password hashing calls with configurable bounded waiting and an acquisition deadline while retaining running work through cleanup.
+
+- [#87](https://github.com/yielded-dev/auth/pull/87) [`d5e1f04`](https://github.com/yielded-dev/auth/commit/d5e1f0491732f30f10eea308667942be6aa51286) Thanks [@danieljvdm](https://github.com/danieljvdm)! - Reject unsafe browser cookie names, transport settings, and OAuth SameSite combinations at Layer acquisition.
+
+  BEHAVIOR CHANGE: Prefix secure custom cookie names and prefixes with `__Host-`, use `SameSite=Lax` with OAuth, and use insecure cookies only on HTTP loopback origins.
+
+- [#95](https://github.com/yielded-dev/auth/pull/95) [`877f025`](https://github.com/yielded-dev/auth/commit/877f0256f2f3760b6f909f41f0985ac311149000) Thanks [@danieljvdm](https://github.com/danieljvdm)! - Reject control characters and line separators in locale hints before proof delivery and custom rendering.
+
+- [#94](https://github.com/yielded-dev/auth/pull/94) [`328b136`](https://github.com/yielded-dev/auth/commit/328b136ef2be59cc4763d861a26ae8af4e96b3cd) Thanks [@danieljvdm](https://github.com/danieljvdm)! - Protect HTTPS authorization consent cookies with the host prefix and root path.
+
+  BEHAVIOR CHANGE: Read `cookieName` from the acquired authorization server `Service` and restart pending authorization flows after upgrading.
+
+- [#83](https://github.com/yielded-dev/auth/pull/83) [`b5c46a1`](https://github.com/yielded-dev/auth/commit/b5c46a1e30a6f80c65a4a15f14354fc6c78e29eb) Thanks [@danieljvdm](https://github.com/danieljvdm)! - Deliver proofs through a built-in bounded worker so requests return without waiting for email or SMS provider acceptance. BEHAVIOR CHANGE: keep Auth's Layer alive across requests and use prepared receipts' `schedule` continuation; provide `Proofs.ProofDispatchScheduler.layerInline` only for trusted workflows that must await delivery.
+
+- [#84](https://github.com/yielded-dev/auth/pull/84) [`841d4c8`](https://github.com/yielded-dev/auth/commit/841d4c809e282ad10214a6abac570b1b45a263b1) Thanks [@danieljvdm](https://github.com/danieljvdm)! - Protect active codes and reset links from other request attempts, charge only issued proofs, provide configurable request rate limiting by default, and expose `Adapter.makeStorageMappings` for adapter composition. BEHAVIOR CHANGE: supply `Proofs.ProofRequestContext` for non-HTTP calls and provide raw HTTP operation handlers, codecs, and callback services at `server.handle` invocation; standard Auth HTTP routes supply the caller automatically.
+
+- [#92](https://github.com/yielded-dev/auth/pull/92) [`e4c0408`](https://github.com/yielded-dev/auth/commit/e4c04089921f2363ae325c7dd8c0f50e0685c860) Thanks [@danieljvdm](https://github.com/danieljvdm)! - Reject unsafe normalized provider display URLs while preserving sign-in for Strava athletes without a profile photo.
+
+- [#96](https://github.com/yielded-dev/auth/pull/96) [`0140ee4`](https://github.com/yielded-dev/auth/commit/0140ee42ba96e49f7753bd8a9de3f8739576dd42) Thanks [@danieljvdm](https://github.com/danieljvdm)! - Bound compromised-password screening with a configurable deadline and fail closed with `PasswordCheckUnavailable` when it expires.
+
+- [#88](https://github.com/yielded-dev/auth/pull/88) [`b2d82cb`](https://github.com/yielded-dev/auth/commit/b2d82cb59b2d19c2dad2dbc773ced8e6494955e4) Thanks [@danieljvdm](https://github.com/danieljvdm)! - Shorten the default stateless session lifetime to fifteen minutes.
+
+  BEHAVIOR CHANGE: Retain an explicit `maxAge` or transitional `maximumIssuedAge` if previously issued longer-lived stateless tokens must remain usable.
+
+- [#91](https://github.com/yielded-dev/auth/pull/91) [`5aa13b0`](https://github.com/yielded-dev/auth/commit/5aa13b0153d0be0613c3c51d7c442c719b1fe9bd) Thanks [@danieljvdm](https://github.com/danieljvdm)! - Bound Strava response bodies and profile fields, and return typed failures for malformed normalized grants.
+
+- [#90](https://github.com/yielded-dev/auth/pull/90) [`ddeeb6d`](https://github.com/yielded-dev/auth/commit/ddeeb6d47d12b029afa33742cf93aab6e1fe9dcf) Thanks [@danieljvdm](https://github.com/danieljvdm)! - Charge rejected TOTP lost-factor resets against the pending authentication attempt budget.
+
 ## 0.1.0-beta.14
 
 ### Minor Changes
