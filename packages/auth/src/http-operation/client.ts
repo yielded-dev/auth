@@ -94,7 +94,11 @@ export interface OperationAuthenticationCompletion {
     route: R,
     input: RouteInput<R>,
     fromSuccess: (success: RouteSuccess<R>) => string | null | undefined,
-    options?: { readonly onTransition?: Effect.Effect<void> },
+    options?: {
+      readonly onTransition?: Effect.Effect<void>;
+      /** Transport generation captured by the caller, checked under the admission gate. */
+      readonly expectedGeneration?: number;
+    },
   ): Effect.Effect<
     RouteSuccess<R>,
     RouteFailure<R> | OperationHttpError,
@@ -117,9 +121,12 @@ export const makeAuthenticationCompletion = Effect.fnUntraced(function* (
     route: R,
     input: RouteInput<R>,
     fromSuccess: (success: RouteSuccess<R>) => string | null | undefined,
-    options?: { readonly onTransition?: Effect.Effect<void> },
+    options?: {
+      readonly onTransition?: Effect.Effect<void>;
+      readonly expectedGeneration?: number;
+    },
   ) {
-    const started = yield* client.generation;
+    const started = options?.expectedGeneration ?? (yield* client.generation);
 
     return yield* gate.withPermits(1)(
       Effect.gen(function* () {

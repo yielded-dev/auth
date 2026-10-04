@@ -2,12 +2,158 @@ import { it } from "@effect/vitest";
 import * as AuthAtom from "@yielded/auth/Atom";
 import * as AuthContract from "@yielded/auth/AuthContract";
 import * as Client from "@yielded/auth/Client";
-import { Deferred, Effect, Fiber, Layer, Schema } from "effect";
+import { Context, Deferred, Effect, Fiber, Layer, Option, Scheduler, Schema, Tracer } from "effect";
 import { HttpClient, HttpClientResponse } from "effect/http";
-import type { Atom } from "effect/reactivity";
-import { AsyncResult, AtomRegistry } from "effect/reactivity";
+import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 import { TestClock } from "effect/testing";
 import { expect, test } from "vite-plus/test";
+
+// https://github.com/yielded-dev/auth/commit/32be91d2
+// Force the scheduler gap between the caller's fence and credential admission;
+// a real browser cannot reliably pause at that boundary.
+test.each(["workflow", "client", "own-transition"] as const)(
+  "keeps the initiating authentication generation across %s completion",
+  (mode) =>
+    Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const contract = AuthContract.make("test/completion-generation", {
+            claims: Schema.Struct({}),
+            actions: () => ({
+              authenticate: AuthContract.action({
+                payload: Schema.String,
+                success: Schema.String,
+                error: Schema.String,
+                mode: "mutation",
+                credentials: true,
+                subject: { fromSuccess: (value) => value },
+              }),
+            }),
+          });
+
+          let calls = 0;
+
+          const http = HttpClient.make((request) =>
+            Effect.sync(() => {
+              calls++;
+
+              return HttpClientResponse.fromWeb(
+                request,
+                Response.json(
+                  mode === "own-transition"
+                    ? { _tag: "Success", value: "signed-in" }
+                    : { _tag: "Failure", error: "denied" },
+                ),
+              );
+            }),
+          );
+
+          const AppClient = Client.make(contract, { baseUrl: "https://example.test" });
+          const factory = Atom.context();
+
+          const auth = AuthAtom.make(AppClient, {
+            runtime: factory,
+            layer: AppClient.layer.pipe(Layer.provide(Layer.succeed(HttpClient.HttpClient, http))),
+          });
+
+          const registry = yield* Effect.acquireRelease(
+            Effect.sync(() => AtomRegistry.make()),
+            (value) => Effect.sync(() => value.dispose()),
+          );
+
+          const context = yield* AtomRegistry.getResult(registry, auth.runtime);
+          const lifetime = Context.get(context, AuthAtom.AuthAtomLifetime);
+
+          const prepare = AuthAtom.workflow<string>()(
+            auth.runtime,
+            Effect.fnUntraced(function* (input) {
+              const workflow = yield* AuthAtom.AuthAtomWorkflow;
+
+              return workflow.completeAuthentication(
+                contract.actions.authenticate.route,
+                input,
+                (value) => value,
+              );
+            }),
+            { reactivityKeys: ["session"] },
+          );
+
+          const paused = yield* Deferred.make<void>();
+          const dispatcher = new Scheduler.MixedScheduler().makeDispatcher();
+          let intercepted = false;
+          let resume: (() => void) | undefined;
+
+          const scheduler: Scheduler.Scheduler = {
+            executionMode: "async",
+            shouldYield(fiber) {
+              const span = Context.getOption(fiber.context, Tracer.ParentSpan);
+
+              if (
+                !intercepted &&
+                Option.isSome(span) &&
+                span.value._tag === "Span" &&
+                span.value.name === "OperationHttpClient.completeAuthentication"
+              ) {
+                intercepted = true;
+
+                return true;
+              }
+
+              return false;
+            },
+            makeDispatcher: () => ({
+              scheduleTask(task, priority) {
+                if (resume === undefined) {
+                  resume = () => dispatcher.scheduleTask(task, priority);
+                  Deferred.doneUnsafe(paused, Effect.void);
+                } else dispatcher.scheduleTask(task, priority);
+              },
+              flush: () => dispatcher.flush(),
+            }),
+          };
+
+          const host = factory(Layer.empty).fn<string>()(
+            Effect.fnUntraced(function* (input, get) {
+              const complete =
+                mode === "client"
+                  ? Context.get(context, AppClient).auth.authenticate(input)
+                  : yield* get.setResult(prepare, input);
+
+              return yield* mode === "own-transition"
+                ? complete
+                : complete.pipe(Effect.provideService(Scheduler.Scheduler, scheduler));
+            }),
+          );
+
+          yield* AtomRegistry.mount(registry, host);
+          registry.set(host, "proof");
+          if (mode !== "own-transition") {
+            yield* Deferred.await(paused);
+            yield* lifetime.replaceSubject("replacement");
+            resume?.();
+          }
+
+          const result = yield* AtomRegistry.getResult(registry, host, {
+            suspendOnWaiting: true,
+          }).pipe(Effect.result, Effect.timeout("1 second"));
+
+          expect(calls).toBe(mode === "own-transition" ? 1 : 0);
+          expect(yield* lifetime.get).toMatchObject({
+            subject: mode === "own-transition" ? "signed-in" : "replacement",
+            generation: 1,
+          });
+          expect(result).toMatchObject(
+            mode === "own-transition"
+              ? { _tag: "Success", success: "signed-in" }
+              : {
+                  _tag: "Failure",
+                  failure: { _tag: "OperationHttpError", reason: "stale-response" },
+                },
+          );
+        }),
+      ),
+    ),
+);
 
 // e2ca72c admitted credential requests without a deadline; a stalled response
 // blocked account transitions and Scope cleanup even with an outer timeout.
