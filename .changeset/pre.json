@@ -22,6 +22,7 @@
   "changesets": [
     "aligned-package-versions",
     "application-owned-drizzle-example",
+    "atom-completion-optionals",
     "audit-admission-and-request-bounds",
     "bright-oauth-callbacks",
     "canonical-auth-transport",
@@ -36,6 +37,7 @@
     "direct-session-claims",
     "drizzle-effect-patch-cli",
     "effect-only-core",
+    "exact-optional-properties",
     "fair-password-waiting",
     "fence-authentication-admission",
     "github-response-issuer",
@@ -54,6 +56,7 @@
     "oauth-consent-cookie",
     "one-authentication-workflow",
     "openid-client-keep-hd",
+    "passkey-claim-clock",
     "phone-sign-in-layers",
     "private-proof-scheduling",
     "protect-live-proof-bindings",
