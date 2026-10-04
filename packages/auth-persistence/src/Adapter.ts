@@ -1,8 +1,9 @@
 /** Shared storage contracts and kernels for persistence adapter authors.
- * Standalone constructors require the matching Current*Sql or NativeDatabase
- * service during acquisition. Provide a coordinator's exact transaction when
- * constructing bound services; do not provide the root database around their
- * later operations, where Current*Sql identifies an active transaction. */
+ * Supply the captured root through NativeDatabase for catalog validation and
+ * standalone execution, alongside each constructor's matching Current*Sql service.
+ * Provide a coordinator's exact transaction through Current*Sql when constructing
+ * bound services; do not provide the root around their later operations, where
+ * Current*Sql identifies an active transaction. */
 export {
   type EmailSubjectReadTable,
   type EmailSubjectTable,
@@ -284,6 +285,7 @@ export {
 export { PersistenceConfigurationError } from "./internal/configuration";
 export { makeComposedPasskeys } from "./internal/passkeys";
 export { createPersistence } from "./internal/persistence";
+export { makeMappings as makeStorageMappings } from "./internal/storage-mapping";
 export { type StorageTable } from "./internal/storage-tables";
 export type { SubjectIdCodec } from "./internal/models/common";
 export type { PasswordRegistrationAuthority } from "./internal/registration-contract";
@@ -294,3 +296,5 @@ export type {
   Definition,
   PersistenceApi,
 } from "./internal/configuration";
+
+export { validateStorage, type PhysicalStorageTable } from "./internal/storage-validation";

@@ -1,4 +1,5 @@
 import type { D1Client } from "@effect/sql-d1/D1Client";
+import { NativeDatabase } from "@yielded/auth-persistence/Adapter";
 import type { LifecycleHooks } from "@yielded/auth/Hooks";
 import {
   PhoneOtpUnavailable as PhoneUnavailable,
@@ -14,6 +15,7 @@ import { Context, Effect } from "effect";
 import { Database as DatabaseService } from "./d1-database";
 import { makeD1Owner } from "./d1-planning";
 import { D1BatchStatements } from "./D1BatchStatements";
+import { nativeDatabase } from "./native-database";
 import type { D1PhoneMapping, PhoneMapping, PhoneMappingSource } from "./phone-model";
 import { coordinateTargetPhone, makePhoneTarget, type PhoneCoordinatorError } from "./phone-target";
 type Database = EffectSQLiteD1Database<AnyRelations> & { readonly $client: D1Client };
@@ -61,7 +63,7 @@ export const coordinatePhonePersistence = <
   | RSetup
   | DatabaseRequirements
 > =>
-  Effect.flatMap(acquire, (database) =>
+  Effect.flatMap(nativeDatabase(acquire), (database) =>
     coordinateTargetPhone(
       database,
       options.mapping,
@@ -96,5 +98,5 @@ export const coordinatePhonePersistence = <
 
           return yield* owner.close(Effect.provideContext(body, provided));
         }),
-    ),
+    ).pipe(Effect.provideService(NativeDatabase, database)),
   );

@@ -120,9 +120,9 @@ import { PhonePersistenceLive, ProofPersistenceLive } from "./auth-persistence";
 const TwilioConfigLive = Layer.effect(
   Twilio.TwilioConfig,
   Config.all({
-    accountSid: Config.string("TWILIO_ACCOUNT_SID"),
-    authToken: Config.redacted("TWILIO_AUTH_TOKEN"),
-    from: Config.string("TWILIO_FROM"),
+    accountSid: Config.String("TWILIO_ACCOUNT_SID"),
+    authToken: Config.Redacted("TWILIO_AUTH_TOKEN"),
+    from: Config.String("TWILIO_FROM"),
   }),
 );
 
@@ -159,8 +159,11 @@ requires no Twilio SDK.
 
 `AuthDependencies` is defined in the [shared application composition](../reference/adapters#compose-the-application-layer).
 It supplies session storage, account authority, request-binding configuration, and
-`ProofKeys`. Web Crypto and empty lifecycle hooks have defaults. Database storage,
-destination policy, claims, and delivery have no automatic implementations.
+`ProofKeys`. Web Crypto, empty lifecycle hooks, and a bounded delivery worker have
+defaults. Database storage, destination policy, claims, and delivery have no automatic
+implementations. Build Auth in an application scope that outlives requests; the built-in
+worker keeps SMS provider latency outside the response path without extra wiring.
+See [delivery lifetime and overrides](./email-delivery#compose-auth), which also apply to SMS.
 
 <details>
 <summary>Customize the SMS message</summary>

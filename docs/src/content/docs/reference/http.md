@@ -35,9 +35,14 @@ Configure paths through `basePath` rather than prefixing the generated endpoints
 
 Cookies default to `Secure`, `HttpOnly`, `SameSite=Lax`, path `/`, and the
 `__Host-effect-auth-` prefix. Override `cookie.name` for the session slot or
-`cookie.prefix` for all slots. Plain HTTP development requires an explicit
-`cookie.secure: false`. Use your real HTTPS origin; never derive trusted origins
-from an untrusted request header.
+`cookie.prefix` for all slots. Secure custom names and prefixes must begin with
+`__Host-`; their cookies retain path `/` and no Domain. `cookie.secure: false` is
+allowed only with HTTP loopback origins (`localhost`, `127.0.0.1`, or `[::1]`).
+Use your real HTTPS origin; never derive trusted origins from an untrusted request
+header. Invalid combinations fail startup.
+
+OAuth callbacks need the request-binding cookie on a cross-site return. Keep
+`SameSite=Lax`; configuring OAuth with `cookie.sameSite: "strict"` fails startup.
 
 POST auth actions require the configured Origin, JSON content type, and
 `x-effect-auth-csrf: 1` by default. GET actions have no body or CSRF header and
@@ -51,6 +56,52 @@ For a custom credential-producing workflow, call `http.protect(effect)` inside
 the request boundary; it applies mutation policy and supplies private collectors
 without imposing a body format. Custom hosts still own webhook validation and
 ordinary application mutation policy.
+
+## Proof request rate limits
+
+Auth supplies `Proofs.HostIngressLimiter` for email code/link and password-reset
+requests. The default network bucket holds twenty requests and replenishes one
+every three minutes, shared across purposes and device keys. Every request is
+checked before target lookup, including retries and suppressed requests.
+Durable delivery quotas separately count only issued proofs.
+
+Configure the bucket when building Auth:
+
+```ts
+import { Proofs } from "@yielded/auth";
+import { Layer } from "effect";
+
+const AuthLive = AppAuth.layer.pipe(
+  Layer.provide(Proofs.HostIngressLimiter.layer({ limit: 40, windowMillis: 3_600_000 })),
+);
+```
+
+Both options must be positive integers. The default Effect memory store retains
+network keys for the runtime's lifetime and resets when it is recreated. For
+shared enforcement across servers, provide an Effect `RateLimiterStore`, such as
+`RateLimiter.layerStoreRedis({ prefix: "auth:requests" })`, to the Auth Layer.
+An explicitly provided `RateLimiter` or `HostIngressLimiter` also replaces its
+default. Limit malformed traffic at the host before HTTP/RPC parsing.
+
+`Http.layer`, generated routes, and `http.middleware` derive
+`Proofs.ProofRequestContext` from the current socket peer. They ignore `Forwarded`
+and `X-Forwarded-For`. For a trusted proxy or a host without socket metadata,
+provide the verified client identity around each request:
+
+```ts
+handler.pipe(
+  Effect.provideService(
+    Proofs.ProofRequestContext,
+    Effect.succeed({ networkKey: Redacted.make(trustedClientAddress) }),
+  ),
+);
+```
+
+The resolver runs only when an operation needs proof admission. Without a peer or
+override, code/reset requests fail as unavailable; unrelated routes still work.
+Never derive this identity from operation payloads or install one caller in a
+shared Auth Layer. Raw `OperationHttpServer.handle` and non-HTTP calls require
+this per-invocation service explicitly.
 
 ## Declare an action
 
@@ -90,6 +141,14 @@ example and [TOTP](../guide/totp#expose-private-reveals-over-http) for private r
 `OperationHttpServer` contracts. Those descriptors continue to own private payload
 injection and explicitly selected reveals.
 Encode expected response failures before leaving the request wrapper.
+
+`OperationHttpServer.make` retains configuration and caller resolution. Supply
+operation handlers, codec services, and callback response services when running
+`server.handle(request)`. Shared `Http` routes bind their auth API and expose other
+invocation services as `HttpRouter.Request` requirements for host middleware.
+Keep trusted caller context in that middleware; never install one caller in a
+shared application Layer. See the
+[lower-level server example](https://github.com/yielded-dev/auth/blob/main/examples/auth/src/transport-application.ts).
 
 `OperationHttpClient.make` requires the same Effect `HttpClient` service.
 `OperationHttpClient.layer(options)` provides `OperationHttpClient.Client` for

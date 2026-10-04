@@ -348,14 +348,20 @@ export const createPersistence = <T extends object, R>(
 
         const sessionServices = yield* sessionKernel
           .makeSqlStatefulSessions(sessionMapping, options)
-          .pipe(Effect.provideService(CurrentSessionSql, native));
+          .pipe(
+            Effect.provideService(CurrentSessionSql, native),
+            Effect.provideService(NativeDatabase, native),
+          );
 
         const authority = yield* sessionKernel
           .makeSqlAuthenticationAuthority<C["Type"]>(
             { ...mappings.authority(), isConstraintConflict: () => false },
             options,
           )
-          .pipe(Effect.provideService(CurrentSessionSql, native));
+          .pipe(
+            Effect.provideService(CurrentSessionSql, native),
+            Effect.provideService(NativeDatabase, native),
+          );
 
         let context: Context.Context<never> = Context.make(AuthenticationAuthority, authority).pipe(
           Context.add(
@@ -383,7 +389,10 @@ export const createPersistence = <T extends object, R>(
             ProofPersistence,
             yield* proofKernel
               .makeSqlProofPersistence(proofConfiguration.mapping, proofConfiguration.configuration)
-              .pipe(Effect.provideService(CurrentProofSql, native)),
+              .pipe(
+                Effect.provideService(CurrentProofSql, native),
+                Effect.provideService(NativeDatabase, native),
+              ),
           );
         }
 
@@ -396,7 +405,10 @@ export const createPersistence = <T extends object, R>(
               insertIfAbsent: (query) => query.onConflictDoNothing(),
               proof: proofConfiguration,
             })
-            .pipe(Effect.provideService(CurrentPasswordSql, native));
+            .pipe(
+              Effect.provideService(CurrentPasswordSql, native),
+              Effect.provideService(NativeDatabase, native),
+            );
 
           context = Context.add(context, PasswordPersistence, persistence);
         }
@@ -429,7 +441,10 @@ export const createPersistence = <T extends object, R>(
                 standaloneGuard: standalone(() => EmailUnavailable.make({})),
                 proof: proofConfiguration,
               })
-              .pipe(Effect.provideService(CurrentEmailSql, native)),
+              .pipe(
+                Effect.provideService(CurrentEmailSql, native),
+                Effect.provideService(NativeDatabase, native),
+              ),
           );
         }
         if (phone) {
@@ -566,7 +581,13 @@ export const createPersistence = <T extends object, R>(
 
         // The checked capability metadata above determines exactly these service keys.
         return context as Context.Context<Ports<C, Id, A>>;
-      }),
+      }).pipe(
+        Effect.mapError((error) =>
+          Schema.is(PersistenceConfigurationError)(error)
+            ? error
+            : configError("Cannot acquire SQL persistence"),
+        ),
+      ),
     ).pipe(Layer.provide(hooksLayer));
 
     return {

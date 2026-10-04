@@ -9,8 +9,10 @@ import { LoginIdentifier } from "../../identity/models";
 import { type AuthInvocation } from "../../operations/context";
 import type { AuthOperationResult } from "../../operations/credentials";
 import { makeOperation, operationGroup } from "../../operations/operation";
+import { proofRequestAdmission } from "../../proofs/admission";
 import type { ProofSecretPolicy } from "../../proofs/crypto";
 import { readProofCommit } from "../../proofs/dispatch";
+import { defaultIngressLayer } from "../../proofs/HostIngressLimiter";
 import {
   ProofBinding,
   ProofContinuation,
@@ -23,7 +25,7 @@ import {
 import { makeProofModule } from "../../proofs/module";
 import type { ProofPolicy } from "../../proofs/policy";
 import type { SubjectId } from "../../Schema";
-import { Email } from "../../Schema";
+import { Email, Locale } from "../../Schema";
 import { assessAuthentication, snapshotAuthenticationEvidence } from "../../sessions/assurance";
 import { AuthenticationAuthority } from "../../sessions/AuthenticationAuthority";
 import { SessionInvalidationWindow, sessionInvalidationWindow } from "../../sessions/invalidation";
@@ -207,7 +209,7 @@ const makePasswordWithManagement = <
   const RequestResetInput = Schema.Struct({
     ...ResetBase,
     requestId: ProofRequestId,
-    locale: Schema.NonEmptyString.check(Schema.isMaxLength(64)),
+    locale: Locale,
   });
 
   const VerifyResetInput = Schema.Struct({
@@ -661,7 +663,7 @@ const makePasswordWithManagement = <
               Effect.mapError(() => PasswordUnavailable.make({})),
             );
 
-          yield* dispatch.dispatch.pipe(Effect.mapError(() => PasswordUnavailable.make({})));
+          yield* dispatch.schedule.pipe(Effect.mapError(() => PasswordUnavailable.make({})));
 
           return dispatch.receipt;
         }),
@@ -784,6 +786,8 @@ const makePasswordWithManagement = <
   });
 
   const RequestReset = makeOperation(`${moduleId}/request-reset`, {
+    authorize: () =>
+      proofRequestAdmission(`${moduleId}/reset`).pipe(Effect.mapError(passwordCompletionFailure)),
     payload: RequestResetInput,
     success: ProofRequestReceipt,
     error: Failure,
@@ -933,6 +937,7 @@ const makePasswordWithManagement = <
         Layer.provide(defaultLayer(reset.Proofs, reset.emailLayer)),
         Layer.provide([newPasswordLayer, hooksLayer]),
         Layer.provideMerge(cryptoLayer),
+        Layer.merge(defaultIngressLayer),
       ),
       { completion: true },
     ),

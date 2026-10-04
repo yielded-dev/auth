@@ -11,6 +11,13 @@ const PgColumns = Schema.Array(Schema.Struct({ name: Schema.String }));
 const PgKeys = Schema.Array(Schema.Struct({ columns: Schema.Array(Schema.String) }));
 const quote = (value: string) => '"' + value.replaceAll('"', '""') + '"';
 
+/** Physical metadata needed for catalog validation; value codecs remain adapter-owned. */
+export interface PhysicalStorageTable {
+  readonly name: string;
+  readonly schema?: string;
+  readonly columns: Readonly<Record<string, { readonly name: string }>>;
+}
+
 export const qualifiedTableName = (table: Pick<StorageTable, "name" | "schema">) =>
   (table.schema === undefined ? "" : quote(table.schema) + ".") + quote(table.name);
 
@@ -18,8 +25,8 @@ export const qualifiedTableName = (table: Pick<StorageTable, "name" | "schema">)
  * partial or expression index cannot establish these unconditional guarantees. */
 export const validateStorage = Effect.fnUntraced(
   function* (
-    dialect: "pg" | "sqlite",
-    table: StorageTable,
+    dialect: "pg" | "mysql" | "sqlite",
+    table: PhysicalStorageTable,
     required: ReadonlyArray<ReadonlyArray<string>>,
   ) {
     const client = yield* SqlClient;
@@ -64,22 +71,76 @@ export const validateStorage = Effect.fnUntraced(
 
           return keys;
         })
-      : Effect.gen(function* () {
-          const relation = qualifiedTableName(table);
+      : dialect === "mysql"
+        ? Effect.gen(function* () {
+            const columns = yield* client`
+              select column_name as name from information_schema.columns
+              where table_schema = coalesce(${table.schema ?? null}, database())
+                and table_name = ${table.name}
+            `.pipe(Effect.flatMap(Schema.decodeUnknownEffect(PgColumns)));
 
-          const columns =
-            yield* client`select attname as name from pg_attribute where attrelid = to_regclass(${relation}) and attnum > 0 and not attisdropped`.pipe(
-              Effect.flatMap(Schema.decodeUnknownEffect(PgColumns)),
+            for (const column of Object.values(table.columns)) {
+              if (!columns.some((actual) => actual.name === column.name))
+                return yield* PersistenceConfigurationError.make({
+                  reason: `Missing SQL column ${table.name}.${column.name}`,
+                });
+            }
+
+            const indexes = yield* client`
+              select index_name as name, column_name as columnName, sub_part as prefix
+              from information_schema.statistics
+              where table_schema = coalesce(${table.schema ?? null}, database())
+                and table_name = ${table.name} and non_unique = 0
+              order by index_name, seq_in_index
+            `.pipe(
+              Effect.flatMap(
+                Schema.decodeUnknownEffect(
+                  Schema.Array(
+                    Schema.Struct({
+                      name: Schema.String,
+                      columnName: Schema.NullOr(Schema.String),
+                      prefix: Schema.NullOr(Schema.Number),
+                    }),
+                  ),
+                ),
+              ),
             );
 
-          for (const column of Object.values(table.columns)) {
-            if (!columns.some((actual) => actual.name === column.name))
-              return yield* PersistenceConfigurationError.make({
-                reason: `Missing SQL column ${relation}.${column.name}`,
-              });
-          }
+            const keys = new Map<string, Array<(typeof indexes)[number]>>();
 
-          const indexes = yield* client`
+            for (const index of indexes) {
+              const columns = keys.get(index.name) ?? [];
+
+              columns.push(index);
+              keys.set(index.name, columns);
+            }
+
+            return [...keys.values()]
+              .filter((columns) =>
+                columns.every((column) => column.columnName !== null && column.prefix === null),
+              )
+              .map((columns) =>
+                columns.flatMap((column) =>
+                  column.columnName === null ? [] : [column.columnName],
+                ),
+              );
+          })
+        : Effect.gen(function* () {
+            const relation = qualifiedTableName(table);
+
+            const columns =
+              yield* client`select attname as name from pg_attribute where attrelid = to_regclass(${relation}) and attnum > 0 and not attisdropped`.pipe(
+                Effect.flatMap(Schema.decodeUnknownEffect(PgColumns)),
+              );
+
+            for (const column of Object.values(table.columns)) {
+              if (!columns.some((actual) => actual.name === column.name))
+                return yield* PersistenceConfigurationError.make({
+                  reason: `Missing SQL column ${relation}.${column.name}`,
+                });
+            }
+
+            const indexes = yield* client`
           select array_agg(a.attname order by k.ordinality) as columns
           from pg_index i
           cross join lateral unnest(i.indkey) with ordinality as k(attnum, ordinality)
@@ -90,8 +151,8 @@ export const validateStorage = Effect.fnUntraced(
           group by i.indexrelid
         `.pipe(Effect.flatMap(Schema.decodeUnknownEffect(PgKeys)));
 
-          return indexes.map((index) => index.columns);
-        });
+            return indexes.map((index) => index.columns);
+          });
 
     for (const keys of required) {
       const columns = keys.map((key) => table.columns[key]?.name);
@@ -99,8 +160,11 @@ export const validateStorage = Effect.fnUntraced(
       if (
         columns.some((column) => column === undefined) ||
         !physicalKeys.some(
+          // A stronger key also guarantees the required tuple's uniqueness.
           (actual) =>
-            actual.length === columns.length && actual.every((column) => columns.includes(column)),
+            actual.length > 0 &&
+            actual.length <= columns.length &&
+            actual.every((column) => columns.includes(column)),
         )
       )
         return yield* PersistenceConfigurationError.make({

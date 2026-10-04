@@ -61,6 +61,7 @@ import {
   validateStepUpPlan,
   stepUpRotationMatches,
 } from "./step-up-state";
+import type { NativeDatabase } from "./transaction-kernel";
 
 type CommitMode = "interactive" | "synchronous";
 
@@ -109,6 +110,7 @@ export class CurrentSessionSql extends Context.Service<CurrentSessionSql, Sessio
 type Guard = Effect.Effect<void, SessionUnavailable>;
 
 export interface SessionSqlOptions {
+  readonly coordinated?: boolean;
   readonly mode: CommitMode;
   readonly locking: boolean;
   /** Target-specific ambient transaction preflight. It runs before IDs or writes. */
@@ -630,10 +632,15 @@ export const makeSessionKernel = (operations: QueryOperations) => {
     options: SessionSqlOptions,
   ): Effect.fn.Return<
     AuthenticationAuthority["Service"],
-    never,
-    LifecycleHooks | CurrentSessionSql
+    SessionUnavailable,
+    LifecycleHooks | CurrentSessionSql | NativeDatabase
   > {
     const database = yield* CurrentSessionSql;
+
+    if (!options.coordinated)
+      yield* (operations.validateStorage?.(mapping) ?? Effect.void).pipe(
+        Effect.mapError(unavailable),
+      );
     const hooks = yield* LifecycleHooks;
 
     const service = {
@@ -790,8 +797,17 @@ export const makeSessionKernel = (operations: QueryOperations) => {
   const makeSqlPendingAuthentication = Effect.fnUntraced(function* <Claims>(
     mapping: PendingAuthenticationMapping<Claims, any, any, any, any, any>,
     options: SessionSqlOptions,
-  ): Effect.fn.Return<PendingAuthentication<Claims>, never, LifecycleHooks | CurrentSessionSql> {
+  ): Effect.fn.Return<
+    PendingAuthentication<Claims>,
+    SessionUnavailable,
+    LifecycleHooks | CurrentSessionSql | NativeDatabase
+  > {
     const database = yield* CurrentSessionSql;
+
+    if (!options.coordinated)
+      yield* (operations.validateStorage?.(mapping) ?? Effect.void).pipe(
+        Effect.mapError(unavailable),
+      );
     const hooks = yield* LifecycleHooks;
 
     const service = {
@@ -964,10 +980,15 @@ export const makeSessionKernel = (operations: QueryOperations) => {
       readonly statefulSessionPersistence: StatefulSessionPersistence<Claims>;
       readonly sessionRepository: SessionRepository;
     },
-    never,
-    LifecycleHooks | CurrentSessionSql
+    SessionUnavailable,
+    LifecycleHooks | CurrentSessionSql | NativeDatabase
   > {
     const database = yield* CurrentSessionSql;
+
+    if (!options.coordinated)
+      yield* (operations.validateStorage?.(mapping) ?? Effect.void).pipe(
+        Effect.mapError(unavailable),
+      );
     const hooks = yield* LifecycleHooks;
 
     const c = sessionColumns(mapping);
@@ -1388,8 +1409,17 @@ export const makeSessionKernel = (operations: QueryOperations) => {
   const makeSqlSignedValidity = Effect.fnUntraced(function* (
     mapping: SignedSessionValidityMapping<any, any, any, any>,
     options: SessionSqlOptions,
-  ): Effect.fn.Return<SignedSessionValidity, never, LifecycleHooks | CurrentSessionSql> {
+  ): Effect.fn.Return<
+    SignedSessionValidity,
+    SessionUnavailable,
+    LifecycleHooks | CurrentSessionSql | NativeDatabase
+  > {
     const database = yield* CurrentSessionSql;
+
+    if (!options.coordinated)
+      yield* (operations.validateStorage?.(mapping) ?? Effect.void).pipe(
+        Effect.mapError(unavailable),
+      );
     const hooks = yield* LifecycleHooks;
 
     const subject = subjectColumns(mapping);
@@ -1780,8 +1810,17 @@ export const makeSessionKernel = (operations: QueryOperations) => {
   const makeSqlSessionStepUp = Effect.fnUntraced(function* <Claims>(
     mapping: SessionStepUpMapping<Claims, any, any, any, any, any, any, any>,
     options: SessionSqlOptions,
-  ): Effect.fn.Return<SessionStepUpPersistence<Claims>, never, LifecycleHooks | CurrentSessionSql> {
+  ): Effect.fn.Return<
+    SessionStepUpPersistence<Claims>,
+    SessionUnavailable,
+    LifecycleHooks | CurrentSessionSql | NativeDatabase
+  > {
     const database = yield* CurrentSessionSql;
+
+    if (!options.coordinated)
+      yield* (operations.validateStorage?.(mapping) ?? Effect.void).pipe(
+        Effect.mapError(unavailable),
+      );
     const hooks = yield* LifecycleHooks;
 
     const m = mapping.intent,

@@ -397,7 +397,7 @@ export const makeOpenIdClientOAuthProtocol = Effect.fn("makeOpenIdClientOAuthPro
           )
             return yield* rejected();
 
-          const profile = yield* decodeOidcProfile(exchanged.claims);
+          const profile = yield* decodeOidcProfile(exchanged.claims, provider.issuer);
 
           return yield* snapshotOAuth(OAuthVerifiedExternalIdentity, {
             identity: { provider: provider.provider, issuer: provider.issuer, subject: claims.sub },

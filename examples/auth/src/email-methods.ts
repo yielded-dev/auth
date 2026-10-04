@@ -1,5 +1,5 @@
 import { BunRuntime } from "@effect/platform-bun";
-import { Auth, EmailDelivery, Email, Hooks, Operations, WebCrypto } from "@yielded/auth";
+import { Auth, EmailDelivery, Email, Hooks, Operations, Proofs, WebCrypto } from "@yielded/auth";
 import { Effect, Layer, Redacted } from "effect";
 import { Base64Url } from "effect/encoding";
 import { HttpRouter, HttpServerResponse } from "effect/http";
@@ -24,7 +24,11 @@ const program = Effect.gen(function* () {
       Layer.provide(notify.layer.pipe(Layer.provide(notifier))),
     );
 
-    const base = Layer.mergeAll(WebCrypto.layerWebCrypto, hooks);
+    const base = Layer.mergeAll(
+      WebCrypto.layerWebCrypto,
+      hooks,
+      Proofs.ProofDispatchScheduler.layerInline,
+    );
 
     yield* Effect.gen(function* () {
       const model = yield* makeEmailConsumer;
@@ -37,6 +41,7 @@ const program = Effect.gen(function* () {
           keys: [
             {
               id: "binding",
+              // Demo-only key material. Production requires independently generated random keys.
               material: Redacted.make(Base64Url.encode(new Uint8Array(32).fill(31))),
             },
           ],
@@ -49,6 +54,7 @@ const program = Effect.gen(function* () {
           keys: [
             {
               id: "session",
+              // Demo-only key material. Production requires independently generated random keys.
               material: Redacted.make(Base64Url.encode(new Uint8Array(32).fill(42))),
             },
           ],
@@ -473,6 +479,11 @@ const program = Effect.gen(function* () {
       }).pipe(
         Effect.scoped,
         Effect.provideService(Auth.AuthRequest, { ...call, invocation: Operations.guest }),
+        // This CLI host owns its caller; HTTP hosts derive a fresh key per request.
+        Effect.provideService(
+          Proofs.ProofRequestContext,
+          Effect.succeed({ networkKey: Redacted.make(`email-cli-${mode}`) }),
+        ),
         Effect.provide(handlers),
       );
     }).pipe(Effect.provide(base));

@@ -1,3 +1,7 @@
+import type {
+  NativeDatabase,
+  PasswordRegistrationAuthority,
+} from "@yielded/auth-persistence/Adapter";
 import {
   coordinateCommit,
   CurrentCommitJournal,
@@ -25,6 +29,7 @@ import {
 } from "./password-model";
 import { CurrentPasswordSql, type PasswordSqlQuery } from "./password-sql";
 import { CurrentProofSql, type ProofSqlDatabase } from "./proof-sql";
+import { validateDrizzleStorage } from "./storage-validation";
 
 type Mapping<Registration> = AnyPasswordRegistrationMapping<Registration>;
 const unavailable = () => PasswordUnavailable.make({});
@@ -40,7 +45,6 @@ const translateFailure = <A, E, R>(
       Schema.is(HookConfigurationError)(error),
   ).pipe(Effect.catchCause((cause) => Effect.failCause(Cause.map(cause, () => unavailable()))));
 
-import type { PasswordRegistrationAuthority } from "@yielded/auth-persistence/Adapter";
 export type { PasswordRegistrationAuthority } from "@yielded/auth-persistence/Adapter";
 
 export interface PasswordRegistrationConfiguration {
@@ -218,10 +222,13 @@ export const makeSqlPasswordRegistrationAuthority = Effect.fn(
   configuration: PasswordRegistrationConfiguration,
 ): Effect.fn.Return<
   PasswordRegistrationAuthority<Registration>,
-  never,
-  LifecycleHooks | CurrentPasswordSql
+  PasswordUnavailable,
+  LifecycleHooks | CurrentPasswordSql | NativeDatabase
 > {
   const database = yield* CurrentPasswordSql;
+
+  if (!configuration.coordinated)
+    yield* validateDrizzleStorage(mapping).pipe(Effect.mapError(unavailable));
   const hooks = yield* LifecycleHooks;
 
   return {

@@ -1,5 +1,5 @@
 import { BunRuntime } from "@effect/platform-bun";
-import { Auth, EmailDelivery, Hooks, Operations, Password, WebCrypto } from "@yielded/auth";
+import { Auth, EmailDelivery, Hooks, Operations, Password, Proofs, WebCrypto } from "@yielded/auth";
 import * as PasswordCrypto from "@yielded/auth-crypto/Password";
 import { DateTime, Effect, Layer, Redacted } from "effect";
 import { Base64Url } from "effect/encoding";
@@ -16,7 +16,12 @@ const hashing = PasswordCrypto.layer().pipe(
   Layer.provide(WebCrypto.layerWebCrypto),
 );
 
-const base = Layer.mergeAll(WebCrypto.layerWebCrypto, Hooks.LifecycleHooks.empty, hashing);
+const base = Layer.mergeAll(
+  WebCrypto.layerWebCrypto,
+  Hooks.LifecycleHooks.empty,
+  hashing,
+  Proofs.ProofDispatchScheduler.layerInline,
+);
 
 const screening = Layer.succeed(Password.CompromisedPasswords, {
   // Public local fixture only; production must supply a maintained corpus/checker.
@@ -47,6 +52,7 @@ const program = Effect.gen(function* () {
       keys: [
         {
           id: "example",
+          // Demo-only key material. Production requires independently generated random keys.
           material: Redacted.make(Base64Url.encode(new Uint8Array(32).fill(42))),
         },
       ],
@@ -261,6 +267,11 @@ const program = Effect.gen(function* () {
   }).pipe(
     Effect.scoped,
     Effect.provideService(Auth.AuthRequest, { ...call, invocation: Operations.guest }),
+    // This CLI host owns its caller; HTTP hosts derive a fresh key per request.
+    Effect.provideService(
+      Proofs.ProofRequestContext,
+      Effect.succeed({ networkKey: Redacted.make("password-cli") }),
+    ),
     Effect.provide(
       Layer.mergeAll(sessionHandlers, model.layer, strategy, completion, delivery, screening),
     ),

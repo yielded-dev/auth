@@ -28,12 +28,14 @@ const policy: Proofs.ProofPolicy = {
 
 const base = Layer.mergeAll(
   WebCrypto.layerWebCrypto,
+  Proofs.ProofDispatchScheduler.layerInline,
   Hooks.LifecycleHooks.empty,
   Proofs.ProofKeys.layer({
     activeKeyId: "current",
     keys: [
       {
         id: "current",
+        // Demo-only key material. Production requires independently generated random keys.
         material: Redacted.make(Base64Url.encode(new Uint8Array(32).fill(23))),
       },
     ],
@@ -107,6 +109,17 @@ const program = Effect.gen(function* () {
     };
 
     yield* Effect.gen(function* () {
+      // The hardening request requires rejecting unsafe locale input before delivery.
+      const invalidLocale = yield* proofs.operations.Request.invoke(invocation, {
+        requestId: Proofs.ProofRequestId.make(`${channel}-request`),
+        binding,
+        locale: "en\nInjected",
+        eligible: true,
+      }).pipe(Effect.result);
+
+      if (invalidLocale._tag !== "Failure" || delivered.length > 0)
+        return yield* Effect.die("invalid locale reached proof delivery");
+
       const receipt = yield* proofs.operations.Request.invoke(invocation, {
         requestId: Proofs.ProofRequestId.make(`${channel}-request`),
         binding,

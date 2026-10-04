@@ -10,6 +10,7 @@ import type { AuthOperationResult } from "../operations/credentials";
 import { makeOperation, operationGroup } from "../operations/operation";
 import type { makeRequestBinding } from "../operations/requestBinding";
 import { RequestBindingCredential, RequestBindingFlowId } from "../operations/requestBinding";
+import { proofRequestAdmission } from "../proofs/admission";
 import { readProofCommit } from "../proofs/dispatch";
 import type { ProofBinding } from "../proofs/models";
 import {
@@ -21,7 +22,7 @@ import {
   ProofRequestReceipt,
 } from "../proofs/models";
 import type { makeProofModule } from "../proofs/module";
-import { Email, TokenDigest } from "../Schema";
+import { Email, Locale, TokenDigest } from "../Schema";
 import { assessAuthentication, snapshotAuthenticationEvidence } from "../sessions/assurance";
 import { SessionInvalidationWindow, sessionInvalidationWindow } from "../sessions/invalidation";
 import { AuthenticationFlowId } from "../sessions/models";
@@ -60,7 +61,7 @@ const BindingInput = Schema.Struct(base);
 const RequestInput = Schema.Struct({
   ...base,
   requestId: ProofRequestId,
-  locale: Schema.NonEmptyString.check(Schema.isMaxLength(64)),
+  locale: Locale,
 });
 
 const ResendInput = Schema.Struct({ ...RequestInput.fields, supersedes: ProofId });
@@ -379,7 +380,7 @@ export const makeEmailAddresses = <
                 Effect.mapError(() => EmailUnavailable.make({})),
               );
 
-            yield* dispatch.dispatch.pipe(Effect.mapError(() => EmailUnavailable.make({})));
+            yield* dispatch.schedule.pipe(Effect.mapError(() => EmailUnavailable.make({})));
 
             return dispatch.receipt;
           },
@@ -536,7 +537,12 @@ export const makeEmailAddresses = <
   ) => {
     const action = mode === "verify" ? "verify-address" : "change-address";
 
+    const admitRequest = proofRequestAdmission(`${moduleId}/address/${mode}`).pipe(
+      Effect.mapError(emailCompletionFailure),
+    );
+
     const Request = makeOperation(`${moduleId}/address/${mode}/request`, {
+      authorize: () => admitRequest,
       payload: schemas.request,
       success: ProofRequestReceipt,
       error: Failure,
@@ -546,6 +552,7 @@ export const makeEmailAddresses = <
     });
 
     const Resend = makeOperation(`${moduleId}/address/${mode}/resend`, {
+      authorize: () => admitRequest,
       payload: schemas.resend,
       success: ProofRequestReceipt,
       error: Failure,

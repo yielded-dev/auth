@@ -5,7 +5,8 @@ description: Connect your email provider to Auth with an Effect service.
 
 Auth creates and renders reset/sign-in links or codes. Your application provides
 `EmailDelivery` through a Layer using any email provider. It receives `to`,
-`subject`, and redacted `text`/optional `html` bodies.
+`subject`, and redacted `text`/optional `html` bodies. Auth queues delivery through
+a built-in worker, so public receipts do not wait for the provider.
 
 The transport's `send` returns `Effect<void, EmailNotAccepted | EmailAcceptanceUnknown>`.
 Success means the provider accepted the message, not that it reached the inbox.
@@ -131,23 +132,46 @@ const EmailLive = Layer.effect(
 ```
 
 Build this Layer per request, where Alchemy supplies `RuntimeContext`; never cache
-it across requests. `SendEmailError` does not establish rejection certainty, so
-it maps to uncertainty. Configure sender permissions and destination eligibility.
+it across requests. Keep that request's Auth scope alive through the Worker's
+background-work lifetime, as described below. `SendEmailError` does not establish
+rejection certainty, so it maps to uncertainty. Configure sender permissions and
+destination eligibility.
 
 ## Compose Auth
 
-Use your chosen `EmailLive` alongside your existing application services:
+Provide your chosen `EmailLive` alongside your application services:
 
 ```ts
 const AuthLive = AppAuth.layer.pipe(Layer.provide(EmailLive), Layer.provide(AuthDependencies));
 ```
 
-In the Alchemy Worker, provide `AuthLive` to the request handler with `Effect.provide`.
+Build `AuthLive` once in your server's application scope. Auth supplies one shared
+delivery worker automatically; there is no scheduler to implement or wire up.
+It accepts up to 64 pending tasks, runs one at a time, and requests cancellation
+after ten seconds of execution. A full queue returns `ProofUnavailable` without waiting for the
+provider. Every committed receipt uses the same admission path, including suppression
+and replay.
+
+The worker stops with the application scope; a scope that closes at the end of each
+request also cancels its delivery. Workers and other hosts that suspend after returning
+a response must keep the scope alive using their background-work mechanism. This also
+applies when a provider requires request-local services, as in the Alchemy example.
+
+A queued task may start before the response is sent. Persistence and application
+hooks can still vary in latency; Auth does not promise constant-time requests.
+For host-specific scheduling, override `Proofs.ProofDispatchScheduler` when constructing
+`AuthLive`. A host requiring strictly post-response execution must release work from
+its completion hook.
+
+For CLI or trusted workflows that must await delivery, explicitly provide
+`Proofs.ProofDispatchScheduler.layerInline`. It exposes provider latency and should
+not serve public requests that must conceal account eligibility.
 
 Keep bodies and capability URLs out of logs and telemetry. Disable transport/SDK
 retries and use `maximumDeliveryAttempts: 1`; the service promises no deduplication.
-Generic auth receipts do not confirm delivery. Dispatch is process-local, without
-a durable outbox.
+Generic auth receipts do not confirm delivery. Scheduling is process-local, without
+a durable outbox; a crash or shutdown can discard accepted work. An exact retry
+recovers its receipt without authorizing another send.
 
 When replacing proof-level delivery, start new email flows with fresh request IDs
 and let old proofs expire. Account, password, and session data need no reset.
@@ -156,8 +180,10 @@ and let old proofs expire. Account, password, and session data need no reset.
 
 Override `EmailDelivery.EmailRenderer` for wording, HTML, or localization. It
 receives purpose, locale, expiry, and a private `Code` or complete `Link`; the
-default is plain text. Return a subject and redacted bodies. Escape HTML and
-retain the supplied link.
+default is plain text. Locale hints contain 1–64 characters and reject control
+characters and line separators before rendering; your renderer chooses supported
+locales. Return a subject and redacted bodies. Escape HTML and retain the supplied
+link.
 
 ## Handle links
 

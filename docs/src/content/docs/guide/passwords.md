@@ -51,6 +51,13 @@ const result = yield* auth.register({
 Generate `requestId` once per submission and retain it for an exact retry.
 `RegistrationAccepted` does not reveal whether the account already existed.
 
+Password registration does not prove ownership of the email address. Offer
+[mailbox registration](./codes#register-a-mailbox-owner) with `Email.makeRegistration`
+so the mailbox owner can complete signup when someone else reserved the address
+without verifying it. This provisions a fresh account; it does not reset or inherit
+the earlier account. Password-only compositions must add that registration endpoint
+and its services explicitly.
+
 ## Handle a rejected sign-in
 
 With `Effect` imported from `effect`, handle only the expected rejection:
@@ -139,6 +146,10 @@ Configure `concurrency`, `maxQueued`, and `maxWaitMilliseconds` on the Layer;
 memory and CPU budget. These are process-local limits, without a strict FIFO
 ordering guarantee; applications still need ingress rate limits.
 
+Compromised-password screening fails closed. `PasswordPolicy.screeningTimeoutMillis`
+defaults to 10,000 ms (allowed range: 1–30,000); a timed-out check returns
+`PasswordCheckUnavailable`, so no password is registered or changed.
+
 ## Recover a password
 
 Recovery uses `requestReset` → `verifyReset` → `completeReset` and requires an
@@ -175,6 +186,15 @@ const requested = yield* auth.requestReset({ flowId, requestId, email, locale: "
 Retain the original flow ID, email, request ID, and reference. Always show a generic
 response such as “If this address is eligible, check your email.” The receipt does
 not reveal account eligibility or whether a message was sent.
+
+To resend, retain the flow ID and use a fresh request ID after the cooldown.
+A new reset attempt leaves an existing unexpired link or code usable and sends no
+new email. Ignored requests do not extend its expiry (five minutes by default).
+
+Auth supplies a network rate limiter, and HTTP derives the caller from the socket
+peer automatically. Checks precede target lookup, including unknown addresses and
+retries. See [HTTP admission](./http-and-client#proof-request-admission) for overrides and
+[proof budgets](./codes#proof-expiry-and-rate-limits) for delivery limits.
 
 For links, the originating client uses `EmailDelivery.parseLinkFragment` to extract
 the reference and secret, clears the fragment from history, then waits for an
@@ -214,13 +234,19 @@ completion submission. Completion changes the password; sign in separately for a
 
 ### Delivery and retry boundaries
 
-Email delivery awaits provider acceptance, which does not prove inbox delivery.
+Auth's built-in worker admits delivery after the proof commits, so public requests
+do not wait for provider acceptance. No scheduler setup is needed; build Auth in an
+application scope that outlives requests, as shown in [email delivery](./email-delivery#compose-auth).
+Work may start before the response is sent. Application hooks and persistence can
+still vary in latency.
+
+Provider acceptance does not prove inbox delivery.
 The transport distinguishes definite rejection from uncertain acceptance. Neither
 Auth nor the transport should automatically resend an uncertain message; this email
 service makes no deduplication promise and requires `maximumDeliveryAttempts: 1`.
 
 An exact `requestReset` retry can recover a generic receipt, not guarantee another
-send. Dispatch is a process-local continuation after persistence commits, not a
+send. Scheduled dispatch is a process-local continuation after persistence commits, not a
 durable outbox. A crash can leave an unsent proof. Let the user check their inbox
 and, if needed, explicitly start a new flow under the configured cooldown and attempt
 limits. A consumed proof or an unknown commit outcome does not authorize repeating

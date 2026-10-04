@@ -70,14 +70,16 @@ export class ProofPersistence extends Context.Service<
   ProofPersistence,
   {
     /**
-     * Atomically charge all identifier/subject/action issue windows (independent
-     * of flow/context/request IDs), enforce cooldown, insert a new active series
-     * generation, and supersede its predecessor. Preserve rolling failed-attempt
-     * history and send budgets across resends, consumption, cancellation and expiry.
+     * Atomically enforce identifier/subject/action issue windows (independent of
+     * flow/context/request IDs) and cooldown. Charge those windows only when a new
+     * proof is issued; suppressed and matching replay requests consume no issue budget.
+     * Preserve an active predecessor unless replacement has the same canonical
+     * binding. Preserve rolling failed-attempt history and send budgets across
+     * resends, consumption, cancellation and expiry.
      * Matching request fingerprint returns Existing WITHOUT pairing its stored
      * digest with this attempt's new secret. Mismatched reuse fails Conflict.
-     * eligible=false still charges existence-independent budgets and stores the
-     * request fingerprint, but creates no usable proof/delivery. Never disclose why.
+     * eligible=false stores a request fingerprint and uniform receipt, but creates
+     * no usable proof/delivery. Host ingress admission covers all eligibility cases.
      * Check any captured security/credential/identifier revision against current authority.
      */
     readonly issue: <A>(

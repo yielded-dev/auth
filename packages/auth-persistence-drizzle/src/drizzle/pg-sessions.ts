@@ -1,3 +1,4 @@
+import { NativeDatabase } from "@yielded/auth-persistence/Adapter";
 import type { LifecycleHooks, HookConfigurationError } from "@yielded/auth/Hooks";
 import {
   AuthenticationAuthority,
@@ -73,7 +74,10 @@ export const makePgAuthenticationAuthorityServices = <
   Effect.flatMap(
     Effect.map(acquireTransactionService(DatabaseService), configuration),
     (configuration) => makeTargetAuthenticationAuthorityServices<Claims>(mapping, configuration),
-  ).pipe(Effect.provideServiceEffect(CurrentSessionSql, nativeDatabase(DatabaseService)));
+  ).pipe(
+    Effect.provideServiceEffect(CurrentSessionSql, nativeDatabase(DatabaseService)),
+    Effect.provideServiceEffect(NativeDatabase, nativeDatabase(DatabaseService)),
+  );
 
 export const makePgPendingAuthenticationServices = <
   Claims,
@@ -95,7 +99,10 @@ export const makePgPendingAuthenticationServices = <
   Effect.flatMap(
     Effect.map(acquireTransactionService(DatabaseService), configuration),
     (configuration) => makeTargetPendingAuthenticationServices<Claims>(mapping, configuration),
-  ).pipe(Effect.provideServiceEffect(CurrentSessionSql, nativeDatabase(DatabaseService)));
+  ).pipe(
+    Effect.provideServiceEffect(CurrentSessionSql, nativeDatabase(DatabaseService)),
+    Effect.provideServiceEffect(NativeDatabase, nativeDatabase(DatabaseService)),
+  );
 
 export const makePgStatefulSessionServices = <
   Claims,
@@ -121,7 +128,10 @@ export const makePgStatefulSessionServices = <
   Effect.flatMap(
     Effect.map(acquireTransactionService(DatabaseService), configuration),
     (configuration) => makeTargetStatefulSessionServices<Claims>(mapping, configuration),
-  ).pipe(Effect.provideServiceEffect(CurrentSessionSql, nativeDatabase(DatabaseService)));
+  ).pipe(
+    Effect.provideServiceEffect(CurrentSessionSql, nativeDatabase(DatabaseService)),
+    Effect.provideServiceEffect(NativeDatabase, nativeDatabase(DatabaseService)),
+  );
 
 export const makePgSignedSessionValidityServices = <
   Subject extends AnyPgTable,
@@ -134,7 +144,10 @@ export const makePgSignedSessionValidityServices = <
   Effect.flatMap(
     Effect.map(acquireTransactionService(DatabaseService), configuration),
     (configuration) => makeTargetSignedSessionValidityServices(mapping, configuration),
-  ).pipe(Effect.provideServiceEffect(CurrentSessionSql, nativeDatabase(DatabaseService)));
+  ).pipe(
+    Effect.provideServiceEffect(CurrentSessionSql, nativeDatabase(DatabaseService)),
+    Effect.provideServiceEffect(NativeDatabase, nativeDatabase(DatabaseService)),
+  );
 
 export function coordinatePgAuthenticationAuthority<
   Claims,
@@ -217,7 +230,7 @@ export function coordinatePgAuthenticationAuthority<
   E | SessionUnavailable | HookConfigurationError | SqlError | DatabaseError,
   Exclude<R, AuthenticationAuthority> | LifecycleHooks | DatabaseRequirements
 > {
-  return Effect.flatMap(acquire, (database) =>
+  return Effect.flatMap(nativeDatabase(acquire), (database) =>
     coordinateTargetAuthenticationAuthority<
       Claims,
       TransactionOf<D>,
@@ -239,7 +252,7 @@ export function coordinatePgAuthenticationAuthority<
           ? work
           : Effect.provideService(work, options.transaction, options.transaction.of(transaction));
       },
-    ),
+    ).pipe(Effect.provideService(NativeDatabase, database)),
   );
 }
 
@@ -330,7 +343,7 @@ export function coordinatePgPendingAuthentication<
   E | SessionUnavailable | HookConfigurationError | SqlError | DatabaseError,
   Exclude<R, TargetId> | LifecycleHooks | DatabaseRequirements
 > {
-  return Effect.flatMap(acquire, (database) =>
+  return Effect.flatMap(nativeDatabase(acquire), (database) =>
     coordinateTargetPendingAuthentication<Claims, TransactionOf<D>, A, E, Exclude<R, TargetId>>(
       database,
       options.mapping,
@@ -346,7 +359,7 @@ export function coordinatePgPendingAuthentication<
           ? work
           : Effect.provideService(work, options.transaction, options.transaction.of(transaction));
       },
-    ),
+    ).pipe(Effect.provideService(NativeDatabase, database)),
   );
 }
 
@@ -476,7 +489,7 @@ export function coordinatePgStatefulSessions<
   E | SessionUnavailable | HookConfigurationError | SqlError | DatabaseError,
   Exclude<R, PersistenceId | RepositoryId> | LifecycleHooks | DatabaseRequirements
 > {
-  return Effect.flatMap(acquire, (database) =>
+  return Effect.flatMap(nativeDatabase(acquire), (database) =>
     coordinateTargetStatefulSessions<
       Claims,
       TransactionOf<D>,
@@ -505,7 +518,7 @@ export function coordinatePgStatefulSessions<
           ? work
           : Effect.provideService(work, options.transaction, options.transaction.of(transaction));
       },
-    ),
+    ).pipe(Effect.provideService(NativeDatabase, database)),
   );
 }
 
@@ -590,7 +603,7 @@ export function coordinatePgSignedSessionValidity<
   E | SessionUnavailable | HookConfigurationError | SqlError | DatabaseError,
   Exclude<R, TargetId> | LifecycleHooks | DatabaseRequirements
 > {
-  return Effect.flatMap(acquire, (database) =>
+  return Effect.flatMap(nativeDatabase(acquire), (database) =>
     coordinateTargetSignedSessionValidity<TransactionOf<D>, A, E, Exclude<R, TargetId>>(
       database,
       options.mapping,
@@ -606,7 +619,7 @@ export function coordinatePgSignedSessionValidity<
           ? work
           : Effect.provideService(work, options.transaction, options.transaction.of(transaction));
       },
-    ),
+    ).pipe(Effect.provideService(NativeDatabase, database)),
   );
 }
 
@@ -629,7 +642,10 @@ export const makePgSessionStepUpServices = <
   Effect.flatMap(
     Effect.map(acquireTransactionService(DatabaseService), configuration),
     (configuration) => makeTargetSessionStepUpServices(mapping, target, configuration),
-  ).pipe(Effect.provideServiceEffect(CurrentSessionSql, nativeDatabase(DatabaseService)));
+  ).pipe(
+    Effect.provideServiceEffect(CurrentSessionSql, nativeDatabase(DatabaseService)),
+    Effect.provideServiceEffect(NativeDatabase, nativeDatabase(DatabaseService)),
+  );
 
 export function coordinatePgSessionStepUp<
   Claims,
@@ -751,7 +767,7 @@ export function coordinatePgSessionStepUp<
   E | SessionUnavailable | HookConfigurationError | SqlError | DatabaseError,
   Exclude<R, Id> | LifecycleHooks | DatabaseRequirements
 > {
-  return Effect.flatMap(acquire, (database) =>
+  return Effect.flatMap(nativeDatabase(acquire), (database) =>
     coordinateTargetSessionStepUp<Claims, Id, TransactionOf<D>, A, E, Exclude<R, Id>>(
       database,
       options.mapping,
@@ -768,6 +784,6 @@ export function coordinatePgSessionStepUp<
           ? work
           : Effect.provideService(work, options.transaction, options.transaction.of(transaction));
       },
-    ),
+    ).pipe(Effect.provideService(NativeDatabase, database)),
   );
 }

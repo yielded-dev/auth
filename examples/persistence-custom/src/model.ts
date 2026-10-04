@@ -207,14 +207,23 @@ export interface Budget {
   readonly windowMillis: number;
 }
 
-/** Charge each open bucket, even when another bucket denies the command. */
-export const charge = (state: State, budgets: ReadonlyArray<Budget>, now: number) => {
+/** Charge each open bucket by default. Issuance requires every budget to admit
+ * before charging any of them; attempts still charge open buckets on rejection.
+ */
+export const charge = (
+  state: State,
+  budgets: ReadonlyArray<Budget>,
+  now: number,
+  options: { readonly requireAll?: boolean } = {},
+) => {
   const open = budgets.filter(
     (budget) =>
       state.charges.filter(
         (event) => event.bucket === budget.bucket && event.at >= now - budget.windowMillis,
       ).length < budget.limit,
   );
+
+  if (options.requireAll && open.length !== budgets.length) return false;
 
   state.charges = [
     ...state.charges,

@@ -1,3 +1,4 @@
+import type { NativeDatabase } from "@yielded/auth-persistence/Adapter";
 import {
   coordinateCommit,
   hasCommitScope,
@@ -17,6 +18,7 @@ import {
   type ProofSqlQuery,
 } from "./proof-sql";
 import { sqlClientStandaloneGuard, type TransactionService } from "./standalone-guard";
+import { validateDrizzleStorage } from "./storage-validation";
 
 export interface ProofTargetConfiguration {
   readonly mode: "interactive" | "synchronous";
@@ -83,12 +85,18 @@ export const coordinateTargetProofPersistence = <Transaction, A, E, R>(
     transaction: Transaction,
     services: { readonly proofPersistence: ProofPersistence["Service"] },
   ) => Effect.Effect<A, E, R>,
-): Effect.Effect<A, ProofCoordinatorError<E>, R | LifecycleHooks> =>
-  Effect.gen(function* (): Effect.fn.Return<A, ProofCoordinatorError<E>, R | LifecycleHooks> {
+): Effect.Effect<A, ProofCoordinatorError<E>, R | LifecycleHooks | NativeDatabase> =>
+  Effect.gen(function* (): Effect.fn.Return<
+    A,
+    ProofCoordinatorError<E>,
+    R | LifecycleHooks | NativeDatabase
+  > {
     const hooks = yield* LifecycleHooks;
 
     if (yield* hasCommitScope) return yield* ProofUnavailable.make({});
     yield* configuration.coordinatorGuard ?? configuration.standaloneGuard;
+
+    yield* validateDrizzleStorage(mapping).pipe(Effect.mapError(() => ProofUnavailable.make({})));
 
     const result = yield* coordinateCommit(
       () =>

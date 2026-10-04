@@ -8,7 +8,8 @@ Start with the [OAuth guide](../guide/oauth) for the flow and choice of API.
 ## Authorization server
 
 `OAuthServer.make(id, { scopes })` supplies `Identity`, `Service`, `routes`,
-`middleware(requiredScopes)`, `paths`, and `cookieName`. It implements authorization
+`middleware(requiredScopes)`, and `paths`. The acquired `Service` exposes the
+origin-dependent `cookieName`. It implements authorization
 code with S256 PKCE for registered public clients. It issues MCP bearer tokens;
 it does not issue OIDC ID tokens or implement the MCP transport.
 
@@ -30,7 +31,9 @@ dependency. The built-in consent page names the client, subject, resource, scope
 and redirect host. Approval requires the bound cookie, form token, same Origin,
 and the same subject that saw the page. Switching accounts invalidates previously
 rendered consent forms. Pending authorization survives the login
-redirect in the cookie; do not put it into a login URL.
+redirect in the cookie; do not put it into a login URL. HTTPS consent cookies use
+`__Host-yielded-${id}-consent`, Secure, HttpOnly, SameSite=Lax, and Path=/ without a
+Domain. Loopback HTTP development uses an unprefixed cookie.
 
 Allow `oauth.paths.authorize` in `OAuthReturnTargets` and have your login page
 request that return target. Set `loginPath` to that page. Keep provider and MCP grants separate.
@@ -84,7 +87,9 @@ Issuance returns credentials only after a confirmed commit. An uncertain commit
 returns no credentials and is never retried by the server; start a new authorization.
 HTTP operations time out after thirty seconds and preserve caller interruption.
 Form bodies are limited to 16 KiB. Applications own ingress rate limits and database
-cleanup. Exclude OAuth query strings, bodies, cookies, and credentials from access
+cleanup. Apply admission limits to authorization GET requests too: a valid request
+allocates a pending row before login. Pending rows expire after five minutes;
+schedule cleanup of expired rows using `expires_at_millis`. Exclude OAuth query strings, bodies, cookies, and credentials from access
 logs and tracing; the runnable example disables request logging and tracing.
 
 Run `vp run @yielded/example-auth#example:strava-mcp` with the Strava example's
@@ -249,7 +254,7 @@ mapping. See the [registration example](https://github.com/yielded-dev/auth/blob
 `GitHub.accessProfile` defaults to `read:user`, rotating refresh tokens, cohort
 revocation, and thirty days of local refresh retention. `Strava.accessProfile`
 requires scopes and declares unsupported remote revocation. Its adapter rechecks
-athlete identity on refresh. Custom Effect HTTP clients must reject redirects and
+athlete identity on refresh and limits response bodies to 1 MiB. Custom Effect HTTP clients must reject redirects and
 must not retry token exchanges.
 
 For generic providers, registration `access` supplies `clientRegistrationId`,
@@ -275,7 +280,7 @@ Effect containing the stable `subject` and optional profile. Set scopes explicit
 S256 PKCE and response issuer validation are required by default. Set
 `responseIssuerMode: "unsupported"` only for providers without issuer responses.
 Public clients use `authentication: { method: "none", publicClient: true }`.
-Load secrets with `Config.redacted`. Invalid settings fail Layer construction with
+Load secrets with `Config.Redacted`. Invalid settings fail Layer construction with
 `OpenIdClientConfigurationError`.
 
 ### Configuration rotation
@@ -296,8 +301,8 @@ stored issuers: they are part of identity keys and encrypted context.
 
 Verified identity is the provider/issuer/subject tuple. `profile` is optional
 metadata: display fields plus bounded `providerData`. It does not authorize account
-linking or local roles. Expose only needed fields in claims; treat profile URLs as
-untrusted input.
+linking or local roles. Normalized profile display URLs accept only HTTP(S).
+Expose only needed fields in claims; still treat profile URLs as untrusted input.
 
 | Consumer                      | Profile access                                               |
 | ----------------------------- | ------------------------------------------------------------ |
@@ -308,6 +313,10 @@ untrusted input.
 Missing fields remain absent; GitHub nullable values remain null. GitHub's `/user`
 email is not asserted verified. Adapters do not fetch additional email or UserInfo
 endpoints or retain unknown fields. Connected-grant refresh need not update profiles.
+
+The OIDC adapter also includes Google's `hd` hosted-domain claim in `providerData`
+for verified Google ID tokens. Applications can use it to restrict access to a
+Google Workspace or Cloud organization. Other issuers' private `hd` claims remain ignored.
 
 Detailed signatures and invariants live beside the
 [OAuth source](https://github.com/yielded-dev/auth/tree/main/packages/auth/src/oauth).

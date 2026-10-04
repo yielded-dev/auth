@@ -118,6 +118,22 @@ export const Routes = Layer.mergeAll(AuthRoutes, ApplicationRoutes).pipe(
 );
 ```
 
+### Proof request admission
+
+Email code/link and password-reset requests have built-in rate limiting. Auth
+shares one limiter across these methods; HTTP uses the current socket peer, so
+normal server setup needs no additional service or middleware.
+
+The default allows a burst of twenty requests per network and replenishes one
+request every three minutes. It checks every request before account lookup,
+including retries and unknown addresses. Change the policy with
+`Proofs.HostIngressLimiter.layer({ limit: 40 })`, or provide your own service.
+
+The default store is local to the Auth runtime. Multiple server instances can use
+a shared Effect `RateLimiterStore`. Behind a proxy, provide the trusted client
+identity per request; forwarded headers are not trusted automatically. See the
+[rate-limit reference](../reference/http#proof-request-rate-limits) for those overrides.
+
 ### Application routes
 
 For application routes that call auth, build the middleware with `Http.make`:

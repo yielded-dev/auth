@@ -53,6 +53,7 @@ import {
 /* oxlint-disable no-explicit-any -- existing storage kernels erase foreign table shapes; domain errors remain typed. */
 import type { QueryFailure } from "./query-operations";
 import type { QueryOperations, SqlFragment, SqlColumn } from "./query-operations";
+import type { NativeDatabase } from "./transaction-kernel";
 
 type AdapterFailure = QueryFailure | PersistenceMappingError | SqlError.SqlError;
 
@@ -1122,8 +1123,20 @@ export const makePasswordKernel = <
   const makeSqlPasswordPersistence = Effect.fn("makeSqlPasswordPersistence")(function* (
     mapping: Mapping,
     configuration: PasswordSqlConfiguration,
-  ): Effect.fn.Return<PasswordPersistence["Service"], never, LifecycleHooks | CurrentPasswordSql> {
+  ): Effect.fn.Return<
+    PasswordPersistence["Service"],
+    PasswordUnavailable,
+    LifecycleHooks | CurrentPasswordSql | NativeDatabase
+  > {
     const database = yield* CurrentPasswordSql;
+
+    if (!configuration.coordinated)
+      yield* (
+        operations.validateStorage?.({
+          ...mapping,
+          proof: configuration.proof?.mapping,
+        }) ?? Effect.void
+      ).pipe(Effect.mapError(unavailable));
     const hooks = yield* LifecycleHooks;
 
     return PasswordPersistence.of({

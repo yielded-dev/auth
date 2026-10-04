@@ -287,6 +287,8 @@ const applyCommands = Effect.fn("OperationHttp.applyCommands")(function* (
   }
 });
 
+/** Retain transport configuration and caller resolution only. Supply operation,
+ * codec and callback services to each handle invocation instead of construction. */
 export const make = <
   const Routes extends Readonly<Record<string, AnyRoute>>,
   const Callbacks extends ReadonlyArray<OAuthHttpCallback<unknown>> = readonly [],
@@ -301,7 +303,6 @@ export const make = <
       | Effect.Services<ReturnType<NonNullable<Callbacks[number]["respond"]>>>,
       AuthRequest | AuthCredentialCommandCollector | AuthRevealCommandCollectorService | Scope.Scope
     >;
-    const services = yield* Effect.context<Requirements>();
     const config = yield* OperationHttpServerConfig;
     const invocation = yield* OperationHttpInvocation;
 
@@ -331,6 +332,8 @@ export const make = <
 
     const handle = Effect.fn("OperationHttp.handle")(
       function* (request: Request) {
+        const services = yield* Effect.context<Requirements>();
+
         if (new TextEncoder().encode(request.url).byteLength > config.maximumUrlBytes)
           return yield* OperationHttpError.make({ reason: "too-large" });
 
@@ -505,7 +508,7 @@ export const make = <
           yield* applyCommands(headers, commands, config, security.native);
         if (callback !== undefined) {
           if (callback.respond !== undefined) {
-            // The callback's exact response requirements are captured above.
+            // The callback retains its exact invocation requirements.
             const respond = callback.respond as NonNullable<
               OAuthHttpCallback<Requirements>["respond"]
             >;

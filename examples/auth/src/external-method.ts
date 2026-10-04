@@ -38,7 +38,6 @@ export class RegistrationAuthority extends Context.Service<
 export const ExternalRegistration = Operations.makeOperation("example.external.register", {
   payload: Schema.Struct({
     proof: Schema.Redacted(Schema.String),
-    eventId: Hooks.LifecycleEventId,
   }),
   success: Schema.Struct({
     subjectId: AuthSchema.SubjectId,
@@ -88,7 +87,7 @@ export const externalMethodLayer = <R = never>(
               for (const contribution of contributions) yield* contribution.run(snapshot);
               journal.stage(
                 Hooks.lifecycleEvent({
-                  id: input.eventId,
+                  id: Hooks.LifecycleEventId.make(globalThis.crypto.randomUUID()),
                   occurredAtMillis: DateTime.toEpochMillis(occurredAt),
                   snapshot,
                 }),

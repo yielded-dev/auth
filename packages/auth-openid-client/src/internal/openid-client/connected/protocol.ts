@@ -397,7 +397,9 @@ export const makeConnectedProtocolWithCompatibility = Effect.fn(
     )
       return yield* unavailable();
 
-    const profile = yield* decodeOidcProfile(raw).pipe(Effect.mapError(unavailable));
+    const profile = yield* decodeOidcProfile(raw, provider.issuer).pipe(
+      Effect.mapError(unavailable),
+    );
 
     return {
       identity: { provider: provider.provider, issuer: provider.issuer, subject: claims.sub },

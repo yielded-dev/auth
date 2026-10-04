@@ -103,6 +103,7 @@ export const makeServer = (config: {
     }),
   );
 
+  // Auth supplies proof request limiting and HTTP supplies the current socket peer.
   const Routes = Layer.mergeAll(http.routes(), ApplicationRoutes.pipe(http.middleware)).pipe(
     Layer.provide(http.layer),
     Layer.provide(

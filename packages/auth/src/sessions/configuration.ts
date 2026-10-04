@@ -44,7 +44,7 @@ const policy = (options: SessionOptions, immediate: boolean) => {
   let values: Omit<SessionPolicy, "issuer" | "audience">;
 
   try {
-    const maxAge = Duration.toMillis(options.maxAge ?? "30 days");
+    const maxAge = Duration.toMillis(options.maxAge ?? (immediate ? "30 days" : "15 minutes"));
 
     const idle = Duration.toMillis(
       options.idleTimeout ?? Math.min(maxAge, Duration.toMillis("7 days")),
@@ -78,7 +78,8 @@ const policy = (options: SessionOptions, immediate: boolean) => {
 export const stateful = (options: SessionOptions = {}): StatefulConfiguration =>
   Object.freeze({ mode: "stateful", policy: policy(options, true) });
 
-/** Database-free verification. Sign-out clears this client's credential only. */
+/** Database-free verification with a fifteen-minute default lifetime.
+ * Sign-out clears this client's credential only; longer lifetimes require explicit policy. */
 export const stateless = (
   options: SessionOptions & { readonly keys: SessionSigningKeyring },
 ): StatelessConfiguration =>

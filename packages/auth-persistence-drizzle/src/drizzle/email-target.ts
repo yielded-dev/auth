@@ -1,3 +1,4 @@
+import type { NativeDatabase } from "@yielded/auth-persistence/Adapter";
 import { EmailAddressPersistence, EmailSignInTargets, EmailUnavailable } from "@yielded/auth/Email";
 import {
   coordinateCommit,
@@ -24,6 +25,7 @@ import {
 } from "./email-sql";
 import type { ProofTargetConfiguration } from "./proof-target";
 import { sqlClientStandaloneGuard, type TransactionService } from "./standalone-guard";
+import { validateDrizzleStorage } from "./storage-validation";
 
 export interface EmailTargetConfiguration {
   readonly mode: "interactive" | "synchronous";
@@ -144,12 +146,20 @@ export const coordinateTargetEmailAddress = <Transaction, A, E, R>(
     transaction: Transaction,
     services: { readonly emailAddressPersistence: EmailAddressPersistence["Service"] },
   ) => Effect.Effect<A, E, R>,
-): Effect.Effect<A, EmailCoordinatorError<E>, R | LifecycleHooks> =>
-  Effect.gen(function* (): Effect.fn.Return<A, EmailCoordinatorError<E>, R | LifecycleHooks> {
+): Effect.Effect<A, EmailCoordinatorError<E>, R | LifecycleHooks | NativeDatabase> =>
+  Effect.gen(function* (): Effect.fn.Return<
+    A,
+    EmailCoordinatorError<E>,
+    R | LifecycleHooks | NativeDatabase
+  > {
     const hooks = yield* LifecycleHooks;
 
     if (yield* hasCommitScope) return yield* EmailUnavailable.make({});
     yield* configuration.coordinatorGuard ?? configuration.standaloneGuard;
+
+    yield* validateDrizzleStorage({ ...mapping, proof: proofMapping }).pipe(
+      Effect.mapError(() => EmailUnavailable.make({})),
+    );
 
     const result = yield* coordinateCommit(
       () =>
@@ -180,12 +190,20 @@ export const coordinateTargetEmailRegistration = <Registration, Transaction, A, 
     transaction: Transaction,
     services: { readonly registrationAuthority: EmailRegistrationAuthority<Registration> },
   ) => Effect.Effect<A, E, R>,
-): Effect.Effect<A, EmailCoordinatorError<E>, R | LifecycleHooks> =>
-  Effect.gen(function* (): Effect.fn.Return<A, EmailCoordinatorError<E>, R | LifecycleHooks> {
+): Effect.Effect<A, EmailCoordinatorError<E>, R | LifecycleHooks | NativeDatabase> =>
+  Effect.gen(function* (): Effect.fn.Return<
+    A,
+    EmailCoordinatorError<E>,
+    R | LifecycleHooks | NativeDatabase
+  > {
     const hooks = yield* LifecycleHooks;
 
     if (yield* hasCommitScope) return yield* EmailUnavailable.make({});
     yield* configuration.coordinatorGuard ?? configuration.standaloneGuard;
+
+    yield* validateDrizzleStorage({ ...mapping, proof: proofMapping }).pipe(
+      Effect.mapError(() => EmailUnavailable.make({})),
+    );
 
     const result = yield* coordinateCommit(
       () =>

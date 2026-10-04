@@ -14,8 +14,10 @@ import {
   RequestBindingFlowId,
   RequestBindingPublic,
 } from "../operations/requestBinding";
+import { proofRequestAdmission } from "../proofs/admission";
 import type { ProofSecretPolicy } from "../proofs/crypto";
 import { readProofCommit } from "../proofs/dispatch";
+import { defaultIngressLayer } from "../proofs/HostIngressLimiter";
 import {
   ProofBinding,
   ProofContinuation,
@@ -28,7 +30,7 @@ import {
 } from "../proofs/models";
 import { makeProofModule } from "../proofs/module";
 import type { ProofPolicy } from "../proofs/policy";
-import { Email, type SubjectId, TokenDigest } from "../Schema";
+import { Email, Locale, type SubjectId, TokenDigest } from "../Schema";
 import { AuthenticationAuthority } from "../sessions/AuthenticationAuthority";
 import type { AuthenticationEvidence } from "../sessions/models";
 import { AuthenticationFlowId } from "../sessions/models";
@@ -63,7 +65,7 @@ const SignInBindingInput = Schema.Struct(SignInBase);
 const RequestInput = Schema.Struct({
   ...SignInBase,
   requestId: ProofRequestId,
-  locale: Schema.NonEmptyString.check(Schema.isMaxLength(64)),
+  locale: Locale,
 });
 
 const ResendInput = Schema.Struct({ ...RequestInput.fields, supersedes: ProofId });
@@ -308,7 +310,7 @@ export const makeEmailSignInModule = <
                 Effect.mapError(() => EmailUnavailable.make({})),
               );
 
-            yield* dispatch.dispatch.pipe(Effect.mapError(() => EmailUnavailable.make({})));
+            yield* dispatch.schedule.pipe(Effect.mapError(() => EmailUnavailable.make({})));
 
             return dispatch.receipt;
           }),
@@ -392,7 +394,12 @@ export const makeEmailSignInModule = <
       }),
     );
 
+    const admitRequest = proofRequestAdmission(`${moduleId}/${mode}/sign-in`).pipe(
+      Effect.mapError(emailCompletionFailure),
+    );
+
     const Request = makeOperation(`${moduleId}/${mode}/sign-in/request`, {
+      authorize: () => admitRequest,
       payload: RequestInput,
       success: ProofRequestReceipt,
       error: Failure,
@@ -402,6 +409,7 @@ export const makeEmailSignInModule = <
     });
 
     const Resend = makeOperation(`${moduleId}/${mode}/sign-in/resend`, {
+      authorize: () => admitRequest,
       payload: ResendInput,
       success: ProofRequestReceipt,
       error: Failure,
@@ -467,6 +475,7 @@ export const makeEmailSignInModule = <
           Layer.provide(defaultLayer(proof.Proofs, proof.emailLayer)),
           Layer.provide(defaultLayer(binding.RequestBinding, binding.layer)),
           Layer.provide([cryptoLayer, hooksLayer]),
+          Layer.merge(defaultIngressLayer),
         ),
         { completion: true },
       ),
@@ -547,6 +556,7 @@ export const makeEmailAccountModule = <
           Layer.provide(defaultLayer(registrationProof.Proofs, registrationProof.emailLayer)),
           Layer.provide(defaultLayer(binding.RequestBinding, binding.layer)),
           Layer.provide([cryptoLayer, hooksLayer]),
+          Layer.merge(defaultIngressLayer),
         ),
       ),
     });
@@ -585,6 +595,7 @@ export const makeEmailAccountModule = <
           ]),
           Layer.provide(defaultLayer(binding.RequestBinding, binding.layer)),
           Layer.provide([cryptoLayer, hooksLayer]),
+          Layer.merge(defaultIngressLayer),
         ),
       ),
     });

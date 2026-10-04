@@ -28,6 +28,7 @@ import {
   type PhoneMapping,
   type PhoneMappingSource,
   type PhonePersistenceServices,
+  type PhoneProofCompletionMapping,
   requiredPhoneConstraints,
 } from "./phone-model";
 import {
@@ -43,6 +44,7 @@ import {
 } from "./phone-state";
 import { requiredProofConstraints } from "./proof-model";
 import { completeProofPlanIn, CurrentProofSql } from "./proof-sql";
+import { validateDrizzleStorage } from "./storage-validation";
 import type { SuppliedService } from "./SuppliedService";
 import {
   coordinateTransactionOwner,
@@ -277,6 +279,11 @@ export const makeTargetPhonePersistence = <
       catch: () => PhoneConfigurationError.make({}),
     });
 
+    yield* validateDrizzleStorage({
+      ...mapping,
+      proofs: phoneProofs(mapping.proofs),
+    }).pipe(Effect.mapError(() => PhoneConfigurationError.make({})));
+
     const execution = yield* makeTransactionExecution(
       CurrentPhoneTransaction,
       configuration,
@@ -287,7 +294,13 @@ export const makeTargetPhonePersistence = <
     return yield* services(mapping, execution, configuration);
   });
 
-export const coordinateTargetPhone = <M, A, E, R, RSetup = never>(
+export const coordinateTargetPhone = <
+  M extends { readonly proofs: PhoneProofCompletionMapping },
+  A,
+  E,
+  R,
+  RSetup = never,
+>(
   database: TransactionNativeDatabase,
   source: PhoneMappingSource<M, RSetup>,
   configuration: PhoneTargetConfiguration,
@@ -296,7 +309,7 @@ export const coordinateTargetPhone = <M, A, E, R, RSetup = never>(
     services: PhonePersistenceServices,
     append: (statement: Statement<any>) => void,
   ) => Effect.Effect<A, E, R>,
-): Effect.Effect<A, PhoneCoordinatorError<E>, R | RSetup | LifecycleHooks> =>
+): Effect.Effect<A, PhoneCoordinatorError<E>, R | RSetup | LifecycleHooks | NativeDatabase> =>
   Effect.gen(function* () {
     const original = yield* Effect.isEffect(source) ? source : Effect.succeed(source);
 
@@ -304,6 +317,11 @@ export const coordinateTargetPhone = <M, A, E, R, RSetup = never>(
       try: () => validateMapping(original, configuration),
       catch: () => PhoneConfigurationError.make({}),
     });
+
+    yield* validateDrizzleStorage({
+      ...mapping,
+      proofs: phoneProofs(mapping.proofs),
+    }).pipe(Effect.mapError(() => PhoneConfigurationError.make({})));
 
     return yield* coordinateTransactionOwner(
       database,
@@ -437,12 +455,19 @@ export const makePhoneTarget = <
     | RSetup
     | DatabaseRequirements
   > {
-    return Effect.flatMap(acquire, (database) =>
+    return Effect.flatMap(nativeDatabase(acquire), (database) =>
       coordinateTargetPhone(
         database as any,
         options.mapping,
         configuration,
-        (transaction: TransactionOf<Database>, services) => {
+        (
+          transaction: TransactionOf<Database>,
+          services,
+        ): Effect.Effect<
+          A,
+          E,
+          Exclude<R, PhonePersistence | PhoneAdmission | PhoneSignInTargets>
+        > => {
           const provided = Context.make(PhonePersistence, services.phonePersistence).pipe(
             Context.add(PhoneAdmission, services.phoneAdmission),
             Context.add(PhoneSignInTargets, services.phoneSignInTargets),
@@ -454,7 +479,7 @@ export const makePhoneTarget = <
             ? work
             : Effect.provideService(work, options.transaction, options.transaction.of(transaction));
         },
-      ),
+      ).pipe(Effect.provideService(NativeDatabase, database)),
     );
   }
 

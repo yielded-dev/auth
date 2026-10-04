@@ -186,6 +186,13 @@ boundary. Transaction coordinators retain their explicit acquisition Effects and
 transaction ownership contracts. Durable Object `databaseLayer` requires a SQL
 client configured with `storage`, which provides the synchronous commit boundary.
 
+Explicit Drizzle factories and transaction coordinators check mapped unique keys
+against the captured database's catalog during acquisition. Apply migrations before
+building these Layers; a Drizzle declaration does not install a constraint. Permit
+catalog reads on PostgreSQL, MySQL, and SQLite, and reacquire services after schema
+changes. These checks cover usable, unconditional unique keys; application predicates
+and column codecs remain application contracts.
+
 ## Compose the application Layer
 
 ```ts title="apps/server/auth-dependencies.ts"
@@ -264,6 +271,20 @@ secret keys. Adapters provide implementations; they are not installed automatica
 Install the selected driver's Effect SQL and Drizzle peers. Import it directly to
 avoid loading unrelated adapters. Shared mapping types live in `@yielded/auth-persistence-drizzle`.
 
+Adapter authors can reuse the canonical row codecs when composing explicit services:
+
+```ts
+import { makeStorageMappings } from "@yielded/auth-persistence/Adapter";
+
+const mappings = makeStorageMappings(storage);
+const proofMapping = mappings.proofs();
+```
+
+The layout must include each requested mapping's role tables. These are shared
+mapping types: the adapter still supplies typed table handles and, for D1, its
+engine clock and atomic commit predicates. Refine authority policy only for the
+intended proof purpose; the composed Layer's defaults remain unchanged.
+
 Use the Effect SQL peer ranges declared by the adapter package and keep the driver
 aligned with `effect`. The native PostgreSQL driver accepts one
 statement per query, decodes `int8` as `bigint`, timestamps as `Date`, and `bytea`
@@ -313,8 +334,32 @@ Prepared intents retain admission charges even after sensitive material is erase
 ## Email
 
 `makeEmailSignInServices` performs lookup. `makeEmailRegistrationServices` and
-`makeEmailAddressServices` own account creation and address changes. Address changes
-consume their proof and advance security revisions in the same transaction.
+`makeEmailAddressServices` own account creation and address changes.
+
+For explicit composition over an existing storage layout, start from
+`makeStorageMappings(storage).emails()` and `.proofs()`, then supply the raw
+registration mapping's provisioning, receipt table, and inspection policy.
+
+Atomic email registration provisions a fresh subject after mailbox proof. Its
+`inspect` policy and proof authority's `identifier.isCurrent` must admit absent or
+active-unverified targets to permit reclamation; D1's `d1CurrentCondition` must
+express the same rule at batch commit. Scope this permission to
+`email-code-registration`. The adapter rechecks the old owner, binding revision,
+unverified timestamp, and subject security revision, then updates the identifier's
+mapped `subjectId`, `verifiedAt`, and `bindingRevision` in place. Other identifier
+columns stay unchanged and the resulting row must satisfy `isCurrent`.
+
+Reclamation advances the previous subject's security revision without moving its
+credentials or application data. Identifier eligibility is separate from the prior
+subject's status: a disabled subject stays disabled. Sessions and pending authentication must consult
+that revision for immediate invalidation; purely stateless sessions retain their
+documented lifetime. Provisioning, reclamation, receipt, and proof consumption share
+one transaction or D1 batch. Verified addresses cannot be reclaimed. Pending-mode
+registration only records a provisioning intent; the application owns its eventual
+binding transition. Compose this guest workflow explicitly as shown in
+[mailbox registration](../guide/codes#register-a-mailbox-owner).
+
+Address changes consume their proof and advance security revisions in the same transaction.
 Confirming an existing unverified address bound to the same subject preserves its
 security revision and sessions; the completion result omits `invalidation`. The
 adapter captures and rechecks the identifier's binding revision. Application policy

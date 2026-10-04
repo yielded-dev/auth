@@ -1,6 +1,7 @@
 import { Context, DateTime, Effect, Redacted, Schema } from "effect";
 
 import { ProofInstant, ProofPurpose } from "../proofs/models";
+import { Locale } from "../Schema";
 import type { EmailContent } from "./service";
 
 /** Auth prepares the credential presentation before rendering or sending email. */
@@ -11,7 +12,7 @@ export const EmailTemplate = Schema.Struct({
     Schema.TaggedStruct("Link", { url: Schema.Redacted(Schema.String) }),
   ]),
   expiresAtMillis: ProofInstant,
-  locale: Schema.String,
+  locale: Locale,
 });
 
 export type EmailTemplate = typeof EmailTemplate.Type;

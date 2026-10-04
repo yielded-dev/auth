@@ -343,6 +343,10 @@ export interface EmailRegistrationIdentifierTable<
   readonly table: Identifier["table"];
   readonly namespace: ColumnKey<Identifier>;
   readonly value: ColumnKey<Identifier>;
+  /** Atomic mailbox registration may reassign an unverified binding in place.
+   * Only subjectId, verifiedAt and bindingRevision change; the supplied proof
+   * authority must admit only absent or active-unverified registration targets.
+   * Its prior subject's mapped securityRevision advances in the same commit. */
   readonly subjectId: ColumnKey<Identifier>;
   readonly verifiedAt: ColumnKey<Identifier>;
   readonly bindingRevision: ColumnKey<Identifier>;

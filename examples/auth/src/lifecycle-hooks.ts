@@ -138,12 +138,10 @@ const http = RpcServer.layerHttp({ group, path: "/auth", protocol: "http" }).pip
 const program = Effect.gen(function* () {
   const local = yield* ExternalRegistration.invoke(Operations.guest, {
     proof: Redacted.make("fixture-proof"),
-    eventId: Hooks.LifecycleEventId.make("local-registration"),
   }).pipe(Effect.provide(method));
 
   const denied = yield* ExternalRegistration.invoke(Operations.guest, {
     proof: Redacted.make("fixture-blocked-proof"),
-    eventId: Hooks.LifecycleEventId.make("denied-registration"),
   }).pipe(Effect.provide(method), Effect.result);
 
   yield* Effect.log({ local, denied });
@@ -157,7 +155,6 @@ const program = Effect.gen(function* () {
     Schema.toCodecJson(ExternalRegistration.rpc.payloadSchema),
   )({
     proof: Redacted.make("fixture-proof"),
-    eventId: Hooks.LifecycleEventId.make("remote-registration"),
   });
 
   const response = yield* Effect.promise(() =>

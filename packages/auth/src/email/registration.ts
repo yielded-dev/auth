@@ -9,6 +9,7 @@ import type { AuthOperationResult } from "../operations/credentials";
 import { makeOperation, operationGroup } from "../operations/operation";
 import type { makeRequestBinding } from "../operations/requestBinding";
 import { RequestBindingCredential, RequestBindingFlowId } from "../operations/requestBinding";
+import { proofRequestAdmission } from "../proofs/admission";
 import type { ProofCompletionPlan } from "../proofs/completion";
 import { readProofCommit } from "../proofs/dispatch";
 import type { ProofBinding } from "../proofs/models";
@@ -21,7 +22,7 @@ import {
   ProofRequestReceipt,
 } from "../proofs/models";
 import type { makeProofModule } from "../proofs/module";
-import { Email, TokenDigest } from "../Schema";
+import { Email, Locale, TokenDigest } from "../Schema";
 import type { PrepareEmailCommit } from "./EmailAddressPersistence";
 import {
   emailCompletionFailure,
@@ -85,7 +86,7 @@ export const makeEmailRegistration = <
   const RequestInput = Schema.Struct({
     ...base,
     requestId: ProofRequestId,
-    locale: Schema.NonEmptyString.check(Schema.isMaxLength(64)),
+    locale: Locale,
   });
 
   const ResendInput = Schema.Struct({ ...RequestInput.fields, supersedes: ProofId });
@@ -253,7 +254,7 @@ export const makeEmailRegistration = <
               Effect.mapError(() => EmailUnavailable.make({})),
             );
 
-          yield* dispatch.dispatch.pipe(Effect.mapError(() => EmailUnavailable.make({})));
+          yield* dispatch.schedule.pipe(Effect.mapError(() => EmailUnavailable.make({})));
 
           return dispatch.receipt;
         }),
@@ -345,7 +346,12 @@ export const makeEmailRegistration = <
     }),
   );
 
+  const admitRequest = proofRequestAdmission(`${moduleId}/registration`).pipe(
+    Effect.mapError(emailCompletionFailure),
+  );
+
   const Request = makeOperation(`${moduleId}/registration/request`, {
+    authorize: () => admitRequest,
     payload: RequestInput,
     success: ProofRequestReceipt,
     error: Failure,
@@ -355,6 +361,7 @@ export const makeEmailRegistration = <
   });
 
   const Resend = makeOperation(`${moduleId}/registration/resend`, {
+    authorize: () => admitRequest,
     payload: ResendInput,
     success: ProofRequestReceipt,
     error: Failure,

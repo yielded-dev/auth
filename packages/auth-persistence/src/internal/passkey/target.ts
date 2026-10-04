@@ -37,6 +37,7 @@ import type {
   PasskeyPersistenceServices,
 } from "../models/passkey-model";
 import type { PasskeyRegistrationCeremonyServices } from "../models/passkey-registration-ceremony-model";
+import type { QueryOperations } from "../query-operations";
 import type {
   TransactionCoordinatorError,
   TransactionExecution,
@@ -91,6 +92,7 @@ export const makePasskeyTargetKernel = (
     | "makeTransactionExecution"
     | "sqlClientTransactionStandaloneGuard"
   >,
+  operations: QueryOperations,
 ) => {
   const { captureEnrollmentContext, lookupCredential } = credentials;
 
@@ -124,8 +126,17 @@ export const makePasskeyTargetKernel = (
 
   const makePasskeyExecution = Effect.fnUntraced(function* (
     configuration: PasskeyTargetConfiguration,
-  ): Effect.fn.Return<PasskeyExecution, never, LifecycleHooks | NativeDatabase> {
+    mapping: unknown,
+  ): Effect.fn.Return<
+    PasskeyExecution,
+    PasskeyConfigurationError,
+    LifecycleHooks | NativeDatabase
+  > {
     const hooks = yield* LifecycleHooks;
+
+    yield* (operations.validateStorage?.(mapping) ?? Effect.void).pipe(
+      Effect.mapError(() => PasskeyConfigurationError.make({})),
+    );
 
     const execution = yield* makeTransactionExecution(
       CurrentPasskeyTransaction,
@@ -431,7 +442,7 @@ export const makePasskeyTargetKernel = (
     Effect.gen(function* () {
       const mapping = yield* capturedMapping(source, "read", configuration);
 
-      const execution = yield* makePasskeyExecution(configuration).pipe(
+      const execution = yield* makePasskeyExecution(configuration, mapping).pipe(
         Effect.provideService(LifecycleHooks, emptyHooks),
       );
 
@@ -449,7 +460,7 @@ export const makePasskeyTargetKernel = (
     Effect.gen(function* () {
       const mapping = yield* capturedMapping(source, "context", configuration);
 
-      const execution = yield* makePasskeyExecution(configuration).pipe(
+      const execution = yield* makePasskeyExecution(configuration, mapping).pipe(
         Effect.provideService(LifecycleHooks, emptyHooks),
       );
 
@@ -466,7 +477,7 @@ export const makePasskeyTargetKernel = (
   > =>
     Effect.gen(function* () {
       const mapping = yield* capturedMapping(source, "assertion", configuration);
-      const execution = yield* makePasskeyExecution(configuration);
+      const execution = yield* makePasskeyExecution(configuration, mapping);
 
       return {
         passkeyPersistence: makePasskeyPersistence(mapping, execution, configuration),
@@ -483,7 +494,7 @@ export const makePasskeyTargetKernel = (
   > =>
     Effect.gen(function* () {
       const mapping = yield* capturedMapping(source, "registration", configuration);
-      const execution = yield* makePasskeyExecution(configuration);
+      const execution = yield* makePasskeyExecution(configuration, mapping);
 
       return registrationServices(mapping, execution, configuration);
     });
@@ -497,14 +508,14 @@ export const makePasskeyTargetKernel = (
       services: PasskeyPersistenceServices,
       append: (statement: Statement<unknown>) => void,
     ) => Effect.Effect<A, E, R>,
-  ): Effect.Effect<A, PasskeyCoordinatorError<E>, R | RSetup | LifecycleHooks> =>
+  ): Effect.Effect<A, PasskeyCoordinatorError<E>, R | RSetup | LifecycleHooks | NativeDatabase> =>
     Effect.flatMap(capturedMapping(source, "assertion", configuration), (mapping) =>
       Effect.flatMap(LifecycleHooks, (hooks) =>
         coordinateTransactionOwner(
           database,
           CurrentPasskeyTransaction,
           configuration,
-          Effect.void,
+          operations.validateStorage?.(mapping) ?? Effect.void,
           unavailable,
           nonce,
           (execution) => ({
@@ -534,14 +545,14 @@ export const makePasskeyTargetKernel = (
       services: PasskeyRegistrationCeremonyServices,
       append: (statement: Statement<unknown>) => void,
     ) => Effect.Effect<A, E, R>,
-  ): Effect.Effect<A, PasskeyCoordinatorError<E>, R | RSetup | LifecycleHooks> =>
+  ): Effect.Effect<A, PasskeyCoordinatorError<E>, R | RSetup | LifecycleHooks | NativeDatabase> =>
     Effect.flatMap(capturedMapping(source, "registration", configuration), (mapping) =>
       Effect.flatMap(LifecycleHooks, (hooks) =>
         coordinateTransactionOwner(
           database,
           CurrentPasskeyTransaction,
           configuration,
-          Effect.void,
+          operations.validateStorage?.(mapping) ?? Effect.void,
           unavailable,
           nonce,
           (execution) =>

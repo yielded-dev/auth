@@ -1,3 +1,4 @@
+import { NativeDatabase } from "@yielded/auth-persistence/Adapter";
 import type { LifecycleHooks, HookConfigurationError } from "@yielded/auth/Hooks";
 import { type PasswordUnavailable, PasswordPersistence } from "@yielded/auth/Password";
 /* oxlint-disable no-explicit-any -- proof mapping tables are independently typed by the proof owner; this driver forwards them unchanged to the shared target. */
@@ -304,7 +305,7 @@ export const makeSqlitePasswordTarget = <
     E | PasswordUnavailable | HookConfigurationError | SqlError | DatabaseError,
     Exclude<R, PasswordPersistence> | LifecycleHooks | DatabaseRequirements
   > {
-    return Effect.flatMap(acquire, (database) =>
+    return Effect.flatMap(nativeDatabase(acquire), (database) =>
       coordinateSqlitePasswordPersistence(
         database,
         options.mapping,
@@ -321,7 +322,7 @@ export const makeSqlitePasswordTarget = <
             ? work
             : Effect.provideService(work, options.transaction, options.transaction.of(transaction));
         },
-      ),
+      ).pipe(Effect.provideService(NativeDatabase, database)),
     );
   }
   function coordinatePasswordRegistration<
@@ -440,7 +441,7 @@ export const makeSqlitePasswordTarget = <
     E | PasswordUnavailable | HookConfigurationError | SqlError | DatabaseError,
     Exclude<R, TargetId> | LifecycleHooks | DatabaseRequirements
   > {
-    return Effect.flatMap(acquire, (database) =>
+    return Effect.flatMap(nativeDatabase(acquire), (database) =>
       coordinateSqlitePasswordRegistration(
         database,
         options.mapping,
@@ -456,7 +457,7 @@ export const makeSqlitePasswordTarget = <
             ? work
             : Effect.provideService(work, options.transaction, options.transaction.of(transaction));
         },
-      ),
+      ).pipe(Effect.provideService(NativeDatabase, database)),
     );
   }
 
@@ -490,7 +491,10 @@ export const makeSqlitePasswordTarget = <
     ) =>
       Effect.flatMap(standaloneConfiguration, (configuration) =>
         makeSqlitePasswordPersistenceServices(mapping, configuration, proofMapping),
-      ).pipe(Effect.provideServiceEffect(CurrentPasswordSql, nativeDatabase(databaseService))),
+      ).pipe(
+        Effect.provideServiceEffect(CurrentPasswordSql, nativeDatabase(databaseService)),
+        Effect.provideServiceEffect(NativeDatabase, nativeDatabase(databaseService)),
+      ),
     coordinatePasswordPersistence,
     makePasswordRegistrationServices: <
       Registration,
@@ -505,7 +509,10 @@ export const makeSqlitePasswordTarget = <
     ) =>
       Effect.flatMap(standaloneConfiguration, (configuration) =>
         makeSqlitePasswordRegistrationServices(mapping, configuration),
-      ).pipe(Effect.provideServiceEffect(CurrentPasswordSql, nativeDatabase(databaseService))),
+      ).pipe(
+        Effect.provideServiceEffect(CurrentPasswordSql, nativeDatabase(databaseService)),
+        Effect.provideServiceEffect(NativeDatabase, nativeDatabase(databaseService)),
+      ),
     coordinatePasswordRegistration,
   };
 };

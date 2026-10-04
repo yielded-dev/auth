@@ -1,3 +1,4 @@
+import { NativeDatabase } from "@yielded/auth-persistence/Adapter";
 import type { LifecycleHooks, HookConfigurationError } from "@yielded/auth/Hooks";
 import { type ProofUnavailable, ProofPersistence } from "@yielded/auth/Proofs";
 import type { AnyRelations } from "drizzle-orm";
@@ -70,7 +71,10 @@ export const makeMysqlProofPersistenceServices = <
   Effect.flatMap(
     Effect.map(acquireTransactionService(DatabaseService), configuration),
     (configuration) => makeTargetProofPersistenceServices(mapping, configuration),
-  ).pipe(Effect.provideServiceEffect(CurrentProofSql, nativeDatabase(DatabaseService)));
+  ).pipe(
+    Effect.provideServiceEffect(CurrentProofSql, nativeDatabase(DatabaseService)),
+    Effect.provideServiceEffect(NativeDatabase, nativeDatabase(DatabaseService)),
+  );
 
 export function coordinateMysqlProofPersistence<
   D extends Database,
@@ -171,7 +175,7 @@ export function coordinateMysqlProofPersistence<
   E | ProofUnavailable | HookConfigurationError | SqlError | DatabaseError,
   Exclude<R, ProofPersistence> | LifecycleHooks | DatabaseRequirements
 > {
-  return Effect.flatMap(acquire, (database) =>
+  return Effect.flatMap(nativeDatabase(acquire), (database) =>
     coordinateTargetProofPersistence<Transaction, A, E, Exclude<R, ProofPersistence>>(
       database,
       options.mapping,
@@ -187,6 +191,6 @@ export function coordinateMysqlProofPersistence<
           ? work
           : Effect.provideService(work, options.transaction, options.transaction.of(transaction));
       },
-    ),
+    ).pipe(Effect.provideService(NativeDatabase, database)),
   );
 }

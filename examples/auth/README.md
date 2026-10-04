@@ -4,7 +4,9 @@ Consumer examples compose public `@yielded/auth` exports with application-owned
 identity, persistence, and delivery. `getting-started.ts` shows application
 composition; `session-contract.ts` and `session-http.ts` show the minimal session
 service, cookies, selected routes, and protected HttpApi group. The runnable password, email, phone, session, and proof programs
-use local example data.
+use local example data. Filled-byte keys are demo-only: generate independent random
+32-byte keys for production, store them in your secret configuration, and retain
+old key material while credentials or persisted records reference it.
 
 `auth-contract.ts` owns the shared named API; `auth-server.ts` mounts it beside
 application routes. `auth-client.ts` declares the client and its atoms;

@@ -1,6 +1,5 @@
-/* oxlint-disable no-explicit-any -- existing mapped-row bridge; public adapters preserve table, ID, and Effect types. */
-
 import { LifecycleHooks } from "@yielded/auth/Hooks";
+/* oxlint-disable no-explicit-any -- existing mapped-row bridge; public adapters preserve table, ID, and Effect types. */
 import {
   PasskeyConfigurationError,
   PasskeyManagementPersistence,
@@ -22,6 +21,7 @@ import type {
 } from "../models/passkey-write-model";
 import type { QueryOperations } from "../query-operations";
 import type { makeTransactionExecutionKernel } from "../transaction-execution-kernel";
+import type { NativeDatabase } from "../transaction-kernel";
 import type { makePasskeyEnrollmentKernel } from "./enrollment";
 import type { makePasskeyManagementKernel } from "./management";
 import type { makePasskeyRegistrationWriteKernel } from "./registration-write";
@@ -346,7 +346,7 @@ export const makePasskeyWriteTargetKernel = (
   ) =>
     Effect.gen(function* () {
       const mapping = yield* writeMapping(source, configuration, false);
-      const execution = yield* makePasskeyExecution(configuration);
+      const execution = yield* makePasskeyExecution(configuration, mapping);
 
       return managementServices(mapping, execution, configuration);
     });
@@ -357,7 +357,7 @@ export const makePasskeyWriteTargetKernel = (
   ) =>
     Effect.gen(function* () {
       const mapping = yield* writeMapping(source, configuration, true);
-      const execution = yield* makePasskeyExecution(configuration);
+      const execution = yield* makePasskeyExecution(configuration, mapping);
 
       return registrationServices<R>(mapping, execution, configuration);
     });
@@ -371,7 +371,7 @@ export const makePasskeyWriteTargetKernel = (
       services: PasskeyManagementServices,
       append: (statement: Statement<unknown>) => void,
     ) => Effect.Effect<A, E, R>,
-  ): Effect.Effect<A, PasskeyCoordinatorError<E>, R | RSetup | LifecycleHooks> =>
+  ): Effect.Effect<A, PasskeyCoordinatorError<E>, R | RSetup | LifecycleHooks | NativeDatabase> =>
     Effect.gen(function* () {
       const mapping = yield* writeMapping(source, configuration, false);
       const hooks = yield* LifecycleHooks;
@@ -380,7 +380,7 @@ export const makePasskeyWriteTargetKernel = (
         database,
         CurrentPasskeyTransaction,
         configuration,
-        Effect.void,
+        operations.validateStorage?.(mapping) ?? Effect.void,
         unavailable,
         nonce,
         (execute) =>
@@ -406,7 +406,7 @@ export const makePasskeyWriteTargetKernel = (
       services: PasskeyRegistrationServices<Value>,
       append: (statement: Statement<unknown>) => void,
     ) => Effect.Effect<A, E, R>,
-  ): Effect.Effect<A, PasskeyCoordinatorError<E>, R | RSetup | LifecycleHooks> =>
+  ): Effect.Effect<A, PasskeyCoordinatorError<E>, R | RSetup | LifecycleHooks | NativeDatabase> =>
     Effect.gen(function* () {
       const mapping = yield* writeMapping(source, configuration, true);
       const hooks = yield* LifecycleHooks;
@@ -415,7 +415,7 @@ export const makePasskeyWriteTargetKernel = (
         database,
         CurrentPasskeyTransaction,
         configuration,
-        Effect.void,
+        operations.validateStorage?.(mapping) ?? Effect.void,
         unavailable,
         nonce,
         (execute) =>

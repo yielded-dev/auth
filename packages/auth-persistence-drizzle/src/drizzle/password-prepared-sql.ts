@@ -1,4 +1,5 @@
 import {
+  type NativeDatabase,
   CurrentPasswordPreparedTransaction,
   PasswordPreparedPostconditions,
   PasswordPreparedJournalGuards,
@@ -53,6 +54,7 @@ import {
   type PasswordSqlQuery,
 } from "./password-sql";
 import { checkProofCompletionIn, completeProofPlanIn } from "./proof-sql";
+import { validateDrizzleStorage } from "./storage-validation";
 
 const translateFailure = <A, E, R>(
   effect: Effect.Effect<A, E, R>,
@@ -410,8 +412,18 @@ export const makeSqlPasswordPreparedPersistence = Effect.fn("makeSqlPasswordPrep
   function* (
     mapping: Mapping,
     configuration: PasswordSqlConfiguration,
-  ): Effect.fn.Return<PasswordPreparedPersistence, never, LifecycleHooks | CurrentPasswordSql> {
+  ): Effect.fn.Return<
+    PasswordPreparedPersistence,
+    PasswordUnavailable,
+    LifecycleHooks | CurrentPasswordSql | NativeDatabase
+  > {
     const database = yield* CurrentPasswordSql;
+
+    if (!configuration.coordinated)
+      yield* validateDrizzleStorage({
+        ...mapping,
+        proof: configuration.proof?.mapping,
+      }).pipe(Effect.mapError(unavailable));
     const hooks = yield* LifecycleHooks;
 
     const p = mapping.password,

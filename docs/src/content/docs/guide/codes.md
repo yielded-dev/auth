@@ -112,7 +112,7 @@ Auth places the reference and secret in the URL fragment. Use
 must not consume it: show a confirmation action, clear the fragment from browser
 history, and complete from the originating client.
 
-<details>
+<details id="proof-expiry-and-rate-limits">
 <summary>Proof expiry and rate limits</summary>
 
 ```ts title="apps/server/proof-policy.ts"
@@ -138,15 +138,24 @@ export const proofPolicy: Proofs.ProofPolicy = {
 };
 ```
 
-Choose the action-wide limits for your application's traffic. Resending or changing
-flow IDs must not reset account-level attempt budgets.
+Size `actionIssues` for peak accepted deliveries across the whole deployment; it
+is a shared circuit breaker, not a per-client allowance. The values above are an
+example policy. Only newly issued proofs spend issuance budgets; suppressed,
+ineligible, and replayed requests still pass host ingress admission. Attempts keep
+their independent budgets across resends and flow IDs.
+
+A live, unexpired proof can be replaced only with the same complete request
+binding. Knowing its public reference does not grant replacement authority.
+A different flow may need to wait for expiry; host ingress limits unsolicited
+requests but cannot guarantee availability against distributed traffic.
 
 </details>
 
 ## Supply the services
 
-Lookup, claims, storage, and delivery are application-supplied. The library provides
-an exact-route allowlist helper, Web Crypto, and empty lifecycle hooks:
+Your application supplies lookup, claims, storage, and delivery. Auth provides
+request rate limiting, a delivery worker, an exact-route allowlist helper,
+Web Crypto, and empty lifecycle hooks:
 
 ```ts title="apps/server/email-live.ts"
 import { Layer } from "effect";
@@ -158,7 +167,7 @@ import { lookupEmail, resolveEmailClaims } from "./auth-accounts";
 import { ProofPersistenceLive } from "./auth-persistence";
 import { EmailLive } from "./email";
 
-export const EmailLive = Layer.mergeAll(
+export const EmailServicesLive = Layer.mergeAll(
   ProofPersistenceLive,
   Layer.succeed(Email.EmailSignInTargets, { lookup: lookupEmail }),
   Layer.succeed(AppAuth.strategies.email.SessionClaims, { resolve: resolveEmailClaims }),
@@ -167,19 +176,52 @@ export const EmailLive = Layer.mergeAll(
 );
 
 export const AuthLive = AppAuth.layer.pipe(
-  Layer.provide(EmailLive),
+  Layer.provide(EmailServicesLive),
   Layer.provide(AuthDependencies),
 );
 ```
 
 The relative imports are your application modules. `EmailLive` implements the
-email service: see [email delivery](./email-delivery) for REST API and Alchemy examples. `AuthDependencies` supplies the shared
+email service. Auth's built-in worker keeps provider acceptance outside the request's
+wait for a response; build Auth in an application scope that outlives requests.
+See [email delivery](./email-delivery#compose-auth) for runtime ownership and overrides.
+`AuthDependencies` supplies the shared
 [session, account, and key configuration](../reference/adapters#compose-the-application-layer).
 For database-backed lookup, use [the email adapter](../reference/adapters#email).
 
-For new accounts use `Email.makeRegistration`; for verified-address management
-use `Email.makeAddresses`. Verification alone does not sign in or link an account.
-See [email persistence](../reference/adapters#email) for those transaction boundaries.
+Email requests and resends check the built-in rate limiter before target lookup,
+including exact retries and unknown addresses. HTTP derives the caller from the
+socket peer automatically. See [HTTP admission](./http-and-client#proof-request-admission)
+for configuration and overrides.
+
+## Register a mailbox owner
+
+Compose `Email.makeRegistration({ namespace, registration: Registration })` with
+`Email.makeCode({ namespace })` using the same namespace. A guest calls
+`beginRegistration` → `register` → `verifyRegistration` → `completeRegistration`.
+The [shared login contract](https://github.com/yielded-dev/auth/blob/main/examples/auth/src/login-contract.ts)
+exposes these existing operations with private request-binding and continuation
+cookies; the [server composition](https://github.com/yielded-dev/auth/blob/main/examples/auth/src/login-server.ts)
+supplies both strategies.
+
+Provide the registration strategy's `RegistrationAuthority` with
+`makeEmailRegistrationServices` from your Drizzle adapter, and provide
+`ProofPersistence` through `makeProofPersistenceServices` with the same proof mapping
+for issuance and completion. In atomic mode, completed
+mailbox proof can replace another subject's active, unverified email reservation
+when the application's inspection and proof policies allow it. The new account
+receives the verified address. The earlier account keeps its data and credentials,
+and its security revision advances. Verified ownership is never replaced.
+
+Registration does not issue a session. Start a fresh email sign-in afterward;
+an authenticated user can then call `addPassword` when password management is
+enabled. `AuthPersistence.layer` does not install guest email-registration services
+automatically. Pending-mode registration leaves provisioning and ownership changes
+to the application. See [email persistence](../reference/adapters#email) for mapping
+and session invalidation requirements.
+
+Use `Email.makeAddresses` for authenticated address management. Confirming an
+address there does not create or link an account.
 
 See the [combined login example](./oauth#other-providers)
 to share Auth, sessions, and client methods with GitHub.

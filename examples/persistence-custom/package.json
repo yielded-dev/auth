@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "build": "vp build",
-    "check": "tsc --noEmit -p tsconfig.json"
+    "check": "tsc --noEmit -p tsconfig.json",
+    "test": "vp test"
   },
   "dependencies": {
     "@effect/atom-react": "catalog:",

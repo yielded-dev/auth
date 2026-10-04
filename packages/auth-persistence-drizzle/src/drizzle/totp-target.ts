@@ -15,6 +15,7 @@ import type { Statement } from "effect/sql/Statement";
 
 import type { PersistenceMappingError } from "./model";
 import { nativeDatabase } from "./native-database";
+import { validateDrizzleStorage } from "./storage-validation";
 import type { SuppliedService } from "./SuppliedService";
 import {
   type TotpMapping,
@@ -140,6 +141,10 @@ export const makeTargetTotpPersistence = <
       catch: () => TotpConfigurationError.make({}),
     });
 
+    yield* validateDrizzleStorage(mapping).pipe(
+      Effect.mapError(() => TotpConfigurationError.make({})),
+    );
+
     const execution = yield* makeTransactionExecution(
       CurrentTotpTransaction,
       configuration,
@@ -159,7 +164,7 @@ export const coordinateTargetTotp = <M, A, E, R, RSetup = never>(
     services: TotpPersistenceServices,
     append: (statement: Statement<any>) => void,
   ) => Effect.Effect<A, E, R>,
-): Effect.Effect<A, TotpCoordinatorError<E>, R | RSetup | LifecycleHooks> =>
+): Effect.Effect<A, TotpCoordinatorError<E>, R | RSetup | LifecycleHooks | NativeDatabase> =>
   Effect.gen(function* () {
     const original = yield* Effect.isEffect(source) ? source : Effect.succeed(source);
 
@@ -167,6 +172,10 @@ export const coordinateTargetTotp = <M, A, E, R, RSetup = never>(
       try: () => validateMapping(original, configuration),
       catch: () => TotpConfigurationError.make({}),
     });
+
+    yield* validateDrizzleStorage(mapping).pipe(
+      Effect.mapError(() => TotpConfigurationError.make({})),
+    );
 
     return yield* coordinateTransactionOwner(
       database,
@@ -280,12 +289,15 @@ export const makeTotpTarget = <
     TotpCoordinatorError<E> | DatabaseError,
     Exclude<R, TotpPersistence> | LifecycleHooks | RSetup | DatabaseRequirements
   > {
-    return Effect.flatMap(acquire, (database) =>
+    return Effect.flatMap(nativeDatabase(acquire), (database) =>
       coordinateTargetTotp(
         database as any,
         options.mapping,
         configuration,
-        (transaction: TransactionOf<Database>, services) => {
+        (
+          transaction: TransactionOf<Database>,
+          services,
+        ): Effect.Effect<A, E, Exclude<R, TotpPersistence>> => {
           const provided = Context.make(TotpPersistence, services.totpPersistence);
           const work = Effect.provideContext(body, provided);
 
@@ -293,7 +305,7 @@ export const makeTotpTarget = <
             ? work
             : Effect.provideService(work, options.transaction, options.transaction.of(transaction));
         },
-      ),
+      ).pipe(Effect.provideService(NativeDatabase, database)),
     );
   }
 

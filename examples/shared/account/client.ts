@@ -321,7 +321,11 @@ export const makeAccountClient = <Auth extends AccountAuth>(
       const now = yield* nowMillis;
 
       if (current !== null && current.email === email && now < current.resendAtMillis) return;
-      const flowId = yield* id;
+
+      const flowId =
+        current !== null && current.email === email && now < current.expiresAtMillis
+          ? current.flowId
+          : yield* id;
 
       const challenge = yield* get.setResult(auth.requestReset, {
         email,

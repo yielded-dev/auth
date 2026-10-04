@@ -151,14 +151,7 @@ export const ProofsLive = Layer.effect(
                   item.record.issuedAtMillis > now - policy.abuse.resendCooldownMillis,
               );
 
-              const admitted = charge(
-                state,
-                budgets(record.moduleId, record.purpose, record.binding, "issue", policy),
-                now,
-              );
-
               if (
-                !admitted ||
                 recent ||
                 !input.eligible ||
                 !bindingCurrent(state, record.binding, record.purpose) ||
@@ -169,9 +162,20 @@ export const ProofsLive = Layer.effect(
                     item.record.moduleId === record.moduleId &&
                     item.record.proofId === record.proofId,
                 ) ||
-                (input.supersedes !== undefined &&
-                  (active?.record.proofId !== input.supersedes ||
-                    !sameBinding(active.record.binding, record.binding)))
+                (active !== undefined &&
+                  active.record.expiresAtMillis > now &&
+                  !sameBinding(active.record.binding, record.binding)) ||
+                (input.supersedes !== undefined && active?.record.proofId !== input.supersedes)
+              )
+                return prepare({ _tag: "Suppressed", receipt }, journal);
+
+              if (
+                !charge(
+                  state,
+                  budgets(record.moduleId, record.purpose, record.binding, "issue", policy),
+                  now,
+                  { requireAll: true },
+                )
               )
                 return prepare({ _tag: "Suppressed", receipt }, journal);
 
