@@ -277,10 +277,12 @@ export const installConfigurations = Effect.fn("OpenIdClient.installConfiguratio
 
   const transport = yield* FetchHttpClient.Fetch;
 
-  const fetch: client.CustomFetch = (url, init) =>
+  const fetch: client.CustomFetch = (url, { body, ...init }) =>
     transport(url, {
       ...init,
-      body: init.body instanceof Uint8Array ? new Uint8Array(init.body) : init.body,
+      ...(body === undefined
+        ? {}
+        : { body: body instanceof Uint8Array ? new Uint8Array(body) : body }),
     });
 
   yield* Effect.try({
@@ -437,14 +439,32 @@ export const installConfigurations = Effect.fn("OpenIdClient.installConfiguratio
         Schema.is(OpenIdClientConfigurationError)(error) ? error : configError("metadata"),
     });
 
+    const {
+      code_challenge_methods_supported,
+      response_types_supported,
+      id_token_signing_alg_values_supported,
+      token_endpoint_auth_methods_supported,
+      ...metadataFields
+    } = metadata;
+
     const serverMetadata: client.ServerMetadata = {
-      ...metadata,
-      code_challenge_methods_supported: metadata.code_challenge_methods_supported?.slice(),
-      response_types_supported: metadata.response_types_supported?.slice(),
-      id_token_signing_alg_values_supported:
-        metadata.id_token_signing_alg_values_supported?.slice(),
-      token_endpoint_auth_methods_supported:
-        metadata.token_endpoint_auth_methods_supported?.slice(),
+      ...metadataFields,
+      ...(code_challenge_methods_supported === undefined
+        ? {}
+        : { code_challenge_methods_supported: code_challenge_methods_supported.slice() }),
+      ...(response_types_supported === undefined
+        ? {}
+        : { response_types_supported: response_types_supported.slice() }),
+      ...(id_token_signing_alg_values_supported === undefined
+        ? {}
+        : {
+            id_token_signing_alg_values_supported: id_token_signing_alg_values_supported.slice(),
+          }),
+      ...(token_endpoint_auth_methods_supported === undefined
+        ? {}
+        : {
+            token_endpoint_auth_methods_supported: token_endpoint_auth_methods_supported.slice(),
+          }),
     };
 
     // The SDK encodes each generated 32-byte state/challenge/nonce in 43 URL-safe characters.

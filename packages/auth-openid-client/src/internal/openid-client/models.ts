@@ -30,7 +30,7 @@ export type OpenIdClientAuthentication =
 
 export interface PlainOAuthIdentity {
   readonly subject: string;
-  readonly profile?: OAuthVerifiedExternalIdentity["profile"];
+  readonly profile?: NonNullable<OAuthVerifiedExternalIdentity["profile"]>;
 }
 
 interface ProviderGeneration {

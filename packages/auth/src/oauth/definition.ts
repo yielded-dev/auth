@@ -61,7 +61,7 @@ const bindSignIn = <
 
   const module = makeOAuthMethod<Id, SessionId, Claims, Access>(binding.namespace, {
     sessions: binding.sessions,
-    access: options.access,
+    ...(options.access === undefined ? {} : { access: options.access }),
   });
 
   return Object.freeze({

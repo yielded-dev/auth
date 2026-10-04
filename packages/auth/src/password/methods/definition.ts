@@ -40,7 +40,7 @@ const captureSignIn = <const Namespace extends string | undefined = undefined>(
 ) => {
   const options = Object.freeze({
     ...input,
-    policy: input.policy === undefined ? undefined : snapshotPasswordMethodPolicy(input.policy),
+    ...(input.policy === undefined ? {} : { policy: snapshotPasswordMethodPolicy(input.policy) }),
   });
 
   return { options };
@@ -111,7 +111,7 @@ const captureManagement = <
     policy: snapshotPasswordMethodPolicy(input.policy ?? defaultPasswordMethodPolicy),
     reset: snapshotProofConfiguration({
       secret: input.reset.secret,
-      url: input.reset.url,
+      ...(input.reset.url === undefined ? {} : { url: input.reset.url }),
       policy: input.reset.policy ?? defaultProofPolicy,
     }),
   });
@@ -229,7 +229,7 @@ export function make<
 export const resetLink = (options: { readonly url: string; readonly policy?: ProofPolicy }) => ({
   secret: { _tag: "Token" as const },
   url: options.url,
-  policy: options.policy,
+  ...(options.policy === undefined ? {} : { policy: options.policy }),
 });
 
 /** Numeric reset codes preserve leading zeroes and require ProofKeys. */
@@ -240,5 +240,5 @@ export const resetCode = (
   } = {},
 ) => ({
   secret: { _tag: "NumericCode" as const, digits: options.digits ?? 6 },
-  policy: options.policy,
+  ...(options.policy === undefined ? {} : { policy: options.policy }),
 });

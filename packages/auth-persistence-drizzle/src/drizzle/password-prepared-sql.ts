@@ -752,7 +752,7 @@ export const makeSqlPasswordPreparedPersistence = Effect.fn("makeSqlPasswordPrep
                 nativeNow = p.encodeInstant(now);
 
               const scope = identifierScope({
-                credential: authority.snapshot,
+                ...(authority.snapshot === undefined ? {} : { credential: authority.snapshot }),
                 revision: authority.revision,
               });
 

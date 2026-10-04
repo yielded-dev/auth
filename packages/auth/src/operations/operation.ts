@@ -216,11 +216,11 @@ const buildOperation = <
   } = OperationOptions<Payload, Success, Error, PolicyServices>,
 >(
   tag: Tag,
-  options: OperationOptions<Payload, Success, Error, PolicyServices> & Options,
+  input: OperationOptions<Payload, Success, Error, PolicyServices> & Options,
 ) => {
   type Credentials = OptionProperty<Options, "credentials">;
   type Reveals = OptionProperty<Options, "reveals">;
-  options = Object.freeze({ ...options });
+  const options = Object.freeze({ ...input });
 
   const reveals = (() => {
     try {

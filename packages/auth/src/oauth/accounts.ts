@@ -445,7 +445,7 @@ export const makeOAuthAccounts = <
           const prepared = yield* prepareAuthorization(
             Object.freeze({
               provider: request.provider,
-              callbackId: request.callbackId,
+              ...(request.callbackId === undefined ? {} : { callbackId: request.callbackId }),
               flowId: request.flowId,
             }),
           ).pipe(Effect.flatMap((value) => snapshotOAuth(OAuthProtocolPreparation, value)));

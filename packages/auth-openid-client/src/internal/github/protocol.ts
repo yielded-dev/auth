@@ -220,10 +220,12 @@ const revocationLayer = (options: Pick<GitHubOAuthAppConnectedProtocolOptions, "
     Effect.gen(function* () {
       const transport = yield* FetchHttpClient.Fetch;
 
-      const fetch: CustomFetch = (url, init) =>
+      const fetch: CustomFetch = (url, { body, ...init }) =>
         transport(url, {
           ...init,
-          body: init.body instanceof Uint8Array ? new Uint8Array(init.body) : init.body,
+          ...(body === undefined
+            ? {}
+            : { body: body instanceof Uint8Array ? new Uint8Array(body) : body }),
         });
 
       const timeoutSeconds = options.timeoutSeconds;

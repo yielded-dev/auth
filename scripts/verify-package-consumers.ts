@@ -19,6 +19,7 @@ const checkDeclarations = Effect.fn("packageConsumers.declarations")(function* (
   const program = ts.createProgram(entries, {
     noEmit: true,
     strict: true,
+    exactOptionalPropertyTypes: true,
     types: [],
     target: ts.ScriptTarget.ESNext,
     module: ts.ModuleKind.ESNext,

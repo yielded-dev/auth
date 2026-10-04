@@ -107,7 +107,7 @@ interface QueryState {
     readonly on: Fragment;
   }>;
   readonly selection?: Selection;
-  readonly where?: Fragment;
+  readonly where?: Fragment | undefined;
   readonly values?: Row;
   readonly returning?: Selection | true;
   readonly order?: ReadonlyArray<Fragment>;
@@ -258,7 +258,8 @@ export const makeSqlDatabase = Effect.fnUntraced(function* (dialect: Dialect) {
 
   const database: SqlDatabase = {
     $client: client,
-    select: (selection?: Selection) => query({ operation: "select", selection }),
+    select: (selection?: Selection) =>
+      query({ operation: "select", ...(selection === undefined ? {} : { selection }) }),
     insert: (table: Table) => query({ operation: "insert", table }),
     update: (table: Table) => query({ operation: "update", table }),
     delete: (table: Table) => query({ operation: "delete", table }),

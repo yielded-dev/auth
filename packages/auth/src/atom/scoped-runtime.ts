@@ -19,9 +19,9 @@ interface ProxyState {
   current?: AuthSubjectLifetime;
   retired: boolean;
   pending: boolean;
-  command?: { readonly value: unknown; readonly generation?: number };
-  terminal?: RuntimeValue;
-  retirementLimit?: object;
+  command?: { readonly value: unknown; readonly generation?: number } | undefined;
+  terminal?: RuntimeValue | undefined;
+  retirementLimit?: object | undefined;
 }
 
 /** Borrow the host Context while assigning each computation to the current

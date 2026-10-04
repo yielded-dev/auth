@@ -212,7 +212,9 @@ export const makeEmailAddresses = <
           moduleId,
           subjectId: invocation.subjectId,
           target: identifier,
-          sourceCredentialId: request.sourceCredentialId,
+          ...(request.sourceCredentialId === undefined
+            ? {}
+            : { sourceCredentialId: request.sourceCredentialId }),
         });
 
         const captured: EmailAddressTarget = Object.freeze({
@@ -310,7 +312,7 @@ export const makeEmailAddresses = <
         const grant = yield* actionAuthority.verify({
           invocation,
           challenge,
-          proof: request.actionProof,
+          ...(request.actionProof === undefined ? {} : { proof: request.actionProof }),
         });
 
         const raw = yield* snapshotAuthenticationEvidence(grant.evidence).pipe(

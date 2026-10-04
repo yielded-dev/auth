@@ -27,8 +27,8 @@ export interface ActionOptions<
   readonly replay?: OperationReplay;
   readonly credentials?: boolean;
   readonly reveals?: ReadonlyArray<AuthRevealKind>;
-  readonly method?: string;
-  readonly strategy?: string;
+  readonly method?: string | undefined;
+  readonly strategy?: string | undefined;
   readonly requestFields?: Readonly<Record<string, CredentialSlot>>;
   /** This action completes an OAuth browser callback. The HTTP host can mount it
    * directly; it must validate the original state and private request binding. */
@@ -49,8 +49,8 @@ export const action = <
   const Strategy extends string | undefined = undefined,
 >(
   options: ActionOptions<Payload, Success, Failure, Mode> & {
-    readonly method?: Method;
-    readonly strategy?: Strategy;
+    readonly method?: Method | undefined;
+    readonly strategy?: Strategy | undefined;
   },
 ) =>
   Object.freeze({
@@ -87,8 +87,8 @@ export const fromOperation = <
     readonly reveals: ReadonlyArray<AuthRevealKind>;
   },
   options: {
-    readonly method?: Method;
-    readonly strategy?: Strategy;
+    readonly method?: Method | undefined;
+    readonly strategy?: Strategy | undefined;
     readonly requestFields?: RequestFields &
       Record<Exclude<keyof RequestFields, Extract<keyof Fields, string>>, never>;
     readonly mode?: Mode;
