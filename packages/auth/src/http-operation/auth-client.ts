@@ -159,8 +159,11 @@ const acquire = Effect.fn("Client.make")(function* <Actions extends AuthActions,
           publish(subject, String(name), callOptions?.origin),
         ).pipe(Effect.provideService(Client, transport));
 
-        const value = yield* complete<Actions[Name]["route"]>(action.route, input, (success) =>
-          project.fromSuccess(success),
+        const value = yield* complete<Actions[Name]["route"]>(
+          action.route,
+          input,
+          (success) => project.fromSuccess(success),
+          { expectedGeneration: started },
         );
 
         transitioned = state.generation !== generation;

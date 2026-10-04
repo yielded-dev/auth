@@ -100,12 +100,14 @@ const completeAuthentication = Effect.fn("AuthAtom.completeAuthentication")(func
   input: RouteInput<Route>,
   subject: (value: RouteSuccess<Route>) => string | null | undefined,
   reactivityKeys: ReactivityKeys,
+  expectedGeneration?: number,
 ) {
   const lifetime = yield* AuthAtomLifetime;
   const reactivity = yield* Reactivity.Reactivity;
 
   return yield* lifetime.completeAuthentication(route, input, subject, {
     onTransition: reactivity.invalidate(reactivityKeys),
+    expectedGeneration,
   });
 });
 
@@ -161,7 +163,7 @@ export const workflow =
             ) =>
               current.pipe(
                 Effect.andThen(
-                  completeAuthentication(route, value, subject, options.reactivityKeys),
+                  completeAuthentication(route, value, subject, options.reactivityKeys, started),
                 ),
                 Effect.provideService(AuthAtomLifetime, lifetime),
               );
