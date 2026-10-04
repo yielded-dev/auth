@@ -107,7 +107,7 @@ const completeAuthentication = Effect.fn("AuthAtom.completeAuthentication")(func
 
   return yield* lifetime.completeAuthentication(route, input, subject, {
     onTransition: reactivity.invalidate(reactivityKeys),
-    expectedGeneration,
+    ...(expectedGeneration === undefined ? {} : { expectedGeneration }),
   });
 });
 
