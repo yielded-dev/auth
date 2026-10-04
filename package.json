@@ -25,9 +25,11 @@
     "docs:dev": "vp run @yielded/auth-docs#dev",
     "docs:build": "vp run @yielded/auth-docs#build",
     "docs:preview": "vp run @yielded/auth-docs#preview",
-    "release:checked-publish": "vp run --no-cache release:publish --check-ready"
+    "release:checked-publish": "vp run --no-cache release:publish --check-ready",
+    "bundle:compare": "bun scripts/bundle-size.ts"
   },
   "devDependencies": {
+    "@babel/core": "catalog:",
     "@changesets/changelog-github": "0.7.0",
     "@changesets/cli": "2.31.0",
     "@effect/atom-react": "catalog:",
@@ -35,7 +37,9 @@
     "@effect/platform-node": "catalog:",
     "@effect/sql-sqlite-node": "catalog:",
     "@effect/tsgo": "catalog:",
+    "@rollup/plugin-babel": "catalog:",
     "@stylistic/eslint-plugin": "5.10.0",
+    "@types/babel__core": "catalog:",
     "@types/node": "catalog:",
     "@types/react": "catalog:",
     "@types/react-dom": "catalog:",
@@ -46,6 +50,7 @@
     "@yielded/auth-persistence-drizzle": "workspace:*",
     "@yielded/auth-simplewebauthn": "workspace:*",
     "alchemy": "catalog:",
+    "babel-plugin-annotate-pure-calls": "catalog:",
     "effect": "catalog:",
     "esbuild": "catalog:",
     "oxfmt": "0.68.0",
@@ -65,6 +70,10 @@
   },
   "packageManager": "bun@1.4.2",
   "catalog": {
+    "@babel/core": "7.29.7",
+    "@rollup/plugin-babel": "7.1.0",
+    "@types/babel__core": "7.20.5",
+    "babel-plugin-annotate-pure-calls": "0.5.0",
     "@cloudflare/workers-types": "5.20260926.1",
     "@effect/platform-bun": "4.0.0",
     "@effect/platform-node": "4.0.0",

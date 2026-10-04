@@ -7,6 +7,12 @@ package uses the shared storage contracts and SQL kernels in
 Import mapping helpers from the root and a driver from its explicit module, such
 as `/Postgres` or `/SqliteBun`. Install `drizzle-orm` and the corresponding Effect
 SQL driver. Each driver exposes `AuthPersistence` and the lower-level factories.
+Import only the factories a worker needs, such as `makeStatefulSessionServices`,
+to let its bundler remove unrelated authentication families. A selected family
+can retain its other operations. `AuthPersistence` retains the complete composed
+adapter, including Phone support. Bundlers differ
+in how they retain initialization and deferred migration chunks; measure the
+application's final output when enforcing deployment limits.
 
 Drizzle RC4 does not yet support the current stable Effect APIs required by Yielded
 Auth. Bun consumers need the temporary

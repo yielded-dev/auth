@@ -62,6 +62,18 @@ this boundary for runtime imports and declarations. The purity check rejects
 production paths that reach test-only code.
 SDK adapters live in companion packages, and `sideEffects: []` requires import-time code to stay free of I/O.
 
+Runtime library builds use Effect's `annotate-pure-calls` transform on emitted
+JavaScript. Keep source exports ordinary and independently removable; do not add
+purity comments or wrapper expressions to work around a shared factory object.
+The transform relies on the same import-time purity contract as `sideEffects: []`.
+Declarations and executable CLI packages are excluded from the transform.
+
+Drizzle drivers re-export internal authentication-family modules. Bind each family
+once per driver. Database service identities live in shared modules; public drivers
+declare acquisition Layers and re-export the separate composed adapter. This lets
+bundlers discard unused families without a binding helper for every operation.
+A selected family can retain its other operations.
+
 The package build preserves implementation modules and native root/group namespaces
 in both JavaScript and declarations. Every namespace target is also an explicit
 pack entry. The resolver leaves sibling imports external to root and group entries
@@ -81,6 +93,24 @@ bytes include Effect and are diagnostics, not fixed size budgets. Retained-modul
 checks enforce the boundaries; esbuild's re-exported namespace retention remains
 visible in the comparisons. The full contracts group must exclude strategy
 implementations and cryptography. Keep direct paths for lazy imports and narrow bundles.
+
+`vp run bundle:compare -- --base-dir /path/to/base` compares published consumer
+bundles against another checkout with dependencies installed and packages built.
+Both checkouts use the current consumer fixtures and bundler settings. The report
+covers core root/direct imports, lazy loading, SQL and Drizzle persistence,
+cryptography, OpenID, and browser/server WebAuthn with esbuild and Vite/Rolldown.
+The probes use browser resolution for portable/edge consumers; they do not model
+a complete application, Node SSR resolution, or React Native's Metro output.
+
+Reports in `.bundle-report` include minified and gzip bytes, emitted JavaScript,
+and module analysis. Initial size includes statically imported shared chunks;
+deferred size includes every remaining emitted chunk, even unreachable output.
+Totals sum per-chunk gzip sizes and include dependencies; server built-ins remain
+external. Sizes from separate consumers are not additive or latency measurements.
+Module attribution helps locate retained code; it is not per-module gzip cost.
+The bundle workflow uploads these artifacts and updates one PR comparison comment.
+Its separate publisher uses trusted default-branch code, so automatic comments
+begin after the workflows first reach `main`.
 
 ## Contributor skills
 

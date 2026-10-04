@@ -1,5 +1,7 @@
 import { defineConfig } from "vite-plus";
 
+import { pureAnnotations } from "../../scripts/library-build";
+
 export default defineConfig({
   pack: {
     tsconfig: "tsconfig.build.json",
@@ -44,6 +46,7 @@ export default defineConfig({
     dts: true,
     // Preserve implementation boundaries so consumers can discard unused modules.
     unbundle: true,
+    outputOptions: { plugins: [pureAnnotations()] },
     plugins: [
       {
         // Each target is also a pack entry. Keep native namespaces in JS and

@@ -1,86 +1,15 @@
-import { NativeDatabase } from "@yielded/auth-persistence/Adapter";
-import type { AnyRelations } from "drizzle-orm";
-import { type EffectSQLiteNodeDatabase, makeWithDefaults } from "drizzle-orm/effect-sqlite-node";
-import type { AnySQLiteTable } from "drizzle-orm/sqlite-core";
-import { Context, Effect, Layer } from "effect";
+import { makeWithDefaults } from "drizzle-orm/effect-sqlite-node";
+import { Layer } from "effect";
 
-import { nativeDatabase } from "./drizzle/native-database";
+import { Database } from "./drizzle/sqlite-node-database";
 
-/** The application-owned Drizzle database used to construct persistence services. */
-export class Database extends Context.Service<Database, EffectSQLiteNodeDatabase<AnyRelations>>()(
-  "effect-auth/persistence-drizzle/SqliteNode/Database",
-) {}
+export const commitMode = "interactive" as const;
 
-/** Construct Drizzle from the driver's SQL-client Layer. */
-export const databaseLayer = Layer.effect(Database, makeWithDefaults({}));
+export { passwordPreparedPersistenceLayer } from "./drizzle/password-prepared-target";
 
-import { sqlClientEmailStandaloneGuard } from "./drizzle/email-target";
-import type {
-  ExternalIdentityTables,
-  IdentityTables,
-  SubjectProvisioningTables,
-} from "./drizzle/model";
-import { sqlClientPasswordStandaloneGuard } from "./drizzle/password-target";
-import { sqlClientProofStandaloneGuard } from "./drizzle/proof-target";
-import { sqlClientSessionStandaloneGuard } from "./drizzle/session-target";
-import { makeSqliteEmailTarget, sqliteEmailConfiguration } from "./drizzle/sqlite-emails";
-import {
-  makeSqliteExternalIdentityServices,
-  makeSqliteIdentityServices,
-  makeSqliteSubjectProvisioningServices,
-} from "./drizzle/sqlite-identity";
-import { makeSqlitePasswordTarget, sqlitePasswordConfiguration } from "./drizzle/sqlite-passwords";
-import { makeSqliteProofTarget, sqliteProofConfiguration } from "./drizzle/sqlite-proofs";
-import { makeSqliteSessionTarget, sqliteSessionConfiguration } from "./drizzle/sqlite-sessions";
+export { Database } from "./drizzle/sqlite-node-database";
 
-const sessionTarget = makeSqliteSessionTarget<Database, EffectSQLiteNodeDatabase<AnyRelations>>(
-  Database,
-  (service) => sqliteSessionConfiguration("interactive", sqlClientSessionStandaloneGuard(service)),
-);
-
-const proofTarget = makeSqliteProofTarget<Database, EffectSQLiteNodeDatabase<AnyRelations>>(
-  Database,
-  (service) => sqliteProofConfiguration("interactive", sqlClientProofStandaloneGuard(service)),
-);
-
-const passwordTarget = makeSqlitePasswordTarget<Database, EffectSQLiteNodeDatabase<AnyRelations>>(
-  Database,
-  (service) =>
-    sqlitePasswordConfiguration(
-      "interactive",
-      sqlClientPasswordStandaloneGuard(service),
-      sqlClientProofStandaloneGuard(service),
-    ),
-);
-
-const emailTarget = makeSqliteEmailTarget<Database, EffectSQLiteNodeDatabase<AnyRelations>>(
-  Database,
-  (service) =>
-    sqliteEmailConfiguration(
-      "interactive",
-      sqlClientEmailStandaloneGuard(service),
-      sqlClientProofStandaloneGuard(service),
-    ),
-);
-
-export const {
-  coordinateEmailAddress,
-  coordinateEmailRegistration,
-  makeEmailAddressServices,
-  makeEmailRegistrationServices,
-  makeEmailSignInServices,
-} = emailTarget;
-
-export const {
-  coordinatePasswordPersistence,
-  coordinatePasswordRegistration,
-  makePasswordPersistenceServices,
-  makePasswordRegistrationServices,
-} = passwordTarget;
-
-export const { coordinateProofPersistence, makeProofPersistenceServices } = proofTarget;
-
-export const {
+export {
   coordinateAuthenticationAuthority,
   coordinatePendingAuthentication,
   coordinateSignedSessionValidity,
@@ -91,79 +20,34 @@ export const {
   coordinateSessionStepUp,
   makeSignedSessionValidityServices,
   makeStatefulSessionServices,
-} = sessionTarget;
+} from "./drizzle/sqlite-node-sessions";
 
-export const commitMode = "interactive" as const;
+export {
+  coordinateProofPersistence,
+  makeProofPersistenceServices,
+} from "./drizzle/sqlite-node-proofs";
 
-export const makeIdentityServices = <
-  Subject extends AnySQLiteTable,
-  Identifier extends AnySQLiteTable,
-  External extends AnySQLiteTable,
-  Request extends AnySQLiteTable,
-  NativeId,
->(
-  mapping: IdentityTables<Subject, Identifier, External, Request, NativeId>,
-) =>
-  makeSqliteIdentityServices(mapping, "interactive").pipe(
-    Effect.provideServiceEffect(NativeDatabase, nativeDatabase(Database)),
-  );
+export {
+  coordinatePasswordPersistence,
+  coordinatePasswordRegistration,
+  makePasswordPersistenceServices,
+  makePasswordRegistrationServices,
+} from "./drizzle/sqlite-node-passwords";
 
-export const makeSubjectProvisioningServices = <
-  Subject extends AnySQLiteTable,
-  Identifier extends AnySQLiteTable,
-  Request extends AnySQLiteTable,
-  NativeId,
->(
-  mapping: SubjectProvisioningTables<Subject, Identifier, Request, NativeId>,
-) =>
-  makeSqliteSubjectProvisioningServices(mapping, "interactive").pipe(
-    Effect.provideServiceEffect(NativeDatabase, nativeDatabase(Database)),
-  );
+export {
+  coordinateEmailAddress,
+  coordinateEmailRegistration,
+  makeEmailAddressServices,
+  makeEmailRegistrationServices,
+  makeEmailSignInServices,
+} from "./drizzle/sqlite-node-emails";
 
-export const makeExternalIdentityServices = <
-  Subject extends AnySQLiteTable,
-  External extends AnySQLiteTable,
-  NativeId,
->(
-  mapping: ExternalIdentityTables<Subject, External, NativeId>,
-) =>
-  makeSqliteExternalIdentityServices(mapping).pipe(
-    Effect.provideServiceEffect(NativeDatabase, nativeDatabase(Database)),
-  );
+export {
+  makePasswordPreparedPersistenceServices,
+  coordinatePasswordPreparedPersistence,
+} from "./drizzle/sqlite-node-password-prepared";
 
-import { makeSqlitePasswordPreparedTarget } from "./drizzle/sqlite-password-prepared";
-
-const passwordPreparedTarget = makeSqlitePasswordPreparedTarget<
-  Database,
-  EffectSQLiteNodeDatabase<AnyRelations>
->(Database, (service) =>
-  sqlitePasswordConfiguration(
-    "interactive",
-    sqlClientPasswordStandaloneGuard(service),
-    sqlClientProofStandaloneGuard(service),
-  ),
-);
-
-export const { makePasswordPreparedPersistenceServices, coordinatePasswordPreparedPersistence } =
-  passwordPreparedTarget;
-
-export { passwordPreparedPersistenceLayer } from "./drizzle/password-prepared-target";
-
-import { makeOAuthTarget } from "./drizzle/oauth-drivers";
-import { sqlClientOAuthStandaloneGuard } from "./drizzle/oauth-target";
-
-const oauthTarget = makeOAuthTarget<
-  Database,
-  EffectSQLiteNodeDatabase<AnyRelations>,
-  AnySQLiteTable<{ dialect: "sqlite" }>
->(Database, {
-  mode: "interactive",
-  dialect: "sqlite",
-  locking: false,
-  standaloneGuard: sqlClientOAuthStandaloneGuard,
-});
-
-export const {
+export {
   makeOAuthAccountsServices,
   makeOAuthSignInServices,
   makeOAuthRegistrationIntentServices,
@@ -172,27 +56,16 @@ export const {
   coordinateOAuthSignIn,
   coordinateOAuthRegistrationIntents,
   coordinateOAuthAccounts,
+} from "./drizzle/sqlite-node-oauth";
+
+export {
   makeOAuthConnectedServices,
   makeOAuthConnectedRevocationServices,
   coordinateOAuthConnected,
   coordinateOAuthConnectedRevocations,
-} = oauthTarget;
+} from "./drizzle/sqlite-node-oauth-connected";
 
-import { makePasskeyTarget } from "./drizzle/passkey-drivers";
-import { sqlClientPasskeyStandaloneGuard } from "./drizzle/passkey-target";
-
-const passkeyTarget = makePasskeyTarget<
-  Database,
-  EffectSQLiteNodeDatabase<AnyRelations>,
-  AnySQLiteTable<{ dialect: "sqlite" }>
->(Database, {
-  mode: "interactive",
-  dialect: "sqlite",
-  locking: false,
-  standaloneGuard: sqlClientPasskeyStandaloneGuard,
-});
-
-export const {
+export {
   makePasskeyCredentialServices,
   makePasskeyPersistenceServices,
   makePasskeyEnrollmentContextServices,
@@ -203,47 +76,22 @@ export const {
   makePasskeyRegistrationServices,
   coordinatePasskeyManagement,
   coordinatePasskeyRegistration,
-} = passkeyTarget;
+} from "./drizzle/sqlite-node-passkeys";
 
-import { makeTotpTarget, sqlClientTotpStandaloneGuard } from "./drizzle/totp-target";
+export { makeTotpPersistenceServices, coordinateTotpPersistence } from "./drizzle/sqlite-node-totp";
 
-const totpTarget = makeTotpTarget<
-  Database,
-  EffectSQLiteNodeDatabase<AnyRelations>,
-  AnySQLiteTable<{ dialect: "sqlite" }>
->(Database, {
-  mode: "interactive",
-  dialect: "sqlite",
-  locking: false,
-  standaloneGuard: sqlClientTotpStandaloneGuard,
-});
+export {
+  makePhonePersistenceServices,
+  coordinatePhonePersistence,
+} from "./drizzle/sqlite-node-phone";
 
-export const { makeTotpPersistenceServices, coordinateTotpPersistence } = totpTarget;
+export {
+  makeIdentityServices,
+  makeSubjectProvisioningServices,
+  makeExternalIdentityServices,
+} from "./drizzle/sqlite-node-identity";
 
-import { makePhoneTarget, sqlClientPhoneStandaloneGuard } from "./drizzle/phone-target";
+export { AuthPersistence } from "./internal/sqlite-node-persistence";
 
-const phoneTarget = makePhoneTarget<
-  Database,
-  EffectSQLiteNodeDatabase<AnyRelations>,
-  AnySQLiteTable<{ dialect: "sqlite" }>
->(Database, {
-  mode: "interactive",
-  dialect: "sqlite",
-  locking: false,
-  standaloneGuard: sqlClientPhoneStandaloneGuard,
-});
-
-export const { makePhonePersistenceServices, coordinatePhonePersistence } = phoneTarget;
-
-import { drizzleMigrationsLayer } from "./internal/drizzle-migrations";
-import { sqlitePersistence } from "./internal/drizzle-sqlite";
-
-export const AuthPersistence = {
-  ...sqlitePersistence(makeWithDefaults({})),
-  migrationsLayer: drizzleMigrationsLayer(
-    makeWithDefaults({}),
-    Effect.promise(() => import("drizzle-orm/effect-sqlite-node/migrator")).pipe(
-      Effect.map((module) => module.migrate),
-    ),
-  ),
-};
+/** Construct Drizzle from the driver's SQL-client Layer. */
+export const databaseLayer = Layer.effect(Database, makeWithDefaults({}));

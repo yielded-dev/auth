@@ -16,6 +16,7 @@ import { Database as DatabaseService } from "./d1-database";
 import { makeD1Owner } from "./d1-planning";
 import { D1BatchStatements } from "./D1BatchStatements";
 import { nativeDatabase } from "./native-database";
+import type { OAuthCoordinatorError } from "./oauth-execution";
 import type {
   OAuthAccountsMapping,
   OAuthD1Mapping,
@@ -25,7 +26,6 @@ import type {
   OAuthSignInMapping,
 } from "./oauth-model";
 import {
-  type OAuthCoordinatorError,
   coordinateTargetOAuthAccounts,
   coordinateTargetOAuthSignIn,
   coordinateTargetOAuthRegistrationIntents,

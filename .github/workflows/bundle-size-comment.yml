@@ -1,0 +1,146 @@
+name: Bundle size comment
+
+on:
+  # GitHub activates workflow_run publishers only after this file reaches the
+  # default branch. The introducing PR still receives the build summary/artifacts.
+  workflow_run:
+    workflows: [Bundle size]
+    types: [completed]
+
+permissions: {}
+
+concurrency:
+  # A fork branch can back more than one PR. Do not cancel a sibling publisher.
+  group: bundle-comment-${{ github.event.workflow_run.id }}
+  cancel-in-progress: true
+
+jobs:
+  comment:
+    if: >-
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.path == '.github/workflows/bundle-size.yml' &&
+      github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      pull-requests: write
+    steps:
+      - name: Download comparison data
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: bundle-stats
+          path: bundle-stats
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+
+      # No checkout, dependency installation, or execution of artifact code.
+      # Reconstruct the comment from bounded data instead of artifact Markdown.
+      - name: Update bundle comparison comment
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea9 # v7
+        with:
+          script: |
+            const fs = require('node:fs');
+            const readData = (file, limit) => {
+              const stat = fs.lstatSync(file);
+              if (!stat.isFile() || stat.size > limit) throw new Error('Invalid bundle metadata');
+              return fs.readFileSync(file, 'utf8');
+            };
+            const number = readData('bundle-stats/pr-number.txt', 20).trim();
+            const report = JSON.parse(readData('bundle-stats/report.json', 1_000_000));
+            const sha = value => typeof value === 'string' && /^[a-f0-9]{40}$/.test(value);
+            const version = value => typeof value === 'string' && /^[0-9][0-9A-Za-z.+-]{0,63}$/.test(value);
+            if (!/^[1-9][0-9]{0,9}$/.test(number) || report.schemaVersion !== 1 ||
+                !sha(report.base?.revision) || !sha(report.head?.revision) ||
+                !version(report.bundlers?.esbuild) || !version(report.bundlers?.vite) ||
+                report.settings?.format !== 'esm' || report.settings.target !== 'es2022' ||
+                report.settings.resolution !== 'browser' ||
+                report.settings.minify !== true ||
+                report.settings.compression !== 'gzip level 9 per chunk' ||
+                report.settings.builtins !== 'external for server probes') {
+              throw new Error('Invalid bundle report metadata');
+            }
+            const bundlers = ['esbuild', 'vite'];
+            const bytes = value => Number.isSafeInteger(value) && value >= 0;
+            const validSize = size => {
+              if (!size || !['initial', 'deferred', 'total'].every(part =>
+                  bytes(size[part]?.raw) && bytes(size[part]?.gzip))) return false;
+              return ['raw', 'gzip'].every(unit =>
+                size.initial[unit] + size.deferred[unit] === size.total[unit]);
+            };
+            // The producer owns fixture coverage; validate safe, complete pairs here.
+            if (!Array.isArray(report.fixtures) || report.fixtures.length < 2 || report.fixtures.length > 100) {
+              throw new Error('Incomplete bundle comparison');
+            }
+            const fixtures = new Map();
+            for (const fixture of report.fixtures) {
+              const key = `${fixture?.name}/${fixture?.bundler}`;
+              if (typeof fixture?.name !== 'string' || !/^[a-z][a-z0-9-]{0,63}$/.test(fixture.name) ||
+                  !bundlers.includes(fixture.bundler) || fixtures.has(key) || !validSize(fixture.head) ||
+                  (fixture.base !== null && !validSize(fixture.base))) {
+                throw new Error('Invalid bundle comparison row');
+              }
+              fixtures.set(key, fixture);
+            }
+            for (const { name } of fixtures.values()) {
+              if (!bundlers.every(bundler => fixtures.has(`${name}/${bundler}`))) {
+                throw new Error('Incomplete bundle comparison');
+              }
+            }
+            const run = context.payload.workflow_run;
+            if (run.repository.id !== context.payload.repository.id || !run.head_repository ||
+                report.head.revision !== run.head_sha) return;
+            const { data: pr } = await github.rest.pulls.get({
+              ...context.repo, pull_number: Number(number),
+            });
+            if (pr.state !== 'open' || pr.head.sha !== run.head_sha ||
+                pr.head.repo?.id !== run.head_repository.id ||
+                pr.base.sha !== report.base.revision ||
+                pr.base.repo.full_name !== `${context.repo.owner}/${context.repo.repo}`) return;
+            const kb = bytes => `${(bytes / 1000).toFixed(2)} kB`;
+            const change = (before, after) => {
+              if (before === undefined) return 'no baseline';
+              const delta = after - before;
+              const sign = delta > 0 ? '+' : '';
+              return `${sign}${kb(delta)}${before === 0 ? '' : ` / ${sign}${(delta / before * 100).toFixed(2)}%`}`;
+            };
+            const table = [
+              '| Fixture | Bundler | Base gzip | PR gzip | Change | PR minified |',
+              '| --- | --- | ---: | ---: | ---: | ---: |',
+            ];
+            const split = [
+              '| Fixture | Bundler | Part | Base gzip | PR gzip | PR minified |',
+              '| --- | --- | --- | ---: | ---: | ---: |',
+            ];
+            for (const fixture of fixtures.values()) {
+              const { name, bundler } = fixture;
+              const before = fixture.base?.total.gzip;
+              const after = fixture.head.total;
+              table.push(`| ${name} | ${bundler} | ${before === undefined ? 'n/a' : kb(before)} | ${kb(after.gzip)} | ${change(before, after.gzip)} | ${kb(after.raw)} |`);
+              if (fixture.head.deferred.raw > 0 || (fixture.base?.deferred.raw ?? 0) > 0) {
+                for (const part of ['initial', 'deferred']) {
+                  const base = fixture.base?.[part];
+                  const head = fixture.head[part];
+                  split.push(`| ${name} | ${bundler} | ${part} | ${base ? kb(base.gzip) : 'n/a'} | ${kb(head.gzip)} | ${kb(head.raw)} |`);
+                }
+              }
+            }
+            const marker = '<!-- yielded-auth:bundle-size -->';
+            const body = `${marker}\n### Bundle size\n\n${table.join('\n')}\n\n` +
+              (split.length > 2 ? `<details>\n<summary>Initial and deferred output</summary>\n\n${split.join('\n')}\n\n</details>\n\n` : '') +
+              'Minified ESM for ES2022 with browser resolution, including Effect and other dependencies. Server built-ins are external. ' +
+              'Totals include every emitted JavaScript chunk, with gzip level 9 measured per chunk. ' +
+              'Initial includes statically imported shared chunks; deferred is the remaining emitted output, including any unreachable chunks. ' +
+              'These isolated consumer sizes are not additive or runtime-speed measurements.\n\n' +
+              `esbuild \`${report.bundlers.esbuild}\`; Vite \`${report.bundlers.vite}\`. ` +
+              `[Chunks, module analysis, and exact bytes](${run.html_url}) for \`${run.head_sha.slice(0, 12)}\` against \`${report.base.revision.slice(0, 12)}\`.`;
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              ...context.repo, issue_number: pr.number, per_page: 100,
+            });
+            const previous = comments.find(comment =>
+              comment.user?.login === 'github-actions[bot]' && comment.body?.startsWith(marker));
+            if (previous) {
+              await github.rest.issues.updateComment({ ...context.repo, comment_id: previous.id, body });
+            } else {
+              await github.rest.issues.createComment({ ...context.repo, issue_number: pr.number, body });
+            }
