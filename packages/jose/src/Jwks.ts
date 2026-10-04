@@ -21,7 +21,7 @@ import * as KeyInput from "./internal/keyInput";
 import { AsymmetricAlgorithm, importPublic, type PublicKey, PublicJwk } from "./Jwk";
 
 export const KeySet = Schema.Struct({
-  keys: Schema.Array(PublicJwk).check(Schema.isMaxLength(256)),
+  keys: Schema.Array(PublicJwk).check(Schema.isMaxLength(KeyInput.maxArrayLength)),
 });
 
 export type KeySet = typeof KeySet.Type;
@@ -73,6 +73,7 @@ const readSet = (input: unknown) =>
     try: () => KeyInput.keySet(input),
     catch: () => InvalidKey.make({}),
   }).pipe(
+    Effect.flatMap(Effect.fromResult),
     Effect.flatMap((captured) =>
       Schema.decodeUnknownEffect(KeySet)(captured, { reportInput: false }).pipe(
         Effect.mapError(() => InvalidKey.make({})),
@@ -137,7 +138,7 @@ const RemoteConfiguration = Schema.Struct({
   cooldownMs: bounded(0, 3600000),
   timeoutMs: bounded(1, 60000),
   maxResponseBytes: bounded(1, 1048576),
-  maxKeys: bounded(1, 256),
+  maxKeys: bounded(1, KeyInput.maxArrayLength),
   maxWaiters: bounded(1, 1024),
 });
 

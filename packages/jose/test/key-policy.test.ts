@@ -1,8 +1,8 @@
 import { generateKeyPairSync } from "node:crypto";
 
 import { it } from "@effect/vitest";
-import { Jwe, Jwk, Jws } from "@yielded/jose";
-import { Effect, Redacted } from "effect";
+import { Jwe, Jwk, Jwks, Jws } from "@yielded/jose";
+import { Effect, Layer, Redacted } from "effect";
 import * as jose from "jose";
 import { expect } from "vite-plus/test";
 
@@ -116,6 +116,33 @@ it.effect("captures every operation slot before a getter can shorten its array",
       (yield* Jwk.importPublic({ ...publicJwk, key_ops }, "ES256").pipe(Effect.flip))._tag,
     ).toBe("JoseInvalidKey");
   }).pipe(Effect.provide(cryptoLayer)),
+);
+
+// ec3ab38 expands sparse input lengths before admission. The throwing first
+// slot safely stops the old loop; bounded admission must never invoke it.
+it.effect.each(["JWK", "JWKS"] as const)(
+  "rejects oversized sparse %s metadata before reading its slots",
+  (boundary) =>
+    Effect.gen(function* () {
+      const sparse: Array<unknown> = [];
+      let reads = 0;
+
+      sparse.length = 100_000_000;
+      Object.defineProperty(sparse, "0", {
+        get() {
+          reads++;
+          throw new Error("oversized-array-slot-canary");
+        },
+      });
+
+      const error =
+        boundary === "JWK"
+          ? yield* Jwk.importPublic({ ...publicJwk, key_ops: sparse }, "ES256").pipe(Effect.flip)
+          : yield* Layer.build(Jwks.layerLocal({ keys: sparse })).pipe(Effect.flip);
+
+      expect(error._tag).toBe("JoseInvalidKey");
+      expect(reads).toBe(0);
+    }).pipe(Effect.scoped, Effect.provide(cryptoLayer)),
 );
 
 it.effect.each([

@@ -112,7 +112,8 @@ Private keys require complete RSA CRT parameters, P-256 coordinates and scalar,
 or Ed25519 public and private bytes. Native key parsing validates the components.
 Public imports and JWKS reject private keys. Imports and key sets capture their
 own properties once and ignore inherited key material and metadata;
-`alg`, `use`, and `key_ops` restrict operations. JWKS select one public key by
+`alg`, `use`, and `key_ops` restrict operations. Key sets and each `key_ops` array
+are limited to 256 entries before their slots are captured. JWKS select one public key by
 algorithm, optional `kid`, use and operations; missing or ambiguous selections fail.
 
 `Jwe.encrypt(plaintext, key, { alg: "dir", enc: "A256GCM" })` requires `Aead` and

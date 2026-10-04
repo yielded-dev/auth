@@ -17,6 +17,7 @@ const encodedBytes = Schema.String.check(
 );
 
 const operations = Schema.Array(Schema.NonEmptyString).check(
+  Schema.isMaxLength(KeyInput.maxArrayLength),
   Schema.makeFilter((values) => new Set(values).size === values.length),
 );
 
@@ -109,6 +110,7 @@ const read = <S extends Schema.Constraint>(schema: S, input: unknown) =>
     try: () => KeyInput.jwk(input),
     catch: () => InvalidKey.make({}),
   }).pipe(
+    Effect.flatMap(Effect.fromResult),
     Effect.flatMap((captured) =>
       Schema.decodeUnknownEffect(schema)(captured, { reportInput: false }).pipe(
         Effect.mapError(() => InvalidKey.make({})),

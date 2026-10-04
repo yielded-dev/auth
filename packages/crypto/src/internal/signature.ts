@@ -45,6 +45,56 @@ const operationAlgorithm = (algorithm: Algorithm) => {
 };
 
 export const makeSignature = (subtle: SubtleCrypto): Signature["Service"] => {
+  // JOSE owns JWK metadata and policy. The adapter translates validated raw
+  // components through its platform key parser.
+  const importComponents = Effect.fnUntraced(function* (
+    parameters: PublicKeyParameters | PrivateKeyParameters,
+    usage: "sign" | "verify",
+  ) {
+    let jwk: JsonWebKey;
+
+    switch (parameters.algorithm) {
+      case "ECDSA-P256-SHA256":
+        jwk = {
+          kty: "EC",
+          crv: "P-256",
+          x: Base64Url.encode(parameters.x),
+          y: Base64Url.encode(parameters.y),
+        };
+        break;
+      case "Ed25519":
+        jwk = { kty: "OKP", crv: "Ed25519", x: Base64Url.encode(parameters.x) };
+        break;
+      case "RSASSA-PKCS1-v1_5-SHA256":
+      case "RSA-PSS-SHA256":
+        jwk = { kty: "RSA", n: Base64Url.encode(parameters.n), e: Base64Url.encode(parameters.e) };
+        if ("p" in parameters) {
+          jwk.p = Base64Url.encode(parameters.p);
+          jwk.q = Base64Url.encode(parameters.q);
+          jwk.dp = Base64Url.encode(parameters.dp);
+          jwk.dq = Base64Url.encode(parameters.dq);
+          jwk.qi = Base64Url.encode(parameters.qi);
+        }
+    }
+    if ("d" in parameters) jwk.d = Base64Url.encode(parameters.d);
+
+    const key = yield* Effect.tryPromise({
+      try: () => subtle.importKey("jwk", jwk, importAlgorithm(parameters.algorithm), true, [usage]),
+      catch: importError,
+    });
+
+    if (
+      parameters.algorithm === "RSA-PSS-SHA256" ||
+      parameters.algorithm === "RSASSA-PKCS1-v1_5-SHA256"
+    ) {
+      yield* Schema.decodeUnknownEffect(RsaAlgorithm)(key.algorithm).pipe(
+        Effect.mapError(() => InvalidInput.make({ reason: "key" })),
+      );
+    }
+
+    return key;
+  });
+
   const importKey = Effect.fnUntraced(function* (
     algorithm: Algorithm,
     format: "pkcs8" | "spki",
@@ -73,7 +123,7 @@ export const makeSignature = (subtle: SubtleCrypto): Signature["Service"] => {
   return Signature.of({
     encodePublicKey: Effect.fnUntraced(function* (input) {
       const parameters = yield* decode(PublicKeyParameters, input, "key");
-      const key = yield* importComponents(subtle, parameters, "verify");
+      const key = yield* importComponents(parameters, "verify");
 
       const encoded = yield* Effect.tryPromise({
         try: () => subtle.exportKey("spki", key),
@@ -90,7 +140,7 @@ export const makeSignature = (subtle: SubtleCrypto): Signature["Service"] => {
       );
 
       const parameters = Redacted.value(wrapped);
-      const key = yield* importComponents(subtle, parameters, "sign");
+      const key = yield* importComponents(parameters, "sign");
 
       const encoded = yield* Effect.tryPromise({
         try: () => subtle.exportKey("pkcs8", key),
@@ -136,54 +186,3 @@ export const makeSignature = (subtle: SubtleCrypto): Signature["Service"] => {
     }),
   });
 };
-
-// JOSE owns JWK metadata and policy. This boundary only translates validated raw
-// components through the platform's key parser; no ASN.1 implementation is shared.
-const importComponents = Effect.fnUntraced(function* (
-  subtle: SubtleCrypto,
-  parameters: PublicKeyParameters | PrivateKeyParameters,
-  usage: "sign" | "verify",
-) {
-  let jwk: JsonWebKey;
-
-  switch (parameters.algorithm) {
-    case "ECDSA-P256-SHA256":
-      jwk = {
-        kty: "EC",
-        crv: "P-256",
-        x: Base64Url.encode(parameters.x),
-        y: Base64Url.encode(parameters.y),
-      };
-      break;
-    case "Ed25519":
-      jwk = { kty: "OKP", crv: "Ed25519", x: Base64Url.encode(parameters.x) };
-      break;
-    case "RSASSA-PKCS1-v1_5-SHA256":
-    case "RSA-PSS-SHA256":
-      jwk = { kty: "RSA", n: Base64Url.encode(parameters.n), e: Base64Url.encode(parameters.e) };
-      if ("p" in parameters) {
-        jwk.p = Base64Url.encode(parameters.p);
-        jwk.q = Base64Url.encode(parameters.q);
-        jwk.dp = Base64Url.encode(parameters.dp);
-        jwk.dq = Base64Url.encode(parameters.dq);
-        jwk.qi = Base64Url.encode(parameters.qi);
-      }
-  }
-  if ("d" in parameters) jwk.d = Base64Url.encode(parameters.d);
-
-  const key = yield* Effect.tryPromise({
-    try: () => subtle.importKey("jwk", jwk, importAlgorithm(parameters.algorithm), true, [usage]),
-    catch: importError,
-  });
-
-  if (
-    parameters.algorithm === "RSA-PSS-SHA256" ||
-    parameters.algorithm === "RSASSA-PKCS1-v1_5-SHA256"
-  ) {
-    yield* Schema.decodeUnknownEffect(RsaAlgorithm)(key.algorithm).pipe(
-      Effect.mapError(() => InvalidInput.make({ reason: "key" })),
-    );
-  }
-
-  return key;
-});
