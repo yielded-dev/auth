@@ -11,9 +11,9 @@ import {
   connectedRead,
   connectedSafe,
   validateConnectedPolicy,
-  wipeConnectedMaterial,
 } from "./connectedAccess";
 import * as M from "./connectedModels";
+import { wipeConnectedMaterial } from "./grantTokens";
 import { OAuthConnectedPersistence } from "./OAuthConnectedPersistence";
 import { OAuthConnectedProtocol } from "./OAuthConnectedProtocol";
 import {

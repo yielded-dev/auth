@@ -107,11 +107,17 @@ you use.
 
 Auth owns schemas, workflows, and direct password, TOTP, and OAuth implementations.
 Its runtime dependencies are Effect and the first-party `@yielded/crypto` and
-`@yielded/oauth` packages; native OAuth uses first-party JOSE verification.
+`@yielded/oauth` packages; OpenID Connect uses first-party JOSE verification.
 `OpenIdConnect` and `GitHub` configure native providers without a provider SDK.
 Optional SDK adapters depend on Auth's public contracts; Auth never imports or
 re-exports them. Applications supply storage, policy, delivery authority, and
 explicit crypto/HTTP Layers.
+
+The direct `GitHub` module loads plain OAuth; its provider setup requires Effect
+`Crypto` and `HttpClient` in a `Scope`. `OpenIdConnect` additionally installs
+discovery and signed ID-token verification, requiring `Hmac` and `Signature`.
+The `OAuth` module separately owns encryption of flow secrets and retained tokens.
+Direct paths narrow module loading; they do not change installed package dependencies.
 
 `@yielded/auth-persistence` exports the named `AuthPersistence` facade for direct
 Effect SQL and has no Drizzle dependency or declarations. The Drizzle companion's

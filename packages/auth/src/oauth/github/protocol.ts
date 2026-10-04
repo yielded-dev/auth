@@ -4,6 +4,8 @@ import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
 
 import { OAuthConnectedProfile } from "../permissionProfile";
 import { tokenCompatibility, type ConnectedCompatibility } from "../providers/compatibility";
+import { installOAuthConfigurations } from "../providers/configuration";
+import { installOAuthConnectedConfigurations } from "../providers/connected/configuration";
 import { makeConnectedProtocolWithCompatibility } from "../providers/connected/protocol";
 import {
   OpenIdConnectConfigurationError,
@@ -321,10 +323,12 @@ export const makeGitHubOAuthAppProtocol = Effect.fn("makeGitHubOAuthAppProtocol"
   if (saved.registrations.filter((item) => item.issuance === "active").length !== 1)
     return yield* invalid();
 
-  return yield* makeOpenIdConnectOAuthProtocol({
-    ...saved,
-    providers: saved.registrations.map(signInProvider),
-  });
+  return yield* makeOpenIdConnectOAuthProtocol(
+    installOAuthConfigurations({
+      ...saved,
+      providers: saved.registrations.map(signInProvider),
+    }),
+  );
 });
 
 export const makeGitHubOAuthAppConnectedProtocol = Effect.fn("makeGitHubOAuthAppConnectedProtocol")(
@@ -350,17 +354,20 @@ export const makeGitHubOAuthAppConnectedProtocol = Effect.fn("makeGitHubOAuthApp
     }
 
     return yield* makeConnectedProtocolWithCompatibility(
-      {
-        ...saved,
-        providers: saved.registrations.map((item) => ({
-          ...provider(item),
-          profiles: item.profiles,
-          clientRegistrationId: item.clientId,
-          resourceIndicators: "unsupported",
-          refreshExpiry: { field: "refresh_token_expires_in", zero: "expired" },
-          revocation: { mode: "provider-cohort" },
-        })),
-      },
+      installOAuthConnectedConfigurations(
+        {
+          ...saved,
+          providers: saved.registrations.map((item) => ({
+            ...provider(item),
+            profiles: item.profiles,
+            clientRegistrationId: item.clientId,
+            resourceIndicators: "unsupported",
+            refreshExpiry: { field: "refresh_token_expires_in", zero: "expired" },
+            revocation: { mode: "provider-cohort" },
+          })),
+        },
+        true,
+      ),
       compatibility,
     ).pipe(Effect.provide(revocationLayer(saved)));
   },

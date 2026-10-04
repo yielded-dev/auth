@@ -4,6 +4,7 @@ import { OAuthConnectedProtocol } from "../OAuthConnectedProtocol";
 import { OAuthProtocol } from "../OAuthProtocol";
 import { OAuthConnectedProfile, OAuthPermissionProfileKey } from "../permissionProfile";
 import { type ProviderDefinition } from "../providerDefinition";
+import { installOAuthConfigurations } from "../providers/configuration";
 import type { OpenIdConnectConfigurationError } from "../providers/models";
 import type { Requirements } from "../providers/native";
 import {
@@ -96,13 +97,15 @@ export const provider = (
 
     const providers = yield* Effect.forEach(registrations, makeGitHubOAuthAppProvider);
 
-    const protocol = yield* makeOpenIdConnectOAuthProtocol({
-      providers: providers.map((input) => ({
-        ...input,
-        provider: binding.provider,
-      })),
-      timeoutSeconds: options.timeoutSeconds ?? 10,
-    });
+    const protocol = yield* makeOpenIdConnectOAuthProtocol(
+      installOAuthConfigurations({
+        providers: providers.map((input) => ({
+          ...input,
+          provider: binding.provider,
+        })),
+        timeoutSeconds: options.timeoutSeconds ?? 10,
+      }),
+    );
 
     const profiles = options.access;
 

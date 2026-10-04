@@ -30,13 +30,13 @@ import type { makeSessionModule } from "../sessions/module";
 import { makeOAuthAccounts } from "./accounts";
 import type { OAuthAccountsPolicy } from "./accountsModels";
 import { makeOAuthConnected } from "./connected";
-import { wipeConnectedMaterial } from "./connectedAccess";
 import {
   type OAuthConnectedPolicy,
   type OAuthConnectedProfile,
   type OAuthConnectedGrantResponse,
 } from "./connectedModels";
 import { completionResult } from "./contracts";
+import { wipeConnectedMaterial } from "./grantTokens";
 import { OAuthProtocol } from "./OAuthProtocol";
 import { OAuthRegistrationIntents, OAuthRegistrationSettlement } from "./OAuthRegistrationIntents";
 import { OAuthReturnTargets } from "./OAuthReturnTargets";

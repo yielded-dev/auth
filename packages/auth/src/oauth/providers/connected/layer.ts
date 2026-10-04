@@ -1,6 +1,7 @@
 import { Effect, Layer } from "effect";
 
 import { OAuthConnectedProtocol } from "../../OAuthConnectedProtocol";
+import { installConnectedConfigurations } from "../oidc";
 import { resolveOptions, resolveProvider, type ProviderOptions } from "../options";
 import type {
   OpenIdConnectConnectedOAuthProvider,
@@ -48,5 +49,9 @@ export const layer = <R = never>(options: Options<R>) =>
           timeoutSeconds: options.timeoutSeconds === undefined ? 10 : options.timeoutSeconds,
         })),
       ),
-    ).pipe(Effect.flatMap(makeOpenIdConnectConnectedProtocol<R>)),
+    ).pipe(
+      Effect.flatMap((configuration) =>
+        makeOpenIdConnectConnectedProtocol(installConnectedConfigurations<R>(configuration)),
+      ),
+    ),
   );

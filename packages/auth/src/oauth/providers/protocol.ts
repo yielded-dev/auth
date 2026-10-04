@@ -1,5 +1,5 @@
 import * as Pkce from "@yielded/oauth/Pkce";
-import { Cause, Crypto, DateTime, Effect, Redacted, Schema } from "effect";
+import { Cause, Crypto, DateTime, Effect, Redacted, Schema, type Scope } from "effect";
 
 import { reportAuthFailure } from "../../internal/diagnostics";
 import { RequestBindingFlowId } from "../../operations/requestBindingModels";
@@ -18,12 +18,8 @@ import {
 } from "../signInModels";
 import { snapshotOAuth } from "../signInSnapshot";
 import { tokenCompatibility } from "./compatibility";
-import { installConfigurations } from "./configuration";
-import {
-  type OpenIdConnectConfigurationError,
-  type OpenIdConnectOAuthProtocolOptions,
-} from "./models";
-import type { Requirements } from "./native";
+import type { InstalledConfiguration } from "./configuration";
+import type { OpenIdConnectConfigurationError } from "./models";
 import { decodeOidcProfile } from "./profile";
 import { tokens } from "./receipt";
 
@@ -67,16 +63,21 @@ const unavailableOnDefect = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
 
 export const makeOpenIdConnectOAuthProtocol = Effect.fn("makeOpenIdConnectOAuthProtocol")(
   // Capture one provider table; each generation retains its own receipt rules.
-  function* <R = never>(
-    options: OpenIdConnectOAuthProtocolOptions<R>,
+  function* <R, Setup>(
+    installation: Effect.Effect<
+      InstalledConfiguration<R>,
+      OpenIdConnectConfigurationError | OAuthUnavailable,
+      Setup
+    >,
   ): Effect.fn.Return<
     OAuthProtocol["Service"],
     OpenIdConnectConfigurationError | OAuthUnavailable,
-    R | Requirements
+    R | Setup | Crypto.Crypto | Scope.Scope
   > {
     const context = yield* Effect.context<R>();
     const crypto = yield* Crypto.Crypto;
-    const { installed, timeoutSeconds } = yield* installConfigurations(options);
+    // Setup shares the protocol's containment for supplied platform services.
+    const { installed, timeoutSeconds } = yield* installation;
 
     const prepareAuthorization: OAuthProtocol["Service"]["prepareAuthorization"] = Effect.fn(
       "OpenIdConnect.prepareAuthorization",

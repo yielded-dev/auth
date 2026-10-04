@@ -32,4 +32,4 @@ export type {
   OpenIdConnectConnectedRevocation,
 } from "./oauth/providers/connected/models";
 
-export type { Requirements } from "./oauth/providers/native";
+export type { Requirements } from "./oauth/providers/oidc";

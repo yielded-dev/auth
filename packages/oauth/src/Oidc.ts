@@ -1,4 +1,6 @@
-import { Jwks, Jwt, type Jws } from "@yielded/jose";
+import * as Jwks from "@yielded/jose/Jwks";
+import type * as Jws from "@yielded/jose/Jws";
+import * as Jwt from "@yielded/jose/Jwt";
 import {
   Clock,
   Context,

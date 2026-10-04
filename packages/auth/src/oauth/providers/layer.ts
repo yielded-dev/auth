@@ -10,7 +10,7 @@ import type {
   OpenIdConnectOAuthProvider,
   OpenIdConnectOidcProvider,
 } from "./models";
-import type { Requirements } from "./native";
+import { installConfigurations, installConnectedConfigurations, type Requirements } from "./oidc";
 import {
   resolveOptions,
   resolveProvider,
@@ -85,10 +85,12 @@ export const provider = <R = never>(
         ),
       );
 
-      const protocol = yield* makeOpenIdConnectOAuthProtocol<R>({
-        providers: registrations,
-        timeoutSeconds: options.timeoutSeconds ?? 10,
-      });
+      const protocol = yield* makeOpenIdConnectOAuthProtocol(
+        installConfigurations<R>({
+          providers: registrations,
+          timeoutSeconds: options.timeoutSeconds ?? 10,
+        }),
+      );
 
       const access = "registrations" in options ? options.registrations : [options];
 
@@ -100,10 +102,12 @@ export const provider = <R = never>(
 
       if (connectedProviders.length === 0) return protocol;
 
-      const connected = yield* makeOpenIdConnectConnectedProtocol<R>({
-        providers: connectedProviders,
-        timeoutSeconds: options.timeoutSeconds ?? 10,
-      });
+      const connected = yield* makeOpenIdConnectConnectedProtocol(
+        installConnectedConfigurations<R>({
+          providers: connectedProviders,
+          timeoutSeconds: options.timeoutSeconds ?? 10,
+        }),
+      );
 
       return { ...protocol, connected };
     }),
@@ -129,5 +133,9 @@ export const layer = <R = never>(options: Options<R>) =>
           timeoutSeconds: options.timeoutSeconds === undefined ? 10 : options.timeoutSeconds,
         })),
       ),
-    ).pipe(Effect.flatMap(makeOpenIdConnectOAuthProtocol<R>)),
+    ).pipe(
+      Effect.flatMap((configuration) =>
+        makeOpenIdConnectOAuthProtocol(installConfigurations<R>(configuration)),
+      ),
+    ),
   );

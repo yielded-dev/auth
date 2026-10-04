@@ -1,7 +1,7 @@
 import type * as OAuth from "@yielded/oauth/OAuth";
 import type * as Oidc from "@yielded/oauth/Oidc";
 import * as Pkce from "@yielded/oauth/Pkce";
-import { Cause, Crypto, DateTime, Effect, Fiber, Redacted, Schema } from "effect";
+import { Cause, Crypto, DateTime, Effect, Fiber, Redacted, Schema, type Scope } from "effect";
 
 import { reportAuthFailure } from "../../../internal/diagnostics";
 import { RequestBindingFlowId } from "../../../operations/requestBindingModels";
@@ -18,18 +18,16 @@ import {
   OAuthTransactionSecrets,
 } from "../../signInModels";
 import { snapshotOAuth } from "../../signInSnapshot";
-import { type ConnectedCompatibility, type ConnectedOptions } from "../compatibility";
-import { type OpenIdConnectConfigurationError } from "../models";
-import type { Requirements } from "../native";
+import { type ConnectedCompatibility } from "../compatibility";
+import type { OpenIdConnectConfigurationError } from "../models";
 import { decodeOidcProfile } from "../profile";
 import { ProviderRevocation } from "../ProviderRevocation";
 import { tokens } from "../receipt";
 import {
-  installConnectedConfigurations,
   sameConnectedProfile,
+  type InstalledConnectedConfiguration,
   type InstalledConnectedProvider,
 } from "./configuration";
-import type { OpenIdConnectConnectedProtocolOptions } from "./models";
 
 const unavailable = () => OAuthUnavailable.make({});
 const rejected = () => OAuthProtocolRejected.make({});
@@ -130,13 +128,17 @@ const sameStrings = (left: ReadonlyArray<string>, right: ReadonlyArray<string>) 
 
 export const makeConnectedProtocolWithCompatibility = Effect.fn(
   "makeOpenIdConnectConnectedProtocol",
-)(function* <R = never>(
-  options: ConnectedOptions<R>,
+)(function* <R, Setup>(
+  installation: Effect.Effect<
+    InstalledConnectedConfiguration<R>,
+    OpenIdConnectConfigurationError | OAuthUnavailable,
+    Setup
+  >,
   compatibility?: ConnectedCompatibility,
 ): Effect.fn.Return<
   OAuthConnectedProtocol["Service"],
   OpenIdConnectConfigurationError | OAuthUnavailable,
-  R | ProviderRevocation | Requirements
+  R | Setup | ProviderRevocation | Crypto.Crypto | Scope.Scope
 > {
   const decoderContext = yield* Effect.context<R>();
   const crypto = yield* Crypto.Crypto;
@@ -159,10 +161,8 @@ export const makeConnectedProtocolWithCompatibility = Effect.fn(
           ),
     );
 
-  const { installed, timeoutSeconds } = yield* installConnectedConfigurations(
-    options,
-    compatibility !== undefined,
-  );
+  // Setup shares the protocol's containment for supplied platform services.
+  const { installed, timeoutSeconds } = yield* installation;
 
   const retained = Effect.fn("OpenIdConnectConnected.retained")(function* (
     saved: M.OAuthConnectedConfiguration,
@@ -677,13 +677,17 @@ export const makeConnectedProtocolWithCompatibility = Effect.fn(
   });
 }, safe);
 
-export const makeOpenIdConnectConnectedProtocol = <R = never>(
-  options: OpenIdConnectConnectedProtocolOptions<R>,
+export const makeOpenIdConnectConnectedProtocol = <R, Setup>(
+  installation: Effect.Effect<
+    InstalledConnectedConfiguration<R>,
+    OpenIdConnectConfigurationError | OAuthUnavailable,
+    Setup
+  >,
 ): Effect.Effect<
   OAuthConnectedProtocol["Service"],
   OpenIdConnectConfigurationError | OAuthUnavailable,
-  R | Requirements
+  R | Setup | Crypto.Crypto | Scope.Scope
 > =>
-  makeConnectedProtocolWithCompatibility(options).pipe(
+  makeConnectedProtocolWithCompatibility(installation).pipe(
     Effect.provide(ProviderRevocation.layerUnsupported),
   );

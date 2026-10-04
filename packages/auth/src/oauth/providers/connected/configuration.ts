@@ -1,10 +1,8 @@
 import type * as OAuth from "@yielded/oauth/OAuth";
-import * as Oidc from "@yielded/oauth/Oidc";
 import { Effect, Predicate, Redacted, Schema } from "effect";
 
 import { OAuthConnectedProfile } from "../../permissionProfile";
 import { OAuthProviderKey, OAuthGeneration } from "../../schema";
-import { OAuthUnavailable } from "../../signInErrors";
 import { OAuthCallbackId, OAuthIssuer, OAuthRedirectUri } from "../../signInModels";
 import { freezeOAuth } from "../../signInSnapshot";
 import type { ConnectedOptions, ProviderConnectedOAuth } from "../compatibility";
@@ -237,8 +235,13 @@ export const sameConnectedProfile = (
   saved: OAuthConnectedProfile,
 ) => equivalentProfile({ ...registered, issuance: saved.issuance }, saved);
 
-export const installConnectedConfigurations = Effect.fn(
-  "OpenIdConnect.installConnectedConfigurations",
+export interface InstalledConnectedConfiguration<R> {
+  readonly installed: ReadonlyArray<InstalledConnectedProvider<R>>;
+  readonly timeoutSeconds: number;
+}
+
+export const prepareConnectedConfigurations = Effect.fn(
+  "OpenIdConnect.prepareConnectedConfigurations",
 )(function* <R>(input: ConnectedOptions<R>, providerCohort = false) {
   const options = yield* Schema.decodeEffect(optionsSchema<R>(providerCohort))(input).pipe(
     Effect.mapError(() => configurationError("provider")),
@@ -407,32 +410,12 @@ export const installConnectedConfigurations = Effect.fn(
     }
     freezeOAuth(provider);
   }
-  const installed: InstalledConnectedProvider<R>[] = [];
 
-  for (const provider of providers) {
-    let raw: OAuth.Metadata;
+  return { providers, timeoutSeconds: options.timeoutSeconds };
+});
 
-    if (provider.protocol === "oidc") {
-      raw = yield* Oidc.discover(provider.issuer, {
-        timeoutMs: options.timeoutSeconds * 1000,
-      }).pipe(
-        Effect.mapError((error) =>
-          error._tag === "OAuthConfigurationError"
-            ? configurationError("metadata")
-            : OAuthUnavailable.make({}),
-        ),
-      );
-    } else
-      raw = {
-        issuer: provider.issuer,
-        authorization_endpoint: provider.authorizationEndpoint,
-        token_endpoint: provider.tokenEndpoint,
-        authorization_response_iss_parameter_supported: provider.responseIssuerMode === "required",
-        ...(provider.revocation.mode === "rfc7009"
-          ? { revocation_endpoint: provider.revocation.endpoint }
-          : {}),
-      };
-
+export const installConnectedProvider = Effect.fn("OpenIdConnect.installConnectedProvider")(
+  function* <R>(provider: ConnectedProvider<R>, raw: OAuth.Metadata, timeoutSeconds: number) {
     // oxlint-disable-next-line no-restricted-properties -- Validate foreign discovery metadata at this adapter's bounded boundary.
     const metadata = yield* Schema.decodeUnknownEffect(metadataSchema)(raw).pipe(
       Effect.mapError(() => configurationError("metadata")),
@@ -491,22 +474,50 @@ export const installConnectedConfigurations = Effect.fn(
         if (reserved.has(key.toLowerCase())) return yield* configurationError("parameters");
     }
 
-    const native = yield* install(
-      {
-        metadata,
-        clientId: provider.clientId,
-        authentication: provider.authentication,
-        timeoutMs: options.timeoutSeconds * 1000,
-        ...(provider.protocol === "oauth" ? { profile: provider.identitySource } : {}),
-        ...(provider.revocation.mode === "rfc7009"
-          ? { revocationAuthentication: provider.revocation.authentication }
-          : {}),
-      },
-      provider.protocol === "oidc",
-    );
+    const native = yield* install({
+      metadata,
+      clientId: provider.clientId,
+      authentication: provider.authentication,
+      timeoutMs: timeoutSeconds * 1000,
+      ...(provider.protocol === "oauth" ? { profile: provider.identitySource } : {}),
+      ...(provider.revocation.mode === "rfc7009"
+        ? { revocationAuthentication: provider.revocation.authentication }
+        : {}),
+    });
 
-    installed.push({ provider, metadata, ...native });
+    return { provider, metadata, ...native };
+  },
+);
+
+export const installOAuthConnectedConfigurations = Effect.fn(
+  "OAuth.installConnectedConfigurations",
+)(function* <R>(input: ConnectedOptions<R>, providerCohort = false) {
+  const { providers, timeoutSeconds } = yield* prepareConnectedConfigurations(
+    input,
+    providerCohort,
+  );
+
+  const installed: InstalledConnectedProvider<R>[] = [];
+
+  for (const provider of providers) {
+    if (provider.protocol !== "oauth") return yield* configurationError("provider");
+    installed.push(
+      yield* installConnectedProvider(
+        provider,
+        {
+          issuer: provider.issuer,
+          authorization_endpoint: provider.authorizationEndpoint,
+          token_endpoint: provider.tokenEndpoint,
+          authorization_response_iss_parameter_supported:
+            provider.responseIssuerMode === "required",
+          ...(provider.revocation.mode === "rfc7009"
+            ? { revocation_endpoint: provider.revocation.endpoint }
+            : {}),
+        },
+        timeoutSeconds,
+      ),
+    );
   }
 
-  return { installed, timeoutSeconds: options.timeoutSeconds };
+  return { installed, timeoutSeconds };
 });
