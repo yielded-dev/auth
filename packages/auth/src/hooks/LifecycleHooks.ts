@@ -37,20 +37,23 @@ export const hookContribution = <const Tag extends string>(id: Tag) => {
         const services = yield* Effect.context<R>();
 
         return {
-          before:
-            before === undefined
-              ? undefined
-              : (snapshot: LifecycleSnapshot) => before(snapshot).pipe(Effect.provide(services)),
-          after:
-            after === undefined
-              ? undefined
-              : (event: LifecycleEvent) =>
+          ...(before === undefined
+            ? {}
+            : {
+                before: (snapshot: LifecycleSnapshot) =>
+                  before(snapshot).pipe(Effect.provide(services)),
+              }),
+          ...(after === undefined
+            ? {}
+            : {
+                after: (event: LifecycleEvent) =>
                   after(event).pipe(
                     Effect.catchCause((cause) =>
                       Effect.failCause(Cause.map(cause, () => HookDeliveryFailed.make({}))),
                     ),
                     Effect.provide(services),
                   ),
+              }),
         };
       }),
     );

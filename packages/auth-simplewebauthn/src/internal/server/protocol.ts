@@ -638,7 +638,8 @@ export const makeSimpleWebAuthnPasskeyProtocol = Effect.fn("makeSimpleWebAuthnPa
           Redacted.value(fixed.response),
         );
 
-        const userHandle = wire.response.userHandle ?? undefined;
+        const { userHandle: rawUserHandle, ...assertionResponse } = wire.response;
+        const userHandle = rawUserHandle ?? undefined;
 
         if (
           wire.id !== wire.rawId ||
@@ -672,7 +673,10 @@ export const makeSimpleWebAuthnPasskeyProtocol = Effect.fn("makeSimpleWebAuthnPa
           verifyAuthenticationResponse({
             response: {
               ...wire,
-              response: { ...wire.response, userHandle },
+              response: {
+                ...assertionResponse,
+                ...(userHandle === undefined ? {} : { userHandle }),
+              },
               clientExtensionResults: {},
             },
             expectedChallenge: ceremony.challenge,

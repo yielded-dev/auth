@@ -7,7 +7,7 @@ import { createHash } from "node:crypto";
 
 import { it } from "@effect/vitest";
 import { Signature } from "@yielded/crypto/Signature";
-import { Cause, DateTime, Deferred, Effect, Fiber, Redacted, Scope, Exit } from "effect";
+import { Cause, DateTime, Deferred, Effect, Fiber, Redacted, Scope, Exit, Struct } from "effect";
 import { HttpClient } from "effect/http";
 import { TestClock } from "effect/testing";
 import * as jose from "jose";
@@ -160,12 +160,12 @@ it.effect(
       ).toBe("OAuthRejected");
       expect(
         (yield* verifier
-          .verify(yield* sign(keys.privateKey, claims), { ...verification, accessToken: undefined })
+          .verify(yield* sign(keys.privateKey, claims), Struct.omit(verification, ["accessToken"]))
           .pipe(Effect.flip))._tag,
       ).toBe("OAuthRejected");
       expect(
         (yield* verifier
-          .verify(yield* sign(keys.privateKey, claims), { ...verification, code: undefined })
+          .verify(yield* sign(keys.privateKey, claims), Struct.omit(verification, ["code"]))
           .pipe(Effect.flip))._tag,
       ).toBe("OAuthRejected");
     }).pipe(Effect.scoped, Effect.provide(cryptoLayer)),
@@ -276,15 +276,15 @@ it.effect("rejects unsupported OIDC metadata and closes the issuer's scoped JWKS
   Effect.gen(function* () {
     const http = transport(() => Response.json({ keys: [] }));
 
-    for (const override of [
-      { jwks_uri: undefined },
-      { code_challenge_methods_supported: ["plain"] },
-      { id_token_signing_alg_values_supported: ["HS256"] },
-      { response_types_supported: ["id_token"] },
+    for (const unsupported of [
+      Struct.omit(metadata, ["jwks_uri"]),
+      { ...metadata, code_challenge_methods_supported: ["plain"] },
+      { ...metadata, id_token_signing_alg_values_supported: ["HS256"] },
+      { ...metadata, response_types_supported: ["id_token"] },
     ]) {
       expect(
         (yield* Oidc.makeVerifier({
-          metadata: { ...metadata, ...override },
+          metadata: unsupported,
           clientId: "client",
           timeoutMs: 1000,
         }).pipe(Effect.provideService(HttpClient.HttpClient, http), Effect.flip))._tag,

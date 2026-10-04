@@ -62,7 +62,7 @@ export interface Strategy {
 export interface Definition<C extends ClaimsCodec, Id extends string> {
   readonly namespace: string;
   readonly claims: C;
-  readonly sessionMode?: string;
+  readonly sessionMode?: string | undefined;
   readonly sessions: ReturnType<typeof makeSessions<C, Id>>;
   readonly strategies: Readonly<Record<string, Strategy>>;
 }

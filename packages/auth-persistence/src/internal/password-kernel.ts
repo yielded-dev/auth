@@ -1168,9 +1168,9 @@ export const makePasswordKernel = <
                 moduleId: input.moduleId,
                 action: input.action,
                 identifier: input.identifier,
-                ...(resolved === undefined
+                ...(resolved?.snapshot === undefined
                   ? {}
-                  : { subjectId: resolved.snapshot?.revision.subjectId }),
+                  : { subjectId: resolved.snapshot.revision.subjectId }),
               });
 
               const scopes = scopeEntries(keys, input.policy);

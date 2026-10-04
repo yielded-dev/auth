@@ -434,9 +434,9 @@ const makePasswordWithManagement = <
         const granted = yield* actionEvidence.verify({
           challenge,
           invocation,
-          proof: request.actionProof,
-          currentPasswordEvidence,
-          recovery: recovery?.input,
+          ...(request.actionProof === undefined ? {} : { proof: request.actionProof }),
+          ...(currentPasswordEvidence === undefined ? {} : { currentPasswordEvidence }),
+          ...(recovery === undefined ? {} : { recovery: recovery.input }),
         });
 
         const evidenceValue = yield* snapshotAuthenticationEvidence(granted.evidence).pipe(
@@ -498,7 +498,7 @@ const makePasswordWithManagement = <
             moduleId,
             commandId: request.commandId,
             expectedRevision,
-            credential,
+            ...(credential === undefined ? {} : { credential }),
             replacement,
             authorization,
             invalidation,

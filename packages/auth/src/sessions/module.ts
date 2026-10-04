@@ -564,7 +564,7 @@ export const makeSessionModule = <
               session: base,
               evidence: planned.evidence,
               ...(source === undefined ? {} : { handoffSourceSessionId: source.sessionId }),
-              pending: input.pending,
+              ...(input.pending === undefined ? {} : { pending: input.pending }),
               now: commitNow,
             },
             (record, journal) => {
@@ -870,7 +870,7 @@ export const makeSessionModule = <
           return yield* authority.approve(
             {
               evidence: planned.evidence,
-              pending: input.pending,
+              ...(input.pending === undefined ? {} : { pending: input.pending }),
               now: yield* DateTime.now,
               expiresAt: session.expiresAt,
               absoluteExpiresAt: session.absoluteExpiresAt,
@@ -1941,8 +1941,9 @@ export const makeSessionModule = <
   const handlersLayer = (management: AssuranceRequirement) => {
     management = Object.freeze({
       ...management,
-      factors:
-        management.factors === undefined ? undefined : Object.freeze([...management.factors]),
+      ...(management.factors === undefined
+        ? {}
+        : { factors: Object.freeze([...management.factors]) }),
     });
 
     return Layer.mergeAll(
@@ -1982,7 +1983,7 @@ export const makeSessionModule = <
           if (session.subjectId !== caller.subjectId) return yield* SessionInvalid.make({});
 
           return yield* strategy.list({
-            cursor: input.cursor,
+            ...(input.cursor === undefined ? {} : { cursor: input.cursor }),
             limit: input.limit,
             subjectId: session.subjectId,
             now: yield* DateTime.now,

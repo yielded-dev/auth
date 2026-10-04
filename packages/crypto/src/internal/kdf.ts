@@ -134,7 +134,7 @@ export const makeKdf = Effect.fnUntraced(function* (
               argon2({
                 password,
                 salt,
-                secret,
+                ...(secret === undefined ? {} : { secret }),
                 associatedData,
                 memoryKiB: value.memoryKiB,
                 passes: value.passes,

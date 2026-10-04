@@ -209,9 +209,13 @@ const makePreparedPlans = (mapping: Mapping, proofMapping?: any) => {
                   statements: planned.statements.map((statement) =>
                     compactD1GeneratedStatement(database.$client, statement, unavailable),
                   ),
-                  postconditions: planned.postconditions?.map((statement) =>
-                    compactD1GeneratedStatement(database.$client, statement, unavailable),
-                  ),
+                  ...(planned.postconditions === undefined
+                    ? {}
+                    : {
+                        postconditions: planned.postconditions.map((statement) =>
+                          compactD1GeneratedStatement(database.$client, statement, unavailable),
+                        ),
+                      }),
                 }),
                 catch: (cause) =>
                   Schema.is(PasswordUnavailable)(cause)
@@ -418,7 +422,9 @@ const makePreparedPlans = (mapping: Mapping, proofMapping?: any) => {
                     ))),
               receipt: receipt ?? prepare("rejected", journal),
               statements: compiled.statements,
-              postconditions: compiled.postconditions,
+              ...(compiled.postconditions === undefined
+                ? {}
+                : { postconditions: compiled.postconditions }),
             };
           }
 
@@ -520,7 +526,7 @@ const makePreparedPlans = (mapping: Mapping, proofMapping?: any) => {
 
             const now = yield* kernel.readEngineNowMillis(p),
               scope = identifierScope({
-                credential: authority.snapshot,
+                ...(authority.snapshot === undefined ? {} : { credential: authority.snapshot }),
                 revision: authority.revision,
               });
 

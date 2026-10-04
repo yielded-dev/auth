@@ -261,7 +261,7 @@ export const make = <
   });
 
   const mutation = <Name extends keyof Actions>(name: Name) => {
-    const active = Atom.make((): { origin?: object } => ({}));
+    const active = Atom.make((): { origin?: object | undefined } => ({}));
 
     const source = host.fn<RouteInput<Actions[Name]["route"]>>()((input, get) =>
       Effect.gen(function* () {

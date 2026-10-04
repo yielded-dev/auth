@@ -117,7 +117,11 @@ const receiptMetadata = Effect.fnUntraced(function* <R>(
       refreshExpiresIn = undefined;
   }
 
-  return { expiresIn: decoded.expires_in, scope: decoded.scope, refreshExpiresIn };
+  return {
+    ...(decoded.expires_in === undefined ? {} : { expiresIn: decoded.expires_in }),
+    ...(decoded.scope === undefined ? {} : { scope: decoded.scope }),
+    ...(refreshExpiresIn === undefined ? {} : { refreshExpiresIn }),
+  };
 }, Effect.mapError(unavailable));
 
 const sameStrings = (left: ReadonlyArray<string>, right: ReadonlyArray<string>) =>
@@ -451,7 +455,9 @@ export const makeConnectedProtocolWithCompatibility = Effect.fn(
             .verify(grant.idToken, {
               verificationStartedAt: request.verificationStartedAt,
               nonce: request.secrets.oidcNonce!,
-              maxAgeSeconds: provider.maxAgeSeconds,
+              ...(provider.maxAgeSeconds === undefined
+                ? {}
+                : { maxAgeSeconds: provider.maxAgeSeconds }),
               accessToken: grant.accessToken,
               code: request.response.code,
             })
@@ -555,7 +561,10 @@ export const makeConnectedProtocolWithCompatibility = Effect.fn(
             verificationStartedAt: request.verificationStartedAt,
             nonce: previous.nonce,
             accessToken: grant.accessToken,
-            previous: { subject: request.context.identity.subject, authTime: previous.authTime },
+            previous: {
+              subject: request.context.identity.subject,
+              ...(previous.authTime === undefined ? {} : { authTime: previous.authTime }),
+            },
           })
           .pipe(Effect.mapError(unavailable));
 

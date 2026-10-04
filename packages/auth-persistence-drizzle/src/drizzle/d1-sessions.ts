@@ -341,7 +341,11 @@ function runPlanned<A, E, GuardE extends D1PlanError = never>(
   recoverGuard?: Effect.Effect<never, GuardE, CurrentD1PlanningDatabase>,
 ) {
   const planned = plan.pipe(
-    Effect.map((value) => ({ ...value, isConstraintConflict, recoverGuard })),
+    Effect.map((value) => ({
+      ...value,
+      ...(isConstraintConflict === undefined ? {} : { isConstraintConflict }),
+      ...(recoverGuard === undefined ? {} : { recoverGuard }),
+    })),
   );
 
   const execution = Effect.gen(function* () {
@@ -1498,9 +1502,11 @@ export const makeD1StatefulSessions = <Claims>(
           Schema.encodeEffect(codec)(record).pipe(Effect.flatMap(Schema.decodeEffect(codec))),
         );
 
+        const nextCursor = decoded.length <= input.limit ? undefined : sessions.at(-1)?.sessionId;
+
         return {
           sessions,
-          ...(decoded.length <= input.limit ? {} : { nextCursor: sessions.at(-1)?.sessionId }),
+          ...(nextCursor === undefined ? {} : { nextCursor }),
         };
       }).pipe(terminalD1),
   };

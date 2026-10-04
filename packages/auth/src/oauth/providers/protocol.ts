@@ -222,7 +222,9 @@ export const makeOpenIdConnectOAuthProtocol = Effect.fn("makeOpenIdConnectOAuthP
             .verify(grant.idToken, {
               verificationStartedAt: request.verificationStartedAt,
               nonce: request.secrets.oidcNonce!,
-              maxAgeSeconds: provider.maxAgeSeconds,
+              ...(provider.maxAgeSeconds === undefined
+                ? {}
+                : { maxAgeSeconds: provider.maxAgeSeconds }),
               accessToken: grant.accessToken,
               code: request.response.code,
             })

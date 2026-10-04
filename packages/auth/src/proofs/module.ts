@@ -325,7 +325,12 @@ export const makeProofModule = <
 
           return {
             commit: store.issue(
-              { record, policy, eligible: eligible && before._tag === "Success", supersedes },
+              {
+                record,
+                policy,
+                eligible: eligible && before._tag === "Success",
+                ...(supersedes === undefined ? {} : { supersedes }),
+              },
               (decision, journal) => {
                 if (
                   decision._tag === "Issued" &&
@@ -443,7 +448,7 @@ export const makeProofModule = <
                 purpose: options.purpose,
                 proofId: request.reference.proofId,
                 binding,
-                candidate,
+                ...(candidate === undefined ? {} : { candidate }),
                 continuationId,
                 continuationDigest,
                 nowMillis: DateTime.toEpochMillis(yield* DateTime.now),

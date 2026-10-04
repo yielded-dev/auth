@@ -111,9 +111,11 @@ const bindLifecycle = <
     sessions: binding.sessions,
   });
 
+  const { lifecycle: lifecyclePolicy, ...phoneOptions } = options;
+
   const lifecycle = makePhoneLifecycle<Id, SessionId, Claims>(binding.namespace, {
-    ...options,
-    lifecycle: options.lifecycle === true ? undefined : options.lifecycle,
+    ...phoneOptions,
+    ...(lifecyclePolicy === true ? {} : { lifecycle: lifecyclePolicy }),
     sessions: binding.sessions,
   });
 

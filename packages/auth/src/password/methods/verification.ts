@@ -171,7 +171,7 @@ export const makePasswordVerification = ({
           moduleId,
           action,
           identifier: identifier(request.email),
-          subjectId,
+          ...(subjectId === undefined ? {} : { subjectId }),
           policy: policy.attempts,
         },
         (decision, journal) => journal.prepare(decision),
@@ -283,7 +283,7 @@ export const makePasswordVerification = ({
         {
           moduleId,
           attemptId: admitted.attemptId,
-          captured: candidate,
+          ...(candidate === undefined ? {} : { captured: candidate }),
           outcome: checked._tag === "Success" ? "verified" : "rejected",
           ...(checked._tag === "Success" && checked.success.rehash !== undefined
             ? { rehash: checked.success.rehash }

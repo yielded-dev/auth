@@ -198,12 +198,13 @@ export const makeOAuth = <E, R, ResponseR>(
         return yield* OperationHttpConfigurationError.make({ reason: "callback" });
 
       return entries.flatMap((entry) =>
-        entry.callbacks.map((callback) =>
-          oauthCallback<Routes[keyof Routes], ResponseR>(route, {
-            ...callback,
-            ...((callback.respond ?? respond) === undefined
-              ? {}
-              : { respond: callback.respond ?? respond }),
+        entry.callbacks.map((callback) => {
+          const { respond: configuredRespond, ...callbackOptions } = callback;
+          const callbackRespond = configuredRespond ?? respond;
+
+          return oauthCallback<Routes[keyof Routes], ResponseR>(route, {
+            ...callbackOptions,
+            ...(callbackRespond === undefined ? {} : { respond: callbackRespond }),
             provider: entry.provider,
             requestBinding: "context",
             allowedRedirectOrigins: [],
@@ -223,8 +224,8 @@ export const makeOAuth = <E, R, ResponseR>(
                     ),
                   );
             },
-          }),
-        ),
+          });
+        }),
       );
     });
 

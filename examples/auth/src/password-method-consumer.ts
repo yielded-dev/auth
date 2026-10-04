@@ -309,7 +309,10 @@ export const makePasswordConsumer = Effect.gen(function* () {
         const captured =
           input.subjectId === undefined || row?.id === input.subjectId ? row?.password : undefined;
 
-        s.attempts.set(attemptId, { captured, expires: now + input.policy.attemptLifetimeMillis });
+        s.attempts.set(attemptId, {
+          ...(captured === undefined ? {} : { captured }),
+          expires: now + input.policy.attemptLifetimeMillis,
+        });
 
         return prepare(
           { _tag: "Admitted", attemptId, ...(captured ? { credential: captured } : {}) },

@@ -845,9 +845,11 @@ export const makePasswordPrepared = <
         actionEvidence.verify({
           challenge: record.challenge,
           invocation,
-          proof: request.actionProof,
-          currentPasswordEvidence: record.baseEvidence,
-          recovery: recovery?.input,
+          ...(request.actionProof === undefined ? {} : { proof: request.actionProof }),
+          ...(record.baseEvidence === undefined
+            ? {}
+            : { currentPasswordEvidence: record.baseEvidence }),
+          ...(recovery === undefined ? {} : { recovery: recovery.input }),
         });
 
       const loadOrdinary = Effect.fn("PasswordPrepared.loadOrdinary")(function* (

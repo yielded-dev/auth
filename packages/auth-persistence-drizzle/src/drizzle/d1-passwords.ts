@@ -1622,7 +1622,7 @@ const makePasswordPlans = (
             return {
               receipt: prepare(compiled === undefined ? "rejected" : "changed", journal),
               statements: compiled?.statements ?? [],
-              retryable: compiled?.retryable,
+              ...(compiled?.retryable === undefined ? {} : { retryable: compiled.retryable }),
             };
           }),
         );

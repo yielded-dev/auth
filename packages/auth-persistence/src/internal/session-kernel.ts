@@ -466,7 +466,7 @@ export const makeSessionKernel = (operations: QueryOperations) => {
   const ensureDirectFlowAvailable = Effect.fn("DrizzleSession.ensureFlowAvailable")(function* (
     mapping: AnyAuthorityMapping &
       AnyFlowMapping & {
-        readonly pending?: PendingAuthenticationTables<any, any, any, any>["pending"];
+        readonly pending?: PendingAuthenticationTables<any, any, any, any>["pending"] | undefined;
       },
     evidence: AuthenticationEvidence,
     nativeSubjectId: unknown,
@@ -1389,10 +1389,11 @@ export const makeSessionKernel = (operations: QueryOperations) => {
               );
 
               const extra = decoded[input.limit];
+              const nextCursor = extra === undefined ? undefined : sessions.at(-1)?.sessionId;
 
               return {
                 sessions,
-                ...(extra === undefined ? {} : { nextCursor: sessions.at(-1)?.sessionId }),
+                ...(nextCursor === undefined ? {} : { nextCursor }),
               };
             }),
           ),

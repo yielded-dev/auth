@@ -410,7 +410,7 @@ export const createPersistence = <T extends object, R>(
               locking: dialect === "pg",
               standaloneGuard: standalone(() => PasswordUnavailable.make({})),
               insertIfAbsent: (query) => query.onConflictDoNothing(),
-              proof: proofConfiguration,
+              ...(proofConfiguration === undefined ? {} : { proof: proofConfiguration }),
             })
             .pipe(
               Effect.provideService(CurrentPasswordSql, native),
@@ -446,7 +446,7 @@ export const createPersistence = <T extends object, R>(
                 mode: "interactive",
                 locking: dialect === "pg",
                 standaloneGuard: standalone(() => EmailUnavailable.make({})),
-                proof: proofConfiguration,
+                ...(proofConfiguration === undefined ? {} : { proof: proofConfiguration }),
               })
               .pipe(
                 Effect.provideService(CurrentEmailSql, native),
