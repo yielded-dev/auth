@@ -111,8 +111,8 @@ const harness = (
     }),
   ).pipe(Layer.provide(Native.databaseLayer), Layer.provideMerge(database));
 
-  // Isolate independent clocks at the public workflow; WebAuthn verification
-  // itself was already exercised with a real synced ES256 virtual authenticator.
+  // Isolate independent clocks at the public workflow. The deployed reproducer
+  // used a real synced ES256 virtual authenticator but failed before verification.
   const protocol = Layer.effect(
     Passkey.PasskeyProtocol,
     Effect.map(SqlClient.SqlClient, (sql) =>
