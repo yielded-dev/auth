@@ -293,7 +293,7 @@ export const makePasskeyEnrollmentKernel = (
       return yield* reject;
     const tuple = mapping.read.credentialOwnership;
     // Credential ownership is RP-global, including retained registration custody.
-    const key = credentialKeyFor(ceremony.profile.rpId, input.verified.protocolCredentialId);
+    const key = yield* credentialKeyFor(ceremony.profile.rpId, input.verified.protocolCredentialId);
 
     if (
       (yield* owner.read(tuple.table, equal(tuple.table, { [tuple.credentialKey]: key }), {
