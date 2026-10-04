@@ -3,4 +3,4 @@
 "@yielded/auth-simplewebauthn": minor
 ---
 
-Move SimpleWebAuthn into its optional companion package. BEHAVIOR CHANGE: import browser and server helpers from `@yielded/auth-simplewebauthn/Browser` or `/Server` and supply the corresponding Layers.
+Move SimpleWebAuthn, OpenID Client, GitHub, and Cloudflare integrations into companion packages, removing their SDK dependencies from core. BEHAVIOR CHANGE: import them from `@yielded/auth-simplewebauthn/Browser` or `/Server` (using `make` and `layer`), `@yielded/auth-openid-client` or its `/Connected` and `/GitHub` entries, and `@yielded/auth-cloudflare`.

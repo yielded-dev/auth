@@ -3,4 +3,4 @@
 "@yielded/auth-persistence": patch
 ---
 
-Provide password hashing, TOTP cryptography, and OAuth protector Layers directly from Auth using the selected first-party crypto backend and Effect Crypto. Preserve stored credential and ciphertext formats.
+Move maintained cryptography into `@yielded/auth-crypto`, leaving Effect as core's only runtime peer and preserving stored credential and ciphertext formats. BEHAVIOR CHANGE: supply password hashing, TOTP cryptography, and OAuth protector Layers from the companion package; move `digest`/`randomId` and TOTP crypto helper imports there, and provide OAuthApp protectors instead of passing `transactionKeys`/`tokenKeys` options.
