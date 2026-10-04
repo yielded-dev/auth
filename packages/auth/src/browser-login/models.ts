@@ -88,12 +88,6 @@ export const HttpsReturnUrl = ReturnUrl.check(
   }),
 );
 
-/** Apple application-identifier prefix and bundle identifier, as signed into the app. */
-export const AppleAppId = Schema.String.check(
-  Schema.isMaxLength(256),
-  Schema.isPattern(/^[A-Z0-9]{10}\.[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$/),
-);
-
 export const BrowserSessionPolicy = Schema.Literals(["automatic", "confirm", "reauthenticate"]);
 
 const clientFields = {
@@ -101,8 +95,9 @@ const clientFields = {
   displayName: Schema.NonEmptyString.check(Schema.isMaxLength(128)),
 };
 
-/** Claimed HTTPS clients require the matching signed associated-domain entitlement
- * and association document at the callback host. HTTPS syntax alone is not proof.
+/** Automatic reuse requires deployed, platform-verified HTTPS callback delivery.
+ * Choosing that policy declares the app/domain association is configured;
+ * this registry does not verify an installed app or the deployed association.
  * Every app associated with that host belongs to the same receiver trust boundary. */
 export const Client = Schema.Union([
   Schema.Struct({
@@ -113,7 +108,6 @@ export const Client = Schema.Union([
   Schema.Struct({
     ...clientFields,
     returnUrl: HttpsReturnUrl,
-    appleAppId: AppleAppId,
     browserSession: BrowserSessionPolicy,
   }),
 ]);
@@ -137,27 +131,7 @@ export const Description = Schema.Struct({
 
 export const AuthorizationDecision = Schema.Literals(["automatic", "continue"]);
 
-const Approval = Schema.Union([
-  Schema.Struct({ decision: Schema.Literal("continue") }),
-  Schema.Struct({ decision: Schema.Literal("automatic"), appleAppId: AppleAppId }),
-]);
-
-/** Serve compact JSON at /.well-known/apple-app-site-association on the callback host. */
-export const AppleAppSiteAssociation = Schema.Struct({
-  applinks: Schema.Struct({
-    details: Schema.Array(
-      Schema.Struct({
-        appIDs: Schema.Array(AppleAppId),
-        components: Schema.Array(Schema.Struct({ "/": Schema.String })),
-      }),
-    ),
-  }),
-  webcredentials: Schema.Struct({ apps: Schema.Array(AppleAppId) }),
-}).check(
-  Schema.makeFilter(
-    (value) => new TextEncoder().encode(JSON.stringify(value)).byteLength <= 131072,
-  ),
-);
+const Approval = Schema.Struct({ decision: AuthorizationDecision });
 
 export const Initiate = Schema.Struct({
   clientId: ClientId,

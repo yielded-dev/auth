@@ -33,8 +33,8 @@ with the executable and application paths. See the example for platform steps.
 
 HTTPS callbacks require a signed, packaged macOS app with an Associated Domains
 entitlement and a matching website association. Follow the
-[claimed HTTPS callback setup](../../docs/src/content/docs/guide/browser-login.mdx#claimed-https-callbacks)
-to generate the association file from your client registry. Browser and user
+[claimed HTTPS callback setup](../../docs/src/content/docs/reference/browser-login.md#apple-association)
+to compose and host your app's association file. Browser and user
 preferences may still require **Open in app**. Windows and Linux support only
 custom schemes through this adapter.
 
@@ -47,5 +47,5 @@ Windows encryption does not isolate the vault from other apps running as the sam
 Pending login state survives restarts; use `resume` while the attempt is valid.
 Never delete an unreadable vault or reset an uncertain exchange just to restart login:
 a native session may already exist. Follow
-[session recovery](../../docs/src/content/docs/guide/browser-login.mdx#lifetimes-and-recovery)
+[session recovery](../../docs/src/content/docs/reference/browser-login.md#recovery)
 before retiring the attempt or resetting storage.

@@ -1,22 +1,26 @@
 import { Effect, Schema } from "effect";
 
-import {
-  AppleAppSiteAssociation,
-  type Client,
-  Clients,
-  ConfigurationError,
-  HttpsReturnUrl,
-} from "./models";
+import { type Client, Clients, ConfigurationError, HttpsReturnUrl } from "./models";
 
-/** Generate both Apple association services from the same server-owned registry.
- * Host the result over HTTPS without redirects at the selected origin's
- * /.well-known/apple-app-site-association. Apps must separately sign the matching
- * webcredentials (iOS auth sessions) or applinks (macOS Universal Links) entitlement.
+/** Apple application-identifier prefix and bundle identifier, as signed into the app. */
+export const AppleAppId = Schema.String.check(
+  Schema.isMaxLength(256),
+  Schema.isPattern(/^[A-Z0-9]{10}\.[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$/),
+);
+
+/** Optional AASA contribution for one app and callback origin. Pass only that
+ * app's client registrations. The application owns the complete association
+ * document, rule ordering, size limit, hosting and signed entitlements.
  * This builds deployment configuration; it does not verify an installed app. */
-export const appleAppSiteAssociation = Effect.fnUntraced(function* (options: {
+export const appleAssociation = Effect.fnUntraced(function* (options: {
+  readonly appId: string;
   readonly clients: ReadonlyArray<Client>;
   readonly origin: string;
 }) {
+  const appId = yield* Schema.decodeEffect(AppleAppId)(options.appId).pipe(
+    Effect.mapError(() => ConfigurationError.make({})),
+  );
+
   const clients = yield* Schema.decodeEffect(Clients)(options.clients).pipe(
     Effect.mapError(() => ConfigurationError.make({})),
   );
@@ -35,27 +39,14 @@ export const appleAppSiteAssociation = Effect.fnUntraced(function* (options: {
     ),
   )(options.origin).pipe(Effect.mapError(() => ConfigurationError.make({})));
 
-  const apps = new Map<string, Set<string>>();
+  const callbackPaths = new Set<string>();
 
   for (const client of clients) {
-    if (!("appleAppId" in client)) continue;
     const url = new URL(client.returnUrl);
 
-    if (url.origin !== origin) continue;
-    const paths = apps.get(client.appleAppId) ?? new Set<string>();
-
-    paths.add(url.pathname);
-    apps.set(client.appleAppId, paths);
+    if (url.origin === origin) callbackPaths.add(url.pathname);
   }
-  if (apps.size === 0) return yield* ConfigurationError.make({});
+  if (callbackPaths.size === 0) return yield* ConfigurationError.make({});
 
-  return yield* Schema.decodeEffect(AppleAppSiteAssociation)({
-    applinks: {
-      details: [...apps].map(([appId, paths]) => ({
-        appIDs: [appId],
-        components: [...paths].map((path) => ({ "/": path })),
-      })),
-    },
-    webcredentials: { apps: [...apps.keys()] },
-  }).pipe(Effect.mapError(() => ConfigurationError.make({})));
+  return { appId, callbackPaths: [...callbackPaths] };
 });

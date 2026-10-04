@@ -90,9 +90,10 @@ scheme in `CFBundleURLTypes` and the exact return URL, such as
 HTTPS callbacks require iOS 17.4+ and a signed `webcredentials:<callback-host>`
 [Associated Domains entitlement](https://developer.apple.com/documentation/xcode/supporting-associated-domains).
 The host's `apple-app-site-association` file must list the app's `PREFIX.bundleID`
-under `webcredentials.apps`. Register that app ID and exact callback URL on the
-server; the [guide's AASA helper](../../docs/src/content/docs/guide/browser-login.mdx#claimed-https-callbacks)
-generates the association file. Older iOS versions reject HTTPS callbacks.
+under `webcredentials.apps`. Register the exact callback URL on the server; app IDs
+belong to your association setup. The optional
+[association helper](../../docs/src/content/docs/reference/browser-login.md#apple-association)
+contributes paths to your app-owned file. Older iOS versions reject HTTPS callbacks.
 
 Let this adapter own the authentication session: do not open a competing
 WebBrowser session or handle its callback through `Linking`. On SDK 54, a failed

@@ -12,26 +12,13 @@ const handoff = BrowserLogin.make(AppAuth.sessions, { basePath: "/auth/browser-l
 const HandoffLive = Layer.unwrap(
   Effect.gen(function* () {
     const returnUrl = yield* Config.option(Config.String("AUTH_IOS_RETURN_URL"));
-    const appleAppId = yield* Config.option(Config.String("AUTH_IOS_APP_ID"));
 
-    let ios: BrowserLogin.Client = {
+    const ios: BrowserLogin.Client = {
       clientId: "ios",
       displayName: "Yielded iOS example",
-      returnUrl: "dev.yielded.auth.ios://callback",
-      browserSession: "confirm",
+      returnUrl: Option.getOrElse(returnUrl, () => "dev.yielded.auth.ios://callback"),
+      browserSession: Option.isSome(returnUrl) ? "automatic" : "confirm",
     };
-
-    if (Option.isSome(returnUrl) || Option.isSome(appleAppId)) {
-      if (Option.isNone(returnUrl) || Option.isNone(appleAppId))
-        return yield* BrowserLogin.ConfigurationError.make({});
-      ios = {
-        clientId: "ios",
-        displayName: "Yielded iOS example",
-        returnUrl: returnUrl.value,
-        appleAppId: appleAppId.value,
-        browserSession: "automatic",
-      };
-    }
 
     return handoff.layer({
       clients: [

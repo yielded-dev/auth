@@ -6,4 +6,4 @@
 "@yielded/auth-electron": minor
 ---
 
-Add system-browser sign-in with PKCE-bound, single-use native session handoff, configurable browser-session reuse for claimed HTTPS callbacks, and Electron and iOS adapters using Expo WebBrowser and SecureStore. Preserve authentication assurance and session lifetimes, bind approval to the selected session, and retain explicit recovery for uncertain exchanges.
+Add system-browser sign-in for Electron and iOS apps with separate native sessions and configurable browser-session reuse. Keep Apple association setup optional and application-owned.

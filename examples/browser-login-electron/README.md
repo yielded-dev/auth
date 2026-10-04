@@ -38,7 +38,7 @@ environment to use another compatible backend. Finder launches do not inherit
 terminal environment overrides. Each backend origin has a separate local vault.
 
 This example uses a custom scheme. For a signed macOS app with HTTPS callbacks,
-see [claimed HTTPS callback setup](../../docs/src/content/docs/guide/browser-login.mdx#claimed-https-callbacks).
+see [claimed HTTPS callback setup](../../docs/src/content/docs/reference/browser-login.md#apple-association).
 
 ## Use the app
 
@@ -55,7 +55,7 @@ After reopening the app, use **Resume login** for a pending browser login, or
 **Cancel login** to abandon it. Cancellation cannot close the external browser tab.
 
 If an exchange has an uncertain outcome, try **Recover saved session** and follow
-[session recovery](../../docs/src/content/docs/guide/browser-login.mdx#lifetimes-and-recovery)
+[session recovery](../../docs/src/content/docs/reference/browser-login.md#recovery)
 before starting again or resetting storage. Only after reconciliation, quit the
 app and reset the affected development vault at
 `<Electron userData>/auth/<backend hash>/vault.bin`; leave other vaults and the

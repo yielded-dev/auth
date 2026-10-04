@@ -201,10 +201,7 @@ export const make = <
 
               yield* update(input.attemptId, record, {
                 status: "Authorized",
-                approval:
-                  input.decision === "automatic" && client.browserSession === "automatic"
-                    ? { decision: "automatic", appleAppId: client.appleAppId }
-                    : { decision: "continue" },
+                approval: { decision: input.decision },
                 codeDigest: yield* secrets.digest(code),
                 source: yield* Schema.encodeEffect(sourceCodec)(source).pipe(
                   Effect.mapError(() => Unavailable.make({})),
@@ -237,8 +234,7 @@ export const make = <
                 record.source === undefined ||
                 record.approval === undefined ||
                 (record.approval.decision === "automatic" &&
-                  (client.browserSession !== "automatic" ||
-                    client.appleAppId !== record.approval.appleAppId)) ||
+                  client.browserSession !== "automatic") ||
                 record.codeDigest !== (yield* secrets.digest(Redacted.value(input.code)))
               )
                 return yield* Invalid.make({});
