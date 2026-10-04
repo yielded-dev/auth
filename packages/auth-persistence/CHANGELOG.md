@@ -1,5 +1,13 @@
 # @yielded/auth-persistence
 
+## 0.1.0-beta.17
+
+### Patch Changes
+
+- Updated dependencies [[`2d6f361`](https://github.com/yielded-dev/auth/commit/2d6f361813bfa8523451120eddabcd801b83ab6d)]:
+  - @yielded/auth@0.1.0-beta.17
+  - @yielded/auth-crypto@0.1.0-beta.17
+
 ## 0.1.0-beta.16
 
 ### Patch Changes
