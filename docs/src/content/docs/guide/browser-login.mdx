@@ -33,24 +33,28 @@ Use your existing session definition to register each app and its exact return U
 ```ts
 import { BrowserLogin } from "@yielded/auth";
 
-const clients: ReadonlyArray<BrowserLogin.Client> = [
-  {
-    clientId: "desktop",
-    displayName: "Example Desktop",
-    returnUrl: "com.example.desktop://auth/callback",
-    browserSession: "confirm",
-  },
-  {
-    clientId: "ios",
-    displayName: "Example Mobile",
-    returnUrl: "https://app.example.com/account",
-    browserSession: "automatic",
-  },
-];
+const desktop = BrowserLogin.Client.make({
+  clientId: "desktop",
+  displayName: "Example Desktop",
+  returnUrl: "com.example.desktop://auth/callback",
+  browserSession: "confirm",
+});
 
-const login = BrowserLogin.make(AppAuth.sessions, { basePath: "/auth/browser-login" });
-const LoginLive = login.layer({ clients });
+const ios = BrowserLogin.Client.make({
+  clientId: "ios",
+  displayName: "Example Mobile",
+  returnUrl: "https://app.example.com/account",
+  browserSession: "automatic",
+});
+
+const login = BrowserLogin.make(AppAuth.sessions, {
+  basePath: "/auth/browser-login",
+  clients: [desktop, ios],
+});
+const LoginLive = login.layer;
 ```
+
+`make` configures the flow; `layer` acquires its services.
 
 `/account` can remain your normal web account page while the associated native
 app handles login callbacks. Deploy and verify the app/domain association before
@@ -101,7 +105,7 @@ your CDN. This optional helper contributes callback paths for one app:
 ```ts
 const association = BrowserLogin.appleAssociation({
   appId: "ABCDE12345.com.example.app",
-  clients: clients.filter((client) => client.clientId === "ios"),
+  clients: [ios],
   origin: "https://app.example.com",
 });
 ```

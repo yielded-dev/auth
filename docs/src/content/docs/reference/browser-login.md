@@ -8,7 +8,9 @@ Start with [browser sign-in for desktop and mobile](../guide/browser-login.mdx).
 ## Server and transport
 
 Share `BrowserLoginContract.make(namespace, Session, { basePath })` with the
-clients; match the server's session namespace and route path. Mount `login.http`
+clients; match the server's session namespace and route path. Configure the server
+with `BrowserLogin.make(sessions, { basePath, clients, lifetimeMillis? })`.
+Its `layer` validates configuration and acquires the required services. Mount `login.http`
 with `OperationHttpServer` to separate browser and native requests.
 `BrowserLoginPersistence.layer` supports SQLite, D1, and PostgreSQL; apply its
 migration through your application's migrations. Attempts expire after two

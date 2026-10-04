@@ -4,35 +4,8 @@ import { Config, Effect, Layer, Option } from "effect";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 
 import { AppAuth } from "../../shared/account/auth";
-import { nativeSession } from "../../shared/account/browser-login-contract";
+import { handoff, nativeSession } from "../../shared/account/browser-login-contract";
 import { NativeSessionLive } from "./live";
-
-const handoff = BrowserLogin.make(AppAuth.sessions, { basePath: "/auth/browser-login" });
-
-const HandoffLive = Layer.unwrap(
-  Effect.gen(function* () {
-    const returnUrl = yield* Config.option(Config.String("AUTH_IOS_RETURN_URL"));
-
-    const ios: BrowserLogin.Client = {
-      clientId: "ios",
-      displayName: "Yielded iOS example",
-      returnUrl: Option.getOrElse(returnUrl, () => "dev.yielded.auth.ios://callback"),
-      browserSession: Option.isSome(returnUrl) ? "automatic" : "confirm",
-    };
-
-    return handoff.layer({
-      clients: [
-        {
-          clientId: "electron",
-          displayName: "Yielded Electron example",
-          returnUrl: "dev.yielded.auth://callback",
-          browserSession: "confirm",
-        },
-        ios,
-      ],
-    });
-  }),
-).pipe(Layer.provide(BrowserLoginPersistence.layer));
 
 const configuration = (origin: URL) =>
   OperationHttpServer.configurationLayer({
@@ -86,49 +59,73 @@ const invocation = OperationHttpServer.invocationLayer(
 export const browserLoginRoutes = (origin: URL) =>
   Layer.unwrap(
     Effect.gen(function* () {
-      const login = yield* handoff.http;
-      const native = yield* OperationHttpServer.make(nativeSession);
+      const returnUrl = yield* Config.option(Config.String("AUTH_IOS_RETURN_URL"));
 
-      return HttpRouter.addAll([
-        ...Object.values(handoff.routes).map((route) =>
-          HttpRouter.route(
-            "POST",
-            route.path as `/${string}`,
-            Effect.gen(function* () {
-              return HttpServerResponse.fromWeb(
-                yield* login.handle(
-                  yield* HttpServerRequest.toWeb(yield* HttpServerRequest.HttpServerRequest),
-                ),
-              );
-            }),
+      const browserLogin = BrowserLogin.make(AppAuth.sessions, {
+        basePath: "/auth/browser-login",
+        clients: [
+          {
+            clientId: "electron",
+            displayName: "Yielded Electron example",
+            returnUrl: "dev.yielded.auth://callback",
+            browserSession: "confirm",
+          },
+          {
+            clientId: "ios",
+            displayName: "Yielded iOS example",
+            returnUrl: Option.getOrElse(returnUrl, () => "dev.yielded.auth.ios://callback"),
+            browserSession: Option.isSome(returnUrl) ? "automatic" : "confirm",
+          },
+        ],
+      });
+
+      return Layer.unwrap(
+        Effect.gen(function* () {
+          const login = yield* browserLogin.http;
+          const native = yield* OperationHttpServer.make(nativeSession);
+
+          return HttpRouter.addAll([
+            ...Object.values(browserLogin.routes).map((route) =>
+              HttpRouter.route(
+                "POST",
+                route.path as `/${string}`,
+                Effect.gen(function* () {
+                  return HttpServerResponse.fromWeb(
+                    yield* login.handle(
+                      yield* HttpServerRequest.toWeb(yield* HttpServerRequest.HttpServerRequest),
+                    ),
+                  );
+                }),
+              ),
+            ),
+            ...Object.values(nativeSession.routes).map((route) =>
+              HttpRouter.route(
+                "POST",
+                route.path as `/${string}`,
+                Effect.gen(function* () {
+                  const request = yield* HttpServerRequest.toWeb(
+                    yield* HttpServerRequest.HttpServerRequest,
+                  );
+
+                  if (request.headers.get("x-auth-mode") !== "native")
+                    return HttpServerResponse.empty({ status: 403 });
+
+                  return HttpServerResponse.fromWeb(yield* native.handle(request));
+                }),
+              ),
+            ),
+          ]);
+        }),
+      ).pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            configuration(origin),
+            invocation,
+            AppAuth.sessions.sessionHandlersLayer,
+            browserLogin.layer.pipe(Layer.provide(BrowserLoginPersistence.layer)),
           ),
         ),
-        ...Object.values(nativeSession.routes).map((route) =>
-          HttpRouter.route(
-            "POST",
-            route.path as `/${string}`,
-            Effect.gen(function* () {
-              const request = yield* HttpServerRequest.toWeb(
-                yield* HttpServerRequest.HttpServerRequest,
-              );
-
-              if (request.headers.get("x-auth-mode") !== "native")
-                return HttpServerResponse.empty({ status: 403 });
-
-              return HttpServerResponse.fromWeb(yield* native.handle(request));
-            }),
-          ),
-        ),
-      ]);
+        Layer.provide(NativeSessionLive),
+      );
     }),
-  ).pipe(
-    Layer.provide(
-      Layer.mergeAll(
-        configuration(origin),
-        invocation,
-        AppAuth.sessions.sessionHandlersLayer,
-        HandoffLive,
-      ),
-    ),
-    Layer.provide(NativeSessionLive),
   );
