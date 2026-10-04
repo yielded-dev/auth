@@ -1,4 +1,4 @@
-# Dependabot keeps the SHA-pinned Actions current and surfaces npm drift.
+# Dependabot keeps Actions current and surfaces Bun dependency drift.
 # Bun lockfiles get version updates only; security advisories arrive through
 # Dependabot alerts on the dependency graph and are fixed by hand with `vp install`.
 version: 2
@@ -7,6 +7,10 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+    # Action v2 requires Changesets CLI v3 and a release-workflow migration.
+    ignore:
+      - dependency-name: "changesets/action"
+        update-types: ["version-update:semver-major"]
     groups:
       actions:
         patterns: ["*"]
