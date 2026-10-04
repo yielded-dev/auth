@@ -1,5 +1,11 @@
 # @yielded/auth
 
+## 0.1.0-beta.16
+
+### Patch Changes
+
+- [#108](https://github.com/yielded-dev/auth/pull/108) [`a070c44`](https://github.com/yielded-dev/auth/commit/a070c44a4c86f79e2782119e74d7eae3ae064542) Thanks [@danieljvdm](https://github.com/danieljvdm)! - Keep authentication usable in React Native Metro bundles.
+
 ## 0.1.0-beta.15
 
 ### Minor Changes
