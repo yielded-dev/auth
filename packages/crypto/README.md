@@ -13,12 +13,15 @@ bun add @yielded/crypto@beta effect
 Import `Aead`, `Hmac`, `Kdf`, `KdfAdmission` and `Signature` from the root. Select
 an implementation through a direct backend import:
 
-- `/WebCrypto`: native operations from an explicitly supplied `SubtleCrypto`.
+- `/WebCrypto`: native operations from a supplied `SubtleCrypto`, plus named global
+  web adapters for Effect entropy/digests and HMAC.
 - `/Portable`: WebCrypto plus owned Argon2id and XChaCha20-Poly1305 implementations.
 - `/platform-node`, `/platform-bun`: shared Node-compatible WebCrypto and native
   Argon2id, plus the owned XChaCha20-Poly1305 implementation.
 
-All backend Layers require one shared `KdfAdmission` Layer. Waiting is bounded;
+Full backend Layers require one shared `KdfAdmission` Layer. The focused
+`WebCrypto.layerHmac(subtle)` and global `layerWebCrypto` adapters need no KDF
+admission. Waiting for derivation is bounded;
 once admitted, derivation retains its permit until actual work and cleanup finish,
 including interruption. Portable Argon2id yields through Effect between batches,
 accepts interruption, and clears its work buffers before releasing admission. It
@@ -27,7 +30,9 @@ constant-time execution.
 
 Secret inputs, derived bytes and decrypted plaintext use `Redacted`. Backend
 errors contain classifications without native causes or secret payloads. Keep
-each AEAD nonce unique for its key. Signature operations use PKCS8/SPKI DER keys;
+each AEAD nonce unique for its key. `Hmac.importKey` snapshots a reusable,
+nonextractable key in the caller's Scope; closure joins native work and prevents
+further use. Signature operations use PKCS8/SPKI DER keys;
 raw key components can be encoded through the native key parser.
 [JOSE](../jose/README.md) and password-hash serialization belong to other layers.
 

@@ -10,7 +10,7 @@ import {
 import type { SubjectId } from "@yielded/auth/Schema";
 import type { AuthenticationRequirement } from "@yielded/auth/Sessions";
 import type { InferInsertModel, InferSelectModel, SQL, Table } from "drizzle-orm";
-import { Effect, Layer } from "effect";
+import { Effect, Layer, type Scope } from "effect";
 
 import type { PersistenceMappingError } from "./model";
 import type { AnyProofPersistenceMapping, ProofPersistenceMapping } from "./proof-model";
@@ -178,7 +178,14 @@ export interface PhonePersistenceServices {
 /** Bundle phone storage, admission, and lookup with overridable crypto and hook defaults. */
 export const phonePersistenceLayer = <E, R>(
   services: Effect.Effect<PhonePersistenceServices, E, R>,
-) =>
+): Layer.Layer<
+  PhonePersistence | PhoneAdmission | PhoneSignInTargets,
+  E,
+  Exclude<
+    Exclude<R, Scope.Scope>,
+    Layer.Success<typeof cryptoLayer> | Layer.Success<typeof hooksLayer>
+  >
+> =>
   Layer.unwrap(
     Effect.map(services, (value) =>
       Layer.mergeAll(
