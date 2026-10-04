@@ -10,7 +10,7 @@ import {
 import type { AnyRelations } from "drizzle-orm";
 import type { EffectSQLiteD1Database } from "drizzle-orm/effect-d1";
 import type { AnySQLiteTable } from "drizzle-orm/sqlite-core";
-import { Effect, Context } from "effect";
+import { type Crypto, Effect, Context } from "effect";
 
 import { Database as DatabaseService } from "./d1-database";
 import { makeD1Owner } from "./d1-planning";
@@ -129,7 +129,10 @@ export function coordinateD1OAuthSignIn<
 ): Effect.Effect<
   A,
   OAuthCoordinatorError<E> | DatabaseError,
-  Exclude<R, OAuthSignInPersistence | D1BatchStatements> | LifecycleHooks | DatabaseRequirements
+  | Exclude<R, OAuthSignInPersistence | D1BatchStatements>
+  | Crypto.Crypto
+  | LifecycleHooks
+  | DatabaseRequirements
 > {
   return Effect.flatMap(nativeDatabase(acquire), (database) =>
     coordinateTargetOAuthSignIn<
@@ -189,7 +192,10 @@ export function coordinateD1OAuthRegistrationIntents<
 ): Effect.Effect<
   A,
   OAuthCoordinatorError<E> | DatabaseError,
-  Exclude<R, OAuthRegistrationIntents | D1BatchStatements> | LifecycleHooks | DatabaseRequirements
+  | Exclude<R, OAuthRegistrationIntents | D1BatchStatements>
+  | Crypto.Crypto
+  | LifecycleHooks
+  | DatabaseRequirements
 > {
   return Effect.flatMap(nativeDatabase(acquire), (database) =>
     coordinateTargetOAuthRegistrationIntents<
@@ -244,7 +250,10 @@ export function coordinateD1OAuthAccounts<
 ): Effect.Effect<
   A,
   OAuthCoordinatorError<E> | DatabaseError,
-  Exclude<R, OAuthAccountsPersistence | D1BatchStatements> | LifecycleHooks | DatabaseRequirements
+  | Exclude<R, OAuthAccountsPersistence | D1BatchStatements>
+  | Crypto.Crypto
+  | LifecycleHooks
+  | DatabaseRequirements
 > {
   return Effect.flatMap(nativeDatabase(acquire), (database) =>
     coordinateTargetOAuthAccounts<
@@ -312,7 +321,7 @@ export function coordinateD1OAuthRegistration<
 ): Effect.Effect<
   A,
   OAuthCoordinatorError<E> | DatabaseError,
-  Exclude<R, TargetId | D1BatchStatements> | LifecycleHooks | DatabaseRequirements
+  Exclude<R, TargetId | D1BatchStatements> | Crypto.Crypto | LifecycleHooks | DatabaseRequirements
 > {
   return Effect.flatMap(nativeDatabase(acquire), (database) =>
     coordinateTargetOAuthRegistration<

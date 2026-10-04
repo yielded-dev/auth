@@ -1,7 +1,8 @@
 # @yielded/crypto
 
 Effect services for authenticated encryption, HMAC, key derivation and signatures.
-This package is independent of Auth. Applications own keys, nonces, password
+Effect is its only runtime package dependency; it is independent of Auth.
+Applications own keys, nonces, password
 policy, envelopes and protocol formats. Use Effect `Crypto` for secure randomness
 and SHA digests.
 
@@ -13,13 +14,14 @@ Import `Aead`, `Hmac`, `Kdf`, `KdfAdmission` and `Signature` from the root. Sele
 an implementation through a direct backend import:
 
 - `/WebCrypto`: native operations from an explicitly supplied `SubtleCrypto`.
-- `/Portable`: WebCrypto plus Noble Argon2id and XChaCha20-Poly1305.
+- `/Portable`: WebCrypto plus owned Argon2id and XChaCha20-Poly1305 implementations.
 - `/platform-node`, `/platform-bun`: shared Node-compatible WebCrypto and native
-  Argon2id, plus Noble XChaCha20-Poly1305.
+  Argon2id, plus the owned XChaCha20-Poly1305 implementation.
 
 All backend Layers require one shared `KdfAdmission` Layer. Waiting is bounded;
 once admitted, derivation retains its permit until actual work and cleanup finish,
-including interruption. Portable Argon2id yields but still runs on the calling
+including interruption. Portable Argon2id yields through Effect between batches
+and clears its work buffers before returning, but still runs on the calling
 thread. JavaScript cannot guarantee zeroization or constant-time execution.
 
 Secret inputs, derived bytes and decrypted plaintext use `Redacted`. Backend

@@ -1,7 +1,5 @@
 /* oxlint-disable no-explicit-any -- existing mapped-row bridge; public adapters preserve table, ID, and Effect types. */
 
-// oxlint-disable-next-line import/extensions -- Noble exposes explicit .js subpaths.
-import { sha256 } from "@noble/hashes/sha2.js";
 import {
   type PasskeyActionAuthorization,
   type PasskeyCeremony,
@@ -18,11 +16,11 @@ import {
   PasskeyManagementPolicy,
   snapshotPasskeySync,
 } from "@yielded/auth/Passkey";
-import { TokenDigest, type SubjectId } from "@yielded/auth/Schema";
+import { type SubjectId } from "@yielded/auth/Schema";
 import { SessionInvalidationWindow } from "@yielded/auth/Sessions";
 import { DateTime, Effect, Schema } from "effect";
-import { Base64Url } from "effect/encoding";
 
+import { digest as digestText } from "../crypto";
 import type { PersistenceMappingError } from "../mapping-error";
 import type { QueryOperations } from "../query-operations";
 import type { makeTransactionKernel } from "../transaction-kernel";
@@ -85,10 +83,7 @@ export const makePasskeyWriteStateKernel = (
   const digest = <S extends Schema.Codec<unknown, unknown, never, never>>(
     schema: S,
     value: S["Type"],
-  ) =>
-    TokenDigest.make(
-      Base64Url.encode(sha256(new TextEncoder().encode(jsonStorage(schema).encode(value)))),
-    );
+  ) => digestText(jsonStorage(schema).encode(value));
 
   const currentSubject = Effect.fn("passkey.currentWriteSubject")(function* (
     mapping: any,
@@ -205,7 +200,7 @@ export const makePasskeyWriteStateKernel = (
         read.subjectIds.equals(table.decodeSubjectId(copiedRow(row)), subject.nativeId),
     );
     const ownership = read.credentialOwnership;
-    const key = credentialKey(decoded.rpId, decoded.protocolCredentialId);
+    const key = yield* credentialKey(decoded.rpId, decoded.protocolCredentialId);
 
     const tuple = (yield* owner.read(
       ownership.table,
@@ -226,7 +221,7 @@ export const makePasskeyWriteStateKernel = (
         row[table.credentialKey] === key,
     );
     const handle = read.handleOwnership;
-    const hashedHandle = handleKey(decoded.rpId, decoded.userHandle);
+    const hashedHandle = yield* handleKey(decoded.rpId, decoded.userHandle);
 
     const held = (yield* owner.read(
       handle.table,
@@ -470,9 +465,10 @@ export const makePasskeyWriteStateKernel = (
     }
     owner.postconditions.push(mapping.invalidation.postcondition(input));
     const flow = mapping.flow;
+    const scope = yield* subjectScope(subject.subjectId);
 
     const where = both(
-      equal(flow.table, { [flow.subjectScope]: subjectScope(subject.subjectId) }),
+      equal(flow.table, { [flow.subjectScope]: scope }),
       sql`${col(flow.table, flow.state)} in (${flow.states.Pending}, ${flow.states.Claimed})`,
     );
 
@@ -485,7 +481,7 @@ export const makePasskeyWriteStateKernel = (
     for (const observation of owner.observations)
       if (observation.table === flow.table)
         observation.rows = observation.rows.map((row) =>
-          row[flow.subjectScope] === subjectScope(subject.subjectId) &&
+          row[flow.subjectScope] === scope &&
           [flow.states.Pending, flow.states.Claimed].includes(row[flow.state])
             ? { ...row, [flow.state]: flow.states.Rejected, [flow.version]: owner.marker }
             : row,
@@ -559,8 +555,8 @@ export const makePasskeyWriteStateKernel = (
     });
 
     const input = { subjectId: subject.nativeId, credential, summary: safe, marker: owner.marker };
-    const tupleKey = credentialKey(credential.rpId, credential.protocolCredentialId);
-    const hashedHandle = handleKey(credential.rpId, credential.userHandle);
+    const tupleKey = yield* credentialKey(credential.rpId, credential.protocolCredentialId);
+    const hashedHandle = yield* handleKey(credential.rpId, credential.userHandle);
     const tuple = read.credentialOwnership;
 
     const absent = yield* owner.read(

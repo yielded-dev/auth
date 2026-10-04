@@ -8,7 +8,7 @@ import type {
 import type { AuthenticationFactor } from "@yielded/auth/Operations";
 import type { AuthenticationRequirement, SecurityRevision } from "@yielded/auth/Sessions";
 import type { InferInsertModel, InferSelectModel, SQL, Table } from "drizzle-orm";
-import type { Effect } from "effect";
+import type { Crypto, Effect, PlatformError } from "effect";
 
 import type { PersistenceMappingError, SubjectIdCodec } from "./model";
 
@@ -506,8 +506,8 @@ export const oauthCleanupTable = <T extends Table, N>(
   Object.freeze({ table: input.table, subjectId: input.subjectId, condition: input.condition });
 
 /** A stable application/reference lock acquired before an ownership target.
- * Missing rows retain ownership. Conditions are synchronous and use detached
- * native IDs; every writer of the guarded reference follows the same order. */
+ * Missing rows retain ownership. Conditions use detached native IDs; every
+ * writer of the guarded reference follows the same order. */
 export interface OAuthReferenceGuardTable<T extends Table, N> {
   readonly table: T;
   readonly orderBy: Column<T>;
@@ -515,7 +515,7 @@ export interface OAuthReferenceGuardTable<T extends Table, N> {
     readonly identity: typeof OAuthExternalIdentity.Type;
     readonly identityKey: string;
     readonly subjectId: N;
-  }) => SQL;
+  }) => SQL | Effect.Effect<SQL, PlatformError.PlatformError, Crypto.Crypto>;
 }
 
 export interface OAuthReferenceGuardDescriptor<N> {

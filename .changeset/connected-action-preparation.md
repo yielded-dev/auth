@@ -1,6 +1,5 @@
 ---
 "@yielded/auth": patch
-"@yielded/auth-crypto": patch
 "@yielded/auth-electron": patch
 "@yielded/auth-persistence-drizzle": patch
 "@yielded/auth-react-native": patch

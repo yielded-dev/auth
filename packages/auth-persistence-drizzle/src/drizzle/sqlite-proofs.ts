@@ -4,7 +4,6 @@ import { type ProofUnavailable, ProofPersistence } from "@yielded/auth/Proofs";
 import type { AnyRelations } from "drizzle-orm";
 import type { EffectLibsqlDatabase } from "drizzle-orm/effect-libsql";
 import type { EffectSQLiteBunDatabase } from "drizzle-orm/effect-sqlite-bun";
-import type { EffectSQLiteDoDatabase } from "drizzle-orm/effect-sqlite-do";
 import type { EffectSQLiteNodeDatabase } from "drizzle-orm/effect-sqlite-node";
 import type { EffectSQLiteWasmDatabase } from "drizzle-orm/effect-sqlite-wasm";
 import type { AnySQLiteTable } from "drizzle-orm/sqlite-core";
@@ -19,6 +18,7 @@ import {
   makeTargetProofPersistenceServices,
   type ProofTargetConfiguration,
 } from "./proof-target";
+import type { DatabaseValue } from "./sqlite-do-database";
 import {
   type TransactionService,
   acquireTransactionService,
@@ -29,7 +29,7 @@ import type { SuppliedService } from "./SuppliedService";
 type Database =
   | EffectLibsqlDatabase<AnyRelations>
   | EffectSQLiteBunDatabase<AnyRelations>
-  | EffectSQLiteDoDatabase<AnyRelations>
+  | DatabaseValue<AnyRelations>
   | EffectSQLiteNodeDatabase<AnyRelations>
   | EffectSQLiteWasmDatabase<AnyRelations>;
 type TransactionOf<D extends Database> = Parameters<Parameters<D["transaction"]>[0]>[0];

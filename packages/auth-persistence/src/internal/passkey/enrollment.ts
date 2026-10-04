@@ -97,7 +97,7 @@ export const makePasskeyEnrollmentKernel = (
 
     const found = yield* owner.read(table.table, where, { limit: 1 });
     const row = found.rows[0];
-    const hashed = handleKey(ceremony.profile.rpId, ceremony.context.userHandle);
+    const hashed = yield* handleKey(ceremony.profile.rpId, ceremony.context.userHandle);
 
     if (row !== undefined)
       return (
@@ -193,7 +193,7 @@ export const makePasskeyEnrollmentKernel = (
           action: "enroll-begin",
           commandId: ceremony.commandId,
           flowId: ceremony.flowId,
-          bindingDigest: enrollmentDigest(ceremony),
+          bindingDigest: yield* enrollmentDigest(ceremony),
           revision: ceremony.context.revision,
         },
         {
@@ -207,11 +207,11 @@ export const makePasskeyEnrollmentKernel = (
     )
       return { _tag: "Rejected" } as const;
     invariant(
-      digest(Ceremony.fields.context, ceremony.context) ===
-        digest(Ceremony.fields.context, {
+      (yield* digest(Ceremony.fields.context, ceremony.context)) ===
+        (yield* digest(Ceremony.fields.context, {
           ...ceremony.context,
           authorization: input.authorization,
-        }),
+        })),
     );
     const issued = yield* issueAssertion(mapping, ceremony, input.policy);
 
@@ -277,7 +277,7 @@ export const makePasskeyEnrollmentKernel = (
           action: "enroll-complete",
           commandId: ceremony.commandId,
           flowId: ceremony.flowId,
-          bindingDigest: digest(Ceremony, ceremony),
+          bindingDigest: yield* digest(Ceremony, ceremony),
           revision: ceremony.context.revision,
         },
         {

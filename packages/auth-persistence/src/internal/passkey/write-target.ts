@@ -10,7 +10,7 @@ import {
 import * as M from "@yielded/auth/Passkey";
 import { SubjectId } from "@yielded/auth/Schema";
 import { SessionInvalidationWindow } from "@yielded/auth/Sessions";
-import { Effect, Layer, Schema } from "effect";
+import { type Crypto, Effect, Layer, Schema } from "effect";
 import type { Statement } from "effect/sql/Statement";
 
 import type { PasskeyMappingSource } from "../models/passkey-model";
@@ -371,7 +371,11 @@ export const makePasskeyWriteTargetKernel = (
       services: PasskeyManagementServices,
       append: (statement: Statement<unknown>) => void,
     ) => Effect.Effect<A, E, R>,
-  ): Effect.Effect<A, PasskeyCoordinatorError<E>, R | RSetup | LifecycleHooks | NativeDatabase> =>
+  ): Effect.Effect<
+    A,
+    PasskeyCoordinatorError<E>,
+    R | RSetup | LifecycleHooks | NativeDatabase | Crypto.Crypto
+  > =>
     Effect.gen(function* () {
       const mapping = yield* writeMapping(source, configuration, false);
       const hooks = yield* LifecycleHooks;
@@ -406,7 +410,11 @@ export const makePasskeyWriteTargetKernel = (
       services: PasskeyRegistrationServices<Value>,
       append: (statement: Statement<unknown>) => void,
     ) => Effect.Effect<A, E, R>,
-  ): Effect.Effect<A, PasskeyCoordinatorError<E>, R | RSetup | LifecycleHooks | NativeDatabase> =>
+  ): Effect.Effect<
+    A,
+    PasskeyCoordinatorError<E>,
+    R | RSetup | LifecycleHooks | NativeDatabase | Crypto.Crypto
+  > =>
     Effect.gen(function* () {
       const mapping = yield* writeMapping(source, configuration, true);
       const hooks = yield* LifecycleHooks;

@@ -56,22 +56,27 @@ checks cover these executable entries, and publishing checks the built binaries.
 
 The export check validates casing, namespace targets, build entries, and workspace
 dependencies, including relative imports through the package's own public barrels.
-Core may depend only on Effect; SDK and cryptography implementations belong in
-companion packages. The export check enforces
-this boundary for runtime imports and declarations. The purity check rejects
+The enforced runtime graph is Effect → crypto → JOSE → OAuth → Auth; Auth also
+uses crypto directly. These packages permit no other runtime dependencies,
+including optional peers and bundled SDKs. Optional database, WebAuthn, and
+platform integrations belong in companion packages. The purity check rejects
 production paths that reach test-only code.
 SDK adapters live in companion packages, and `sideEffects: []` requires import-time code to stay free of I/O.
 
 `@yielded/crypto` owns reusable cryptography services and explicit runtime Layers;
 it must not depend on or import Auth packages. Its root exposes `Aead`, `Errors`,
 `Hmac`, `Kdf`, `KdfAdmission`, and `Signature`; select backends through direct
-`/WebCrypto`, `/Portable`, `/platform-node`, or `/platform-bun` imports. Auth currently retains its
-existing cryptography services and `@yielded/auth-crypto` adapters.
+`/WebCrypto`, `/Portable`, `/platform-node`, or `/platform-bun` imports. Auth owns
+its credential formats and supplies service Layers over these capabilities.
 
 `@yielded/jose` depends on Effect and `@yielded/crypto`. It owns JOSE formats,
 key metadata, JWT Schema boundaries, and scoped JWKS caching; it must not depend
 on Auth. Its root and flat modules expose `Errors`, `Jwk`, `Jwks`, `Jws`, `Jwt`,
 and `Jwe`. The selected JOSE profile is documented in the public reference.
+
+`@yielded/oauth` uses Effect and JOSE for scoped OAuth clients, PKCE, discovery,
+and signed OIDC verification. Auth supplies application identity and credential
+policy through `OpenIdConnect`, `GitHub`, and its OAuth services.
 
 The package build preserves implementation modules and native root/group namespaces
 in both JavaScript and declarations. Every namespace target is also an explicit
@@ -81,10 +86,12 @@ Do not merge unrelated implementations into shared chunks: consumer bundlers can
 retain their initialization even when only one API is used.
 
 `vp run check:package-consumers` requires built packages and runs during `build`.
-It loads and type-checks every core export with only Effect installed, then every
-default persistence export without Drizzle installed. Separate crypto and JOSE stages load
-and type-check their published exports without Auth or panva/jose, adding Noble dependencies only
-for crypto backend checks. Browser resolution excludes native imports outside `/platform-node` or `/platform-bun`.
+It loads and type-checks every core export with only Effect and first-party packages, then every
+default persistence export without Drizzle installed. A reusable crypto, JOSE, and OAuth stage loads
+and type-check their published exports with only Effect and first-party packages.
+The checks reject third-party runtime dependency declarations, imports and bundled
+installed code, then exercise packaged crypto, JOSE, OAuth, and Auth credential operations on Node and Bun.
+Browser resolution excludes native imports outside `/platform-node` or `/platform-bun`.
 It stages the publisher's manifests and built files with the selected adapters' required dependencies,
 compares equivalent root/group/direct consumers through esbuild and Vite/Rolldown,
 checks their declarations, and runs native ESM and bundled consumers. It protects
@@ -121,7 +128,7 @@ Before enabling automated releases:
 3. Configure npm trusted publishing for each published package, including
    `@yielded/auth`, `@yielded/auth-persistence`, `@yielded/auth-persistence-drizzle`,
    `@yielded/auth-simplewebauthn`, `@yielded/auth-react-native`, `@yielded/auth-electron`,
-   `@yielded/auth-openid-client`, `@yielded/auth-crypto`, `@yielded/crypto`, `@yielded/jose`,
+   `@yielded/crypto`, `@yielded/jose`, `@yielded/oauth`,
    and `@yielded/drizzle-effect-v4-patch`, repository
    `yielded-dev/auth`, workflow `release.yml`. The first npm publication may
    require a manually authenticated owner before trusted publishing can be set.

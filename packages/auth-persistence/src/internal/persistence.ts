@@ -1,4 +1,3 @@
-import { digest, randomId } from "@yielded/auth-crypto";
 import { EmailAddressPersistence, EmailUnavailable } from "@yielded/auth/Email";
 import { LifecycleHooks } from "@yielded/auth/Hooks";
 import type { PasskeyConfig } from "@yielded/auth/Passkey";
@@ -7,7 +6,7 @@ import { hooksLayer } from "@yielded/auth/Persistence";
 import { PhoneAdmission, PhoneSignInTargets, PhoneOtpUnavailable } from "@yielded/auth/PhoneOtp";
 import { ProofPersistence, ProofUnavailable } from "@yielded/auth/Proofs";
 import { AuthenticationAuthority, SessionUnavailable } from "@yielded/auth/Sessions";
-import { Context, Effect, Layer, Schema } from "effect";
+import { Context, Crypto, Effect, Layer, Schema } from "effect";
 import { SqlClient } from "effect/sql";
 
 import {
@@ -27,6 +26,7 @@ import {
   type PasskeyRequirement,
   type MappingInput,
 } from "./configuration";
+import { randomId } from "./crypto";
 import { makeEmailKernel, CurrentEmailSql, type EmailSqlDatabase } from "./email-kernel";
 import { PersistenceMappingError } from "./mapping-error";
 import {
@@ -74,7 +74,12 @@ export interface Backend<T extends object, R> {
   }) => Effect.Effect<
     Context.Context<never>,
     PersistenceConfigurationError,
-    PasskeyConfig | LifecycleHooks | SqlClient.SqlClient | NativeDatabase | CurrentProofSql
+    | PasskeyConfig
+    | LifecycleHooks
+    | SqlClient.SqlClient
+    | NativeDatabase
+    | CurrentProofSql
+    | Crypto.Crypto
   >;
 }
 
@@ -208,8 +213,10 @@ export const createPersistence = <T extends object, R>(
       if (idColumn === undefined || idColumn.type === "boolean")
         throw configError("Subject ID must map a text or integer column");
 
-      const prefix =
-        options.prefix ?? `auth_${digest(auth.namespace).slice(0, 12).replaceAll("-", "_")}`;
+      const prefix = options.prefix;
+
+      if (managed && (prefix === undefined || !/^[A-Za-z_][A-Za-z0-9_]{0,100}$/.test(prefix)))
+        throw configError("Managed persistence requires an explicit SQL table prefix");
 
       const schema: Partial<Record<StorageRole, T>> = { ...options.tables };
 
@@ -326,7 +333,7 @@ export const createPersistence = <T extends object, R>(
         yield* validateStorage(dialect, backend.describe(storage.subjects.table as T), [
           [storage.subjects.id],
         ]);
-        const mappings = makeMappings(storage);
+        const mappings = makeMappings(storage, yield* Crypto.Crypto);
 
         const standalone = <E>(error: () => E) =>
           requireStandalone(error, client.transactionService);
@@ -564,6 +571,7 @@ export const createPersistence = <T extends object, R>(
             Context.Context<never>,
             PersistenceConfigurationError,
             | PasskeyRequirement<A>
+            | Crypto.Crypto
             | LifecycleHooks
             | SqlClient.SqlClient
             | NativeDatabase

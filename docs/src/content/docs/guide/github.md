@@ -17,7 +17,7 @@ Set its callback URL to `https://app.example.com/auth/github/callback`.
 
 ```ts title="apps/server/github.ts"
 import { Redacted } from "effect";
-import * as GitHub from "@yielded/auth-openid-client/GitHub";
+import * as GitHub from "@yielded/auth/GitHub";
 import { Http } from "@yielded/auth";
 
 import { AppAuth } from "./auth";
@@ -36,7 +36,7 @@ export const AuthRoutes = Http.layer(AppAuth, {
 });
 ```
 
-Install `openid-client` and [supply your services](../reference/oauth#supply-the-services).
+[Supply your services](../reference/oauth#supply-the-services).
 `AuthRoutes` serves the callback URL derived from `origin`.
 [Customize callbacks →](../reference/oauth#customize-callbacks)
 

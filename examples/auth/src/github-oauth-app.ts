@@ -4,13 +4,13 @@ import {
   type Operations,
   type Schema as AuthSchema,
   type Sessions,
-  WebCrypto,
 } from "@yielded/auth";
-import * as OAuthCrypto from "@yielded/auth-crypto/OAuth";
-import * as GitHub from "@yielded/auth-openid-client/GitHub";
+import * as GitHub from "@yielded/auth/GitHub";
 import { Context, Effect, Layer, Schema, Stream } from "effect";
 import type { HttpClientResponse } from "effect/http";
 import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
+
+import { CryptoLive } from "../../shared/crypto";
 
 // Application authority is local. Neither registration data nor Claims needs email.
 const Claims = Schema.Struct({ role: Schema.Literal("member"), displayName: Schema.String });
@@ -91,7 +91,7 @@ export const githubSignInLayer = (input: {
       lifetimeMillis: 120_000,
       keyring: input.bindingKeys,
     }),
-    OAuthCrypto.transactionLayer(input.transactionKeys),
+    OAuth.OAuthTransactionProtector.layer(input.transactionKeys),
     OAuth.OAuthReturnTargets.exactRoutes(["/account"]),
     claimsLayer,
     githubSessions.statelessLayer(
@@ -116,7 +116,7 @@ export const githubSignInLayer = (input: {
 
   return GitHubAuth.layer.pipe(
     Layer.provide(Layer.merge(shared, completion)),
-    Layer.provide(WebCrypto.layerWebCrypto),
+    Layer.provide(Layer.merge(CryptoLive, FetchHttpClient.layer)),
   );
 };
 
@@ -186,8 +186,8 @@ export const githubProfileConnection = (input: {
       lifetimeMillis: 120_000,
       keyring: input.bindingKeys,
     }),
-    OAuthCrypto.connectedTransactionLayer(input.transactionKeys),
-    OAuthCrypto.connectedTokenLayer(input.tokenKeys),
+    OAuth.OAuthConnectedTransactionProtector.layer(input.transactionKeys),
+    OAuth.OAuthConnectedTokenProtector.layer(input.tokenKeys),
     OAuth.OAuthReturnTargets.exactRoutes(["/account/connections"]),
   );
 
@@ -195,7 +195,7 @@ export const githubProfileConnection = (input: {
     connected.layer,
     connected.accessLayer,
     connected.maintenanceLayer,
-  ).pipe(Layer.provide(shared), Layer.provide(WebCrypto.layerWebCrypto));
+  ).pipe(Layer.provide(shared), Layer.provide(Layer.merge(CryptoLive, FetchHttpClient.layer)));
 
   const readMyProfile = Effect.fn("example.GitHub.readMyProfile")(
     function* (caller: Operations.AuthInvocation, grantId: typeof OAuth.OAuthGrantId.Type) {

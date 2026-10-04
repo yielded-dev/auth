@@ -46,9 +46,9 @@ export const activateGrant = Effect.fn("oauthConnected.activateGrant")(function*
   const owner = yield* CurrentOAuthTransaction;
   const token = grant.context;
   const g = mapping.grant;
-  const identityKey = oauthIdentityKey(token.identity);
-  const clientKey = S.clientKey(token.configuration);
-  const cohortKey = S.cohortKey(clientKey, identityKey);
+  const identityKey = yield* oauthIdentityKey(token.identity);
+  const clientKey = yield* S.clientKey(token.configuration);
+  const cohortKey = yield* S.cohortKey(clientKey, identityKey);
 
   const values = {
     ...g.encodeInsert({
@@ -143,7 +143,7 @@ export const settle = Effect.fn("oauthConnected.settle")(function* (
       token.grantId === c.grantId &&
       token.identity.provider === c.provider &&
       token.identity.issuer === c.issuer &&
-      S.clientKey(token.configuration) === cl.id &&
+      (yield* S.clientKey(token.configuration)) === cl.id &&
       S.tokenContextStorage.encode({
         ...token,
         configuration: S.configuration(input.claim.flow),

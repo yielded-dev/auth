@@ -251,3 +251,49 @@ it.effect("keeps absolute KDF bounds when application resource ceilings are rais
     ),
   ),
 );
+
+// Requested port review: Argon2 H0 encodes each byte length in uint32 even when
+// resource limits are raised. Oversized reported lengths avoid a 4 GiB allocation.
+it.effect("retains absolute Argon2 byte-length bounds independently of resource ceilings", () =>
+  Effect.gen(function* () {
+    const kdf = yield* Kdf;
+    const oversized = new Uint8Array(8);
+
+    Object.defineProperty(oversized, "length", { value: 2 ** 32 });
+
+    const input = {
+      password: Redacted.make(utf8("password")),
+      salt: utf8("somesalt"),
+      memoryKiB: 8,
+      passes: 1,
+      parallelism: 1,
+      length: 32,
+    };
+
+    const outcomes = yield* Effect.forEach(
+      [
+        { ...input, password: Redacted.make(oversized) },
+        { ...input, salt: oversized },
+        { ...input, secret: Redacted.make(oversized) },
+        { ...input, associatedData: oversized },
+      ],
+      (request) =>
+        kdf
+          .argon2id(request)
+          .pipe(Effect.match({ onFailure: (error) => error._tag, onSuccess: () => "derived" })),
+    );
+
+    expect(outcomes).toEqual([
+      "CryptoInvalidInput",
+      "CryptoInvalidInput",
+      "CryptoInvalidInput",
+      "CryptoInvalidInput",
+    ]);
+  }).pipe(
+    Effect.provide(
+      Portable.layer(globalThis.crypto.subtle, { maximumInputBytes: 2 ** 32 }).pipe(
+        Layer.provide(KdfAdmission.layer()),
+      ),
+    ),
+  ),
+);

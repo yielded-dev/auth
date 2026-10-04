@@ -1,13 +1,13 @@
-import { randomId } from "@yielded/auth-crypto";
 import { coordinateCommit, hasCommitScope, LifecycleHooks } from "@yielded/auth/Hooks";
 import type { LoginIdentifier } from "@yielded/auth/Identity";
 import { PasswordUnavailable } from "@yielded/auth/Password";
 import { reportPersistenceFailure } from "@yielded/auth/Persistence";
 import type { SubjectId } from "@yielded/auth/Schema";
 import { SecurityRevision } from "@yielded/auth/Sessions";
-import { type Context, Effect, Schema } from "effect";
+import { type Context, Crypto, Effect, Schema } from "effect";
 
 import { PersistenceConfigurationError } from "./configuration";
+import { randomId } from "./crypto";
 import { CurrentPasswordSql } from "./password-kernel";
 import type { QueryOperations } from "./query-operations";
 import type { PasswordRegistrationAuthority } from "./registration-contract";
@@ -33,10 +33,11 @@ export const makeRegistrationAuthority = Effect.fn("makeRegistrationAuthority")(
 ): Effect.fn.Return<
   PasswordRegistrationAuthority<unknown>,
   PersistenceConfigurationError,
-  LifecycleHooks | CurrentPasswordSql | R
+  LifecycleHooks | CurrentPasswordSql | Crypto.Crypto | R
 > {
   const database = yield* CurrentPasswordSql;
   const hooks = yield* LifecycleHooks;
+  const crypto = yield* Crypto.Crypto;
   // Core has already decoded registration with the selected strategy's Schema;
   // the dynamic strategy table erases only that heterogeneous callback signature.
   const creators = (yield* provisioning) as Readonly<Record<string, CreateSubject>>;
@@ -129,7 +130,7 @@ export const makeRegistrationAuthority = Effect.fn("makeRegistrationAuthority")(
                     mapping.identifier.encodeInitialInsert(
                       input.identifier,
                       nativeId,
-                      SecurityRevision.make(randomId()),
+                      SecurityRevision.make(yield* randomId),
                     ),
                   )
                   .onConflictDoNothing()
@@ -139,8 +140,8 @@ export const makeRegistrationAuthority = Effect.fn("makeRegistrationAuthority")(
                 // subject too, then persist a non-authorizing receipt in a new transaction.
                 if (bound.length !== 1) return yield* new IdentifierTaken({});
 
-                const credentialId = randomId();
-                const credentialRevision = SecurityRevision.make(randomId());
+                const credentialId = yield* randomId;
+                const credentialRevision = SecurityRevision.make(yield* randomId);
 
                 yield* tx.insert(mapping.credential.table).values(
                   mapping.credential.encodeInsert({
@@ -148,7 +149,7 @@ export const makeRegistrationAuthority = Effect.fn("makeRegistrationAuthority")(
                     subjectId: nativeId,
                     credentialId,
                     credentialRevision,
-                    verifierVersion: SecurityRevision.make(randomId()),
+                    verifierVersion: SecurityRevision.make(yield* randomId),
                     replacement: input.replacement,
                   }),
                 );
@@ -169,6 +170,7 @@ export const makeRegistrationAuthority = Effect.fn("makeRegistrationAuthority")(
         return committed.value;
       }).pipe(
         Effect.provideService(LifecycleHooks, hooks),
+        Effect.provideService(Crypto.Crypto, crypto),
         (work) => reportPersistenceFailure(work, Schema.is(PasswordUnavailable)),
         Effect.mapError(() => PasswordUnavailable.make({})),
       ),

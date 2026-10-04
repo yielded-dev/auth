@@ -1,7 +1,3 @@
-// oxlint-disable-next-line import/extensions -- Noble exposes only its explicit .js subpath.
-import { sha256 } from "@noble/hashes/sha2.js";
-// oxlint-disable-next-line import/extensions -- Noble exposes only its explicit .js subpath.
-import { randomBytes } from "@noble/hashes/utils.js";
 import {
   type OAuthActionAuthorization,
   type OAuthAccountRevision,
@@ -10,8 +6,11 @@ import {
   snapshotOAuthSync,
 } from "@yielded/auth/OAuth";
 import type { AuthenticationRequirement } from "@yielded/auth/Sessions";
-import { DateTime, Effect, Schema } from "effect";
+import { Crypto, DateTime, Effect, Schema } from "effect";
 import { Base64Url } from "effect/encoding";
+
+import { digest, randomId } from "./crypto";
+export { digest } from "./crypto";
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder("utf-8", { fatal: true });
@@ -22,8 +21,7 @@ export const invariant: (value: unknown) => asserts value = (value) => {
   if (!value) throw unavailable();
 };
 
-export const nonce = () => Base64Url.encode(randomBytes(32));
-export const digest = (value: string) => Base64Url.encode(sha256(encoder.encode(value)));
+export const nonce = randomId;
 
 /** Capture configuration/callback references while preserving Drizzle table, SQL
  * and Effect objects. Never freeze or mutate the consumer's original graph. */
@@ -57,7 +55,9 @@ export const captureOAuthMapping = <A>(input: A): A => {
 
 /** Versioned length-delimited UTF-8 tuple; the module is deliberately excluded.
  * Reject ill-formed UTF-16 rather than letting UTF-8 replacement alias identities. */
-export const oauthIdentityKey = (input: typeof OAuthExternalIdentity.Type): string => {
+export const oauthIdentityKey = Effect.fnUntraced(function* (
+  input: typeof OAuthExternalIdentity.Type,
+) {
   const identity = snapshotOAuthSync(OAuthExternalIdentity, input);
 
   const fields = [
@@ -85,8 +85,10 @@ export const oauthIdentityKey = (input: typeof OAuthExternalIdentity.Type): stri
     offset += 4 + value.length;
   }
 
-  return "v1:" + Base64Url.encode(sha256(packed));
-};
+  const crypto = yield* Crypto.Crypto;
+
+  return "v1:" + Base64Url.encode(yield* crypto.digest("SHA-256", packed));
+});
 
 export const sameIdentity = (
   left: typeof OAuthExternalIdentity.Type,
@@ -148,7 +150,7 @@ export const satisfies = (
   );
 };
 
-export const validAction = (
+export const validAction = Effect.fnUntraced(function* (
   authorization: OAuthActionAuthorization,
   expected: {
     readonly moduleId: string;
@@ -161,12 +163,12 @@ export const validAction = (
   currentRequirement: AuthenticationRequirement,
   now: number,
   maximumAgeMillis: number,
-) => {
+) {
   const challenge = authorization.challenge;
   const evidence = authorization.evidence;
-  const intentDigest = digest(expected.intent);
+  const intentDigest = yield* digest(expected.intent);
 
-  const binding = digest(
+  const binding = yield* digest(
     // oxlint-disable-next-line no-restricted-properties -- Fixed private action fingerprint format shared with the core verifier.
     JSON.stringify([
       "effect-auth/oauth-action/v1",
@@ -213,4 +215,4 @@ export const validAction = (
 
     return satisfies(fresh, requirement);
   });
-};
+});

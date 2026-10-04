@@ -15,7 +15,7 @@ Add `https://app.example.com/auth/google/callback` as an authorized redirect URI
 ```ts title="apps/server/google.ts"
 import { Redacted } from "effect";
 import { Http } from "@yielded/auth";
-import * as OpenIdClient from "@yielded/auth-openid-client";
+import * as OpenIdConnect from "@yielded/auth/OpenIdConnect";
 
 import { AppAuth } from "./auth";
 import { config } from "./config";
@@ -24,7 +24,7 @@ export const AuthRoutes = Http.layer(AppAuth, {
   origin: config.AUTH_ORIGIN,
   oauth: {
     providers: {
-      google: OpenIdClient.provider({
+      google: OpenIdConnect.provider({
         protocol: "oidc",
         issuer: "https://accounts.google.com",
         clientId: config.GOOGLE_CLIENT_ID,
@@ -36,7 +36,7 @@ export const AuthRoutes = Http.layer(AppAuth, {
 });
 ```
 
-Install `openid-client` and [supply your services](../reference/oauth#supply-the-services).
+[Supply your services](../reference/oauth#supply-the-services).
 `AuthRoutes` serves the callback URL derived from `origin`.
 [Customize callbacks →](../reference/oauth#customize-callbacks)
 

@@ -285,7 +285,7 @@ export const collect = Effect.fn("oauthConnected.collect")(function* (
         subject: candidate[t.externalSubject],
       };
 
-      invariant(oauthIdentityKey(identity) === candidate[t.identityKey]);
+      invariant((yield* oauthIdentityKey(identity)) === candidate[t.identityKey]);
 
       const tuple = yield* F.inspectTuple(mapping, identity),
         row = tuple.row;

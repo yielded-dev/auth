@@ -1,11 +1,13 @@
-import { Context, type Effect } from "effect";
+import { Context, type Effect, Layer } from "effect";
 
 import type {
   OAuthConnectedTransactionContext,
   OAuthConnectedTransactionSecrets,
   OAuthConnectedSealedTransaction,
 } from "./connectedModels";
+import { make } from "./encryption/OAuthConnectedTransactionProtector";
 import type { OAuthUnavailable } from "./signInErrors";
+import type { OAuthTransactionKeyring } from "./transactionKeyring";
 
 /** Separate connected purpose. Key retention includes original claim horizons. */
 export class OAuthConnectedTransactionProtector extends Context.Service<
@@ -20,4 +22,6 @@ export class OAuthConnectedTransactionProtector extends Context.Service<
       readonly sealed: OAuthConnectedSealedTransaction;
     }) => Effect.Effect<OAuthConnectedTransactionSecrets, OAuthUnavailable>;
   }
->()("effect-auth/OAuthConnectedTransactionProtector") {}
+>()("effect-auth/OAuthConnectedTransactionProtector") {
+  static readonly layer = (keyring: OAuthTransactionKeyring) => Layer.effect(this, make(keyring));
+}

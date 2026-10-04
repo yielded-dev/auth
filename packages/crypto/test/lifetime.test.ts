@@ -97,3 +97,29 @@ it.effect("rejects invalid KDF admission configuration at Layer construction", (
     expect(result).toMatchObject({ _tag: "CryptoInvalidInput", reason: "parameters" });
   }),
 );
+
+// Direct Auth adoption needs one admission region around the whole password
+// operation; its nested Kdf call must reuse that permit without admitting children.
+it.effect("shares admission with nested work in the same fiber but not forked children", () =>
+  Effect.gen(function* () {
+    const admission = yield* KdfAdmission.KdfAdmission;
+
+    const result = yield* admission.run(
+      Effect.gen(function* () {
+        const nested = yield* admission.run(Effect.succeed("nested"));
+
+        const child = yield* admission
+          .run(Effect.succeed("child"))
+          .pipe(Effect.result, Effect.forkChild);
+
+        return { nested, child: yield* Fiber.join(child) };
+      }),
+    );
+
+    expect(result).toMatchObject({
+      nested: "nested",
+      child: { _tag: "Failure", failure: { _tag: "CryptoKdfBusy" } },
+    });
+    expect(yield* admission.run(Effect.succeed("reused"))).toBe("reused");
+  }).pipe(Effect.provide(KdfAdmission.layer({ concurrency: 1, maxQueued: 0 }))),
+);

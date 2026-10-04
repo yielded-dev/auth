@@ -1,4 +1,3 @@
-import { randomId } from "@yielded/auth-crypto";
 import { NativeDatabase } from "@yielded/auth-persistence/Adapter";
 import { LifecycleHooks } from "@yielded/auth/Hooks";
 import {
@@ -16,9 +15,10 @@ import {
 import { ProofBinding } from "@yielded/auth/Proofs";
 import { sql, type Table } from "drizzle-orm";
 /* oxlint-disable no-explicit-any -- shared native implementation; driver entrypoints retain exact database and table types. */
-import { Context, Effect, Schema } from "effect";
+import { type Crypto, Context, Effect, Schema } from "effect";
 import type { Statement } from "effect/sql/Statement";
 
+import { randomId } from "./crypto";
 import { CurrentD1PlanningDatabase } from "./d1-planning";
 import { compileD1ProofCompletionPlan } from "./d1-proofs";
 import type { PersistenceMappingError } from "./model";
@@ -309,7 +309,11 @@ export const coordinateTargetPhone = <
     services: PhonePersistenceServices,
     append: (statement: Statement<any>) => void,
   ) => Effect.Effect<A, E, R>,
-): Effect.Effect<A, PhoneCoordinatorError<E>, R | RSetup | LifecycleHooks | NativeDatabase> =>
+): Effect.Effect<
+  A,
+  PhoneCoordinatorError<E>,
+  R | RSetup | Crypto.Crypto | LifecycleHooks | NativeDatabase
+> =>
   Effect.gen(function* () {
     const original = yield* Effect.isEffect(source) ? source : Effect.succeed(source);
 
@@ -383,6 +387,7 @@ export const makePhoneTarget = <
     | (Synchronous extends true
         ? never
         : Exclude<R, PhonePersistence | PhoneAdmission | PhoneSignInTargets>)
+    | Crypto.Crypto
     | LifecycleHooks
     | RSetup
     | DatabaseRequirements
@@ -421,6 +426,7 @@ export const makePhoneTarget = <
     | (Synchronous extends true
         ? never
         : Exclude<R, PhonePersistence | PhoneAdmission | PhoneSignInTargets | TxId>)
+    | Crypto.Crypto
     | LifecycleHooks
     | RSetup
     | DatabaseRequirements
@@ -451,6 +457,7 @@ export const makePhoneTarget = <
     A,
     PhoneCoordinatorError<E> | DatabaseError,
     | Exclude<R, PhonePersistence | PhoneAdmission | PhoneSignInTargets>
+    | Crypto.Crypto
     | LifecycleHooks
     | RSetup
     | DatabaseRequirements

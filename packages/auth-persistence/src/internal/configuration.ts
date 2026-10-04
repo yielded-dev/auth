@@ -24,7 +24,7 @@ import type {
   AuthenticationRequirement,
   make as makeSessions,
 } from "@yielded/auth/Sessions";
-import { type Context, type Effect, type Layer, Schema } from "effect";
+import { type Context, type Crypto, type Effect, type Layer, Schema } from "effect";
 import type { SqlClient } from "effect/sql";
 
 import type { PersistenceMappingError } from "./mapping-error";
@@ -251,6 +251,7 @@ export interface BoundPersistence<
   readonly layer: Layer.Layer<
     Ports<C, Id, A>,
     PersistenceConfigurationError,
+    | Crypto.Crypto
     | ConfigId<A["namespace"]>
     | ProvisioningRequirement<A>
     | PasskeyRequirement<A>
@@ -260,7 +261,8 @@ export interface BoundPersistence<
   readonly managed: <N, Instant = number>(options: {
     readonly subjects: SubjectOptions<T, N>;
     readonly tables?: Partial<Record<Roles<C, Id, A>, T>>;
-    readonly prefix?: string;
+    /** Stable SQL identifier prefix; reuse the deployed prefix for existing tables. */
+    readonly prefix: string;
     readonly timestamps?: TimestampOptions<Instant>;
   }) => StorageLayout<T, Roles<C, Id, A>>;
   readonly map: <N, Instant = number>(options: {

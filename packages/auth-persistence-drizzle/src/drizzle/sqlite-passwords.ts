@@ -5,7 +5,6 @@ import { type PasswordUnavailable, PasswordPersistence } from "@yielded/auth/Pas
 import type { AnyRelations } from "drizzle-orm";
 import type { EffectLibsqlDatabase } from "drizzle-orm/effect-libsql";
 import type { EffectSQLiteBunDatabase } from "drizzle-orm/effect-sqlite-bun";
-import type { EffectSQLiteDoDatabase as DODatabase } from "drizzle-orm/effect-sqlite-do";
 import type { EffectSQLiteNodeDatabase as NodeDatabase } from "drizzle-orm/effect-sqlite-node";
 import type { EffectSQLiteWasmDatabase as WasmDatabase } from "drizzle-orm/effect-sqlite-wasm";
 import type { AnySQLiteTable } from "drizzle-orm/sqlite-core";
@@ -26,6 +25,7 @@ import {
 } from "./password-target";
 import type { ProofPersistenceMapping } from "./proof-model";
 import type { ProofSqlQuery } from "./proof-sql";
+import type { DatabaseValue as DODatabase } from "./sqlite-do-database";
 import {
   type TransactionService,
   acquireTransactionService,

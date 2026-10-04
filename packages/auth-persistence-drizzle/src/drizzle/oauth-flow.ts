@@ -301,7 +301,7 @@ export const currentSubject = (mapping: any, nativeId: unknown) =>
 export const discoverOwned = (mapping: any, identity: OAuthVerifiedExternalIdentity["identity"]) =>
   Effect.flatMap(CurrentOAuthTransaction, (owner) =>
     Effect.gen(function* () {
-      const key = oauthIdentityKey(identity),
+      const key = yield* oauthIdentityKey(identity),
         o = mapping.ownership;
 
       const where = both(eq(col(o.table, o.identityKey), key), o.ownedCondition);

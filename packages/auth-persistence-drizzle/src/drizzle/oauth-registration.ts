@@ -40,7 +40,7 @@ export const readTuple = (ownership: any, identity: typeof OAuthExternalIdentity
   Effect.flatMap(CurrentOAuthTransaction, (owner) =>
     Effect.gen(function* () {
       const t = ownership.tuple,
-        key = oauthIdentityKey(identity);
+        key = yield* oauthIdentityKey(identity);
 
       const where = { [t.identityKey]: key };
       const observed = yield* owner.read(t.table, equal(t.table, where), { limit: 1 });
@@ -259,7 +259,7 @@ export const inspectIntent = (
           row[i.reference] === intent.reference &&
           row[i.flowId] === c.flowId &&
           row[i.claimId] === intent.claimId &&
-          row[i.identityKey] === oauthIdentityKey(intent.identity) &&
+          row[i.identityKey] === (yield* oauthIdentityKey(intent.identity)) &&
           mapping.clock.decodeInstant(row[i.expiresAt]) === intent.expiresAtMillis &&
           mapping.clock.decodeInstant(row[i.retentionUntil]) === intent.retentionUntilMillis,
       );

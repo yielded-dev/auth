@@ -16,7 +16,7 @@ import {
 import { PersistenceMappingError } from "../src/drizzle/model";
 import * as Sqlite from "../src/SqliteNode";
 import type { subjects } from "./fixtures/proof-sqlite";
-import { database, d1Database, d1Mapping, storage } from "./fixtures/proof-sqlite";
+import { crypto, database, d1Database, d1Mapping, storage } from "./fixtures/proof-sqlite";
 
 // User-requested finding 3 regression: real proof issuance/attempt and public raw
 // registration authority, including the independently compiled D1 atomic batch.
@@ -44,7 +44,7 @@ const { RegistrationAuthority } = Auth.make("test/email-registration", {
 const identifier = { namespace: "email", value: "owner@example.invalid" };
 const fingerprint = TokenDigest.make("owner-registration");
 const columns = getTableColumns(storage.schema.identifiers);
-const email = makeStorageMappings(storage).emails();
+const email = makeStorageMappings(storage, crypto).emails();
 
 const proofMapping: typeof d1Mapping = {
   ...d1Mapping,

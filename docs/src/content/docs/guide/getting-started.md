@@ -42,7 +42,7 @@ supplies Web Crypto and empty lifecycle hooks; you supply the rest:
 | --------------------------------------------- | ------------------------------------------------------------------------------------- |
 | Storage for credentials, sessions, and proofs | [Managed tables, your schema, or your services](./storage)                            |
 | Account checks and session claims             | Your account Layers; see [passwords](./passwords#supply-the-services)                 |
-| Password hashing                              | `@yielded/auth-crypto/Password`                                                       |
+| Password hashing                              | [`Password.PasswordHashing.layer()`](./passwords#supply-the-services)                 |
 | Proof and request-binding keys                | Your secrets; see [Layer wiring](../reference/adapters#compose-the-application-layer) |
 
 Provide them to `AuthRoutes` and merge it with your router:

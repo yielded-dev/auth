@@ -6,16 +6,18 @@ const positive = Schema.Int.check(Schema.isGreaterThan(0));
 const uint32 = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 0xffffffff }));
 const bytes = Schema.Uint8Array;
 const secret = Schema.Redacted(bytes, { disallowJsonEncode: true });
+const argon2Bytes = bytes.check(Schema.isMaxLength(0xffffffff));
+const argon2Secret = Schema.Redacted(argon2Bytes, { disallowJsonEncode: true });
 
 export const Argon2idInput = Schema.Struct({
-  password: secret,
-  salt: bytes.check(Schema.isMinLength(8)),
+  password: argon2Secret,
+  salt: argon2Bytes.check(Schema.isMinLength(8)),
   memoryKiB: uint32,
   passes: uint32,
   parallelism: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 0xffffff })),
   length: Schema.Int.check(Schema.isBetween({ minimum: 4, maximum: 0xffffffff })),
-  secret: Schema.optionalKey(secret),
-  associatedData: Schema.optionalKey(bytes),
+  secret: Schema.optionalKey(argon2Secret),
+  associatedData: Schema.optionalKey(argon2Bytes),
 });
 
 export type Argon2idInput = typeof Argon2idInput.Type;

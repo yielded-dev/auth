@@ -1,11 +1,13 @@
-import { Context, type Effect } from "effect";
+import { Context, type Effect, Layer } from "effect";
 
+import { make } from "./encryption/OAuthTransactionProtector";
 import type { OAuthUnavailable } from "./signInErrors";
 import type {
   OAuthTransactionSecrets,
   OAuthSealedTransaction,
   OAuthSignInTransactionContext,
 } from "./signInModels";
+import type { OAuthTransactionKeyring } from "./transactionKeyring";
 
 /** Dedicated transaction encryption. Retain retired keys through every pending
  * and claimed flow horizon and deployment convergence; binder signing keys have
@@ -24,4 +26,6 @@ export class OAuthTransactionProtector extends Context.Service<
       readonly sealed: OAuthSealedTransaction;
     }) => Effect.Effect<OAuthTransactionSecrets, OAuthUnavailable>;
   }
->()("effect-auth/OAuthTransactionProtector") {}
+>()("effect-auth/OAuthTransactionProtector") {
+  static readonly layer = (keyring: OAuthTransactionKeyring) => Layer.effect(this, make(keyring));
+}

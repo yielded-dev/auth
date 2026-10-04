@@ -1,8 +1,9 @@
 # Third-party notices
 
-`@yielded/crypto` uses maintained primitives and adapts selected independent tests.
-The Effect services, validation, admission and backend integration are original
-Yielded code. No cryptographic algorithm implementation is copied into this package.
+`@yielded/crypto` uses native runtime capabilities and owned portable implementations
+adapted from the sources below. Effect is its only runtime package dependency.
+The Effect services, validation, admission, scheduling and backend integration are
+Yielded code; the portable arithmetic retains its upstream attribution.
 
 ## Noble hashes and ciphers — MIT
 
@@ -12,14 +13,26 @@ and [noble-ciphers](https://github.com/paulmillr/noble-ciphers).
 - noble-hashes 2.3.0, revision `8060cc83bbab6681d23c9eed071db3f3a6b442da`:
   `test/hmac.test.ts`, `test/kdf.test.ts`, `test/argon2.test.ts` influenced and
   supplied selected known-answer/validation tests in `test/primitives.test.ts`,
-  `test/boundaries.test.ts`, and `test/vectors.ts`. The portable Argon2id backend
-  calls the installed library; its exact dependency is in the workspace catalog.
+  `test/boundaries.test.ts`, and `test/vectors.ts`. All nine Argon2id v19 known
+  answers from `test/argon2.test.ts` are adapted in `test/argon2.test.ts` and
+  `test/fixtures/argon2-vectors.ts`; Argon2d, Argon2i and version 16 are excluded
+  because they are outside the supported API.
+  `src/argon2.ts`, `src/blake2.ts`, `src/_blake.ts`, and `src/_u64.ts` are adapted
+  into `src/internal/argon2-core.ts`, `blake2b.ts`, and `word64.ts`. The port retains
+  Argon2id v19 and its unkeyed BLAKE2b machinery, with per-derivation work buffers,
+  explicit little-endian encoding, and an Effect driver in `src/internal/argon2.ts`.
 - noble-ciphers 2.1.1, revision `785181b0772ba84afbe812025714163e4e48262f`:
   AEAD test behavior and independent vectors informed `test/primitives.test.ts`
-  and `test/vectors.ts`. The XChaCha20-Poly1305 backend calls the installed library.
+  and `test/vectors.ts`. `src/chacha.ts`, `src/_poly1305.ts`, and the stream/nonce
+  construction in `src/_arx.ts` are adapted into `src/internal/xchacha-core.ts`
+  and `poly1305.ts`. Only XChaCha20-Poly1305 is retained. The port uses owned work
+  buffers, authenticates before producing plaintext, and returns typed Effect
+  failures through `src/internal/xchacha.ts`.
 
 The MIT notices below preserve both libraries' copyright holders. Noble's
 cipher license also credits Thomas Pornin.
+Noble's Poly1305 arithmetic derives from Andrew Moon's public-domain
+[poly1305-donna](https://github.com/floodyberry/poly1305-donna/blob/e6ad6e091d30d7f4ec2d4f978be1fcfcbce72781/poly1305-donna-16.h).
 
 ## Project Wycheproof — Apache-2.0
 
@@ -34,6 +47,11 @@ removed, from `testvectors_v1/aes_gcm_test.json` (tcId 91),
 32-byte-salt profile), and `rsa_signature_2048_sha256_test.json` (tcIds 1 and 240).
 These are test-data adaptations, not copied implementation. The Apache license
 is reproduced below.
+
+`test/fixtures/xchacha-vectors.ts` reformats all 315 cases from
+`testvectors_v1/xchacha20_poly1305_test.json` at the same revision, retaining test
+IDs, comments, flags and results. `test/xchacha.test.ts` adapts encryption,
+decryption and rejection behavior through the public Effect service.
 
 ## Standards and independent results
 
@@ -63,7 +81,11 @@ or implementation pseudocode is copied. IETF Code Component terms are retained b
 
 A binary-password PBKDF2 fixture is independently calculated using Python's
 `hashlib.pbkdf2_hmac`; no Python source is copied. Source URLs are retained beside
-each vector. These attributions do not imply an upstream endorsement.
+each vector. Additional binary-input, rounded-memory and variable-output Argon2id
+fixtures in `test/fixtures/argon2-vectors.ts` were independently calculated with
+Node's native `crypto.argon2Sync` before the portable implementation was adapted.
+These attributions do not imply an upstream endorsement or transfer an upstream
+security audit to the adapted implementation.
 
 ## License texts
 

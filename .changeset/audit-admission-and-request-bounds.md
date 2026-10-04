@@ -2,7 +2,6 @@
 "@yielded/auth": patch
 "@yielded/auth-persistence": patch
 "@yielded/auth-persistence-drizzle": patch
-"@yielded/auth-openid-client": patch
 ---
 
 Release password admission after attempt retention, page phone admission cleanup, and resolve an OAuth reservation when the provider issues no token.

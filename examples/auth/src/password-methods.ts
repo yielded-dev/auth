@@ -1,9 +1,9 @@
 import { BunRuntime } from "@effect/platform-bun";
 import { Auth, EmailDelivery, Hooks, Operations, Password, Proofs, WebCrypto } from "@yielded/auth";
-import * as PasswordCrypto from "@yielded/auth-crypto/Password";
 import { DateTime, Effect, Layer, Redacted } from "effect";
 import { Base64Url } from "effect/encoding";
 
+import { CryptoLive } from "../../shared/crypto";
 import {
   makePasswordConsumer,
   passwordAuth,
@@ -11,10 +11,7 @@ import {
   sessionPolicy,
 } from "./password-method-consumer";
 
-const hashing = PasswordCrypto.layer().pipe(
-  Layer.provide(Password.PasswordKdfAdmission.layer()),
-  Layer.provide(WebCrypto.layerWebCrypto),
-);
+const hashing = Password.PasswordHashing.layer().pipe(Layer.provide(CryptoLive));
 
 const base = Layer.mergeAll(
   WebCrypto.layerWebCrypto,

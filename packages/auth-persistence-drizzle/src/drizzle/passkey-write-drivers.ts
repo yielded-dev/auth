@@ -2,7 +2,7 @@ import { NativeDatabase } from "@yielded/auth-persistence/Adapter";
 import type { LifecycleHooks } from "@yielded/auth/Hooks";
 import { PasskeyManagementPersistence, PasskeyPersistence } from "@yielded/auth/Passkey";
 import type { Table } from "drizzle-orm";
-import { Context, Effect } from "effect";
+import { type Crypto, Context, Effect } from "effect";
 
 import { nativeDatabase } from "./native-database";
 import type { PasskeyMappingSource } from "./passkey-model";
@@ -73,6 +73,7 @@ export const makePasskeyWriteTarget = <
     | (Synchronous extends true
         ? never
         : Exclude<R, PasskeyPersistence | PasskeyManagementPersistence>)
+    | Crypto.Crypto
     | LifecycleHooks
     | RSetup
     | DatabaseRequirements
@@ -120,6 +121,7 @@ export const makePasskeyWriteTarget = <
     | (Synchronous extends true
         ? never
         : Exclude<R, PasskeyPersistence | PasskeyManagementPersistence | TxId>)
+    | Crypto.Crypto
     | LifecycleHooks
     | RSetup
     | DatabaseRequirements
@@ -159,6 +161,7 @@ export const makePasskeyWriteTarget = <
     A,
     PasskeyCoordinatorError<E> | DatabaseError,
     | Exclude<R, PasskeyPersistence | PasskeyManagementPersistence>
+    | Crypto.Crypto
     | LifecycleHooks
     | RSetup
     | DatabaseRequirements
@@ -250,6 +253,7 @@ export const makePasskeyWriteTarget = <
     A,
     PasskeyCoordinatorError<E> | DatabaseError,
     | (Synchronous extends true ? never : Exclude<R, PasskeyPersistence | AuthorityId>)
+    | Crypto.Crypto
     | LifecycleHooks
     | RSetup
     | DatabaseRequirements
@@ -297,6 +301,7 @@ export const makePasskeyWriteTarget = <
     A,
     PasskeyCoordinatorError<E> | DatabaseError,
     | (Synchronous extends true ? never : Exclude<R, PasskeyPersistence | AuthorityId | TxId>)
+    | Crypto.Crypto
     | LifecycleHooks
     | RSetup
     | DatabaseRequirements
@@ -339,7 +344,11 @@ export const makePasskeyWriteTarget = <
   ): Effect.Effect<
     A,
     PasskeyCoordinatorError<E> | DatabaseError,
-    Exclude<R, PasskeyPersistence | AuthorityId> | LifecycleHooks | RSetup | DatabaseRequirements
+    | Exclude<R, PasskeyPersistence | AuthorityId>
+    | Crypto.Crypto
+    | LifecycleHooks
+    | RSetup
+    | DatabaseRequirements
   > {
     return Effect.flatMap(nativeDatabase(acquire), (database) =>
       coordinateTargetPasskeyRegistrationWriter(

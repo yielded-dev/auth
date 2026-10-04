@@ -165,7 +165,7 @@ export const makeTotpModule = <
         commandId: input.commandId,
         flowId: AuthenticationFlowId.make(input.commandId),
         revision: captured.revision,
-        bindingDigest: digest(
+        bindingDigest: yield* digest(
           `${moduleId.length}:${moduleId}/${action}/${input.commandId}/${captured.record?.version ?? "none"}/${detail}`,
         ),
       });
@@ -273,7 +273,7 @@ export const makeTotpModule = <
           },
           envelope,
         ),
-        (secret) => Effect.sync(() => matchCode(secret, code, nowMillis, policy.clockSkewSteps)),
+        (secret) => matchCode(secret, code, nowMillis, policy.clockSkewSteps),
         (secret) => Effect.sync(() => secret.fill(0)),
       );
     });
@@ -354,11 +354,12 @@ export const makeTotpModule = <
 
         const now = DateTime.toEpochMillis(yield* DateTime.now);
 
-        const secret = generateSecret(),
-          manualKey = base32(secret),
-          enrollmentId = randomId(),
-          revision = randomId(),
-          credentialId = captured.record?.credentialId ?? randomId();
+        const enrollmentId = yield* randomId(),
+          revision = yield* randomId(),
+          credentialId = captured.record?.credentialId ?? (yield* randomId());
+
+        const secret = yield* generateSecret(),
+          manualKey = base32(secret);
 
         const envelope = yield* encryptSecret(
           { moduleId, subjectId: captured.revision.subjectId, credentialId, revision },
@@ -378,7 +379,7 @@ export const makeTotpModule = <
                 subjectId: captured.revision.subjectId,
                 credentialId,
                 revision,
-                version: randomId(),
+                version: yield* randomId(),
                 secret: null,
                 recoveryDigests: [],
                 acceptedStep: -1,
@@ -426,7 +427,7 @@ export const makeTotpModule = <
             input,
             input.enrollmentId,
           ),
-          codes = newRecoveryCodes(moduleId, captured.revision.subjectId),
+          codes = yield* newRecoveryCodes(moduleId, captured.revision.subjectId),
           now = DateTime.toEpochMillis(yield* DateTime.now);
 
         yield* commit(
@@ -466,7 +467,7 @@ export const makeTotpModule = <
         const input = yield* decode(ManageInput, original),
           captured = yield* authenticated(invocation),
           authorization = yield* authorize(invocation, captured, "regenerate", input, ""),
-          codes = newRecoveryCodes(moduleId, captured.revision.subjectId),
+          codes = yield* newRecoveryCodes(moduleId, captured.revision.subjectId),
           now = DateTime.toEpochMillis(yield* DateTime.now);
 
         yield* commit(
@@ -497,7 +498,7 @@ export const makeTotpModule = <
           captured = yield* snapshot(target.revision.subjectId),
           evidence = yield* evidenceFor(captured, target, "totp");
 
-        yield* commit(captured, randomId(), {
+        yield* commit(captured, yield* randomId(), {
           _tag: "Verify",
           matchedStep: yield* matched(captured, Redacted.value(input.code)),
         }).pipe(
@@ -534,7 +535,7 @@ export const makeTotpModule = <
         const captured = yield* snapshot(invocation.subjectId),
           evidence = yield* evidenceFor(captured, target, "totp");
 
-        yield* commit(captured, randomId(), {
+        yield* commit(captured, yield* randomId(), {
           _tag: "Verify",
           matchedStep: yield* matched(captured, Redacted.value(input.code)),
         }).pipe(
@@ -573,9 +574,13 @@ export const makeTotpModule = <
           captured = yield* snapshot(target.revision.subjectId),
           evidence = yield* evidenceFor(captured, target, "recovery-code");
 
-        yield* commit(captured, randomId(), {
+        yield* commit(captured, yield* randomId(), {
           _tag: "Recovery",
-          digest: recoveryDigest(moduleId, target.revision.subjectId, Redacted.value(input.code)),
+          digest: yield* recoveryDigest(
+            moduleId,
+            target.revision.subjectId,
+            Redacted.value(input.code),
+          ),
           reset: false,
         }).pipe(
           Effect.catchTag("TotpRejected", () =>
@@ -609,9 +614,13 @@ export const makeTotpModule = <
           captured = yield* snapshot(target.revision.subjectId);
 
         yield* evidenceFor(captured, target, "recovery-code");
-        yield* commit(captured, randomId(), {
+        yield* commit(captured, yield* randomId(), {
           _tag: "Recovery",
-          digest: recoveryDigest(moduleId, target.revision.subjectId, Redacted.value(input.code)),
+          digest: yield* recoveryDigest(
+            moduleId,
+            target.revision.subjectId,
+            Redacted.value(input.code),
+          ),
           reset: true,
           pending: target,
         }).pipe(

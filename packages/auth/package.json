@@ -62,7 +62,9 @@
     "./Persistence": "./src/Persistence.ts",
     "./EmailDelivery": "./src/EmailDelivery.ts",
     "./BrowserLogin": "./src/BrowserLogin.ts",
-    "./BrowserLoginContract": "./src/BrowserLoginContract.ts"
+    "./BrowserLoginContract": "./src/BrowserLoginContract.ts",
+    "./OpenIdConnect": "./src/OpenIdConnect.ts",
+    "./GitHub": "./src/GitHub.ts"
   },
   "publishConfig": {
     "access": "public"
@@ -71,6 +73,10 @@
     "build": "vp pack",
     "check": "tsc --noEmit -p tsconfig.json",
     "test": "vp test --passWithNoTests"
+  },
+  "dependencies": {
+    "@yielded/crypto": "workspace:*",
+    "@yielded/oauth": "workspace:*"
   },
   "devDependencies": {
     "@effect/platform-bun": "catalog:",

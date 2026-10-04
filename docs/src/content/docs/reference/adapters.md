@@ -3,7 +3,8 @@ title: Adapters and persistence
 description: Choose managed storage, your own SQL schema, or custom Effect services.
 ---
 
-`@yielded/auth` owns workflows and service contracts and depends only on Effect.
+`@yielded/auth` owns workflows and service contracts. Its only third-party runtime
+dependency is Effect; first-party crypto and OAuth packages supply the primitives.
 `@yielded/auth-persistence` supplies direct Effect SQL persistence and shared storage
 contracts. `@yielded/auth-persistence-drizzle` adds Drizzle bindings, managed tables,
 and migration helpers. Applications choose their adapter and own customer
@@ -41,6 +42,7 @@ import { customers } from "./customers";
 
 export const Persistence = AuthPersistence.make(AppAuth);
 export const storage = Persistence.managed({
+  prefix: "app_auth",
   subjects: {
     table: customers,
     id: "id",
@@ -57,8 +59,12 @@ export const authSchema = storage.schema;
 `authSchema` contains ordinary Drizzle tables before any Layer starts. Only enabled
 capabilities allocate storage; shared proof storage is configured once. Use
 `Persistence.map({ subjects, tables })` when your application declares all tables.
-`managed` also accepts table overrides. Export each enabled table from `authSchema`
-as a named export so Drizzle Kit discovers it; the
+`managed` also accepts table overrides. Keep `prefix` explicit and stable; it is a
+physical table identifier, not a per-process random value. Both direct Effect SQL
+and Drizzle `managed` require it. For an existing database that used a generated prefix,
+pass that exact prefix from its deployed table names; a different prefix selects
+different tables and does not migrate credentials. Export each enabled table from
+`authSchema` as a named export so Drizzle Kit discovers it; the
 [managed schema](https://github.com/yielded-dev/auth/blob/main/examples/persistence-drizzle-managed/src/schema.ts)
 shows the complete exports. Both Drizzle examples use Drizzle Kit:
 
@@ -79,6 +85,7 @@ from their directories. The latter uses the same migration Layer as startup:
 ```ts title="apps/server/auth-live.ts"
 import * as SqliteClient from "@effect/sql-sqlite-bun/SqliteClient";
 import { AuthPersistence } from "@yielded/auth-persistence-drizzle/SqliteBun";
+import { WebCrypto } from "@yielded/auth";
 import { Layer } from "effect";
 import { AppAuth } from "./auth";
 import { ApplicationLive } from "./application"; // claims, keys, delivery, hashing
@@ -93,6 +100,7 @@ export const AuthLive = AppAuth.layer.pipe(
   Layer.provide(Persistence.layer),
   Layer.provide(ApplicationLive),
   Layer.provide(DatabaseReady),
+  Layer.provide(WebCrypto.layerCryptoWeb),
 );
 ```
 
@@ -179,12 +187,18 @@ export const PasswordPersistenceLive = Layer.effect(
 `passwordMapping` maps your account, identifier, credential, revision, attempt,
 and receipt tables. It is a `PasswordPersistenceMapping` from `@yielded/auth-persistence-drizzle`.
 Supply `LifecycleHooks` and your other account/session Layers at the composition root.
-Every driver's `make*Services` factory requires its exported `Database` service.
-Use `databaseLayer` to acquire it from the platform SQL client, or provide your
-existing native database with `Layer.succeed(Database, db)` at the application
-boundary. Transaction coordinators retain their explicit acquisition Effects and
-transaction ownership contracts. Durable Object `databaseLayer` requires a SQL
-client configured with `storage`, which provides the synchronous commit boundary.
+Driver factories and transaction coordinators declare `Database` and Effect
+`Crypto` requirements at acquisition. Provide your platform's Crypto Layer to
+the persistence Layer itself; Auth's internal defaults do not supply services to
+an independently constructed storage Layer. SHA digests and entropy use Effect
+Crypto and may suspend.
+
+Use `databaseLayer` to acquire `Database` from the platform SQL client. Most drivers
+also accept a native database through `Layer.succeed(Database, db)`. Durable Object
+SQLite instead exposes `DatabaseValue`: `databaseLayer` builds this projection,
+or `makeDatabase(existingDrizzle)` adapts an existing database while preserving
+its query configuration. Its SQL client must be configured with Durable Object
+`storage`. Transactions belong to Effect SQL and support asynchronous Effects.
 
 Explicit Drizzle factories and transaction coordinators check mapped unique keys
 against the captured database's catalog during acquisition. Apply migrations before
@@ -197,7 +211,8 @@ and column codecs remain application contracts.
 
 ```ts title="apps/server/auth-dependencies.ts"
 import { Layer } from "effect";
-import { Auth, Hooks, Proofs, WebCrypto } from "@yielded/auth";
+import { Auth, Hooks, Proofs } from "@yielded/auth";
+import { CryptoLive } from "./crypto-live";
 
 import { AccountsLive } from "./auth-accounts";
 import { requestBinding, proofKeys } from "./auth-config";
@@ -208,11 +223,11 @@ export const AuthDependencies = Layer.mergeAll(
   Proofs.ProofKeys.layer(proofKeys),
   SessionPersistenceLive,
   AccountsLive,
-  WebCrypto.layerWebCrypto,
   Hooks.LifecycleHooks.empty,
-);
+).pipe(Layer.provideMerge(CryptoLive));
 ```
 
+[`CryptoLive`](./crypto#use-with-auth) is the shared application crypto Layer.
 `proofKeys` is your secret-managed numeric-code keyring. Retain old key IDs until
 their proofs expire.
 
@@ -249,7 +264,7 @@ for each request or use [the HTTP adapter](../guide/http-and-client).
 
 `Auth.make` wires the selected methods, session implementation, Web Crypto, and
 empty lifecycle hooks. Supply `PasswordHashing` explicitly, for example with the
-bounded [`@yielded/auth-crypto/Password` Layer](../guide/passwords#supply-the-services).
+bounded [`Password.PasswordHashing.layer()`](../guide/passwords#supply-the-services).
 Adapter factories expose their crypto and hook requirements; supply them as above
 or use a Layer helper that installs defaults. You supply storage mappings, account authority, claims, delivery, and
 secret keys. Adapters provide implementations; they are not installed automatically.
@@ -275,9 +290,13 @@ Adapter authors can reuse the canonical row codecs when composing explicit servi
 
 ```ts
 import { makeStorageMappings } from "@yielded/auth-persistence/Adapter";
+import { Crypto, Effect } from "effect";
 
-const mappings = makeStorageMappings(storage);
-const proofMapping = mappings.proofs();
+const proofMapping = Effect.gen(function* () {
+  const crypto = yield* Crypto.Crypto;
+  const mappings = makeStorageMappings(storage, crypto);
+  return mappings.proofs();
+});
 ```
 
 The layout must include each requested mapping's role tables. These are shared
@@ -337,7 +356,7 @@ Prepared intents retain admission charges even after sensitive material is erase
 `makeEmailAddressServices` own account creation and address changes.
 
 For explicit composition over an existing storage layout, start from
-`makeStorageMappings(storage).emails()` and `.proofs()`, then supply the raw
+`makeStorageMappings(storage, crypto).emails()` and `.proofs()`, then supply the raw
 registration mapping's provisioning, receipt table, and inspection policy.
 
 Atomic email registration provisions a fresh subject after mailbox proof. Its
@@ -452,9 +471,12 @@ D1 uses a preplanned conditional batch, not an interactive transaction. Allocate
 registration IDs before the batch. Do not replay a caller-owned mutation after an
 ambiguous response.
 
-Durable Object SQLite callbacks inside `transactionSync` must remain synchronous.
-Do verification and asynchronous work outside that callback, then recheck the
-captured authority before committing.
+Durable Object SQLite uses the captured Effect SQL client's asynchronous
+`storage.transaction` boundary. Use `SqliteDo.databaseLayer` or
+`SqliteDo.makeDatabase(existingDrizzle)` and the adapter's transaction coordinators;
+crypto Effects may suspend inside that owned transaction. An arbitrary raw Drizzle
+outer transaction, including its `transactionSync` callbacks, is unsupported.
+No synchronous crypto implementation or `Effect.runSync` bridge is required.
 
 </details>
 

@@ -40,9 +40,7 @@
     "example:totp": "bun test/fixtures/totp-sqlite-bun.ts"
   },
   "dependencies": {
-    "@noble/hashes": "catalog:",
     "@yielded/auth": "workspace:*",
-    "@yielded/auth-crypto": "workspace:*",
     "@yielded/auth-persistence": "workspace:*"
   },
   "devDependencies": {
@@ -58,6 +56,7 @@
     "@effect/sql-sqlite-node": "catalog:",
     "@effect/sql-sqlite-wasm": "catalog:",
     "@effect/vitest": "catalog:",
+    "@yielded/crypto": "workspace:*",
     "drizzle-orm": "catalog:",
     "effect": "catalog:",
     "typescript": "catalog:",

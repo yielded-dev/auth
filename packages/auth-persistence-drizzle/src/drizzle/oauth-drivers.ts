@@ -6,7 +6,7 @@ import {
   OAuthSignInPersistence,
 } from "@yielded/auth/OAuth";
 import type { Table } from "drizzle-orm";
-import { Effect, Context } from "effect";
+import { type Crypto, Effect, Context } from "effect";
 
 import { nativeDatabase } from "./native-database";
 import { makeOAuthConnectedTarget } from "./oauth-connected-drivers";
@@ -70,6 +70,7 @@ export const makeOAuthTarget = <
     A,
     OAuthCoordinatorError<E> | DatabaseError,
     | (Synchronous extends true ? never : Exclude<R, OAuthSignInPersistence>)
+    | Crypto.Crypto
     | LifecycleHooks
     | DatabaseRequirements
   >;
@@ -103,6 +104,7 @@ export const makeOAuthTarget = <
     A,
     OAuthCoordinatorError<E> | DatabaseError,
     | (Synchronous extends true ? never : Exclude<R, OAuthSignInPersistence | TxId>)
+    | Crypto.Crypto
     | LifecycleHooks
     | DatabaseRequirements
   >;
@@ -131,7 +133,7 @@ export const makeOAuthTarget = <
   ): Effect.Effect<
     A,
     OAuthCoordinatorError<E> | DatabaseError,
-    Exclude<R, OAuthSignInPersistence> | LifecycleHooks | DatabaseRequirements
+    Exclude<R, OAuthSignInPersistence> | Crypto.Crypto | LifecycleHooks | DatabaseRequirements
   > {
     return Effect.flatMap(nativeDatabase(acquire), (database) =>
       coordinateTargetOAuthSignIn<
@@ -183,6 +185,7 @@ export const makeOAuthTarget = <
     A,
     OAuthCoordinatorError<E> | DatabaseError,
     | (Synchronous extends true ? never : Exclude<R, OAuthRegistrationIntents>)
+    | Crypto.Crypto
     | LifecycleHooks
     | DatabaseRequirements
   >;
@@ -218,6 +221,7 @@ export const makeOAuthTarget = <
     A,
     OAuthCoordinatorError<E> | DatabaseError,
     | (Synchronous extends true ? never : Exclude<R, OAuthRegistrationIntents | TxId>)
+    | Crypto.Crypto
     | LifecycleHooks
     | DatabaseRequirements
   >;
@@ -248,7 +252,7 @@ export const makeOAuthTarget = <
   ): Effect.Effect<
     A,
     OAuthCoordinatorError<E> | DatabaseError,
-    Exclude<R, OAuthRegistrationIntents> | LifecycleHooks | DatabaseRequirements
+    Exclude<R, OAuthRegistrationIntents> | Crypto.Crypto | LifecycleHooks | DatabaseRequirements
   > {
     return Effect.flatMap(nativeDatabase(acquire), (database) =>
       coordinateTargetOAuthRegistrationIntents<
@@ -304,6 +308,7 @@ export const makeOAuthTarget = <
     A,
     OAuthCoordinatorError<E> | DatabaseError,
     | (Synchronous extends true ? never : Exclude<R, OAuthAccountsPersistence>)
+    | Crypto.Crypto
     | LifecycleHooks
     | DatabaseRequirements
   >;
@@ -339,6 +344,7 @@ export const makeOAuthTarget = <
     A,
     OAuthCoordinatorError<E> | DatabaseError,
     | (Synchronous extends true ? never : Exclude<R, OAuthAccountsPersistence | TxId>)
+    | Crypto.Crypto
     | LifecycleHooks
     | DatabaseRequirements
   >;
@@ -369,7 +375,7 @@ export const makeOAuthTarget = <
   ): Effect.Effect<
     A,
     OAuthCoordinatorError<E> | DatabaseError,
-    Exclude<R, OAuthAccountsPersistence> | LifecycleHooks | DatabaseRequirements
+    Exclude<R, OAuthAccountsPersistence> | Crypto.Crypto | LifecycleHooks | DatabaseRequirements
   > {
     return Effect.flatMap(nativeDatabase(acquire), (database) =>
       coordinateTargetOAuthAccounts<
@@ -428,6 +434,7 @@ export const makeOAuthTarget = <
     A,
     OAuthCoordinatorError<E> | DatabaseError,
     | (Synchronous extends true ? never : Exclude<R, TargetId>)
+    | Crypto.Crypto
     | LifecycleHooks
     | DatabaseRequirements
   >;
@@ -462,6 +469,7 @@ export const makeOAuthTarget = <
     A,
     OAuthCoordinatorError<E> | DatabaseError,
     | (Synchronous extends true ? never : Exclude<R, TargetId | TxId>)
+    | Crypto.Crypto
     | LifecycleHooks
     | DatabaseRequirements
   >;
@@ -495,7 +503,7 @@ export const makeOAuthTarget = <
   ): Effect.Effect<
     A,
     OAuthCoordinatorError<E> | DatabaseError,
-    Exclude<R, TargetId> | LifecycleHooks | DatabaseRequirements
+    Exclude<R, TargetId> | Crypto.Crypto | LifecycleHooks | DatabaseRequirements
   > {
     return Effect.flatMap(nativeDatabase(acquire), (database) =>
       coordinateTargetOAuthRegistration<

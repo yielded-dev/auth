@@ -1,24 +1,31 @@
-// oxlint-disable-next-line import/extensions -- Noble's public ESM subpath.
-import { xchacha20poly1305 } from "@noble/ciphers/chacha.js";
-import { Effect, Predicate } from "effect";
+import { Effect } from "effect";
 
-import { AuthenticationFailed, CryptoUnavailable } from "../Errors";
+import { AuthenticationFailed, CryptoUnavailable, InvalidInput } from "../Errors";
 import type { XChaCha } from "./aead";
+import { decrypt, encrypt } from "./xchacha-core";
+
+// Counter zero derives the MAC key; payload blocks use the remaining uint32 values.
+const maximumPlaintextBytes = 0xffffffff * 64;
 
 export const xchacha: XChaCha = {
   encrypt: ({ key, nonce, additionalData, data }) =>
-    Effect.try({
-      try: () => xchacha20poly1305(key, nonce, additionalData).encrypt(data),
+    data.length > maximumPlaintextBytes
+      ? Effect.fail(InvalidInput.make({ reason: "data" }))
+      : Effect.try({
+          try: () => encrypt(key, nonce, additionalData, data),
+          catch: () => CryptoUnavailable.make({}),
+        }),
+  decrypt: Effect.fnUntraced(function* ({ key, nonce, additionalData, data }) {
+    if (data.length - 16 > maximumPlaintextBytes)
+      return yield* InvalidInput.make({ reason: "data" });
+
+    const plaintext = yield* Effect.try({
+      try: () => decrypt(key, nonce, additionalData, data),
       catch: () => CryptoUnavailable.make({}),
-    }),
-  decrypt: ({ key, nonce, additionalData, data }) =>
-    Effect.try({
-      try: () => xchacha20poly1305(key, nonce, additionalData).decrypt(data),
-      // Noble has no tagged authentication error. Match its pinned, fixed marker
-      // only; allocation/runtime failures must not become invalid credentials.
-      catch: (cause) =>
-        Predicate.isError(cause) && cause.message === "invalid tag"
-          ? AuthenticationFailed.make({})
-          : CryptoUnavailable.make({}),
-    }),
+    });
+
+    if (plaintext === undefined) return yield* AuthenticationFailed.make({});
+
+    return plaintext;
+  }),
 };

@@ -28,7 +28,7 @@ import {
 import type { SecurityRevision } from "@yielded/auth/Sessions";
 /* oxlint-disable no-explicit-any -- concrete driver entry points restore table/database generics. */
 import { eq, sql } from "drizzle-orm";
-import { type Context, Effect, Layer } from "effect";
+import { type Crypto, type Context, Effect, Layer } from "effect";
 import type { Statement } from "effect/sql/Statement";
 
 import type { PersistenceMappingError } from "./model";
@@ -91,7 +91,11 @@ export const sqlClientOAuthStandaloneGuard = (
 export const makeOAuthExecution = Effect.fnUntraced(function* (
   configuration: OAuthTargetConfiguration,
   mapping: unknown,
-): Effect.fn.Return<OAuthExecution, OAuthUnavailable, LifecycleHooks | NativeDatabase> {
+): Effect.fn.Return<
+  OAuthExecution,
+  OAuthUnavailable,
+  LifecycleHooks | NativeDatabase | Crypto.Crypto
+> {
   const hooks = yield* LifecycleHooks;
 
   yield* validateDrizzleStorage(mapping).pipe(Effect.mapError(unavailable));
@@ -435,7 +439,11 @@ export const coordinateOAuthOwner = <Services, Transaction, A, E, R>(
     services: Services,
     append: (statement: Statement<any>) => void,
   ) => Effect.Effect<A, E, R>,
-): Effect.Effect<A, OAuthCoordinatorError<E>, R | LifecycleHooks | NativeDatabase> => {
+): Effect.Effect<
+  A,
+  OAuthCoordinatorError<E>,
+  R | Crypto.Crypto | LifecycleHooks | NativeDatabase
+> => {
   const captured = captureOAuthMapping(mapping);
 
   return Effect.flatMap(LifecycleHooks, (hooks) =>

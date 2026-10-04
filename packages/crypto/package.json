@@ -40,10 +40,6 @@
     "check": "tsc --noEmit -p tsconfig.json",
     "test": "vp test"
   },
-  "dependencies": {
-    "@noble/ciphers": "catalog:",
-    "@noble/hashes": "catalog:"
-  },
   "devDependencies": {
     "@effect/vitest": "catalog:",
     "@types/node": "catalog:",

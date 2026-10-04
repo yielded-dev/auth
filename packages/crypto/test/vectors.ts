@@ -95,7 +95,7 @@ export const argon2Vector = {
   source: "https://www.rfc-editor.org/rfc/rfc9106.html#section-5.3",
   referenceSource:
     "https://github.com/P-H-C/phc-winner-argon2/blob/f57e61e19229e23c4445b85494dbf7c07de721cb/kats/argon2id",
-  why: "Distinguishes v19, id variant, KiB memory units, lanes, secret and AD mappings across native and Noble Layers.",
+  why: "Distinguishes v19, id variant, KiB memory units, lanes, secret and AD mappings across native and portable Layers.",
 } as const;
 
 export const aeadVectors = [

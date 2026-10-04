@@ -91,17 +91,16 @@ invalidation behavior of your selected strategy.
 
 ## Supply the services
 
-Supply `PasswordHashing` explicitly. The maintained Argon2id adapter lives in
-`@yielded/auth-crypto/Password`; its Layer also requires bounded KDF admission and
-Web Crypto. Storage, claims, account creation, screening, and change authorization
-remain application-owned:
+Supply `Password.PasswordHashing.layer()` with an explicit crypto backend,
+bounded KDF admission, and Effect Crypto for entropy. Storage, claims, account
+creation, screening, and change authorization remain application-owned:
 
 ```ts title="apps/server/password-live.ts"
 import { Layer } from "effect";
-import { Password, WebCrypto } from "@yielded/auth";
-import * as PasswordCrypto from "@yielded/auth-crypto/Password";
+import { Password } from "@yielded/auth";
 
 import { AppAuth } from "./auth";
+import { CryptoLive } from "./crypto-live";
 import { AuthDependencies } from "./auth-dependencies";
 import { authorizePasswordChange, registerAccount, resolvePasswordClaims } from "./auth-accounts";
 import { PasswordPersistenceLive, ProofPersistenceLive } from "./auth-persistence";
@@ -109,10 +108,7 @@ import { checkPassword } from "./password-screening";
 import { EmailLive } from "./email";
 
 export const PasswordLive = Layer.mergeAll(
-  PasswordCrypto.layer().pipe(
-    Layer.provide(Password.PasswordKdfAdmission.layer()),
-    Layer.provide(WebCrypto.layerWebCrypto),
-  ),
+  Password.PasswordHashing.layer().pipe(Layer.provide(CryptoLive)),
   PasswordPersistenceLive,
   ProofPersistenceLive,
   Layer.succeed(AppAuth.strategies.password.SessionClaims, { resolve: resolvePasswordClaims }),
@@ -134,7 +130,14 @@ can provide persistence and registration. `AuthDependencies` supplies the shared
 For sign-in-only `Password.make()`, supply hashing, password persistence, and claims
 alongside those shared services. Keep normalization stable for stored credentials.
 
+[`CryptoLive`](../reference/crypto#use-with-auth) is the shared application crypto
+Layer. Install `@yielded/crypto` alongside Auth when importing its backend. See
+[crypto backends](../reference/crypto#compose-a-backend) for native alternatives.
 Share one `PasswordKdfAdmission.layer()` instance across hashers in each runtime.
+`Layer.provideMerge(Admission)` exposes both the password admission service and
+its generic KDF service. The outer password operation and nested derivations use
+that same instance; comparison and secret cleanup retain the permit. Nested work
+in the same fiber reuses it, while child fibers acquire independently.
 By default it runs one KDF callback and accepts up to 16 waiting calls, each with a
 5000ms acquisition deadline. A full queue or expired wait fails with
 `PasswordKdfBusy`; interrupted waiters leave the queue. Once admitted to run, work

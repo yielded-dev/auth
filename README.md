@@ -28,8 +28,8 @@ HttpClient service and Effect Atom queries and mutations.
 Your application owns its accounts, identifiers, and authorization policy.
 Use managed auth tables, map an existing SQL schema, or implement storage services
 against another backend. The auth API stays the same when you change storage.
-Core has only Effect as a runtime peer; companion packages supply database,
-cryptography, and protocol adapters.
+Auth uses Effect and first-party crypto, JOSE, and OAuth packages. Applications select
+crypto Layers; optional companions supply database, WebAuthn, and platform integrations.
 
 Start with [Auth in an Effect application](docs/src/content/docs/guide/effect.mdx)
 or compare [database and backend choices](docs/src/content/docs/guide/storage.mdx).

@@ -1,6 +1,7 @@
-import { Password, WebCrypto } from "@yielded/auth";
-import * as PasswordCrypto from "@yielded/auth-crypto/Password";
+import { Password } from "@yielded/auth";
 import { Context, Effect, Layer, Ref } from "effect";
+
+import { CryptoLive } from "../crypto";
 
 export class HashingStats extends Context.Service<
   HashingStats,
@@ -13,10 +14,7 @@ export class HashingStats extends Context.Service<
   }
 >()("example/HashingStats") {}
 
-const PortableHashing = PasswordCrypto.layer().pipe(
-  Layer.provide(Password.PasswordKdfAdmission.layer()),
-  Layer.provide(WebCrypto.layerWebCrypto),
-);
+const PortableHashing = Password.PasswordHashing.layer().pipe(Layer.provide(CryptoLive));
 
 // Replace functions with ordinary Effect.fn values. This application adds tracing
 // and counters while retaining the portable Argon2id implementation and admission.

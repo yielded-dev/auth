@@ -1,3 +1,4 @@
+import { NodeCrypto } from "@effect/platform-node";
 import { D1Client } from "@effect/sql-d1/D1Client";
 import type { D1Client as D1ClientService } from "@effect/sql-d1/D1Client";
 import * as SqliteClient from "@effect/sql-sqlite-node/SqliteClient";
@@ -14,7 +15,7 @@ import {
   text,
   type SQLiteTable,
 } from "drizzle-orm/sqlite-core";
-import { Effect, Layer, Schema } from "effect";
+import { Crypto, Effect, Layer, Schema } from "effect";
 import { SqlClient } from "effect/sql";
 import type { SqlError } from "effect/sql/SqlError";
 import type { Statement } from "effect/sql/Statement";
@@ -68,7 +69,8 @@ export const storage = persistence.managed({
 });
 
 // Use production codecs and table mapping, rather than a test proof-store implementation.
-export const proofMapping = makeStorageMappings(storage).proofs();
+export const crypto = Effect.runSync(Crypto.Crypto.pipe(Effect.provide(NodeCrypto.layer)));
+export const proofMapping = makeStorageMappings(storage, crypto).proofs();
 const identifiers = getTableColumns(storage.schema.identifiers);
 const clock = sql`(select now from proof_clock)`;
 

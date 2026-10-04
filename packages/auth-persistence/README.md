@@ -2,7 +2,9 @@
 
 Direct Effect SQL persistence and shared storage contracts for `@yielded/auth`.
 
-Import the named `AuthPersistence` facade and provide an explicit Effect SQL client.
+Import the named `AuthPersistence` facade and provide an explicit Effect SQL client
+and Effect `Crypto` to its Layer. Managed storage requires a stable `prefix`; use
+the existing table prefix when connecting an existing database.
 Drizzle integrations live in `@yielded/auth-persistence-drizzle`; this package has
 no Drizzle dependency or exports. Core workflows and replaceable service contracts
 remain in `@yielded/auth`.
@@ -19,7 +21,8 @@ and changes, phone sign-in, and passkey sign-in and management with stateful ses
 on PostgreSQL and SQLite. The `/Adapter` module exposes the shared mapping contracts
 and transaction kernels used by companion adapters.
 Its constructors acquire their database through the matching `Current*Sql` or
-`NativeDatabase` service. Provide that dependency during construction only;
+`NativeDatabase` service, alongside Effect `Crypto` where required. Supply these
+services during construction;
 transaction coordinators supply their exact transaction when constructing bound
 services. Keep root database provision outside later operations, where the
 current SQL service identifies an active transaction.

@@ -1,10 +1,11 @@
-import { Context, type Effect } from "effect";
+import { Context, type Effect, Layer } from "effect";
 
 import type {
   OAuthConnectedProtectionContext,
   OAuthConnectedSealedTokens,
   OAuthConnectedTokenMaterial,
 } from "./connectedModels";
+import { make } from "./encryption/OAuthConnectedTokenProtector";
 import type { OAuthUnavailable } from "./signInErrors";
 import type { OAuthTransactionKeyring } from "./transactionKeyring";
 
@@ -24,4 +25,7 @@ export class OAuthConnectedTokenProtector extends Context.Service<
       readonly sealed: OAuthConnectedSealedTokens;
     }) => Effect.Effect<OAuthConnectedTokenMaterial, OAuthUnavailable>;
   }
->()("effect-auth/OAuthConnectedTokenProtector") {}
+>()("effect-auth/OAuthConnectedTokenProtector") {
+  static readonly layer = (keyring: OAuthConnectedTokenKeyring) =>
+    Layer.effect(this, make(keyring));
+}

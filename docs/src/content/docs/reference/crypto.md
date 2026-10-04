@@ -3,10 +3,11 @@ title: Reusable cryptography
 description: Compose independent Effect crypto services with explicit runtime backends.
 ---
 
-`@yielded/crypto` provides byte operations independently of Auth. Its services own
+`@yielded/crypto` provides byte operations independently of Auth, with Effect as its
+only runtime package dependency. Its services own
 cryptographic execution; your application owns keys, nonce uniqueness, password
 policy, trusted algorithms and envelope formats. Use Effect `Crypto` for entropy
-and SHA digests. Auth's existing adapters remain the integration entrypoints for
+and SHA digests. Auth directly supplies the domain services for
 [passwords](../guide/passwords.md), [TOTP](../guide/totp.mdx) and
 [OAuth](../guide/oauth.mdx).
 
@@ -58,6 +59,36 @@ second argument containing KDF limit overrides; `NodeCrypto.layer(limits?)`
 takes those overrides as its first argument. Bun uses the same implementation
 through `@yielded/crypto/platform-bun`.
 
+## Use with Auth
+
+Choose the backend at your application's composition root. This portable setup
+supplies Effect entropy/digests, Auth's session WebCrypto capability, and owned
+KDF, AEAD, HMAC, and signature services:
+
+```ts title="apps/server/crypto-live.ts"
+import { Password, WebCrypto } from "@yielded/auth";
+import * as Portable from "@yielded/crypto/Portable";
+import { Layer } from "effect";
+
+const Admission = Password.PasswordKdfAdmission.layer();
+export const CryptoLive = Layer.merge(
+  WebCrypto.layerWebCrypto,
+  Portable.layer(globalThis.crypto.subtle).pipe(Layer.provideMerge(Admission)),
+);
+```
+
+Provide `CryptoLive` to `Password.PasswordHashing.layer()`,
+`Totp.TotpCryptography.layer`, and the `OAuth` protector Layers. TOTP also requires
+`TotpSecretKeys`; OAuth protectors take their application keyring as an argument.
+`OpenIdConnect` and `GitHub` provider Layers additionally require `HttpClient`.
+Build provider and protector Layers in the application's owning scope.
+
+The password admission Layer exposes both Auth's domain admission service and
+the generic `KdfAdmission` service. Use the same instance for the backend and
+password operations so their nested work shares a permit. Auth preserves its
+password limits, PHC/PBKDF2 encodings, TOTP recovery digests, and OAuth envelopes;
+changing the backend does not change stored credential bytes or keyring policy.
+
 ## Supported profiles
 
 | Service               | Profile                                      | Bytes and key formats                                                             |
@@ -84,8 +115,8 @@ for existing protocols such as TOTP.
 | Backend                         | Native operations                                        | Portable operations        | Unsupported operations                              |
 | ------------------------------- | -------------------------------------------------------- | -------------------------- | --------------------------------------------------- |
 | `WebCrypto`                     | AES-GCM, HMAC, PBKDF2, HKDF, signatures                  | None                       | Argon2id, XChaCha                                   |
-| `Portable`                      | AES-GCM, HMAC, PBKDF2, HKDF, signatures                  | Noble Argon2id and XChaCha | Host-specific native capability gaps                |
-| `platform-node`, `platform-bun` | Node-compatible WebCrypto operations and native Argon2id | Noble XChaCha              | Native Argon2id when the host lacks `crypto.argon2` |
+| `Portable`                      | AES-GCM, HMAC, PBKDF2, HKDF, signatures                  | Owned Argon2id and XChaCha | Host-specific native capability gaps                |
+| `platform-node`, `platform-bun` | Node-compatible WebCrypto operations and native Argon2id | Owned XChaCha              | Native Argon2id when the host lacks `crypto.argon2` |
 
 Backend selection is explicit. An unavailable native algorithm fails with
 `CryptoUnsupportedAlgorithm`; it does not silently select a different algorithm
@@ -104,7 +135,10 @@ validation, PHC parsing and rehash policy.
 `KdfAdmission.layer()` defaults to one running derivation, sixteen queued requests
 and a five-second acquisition wait. Waiting can be interrupted. Once native work
 starts, interruption waits for the work and cleanup to finish before releasing
-capacity. Portable Argon2id remains on the calling thread even though it yields.
+capacity. Portable Argon2id yields through Effect between bounded batches and
+clears its memory and scratch buffers before releasing admission. It remains on
+the calling thread. Nested `run` calls reuse admission only in the same fiber
+and on the same service instance. A child fiber acquires independently.
 
 ## Failure and secret boundaries
 

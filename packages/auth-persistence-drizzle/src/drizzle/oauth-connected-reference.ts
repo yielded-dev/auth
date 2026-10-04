@@ -1,6 +1,7 @@
 import { eq, is, sql, type SQL, type Table } from "drizzle-orm";
 import { MySqlTable } from "drizzle-orm/mysql-core/table";
 import { PgTable } from "drizzle-orm/pg-core/table";
+import { Effect } from "effect";
 
 import type { OAuthConnectedMapping } from "./oauth-connected-model";
 import { scopeKey, type Mapping } from "./oauth-connected-state";
@@ -52,15 +53,19 @@ export const oauthConnectedOwnershipReferences = <
         table: c.table,
         orderBy: c.clientKey,
         condition: (input) =>
-          both(
-            equal(c.table, {
-              [c.clientKey]: scopeKey(input.identity.provider, input.identity.issuer),
-              [c.counter]: mapping.order.encode(0),
-            }),
-            exactText(c.table, c.provider, input.identity.provider),
-            exactText(c.table, c.issuer, input.identity.issuer),
-            exactText(c.table, c.clientRegistrationId, ""),
-          ),
+          Effect.gen(function* () {
+            const key = yield* scopeKey(input.identity.provider, input.identity.issuer);
+
+            return both(
+              equal(c.table, {
+                [c.clientKey]: key,
+                [c.counter]: mapping.order.encode(0),
+              }),
+              exactText(c.table, c.provider, input.identity.provider),
+              exactText(c.table, c.issuer, input.identity.issuer),
+              exactText(c.table, c.clientRegistrationId, ""),
+            );
+          }),
       }),
     ],
     connectedReference: (input) => connectedReferenceCondition(mapping, input.identityKey),

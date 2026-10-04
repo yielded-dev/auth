@@ -18,13 +18,15 @@ export class KdfAdmission extends Context.Service<
 
 const Configuration = Schema.Struct({
   concurrency: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 32 })),
-  maxQueued: Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 65536 })),
+  maxQueued: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
   maxWaitMilliseconds: Schema.Int.check(Schema.isGreaterThan(0)),
 });
 
 /**
  * Waiting is interruptible and bounded; admitted work is not detached on
  * interruption. The permit's scope covers native completion and buffer cleanup.
+ * Nested work in the same fiber shares its permit; forked fibers must acquire
+ * their own. This lets callers cover preparation and cleanup around a KDF call.
  * Defaults: one running derivation, sixteen waiting, five-second acquisition wait.
  */
 export const layer = (options: Options = {}): Layer.Layer<KdfAdmission, InvalidInput> => {
@@ -41,8 +43,13 @@ export const layer = (options: Options = {}): Layer.Layer<KdfAdmission, InvalidI
         Effect.mapError(() => InvalidInput.make({ reason: "parameters" })),
       );
 
+      const capacity = yield* Schema.decodeEffect(Schema.Int)(
+        config.concurrency + config.maxQueued,
+      ).pipe(Effect.mapError(() => InvalidInput.make({ reason: "parameters" })));
+
       const active = yield* Semaphore.make(config.concurrency);
-      const admitted = yield* Semaphore.make(config.concurrency + config.maxQueued);
+      const admitted = yield* Semaphore.make(capacity);
+      const owners = new Set<number>();
 
       const acquire = Effect.acquireRelease(active.take(1), () => active.release(1), {
         interruptible: true,
@@ -55,17 +62,25 @@ export const layer = (options: Options = {}): Layer.Layer<KdfAdmission, InvalidI
 
       return KdfAdmission.of({
         run: <A, E, R>(work: Effect.Effect<A, E, R>) =>
-          admitted
-            .withPermitsIfAvailable(1)(
-              Effect.scoped(Effect.andThen(acquire, Effect.uninterruptible(work))),
-            )
-            .pipe(
-              Effect.flatMap((result) =>
-                Option.isSome(result)
-                  ? Effect.succeed(result.value)
-                  : Effect.fail(KdfBusy.make({})),
-              ),
-            ),
+          Effect.withFiber((fiber) => {
+            if (owners.has(fiber.id)) return Effect.uninterruptible(work);
+
+            const owned = Effect.acquireUseRelease(
+              Effect.sync(() => owners.add(fiber.id)),
+              () => Effect.uninterruptible(work),
+              () => Effect.sync(() => owners.delete(fiber.id)),
+            );
+
+            return admitted
+              .withPermitsIfAvailable(1)(Effect.scoped(Effect.andThen(acquire, owned)))
+              .pipe(
+                Effect.flatMap((result) =>
+                  Option.isSome(result)
+                    ? Effect.succeed(result.value)
+                    : Effect.fail(KdfBusy.make({})),
+                ),
+              );
+          }),
       });
     }),
   );

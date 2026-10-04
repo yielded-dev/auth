@@ -1,9 +1,5 @@
 /* oxlint-disable no-explicit-any -- existing mapped-row bridge; public adapters preserve table, ID, and Effect types. */
 
-// oxlint-disable-next-line import/extensions -- Noble exposes its explicit .js subpaths.
-import { sha256 } from "@noble/hashes/sha2.js";
-// oxlint-disable-next-line import/extensions -- Noble exposes its explicit .js subpaths.
-import { randomBytes } from "@noble/hashes/utils.js";
 import {
   PasskeyConfigurationError,
   PasskeyUnavailable,
@@ -15,9 +11,9 @@ import {
   PasskeyMethodPolicy,
   snapshotPasskeySync,
 } from "@yielded/auth/Passkey";
-import { Context, Effect, Schema } from "effect";
-import { Base64Url } from "effect/encoding";
+import { Context, Crypto, Effect, Schema } from "effect";
 
+import { randomId } from "../crypto";
 import {
   requiredPasskeyCredentialConstraints,
   requiredPasskeyPersistenceConstraints,
@@ -48,14 +44,14 @@ export const makePasskeyStateKernel = (
 
   const { col, equal, copiedRow, matchesNativeRow } = makeTransactionRows(unavailable);
 
-  const nonce = () => Base64Url.encode(randomBytes(32));
+  const nonce = randomId;
 
   const encoder = new TextEncoder();
 
   const decoder = new TextDecoder("utf-8", { fatal: true });
 
   /** RP tuples and admission scopes have no collation-dependent string identity. */
-  const key = (kind: string, fields: ReadonlyArray<string>) => {
+  const key = Effect.fnUntraced(function* (kind: string, fields: ReadonlyArray<string>) {
     const values = ["effect-auth/passkey/" + kind + "/v1", ...fields].map((field) => {
       const bytes = encoder.encode(field);
 
@@ -74,10 +70,11 @@ export const makePasskeyStateKernel = (
       offset += 4 + bytes.length;
     }
 
-    return (
-      "v1:" + Array.from(sha256(packed), (value) => value.toString(16).padStart(2, "0")).join("")
-    );
-  };
+    const crypto = yield* Crypto.Crypto;
+    const hashed = yield* crypto.digest("SHA-256", packed);
+
+    return "v1:" + Array.from(hashed, (value) => value.toString(16).padStart(2, "0")).join("");
+  });
 
   const credentialKey = (rpId: string, id: string) => key("credential", [rpId, id]);
 
@@ -88,7 +85,7 @@ export const makePasskeyStateKernel = (
   const targetScope = (ceremony: PasskeyCeremony) => {
     const context = ceremony.context;
 
-    if (!("target" in context)) return null;
+    if (!("target" in context)) return Effect.succeed(null);
     const target = context.target;
 
     return key("target", [

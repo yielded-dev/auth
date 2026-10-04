@@ -26,7 +26,7 @@ import {
   snapshotPasskeySync,
 } from "@yielded/auth/Passkey";
 import { SubjectId } from "@yielded/auth/Schema";
-import { Effect, Schema } from "effect";
+import { type Crypto, Effect, Schema } from "effect";
 import type { Statement } from "effect/sql/Statement";
 
 import type { PersistenceMappingError } from "../mapping-error";
@@ -130,7 +130,7 @@ export const makePasskeyTargetKernel = (
   ): Effect.fn.Return<
     PasskeyExecution,
     PasskeyConfigurationError,
-    LifecycleHooks | NativeDatabase
+    LifecycleHooks | NativeDatabase | Crypto.Crypto
   > {
     const hooks = yield* LifecycleHooks;
 
@@ -437,7 +437,7 @@ export const makePasskeyTargetKernel = (
   ): Effect.Effect<
     PasskeyCredentialServices,
     PasskeyConfigurationError | PersistenceMappingError,
-    RSetup | NativeDatabase
+    RSetup | NativeDatabase | Crypto.Crypto
   > =>
     Effect.gen(function* () {
       const mapping = yield* capturedMapping(source, "read", configuration);
@@ -455,7 +455,7 @@ export const makePasskeyTargetKernel = (
   ): Effect.Effect<
     PasskeyEnrollmentContextServices,
     PasskeyConfigurationError | PersistenceMappingError,
-    RSetup | NativeDatabase
+    RSetup | NativeDatabase | Crypto.Crypto
   > =>
     Effect.gen(function* () {
       const mapping = yield* capturedMapping(source, "context", configuration);
@@ -473,7 +473,7 @@ export const makePasskeyTargetKernel = (
   ): Effect.Effect<
     PasskeyPersistenceServices,
     PasskeyConfigurationError | PersistenceMappingError,
-    RSetup | LifecycleHooks | NativeDatabase
+    RSetup | LifecycleHooks | NativeDatabase | Crypto.Crypto
   > =>
     Effect.gen(function* () {
       const mapping = yield* capturedMapping(source, "assertion", configuration);
@@ -490,7 +490,7 @@ export const makePasskeyTargetKernel = (
   ): Effect.Effect<
     PasskeyRegistrationCeremonyServices,
     PasskeyConfigurationError | PersistenceMappingError,
-    RSetup | LifecycleHooks | NativeDatabase
+    RSetup | LifecycleHooks | NativeDatabase | Crypto.Crypto
   > =>
     Effect.gen(function* () {
       const mapping = yield* capturedMapping(source, "registration", configuration);
@@ -508,7 +508,11 @@ export const makePasskeyTargetKernel = (
       services: PasskeyPersistenceServices,
       append: (statement: Statement<unknown>) => void,
     ) => Effect.Effect<A, E, R>,
-  ): Effect.Effect<A, PasskeyCoordinatorError<E>, R | RSetup | LifecycleHooks | NativeDatabase> =>
+  ): Effect.Effect<
+    A,
+    PasskeyCoordinatorError<E>,
+    R | RSetup | LifecycleHooks | NativeDatabase | Crypto.Crypto
+  > =>
     Effect.flatMap(capturedMapping(source, "assertion", configuration), (mapping) =>
       Effect.flatMap(LifecycleHooks, (hooks) =>
         coordinateTransactionOwner(
@@ -545,7 +549,11 @@ export const makePasskeyTargetKernel = (
       services: PasskeyRegistrationCeremonyServices,
       append: (statement: Statement<unknown>) => void,
     ) => Effect.Effect<A, E, R>,
-  ): Effect.Effect<A, PasskeyCoordinatorError<E>, R | RSetup | LifecycleHooks | NativeDatabase> =>
+  ): Effect.Effect<
+    A,
+    PasskeyCoordinatorError<E>,
+    R | RSetup | LifecycleHooks | NativeDatabase | Crypto.Crypto
+  > =>
     Effect.flatMap(capturedMapping(source, "registration", configuration), (mapping) =>
       Effect.flatMap(LifecycleHooks, (hooks) =>
         coordinateTransactionOwner(

@@ -7,7 +7,7 @@ import {
 } from "@yielded/auth/Hooks";
 /* oxlint-disable no-explicit-any -- existing storage kernels erase foreign table shapes; domain errors remain typed. */
 /* oxlint-disable no-explicit-any -- private execution bridge retains exact public driver wrappers. */
-import { Context, Effect } from "effect";
+import { Context, Crypto, Effect, type PlatformError } from "effect";
 import type * as SqlClient from "effect/sql/SqlClient";
 import type * as SqlError from "effect/sql/SqlError";
 import type { Statement } from "effect/sql/Statement";
@@ -56,7 +56,11 @@ export interface TransactionExecution<Failure, OwnerId, Requirements = Lifecycle
   readonly run: <A, E, R>(
     body: Effect.Effect<A, E, R>,
     mutation?: boolean,
-  ) => Effect.Effect<A, Failure, Exclude<R, OwnerId | CurrentCommitJournal> | Requirements>;
+  ) => Effect.Effect<
+    A,
+    Failure,
+    Exclude<Exclude<R, OwnerId | CurrentCommitJournal>, Crypto.Crypto> | Requirements
+  >;
 }
 
 export const makeTransactionExecutionKernel = (
@@ -76,10 +80,15 @@ export const makeTransactionExecutionKernel = (
     ownerTag: Context.Key<OwnerId, TransactionOwner<Failure>>,
     configuration: TransactionTargetConfiguration<Failure>,
     unavailable: () => Failure,
-    nonce: () => string,
+    nonce: Effect.Effect<string, PlatformError.PlatformError, Crypto.Crypto>,
     bound?: TransactionBound<Failure>,
-  ): Effect.fn.Return<TransactionExecution<Failure, OwnerId>, never, NativeDatabase> {
+  ): Effect.fn.Return<
+    TransactionExecution<Failure, OwnerId>,
+    never,
+    NativeDatabase | Crypto.Crypto
+  > {
     const database = yield* NativeDatabase;
+    const crypto = yield* Crypto.Crypto;
 
     const invariant: (value: unknown) => asserts value = (value) => {
       if (!value) throw unavailable();
@@ -101,11 +110,19 @@ export const makeTransactionExecutionKernel = (
       run: <A, E, R>(
         body: Effect.Effect<A, E, R>,
         mutation = true,
-      ): Effect.Effect<A, Failure, Exclude<R, OwnerId | CurrentCommitJournal> | LifecycleHooks> => {
+      ): Effect.Effect<
+        A,
+        Failure,
+        Exclude<Exclude<R, OwnerId | CurrentCommitJournal>, Crypto.Crypto> | LifecycleHooks
+      > => {
         return Effect.suspend(() => {
           let entered = false;
 
-          const work =
+          const work: Effect.Effect<
+            A,
+            E | Failure | HookConfigurationError | SqlError.SqlError | PlatformError.PlatformError,
+            Exclude<R, OwnerId | CurrentCommitJournal> | LifecycleHooks | Crypto.Crypto
+          > =
             bound !== undefined
               ? Effect.gen(function* () {
                   if (!bound.active) return yield* Effect.fail(unavailable());
@@ -148,7 +165,7 @@ export const makeTransactionExecutionKernel = (
               : Effect.gen(function* () {
                   if (yield* hasCommitScope) return yield* Effect.fail(unavailable());
                   yield* configuration.standaloneGuard(database.$client.transactionService);
-                  const marker = nonce();
+                  const marker = yield* nonce;
 
                   const result = yield* coordinateCommit(
                     (journal) => {
@@ -189,6 +206,7 @@ export const makeTransactionExecutionKernel = (
                 });
 
           return work.pipe(
+            Effect.provideService(Crypto.Crypto, crypto),
             (operation) => reportTransactionFailure(operation, unavailable),
             Effect.mapError(unavailable),
             Effect.catchDefect(() => Effect.fail(unavailable())),
@@ -215,7 +233,7 @@ export const makeTransactionExecutionKernel = (
     configuration: TransactionTargetConfiguration<Failure>,
     allocate: Effect.Effect<Resources, AllocationError, AllocationRequirements>,
     unavailable: () => Failure,
-    nonce: () => string,
+    nonce: Effect.Effect<string, PlatformError.PlatformError, Crypto.Crypto>,
     services: (execution: TransactionExecution<Failure, OwnerId>, resources: Resources) => Services,
     owner: (
       transaction: Transaction,
@@ -225,11 +243,12 @@ export const makeTransactionExecutionKernel = (
   ): Effect.Effect<
     A,
     TransactionCoordinatorError<E, Failure>,
-    Exclude<R, CurrentCommitJournal> | LifecycleHooks | AllocationRequirements
+    Exclude<R, CurrentCommitJournal> | LifecycleHooks | AllocationRequirements | Crypto.Crypto
   > => {
     return Effect.gen(function* () {
       if (yield* hasCommitScope) return yield* Effect.fail(unavailable());
       yield* configuration.standaloneGuard(database.$client.transactionService);
+      const crypto = yield* Crypto.Crypto;
 
       // Allocation is independent of registration data and always precedes the physical owner.
       const resources = yield* allocate.pipe(
@@ -238,7 +257,7 @@ export const makeTransactionExecutionKernel = (
         Effect.catchDefect(() => Effect.fail(unavailable())),
       );
 
-      const marker = nonce();
+      const marker = yield* nonce.pipe(Effect.mapError(unavailable));
 
       const result = yield* coordinateCommit(
         (journal) => {
@@ -293,7 +312,7 @@ export const makeTransactionExecutionKernel = (
                   }),
                 ),
               );
-            });
+            }).pipe(Effect.provideService(Crypto.Crypto, crypto));
 
           return configuration.mode === "batch"
             ? run(database)

@@ -3,6 +3,6 @@ import { makeLayer } from "./internal/layer";
 import { xchacha } from "./internal/xchacha";
 import type { Limits } from "./Kdf";
 
-/** WebCrypto with explicit Noble Argon2id and XChaCha20-Poly1305 extensions. */
+/** WebCrypto with owned, portable Argon2id and XChaCha20-Poly1305 implementations. */
 export const layer = (subtle: SubtleCrypto, limits: Partial<Limits> = {}) =>
   makeLayer(subtle, limits, { argon2, xchacha });

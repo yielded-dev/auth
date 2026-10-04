@@ -37,7 +37,7 @@ The optional `@yielded/auth/contracts` group exports `AuthContract`,
 `PhoneOtp`, and `Totp`. These are the same modules exposed at the root.
 
 Optional adapters are direct imports, for example `@yielded/auth-persistence-drizzle/Postgres`,
-`@yielded/auth-openid-client`, `@yielded/auth-simplewebauthn/Browser`, or
+`@yielded/auth-simplewebauthn/Browser`, or
 `@yielded/auth/adapters/Twilio`. Install only the peers
 required by the selected adapters.
 
@@ -58,6 +58,7 @@ Import application services and authentication methods from the root:
 | `Totp`, `Passkey`                      | Additional factors and passkey workflows.                                |
 | `PasskeyPassword`                      | Password-backed authority for passkey workflows.                         |
 | `OAuth`                                | Provider sign-in, registration, linked accounts, and connected grants.   |
+| `OpenIdConnect`, `GitHub`, `Strava`    | Native provider configuration and protocol Layers.                       |
 
 ## Browser and transport boundaries
 
@@ -93,24 +94,24 @@ See [HTTP integration](../guide/http-and-client) for contract sharing,
 SDK integrations live in companion packages. Import the platform entrypoint
 you use.
 
-| Package or import                         | Integration                                                                                     |
-| ----------------------------------------- | ----------------------------------------------------------------------------------------------- |
-| `@yielded/auth-simplewebauthn/Browser`    | Browser WebAuthn ceremonies through `make()` or `layer`.                                        |
-| `@yielded/auth-simplewebauthn/Server`     | Server verification through `make(options)` or `layer`.                                         |
-| `@yielded/auth-react-native`              | iOS passkey ceremonies through `make()` or `layer`; import only in the native entrypoint.       |
-| `@yielded/auth-react-native/BrowserLogin` | iOS authentication browser and Keychain vault.                                                  |
-| `@yielded/auth-electron/BrowserLogin`     | Main-process system browser and encrypted vault.                                                |
-| `@yielded/auth-openid-client`             | OAuth/OIDC verification and provider configuration.                                             |
-| `@yielded/auth-openid-client/Connected`   | Connected grant management.                                                                     |
-| `@yielded/auth-openid-client/GitHub`      | GitHub configuration and operations using OpenID Client.                                        |
-| `@yielded/auth-crypto`                    | Password hashing, TOTP, and OAuth secret protection through `/Password`, `/Totp`, and `/OAuth`. |
-| `@yielded/auth-persistence`               | Direct Effect SQL persistence; requires an application-provided SQL client.                     |
-| `@yielded/auth-persistence-drizzle`       | Drizzle mappings and explicit driver modules such as `/Postgres` and `/SqliteBun`.              |
-| `@yielded/auth/adapters/Twilio`           | SMS delivery through Effect HTTP; requires `TwilioConfig`.                                      |
+| Package or import                         | Integration                                                                               |
+| ----------------------------------------- | ----------------------------------------------------------------------------------------- |
+| `@yielded/auth-simplewebauthn/Browser`    | Browser WebAuthn ceremonies through `make()` or `layer`.                                  |
+| `@yielded/auth-simplewebauthn/Server`     | Server verification through `make(options)` or `layer`.                                   |
+| `@yielded/auth-react-native`              | iOS passkey ceremonies through `make()` or `layer`; import only in the native entrypoint. |
+| `@yielded/auth-react-native/BrowserLogin` | iOS authentication browser and Keychain vault.                                            |
+| `@yielded/auth-electron/BrowserLogin`     | Main-process system browser and encrypted vault.                                          |
+| `@yielded/auth-persistence`               | Direct Effect SQL persistence; requires an application-provided SQL client.               |
+| `@yielded/auth-persistence-drizzle`       | Drizzle mappings and explicit driver modules such as `/Postgres` and `/SqliteBun`.        |
+| `@yielded/auth/adapters/Twilio`           | SMS delivery through Effect HTTP; requires `TwilioConfig`.                                |
 
-Core has only Effect as a runtime peer. It owns schemas, workflows, and service contracts. Adapters depend on those
-public contracts; core never imports or re-exports an SDK adapter. An application
-chooses the adapter Layer and supplies storage, policy, and delivery authority.
+Auth owns schemas, workflows, and direct password, TOTP, and OAuth implementations.
+Its runtime dependencies are Effect and the first-party `@yielded/crypto` and
+`@yielded/oauth` packages; native OAuth uses first-party JOSE verification.
+`OpenIdConnect` and `GitHub` configure native providers without a provider SDK.
+Optional SDK adapters depend on Auth's public contracts; Auth never imports or
+re-exports them. Applications supply storage, policy, delivery authority, and
+explicit crypto/HTTP Layers.
 
 `@yielded/auth-persistence` exports the named `AuthPersistence` facade for direct
 Effect SQL and has no Drizzle dependency or declarations. The Drizzle companion's
@@ -127,7 +128,9 @@ implementations that `Auth.make` binds. Use them when you own operation composit
 `Auth.make` supplies the application service and request boundary.
 
 Storage implements the strategy ports in `Password`, `Email`, `Proofs`, and
-`Sessions`. Password hashing comes from `@yielded/auth-crypto/Password`.
+`Sessions`. Use `Password.PasswordHashing.layer()`, `Totp.TotpCryptography.layer`,
+and the `OAuth` protector services' `.layer(keyring)` methods with an explicit
+[crypto backend](./crypto#use-with-auth).
 Application account services provide identity authority and session claims.
 `SmsDelivery` and `EmailDelivery.EmailDelivery` own private delivery. Auth renders
 email content before sending it; see the [transport recipes](../guide/email-delivery).
