@@ -43,7 +43,10 @@ export class PasskeyPersistence extends Context.Service<
      * subject/target issue charges through full physical rolling windows. Serialize
      * the subject budget decision with claim so different flows cannot bypass it.
      * Optional credential authority is captured before signature verification.
-     * One fixed claim; no takeover, lease renewal or return to Pending. */
+     * One fixed claim; no takeover, lease renewal or return to Pending. Claim
+     * timestamps use the persistence authority's clock, which may differ from the
+     * application's clock. The core bounds verification by the granted duration;
+     * persistence must recheck liveness at final authority time before committing. */
     readonly claim: <A>(
       input: {
         readonly access: PasskeyAccess;

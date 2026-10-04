@@ -1,4 +1,15 @@
-import { Cause, Context, Crypto, DateTime, Effect, Fiber, Layer, Redacted, Schema } from "effect";
+import {
+  Cause,
+  Clock,
+  Context,
+  Crypto,
+  DateTime,
+  Effect,
+  Fiber,
+  Layer,
+  Redacted,
+  Schema,
+} from "effect";
 import { Base64Url } from "effect/encoding";
 
 import { hasCommitScope, type PreparedCommit } from "../hooks/commit";
@@ -466,6 +477,7 @@ export const makePasskeyCeremony = <const Id extends string, const Purpose exten
       credential?: PasskeyCredential,
     ) {
       const claimId = yield* random();
+      const startedNanos = yield* Clock.monotonicTimeNanos;
 
       const decision = yield* snapshotPasskey(
         PasskeyClaimDecision,
@@ -485,24 +497,37 @@ export const makePasskeyCeremony = <const Id extends string, const Purpose exten
 
       if (decision._tag !== "Claimed") return yield* PasskeyRejected.make({});
 
-      const result = decision.claim,
-        clock = yield* now;
+      const result = decision.claim;
 
-      if (
-        result.claimId !== claimId ||
-        !(yield* samePasskey(PasskeyCeremony, result.ceremony, inspected.ceremony)) ||
-        result.claimedAtMillis > clock ||
-        result.claimedAtMillis < inspected.ceremony.issuedAtMillis ||
-        result.claimExpiresAtMillis !==
+      const diagnostic = {
+        claimIdMatches: result.claimId === claimId,
+        ceremonyMatches: yield* samePasskey(PasskeyCeremony, result.ceremony, inspected.ceremony),
+        claimChronologyValid:
+          result.claimedAtMillis >= inspected.ceremony.issuedAtMillis &&
+          result.claimedAtMillis < inspected.ceremony.expiresAtMillis,
+        claimExpiryMatches:
+          result.claimExpiresAtMillis ===
           Math.min(
             result.claimedAtMillis + policy.claimLifetimeMillis,
             inspected.ceremony.expiresAtMillis,
-          ) ||
-        result.claimExpiresAtMillis <= clock
-      )
-        return yield* PasskeyUnavailable.make({});
+          ),
+      };
 
-      return result;
+      if (!Object.values(diagnostic).every(Boolean))
+        return yield* Effect.die(new globalThis.Error("Invalid passkey claim receipt")).pipe(
+          passkeyUnexpected,
+          Effect.annotateLogs({ passkeyGuard: "claim", ...diagnostic }),
+        );
+
+      // Persistence owns epoch timestamps and final liveness. Count its granted
+      // duration from before the claim round trip, using only our monotonic clock.
+      // This conservatively subtracts transport/commit time without assuming that
+      // the database and application wall clocks agree. Never persist this timer.
+      return {
+        claim: result,
+        deadlineNanos:
+          startedNanos + BigInt(result.claimExpiresAtMillis - result.claimedAtMillis) * 1_000_000n,
+      };
     });
 
     const terminal = Effect.fn("Passkey.terminal")(function* (
@@ -519,9 +544,13 @@ export const makePasskeyCeremony = <const Id extends string, const Purpose exten
       if (result !== outcome) return yield* PasskeyUnavailable.make({});
     });
 
-    const verify = <A, E, R>(claimed: PasskeyClaim, operation: Effect.Effect<A, E, R>) =>
+    const verify = <A, E, R>(
+      claimed: PasskeyClaim,
+      deadlineNanos: bigint,
+      operation: Effect.Effect<A, E, R>,
+    ) =>
       Effect.gen(function* () {
-        const remaining = claimed.claimExpiresAtMillis - (yield* now);
+        const remaining = Number(deadlineNanos - (yield* Clock.monotonicTimeNanos)) / 1_000_000;
 
         if (remaining <= 0) return yield* PasskeyRejected.make({});
 
@@ -574,10 +603,11 @@ export const makePasskeyCeremony = <const Id extends string, const Purpose exten
 
         if (found !== undefined) credential = yield* snapshotPasskey(PasskeyCredential, found);
       }
-      const claimed = yield* claim(inspected, credential);
+      const { claim: claimed, deadlineNanos } = yield* claim(inspected, credential);
 
       const verified = yield* verify(
         claimed,
+        deadlineNanos,
         Effect.gen(function* () {
           if (credential === undefined || decoded._tag !== "Success")
             return yield* PasskeyRejected.make({});
@@ -682,7 +712,7 @@ export const makePasskeyCeremony = <const Id extends string, const Purpose exten
             (!credential.backupEligible &&
               (credential.counter > 0 || result.counter > 0) &&
               result.counter <= credential.counter) ||
-            (yield* now) >= claimed.claimExpiresAtMillis
+            (yield* Clock.monotonicTimeNanos) >= deadlineNanos
           )
             return yield* PasskeyRejected.make({});
 
@@ -748,10 +778,11 @@ export const makePasskeyCeremony = <const Id extends string, const Purpose exten
       yield* Schema.decodeEffect(Schema.toType(PasskeyAttestation))(input.response).pipe(
         Effect.mapError(() => PasskeyRejected.make({})),
       );
-      const claimed = yield* claim(inspected);
+      const { claim: claimed, deadlineNanos } = yield* claim(inspected);
 
       const verified = yield* verify(
         claimed,
+        deadlineNanos,
         Effect.gen(function* () {
           const result = yield* snapshotPasskey(
             PasskeyRegistrationVerified,
@@ -765,7 +796,7 @@ export const makePasskeyCeremony = <const Id extends string, const Purpose exten
             (result.backupState && !result.backupEligible) ||
             (claimed.ceremony.profile.userVerification === "required" && !result.userVerified) ||
             !claimed.ceremony.profile.algorithms.includes(result.algorithm) ||
-            (yield* now) >= claimed.claimExpiresAtMillis
+            (yield* Clock.monotonicTimeNanos) >= deadlineNanos
           )
             return yield* PasskeyRejected.make({});
 
