@@ -1,5 +1,15 @@
 # @yielded/auth
 
+## 0.1.0-beta.18
+
+### Patch Changes
+
+- [#115](https://github.com/yielded-dev/auth/pull/115) [`9aaaa55`](https://github.com/yielded-dev/auth/commit/9aaaa55fff9e7bf7236036ba3fe8b84337eb3eae) Thanks [@danieljvdm](https://github.com/danieljvdm)! - Keep authentication Atom workflows compatible with `exactOptionalPropertyTypes`.
+
+- [#110](https://github.com/yielded-dev/auth/pull/110) [`b904442`](https://github.com/yielded-dev/auth/commit/b904442510ec0b5412e4be81933a4e1523e16260) Thanks [@goknsh](https://github.com/goknsh)! - Support TypeScript consumers with `exactOptionalPropertyTypes` enabled, including the default session lifecycle actions.
+
+- [#116](https://github.com/yielded-dev/auth/pull/116) [`a9009bf`](https://github.com/yielded-dev/auth/commit/a9009bf44c935946f7e8acde1a0073ef0239542a) Thanks [@danieljvdm](https://github.com/danieljvdm)! - Complete passkey ceremonies when persistence and application clocks differ while preserving bounded verification and authority-time expiry. Report invalid claim receipts with content-free diagnostics.
+
 ## 0.1.0-beta.17
 
 ### Patch Changes
