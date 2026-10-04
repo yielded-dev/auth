@@ -1,5 +1,11 @@
 # @yielded/auth
 
+## 0.1.0-beta.17
+
+### Patch Changes
+
+- [#111](https://github.com/yielded-dev/auth/pull/111) [`2d6f361`](https://github.com/yielded-dev/auth/commit/2d6f361813bfa8523451120eddabcd801b83ab6d) Thanks [@danieljvdm](https://github.com/danieljvdm)! - Reject authentication completions from replaced account lifetimes before sending credentials or clearing the current account.
+
 ## 0.1.0-beta.16
 
 ### Patch Changes

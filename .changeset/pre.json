@@ -35,6 +35,7 @@
     "drizzle-effect-patch-cli",
     "effect-only-core",
     "fair-password-waiting",
+    "fence-authentication-admission",
     "github-response-issuer",
     "http-cookies",
     "ios-passkey-ceremonies",
