@@ -180,8 +180,10 @@ and let old proofs expire. Account, password, and session data need no reset.
 
 Override `EmailDelivery.EmailRenderer` for wording, HTML, or localization. It
 receives purpose, locale, expiry, and a private `Code` or complete `Link`; the
-default is plain text. Return a subject and redacted bodies. Escape HTML and
-retain the supplied link.
+default is plain text. Locale hints contain 1–64 characters and reject control
+characters and line separators before rendering; your renderer chooses supported
+locales. Return a subject and redacted bodies. Escape HTML and retain the supplied
+link.
 
 ## Handle links
 

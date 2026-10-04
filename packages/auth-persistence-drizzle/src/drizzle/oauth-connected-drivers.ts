@@ -144,7 +144,7 @@ export const makeOAuthConnectedTarget = <
     OAuthCoordinatorError<E> | DatabaseError,
     Exclude<R, OAuthConnectedPersistence> | LifecycleHooks | DatabaseRequirements
   > {
-    return Effect.flatMap(acquire, (database) =>
+    return Effect.flatMap(nativeDatabase(acquire), (database) =>
       coordinateTargetOAuthConnected<TransactionOf<D>, A, E, Exclude<R, OAuthConnectedPersistence>>(
         database,
         options.mapping,
@@ -164,7 +164,7 @@ export const makeOAuthConnectedTarget = <
             ? work
             : Effect.provideService(work, options.transaction, options.transaction.of(transaction));
         },
-      ),
+      ).pipe(Effect.provideService(NativeDatabase, database)),
     );
   }
   function coordinateOAuthConnectedRevocations<
@@ -260,7 +260,7 @@ export const makeOAuthConnectedTarget = <
     OAuthCoordinatorError<E> | DatabaseError,
     Exclude<R, OAuthConnectedRevocations> | LifecycleHooks | DatabaseRequirements
   > {
-    return Effect.flatMap(acquire, (database) =>
+    return Effect.flatMap(nativeDatabase(acquire), (database) =>
       coordinateTargetOAuthConnectedRevocations<
         TransactionOf<D>,
         A,
@@ -285,7 +285,7 @@ export const makeOAuthConnectedTarget = <
             ? work
             : Effect.provideService(work, options.transaction, options.transaction.of(transaction));
         },
-      ),
+      ).pipe(Effect.provideService(NativeDatabase, database)),
     );
   }
 
@@ -364,7 +364,7 @@ export const makeD1OAuthConnectedTarget = <DatabaseId, Database, Family extends 
     | LifecycleHooks
     | DatabaseRequirements
   > {
-    return Effect.flatMap(acquire, (database) =>
+    return Effect.flatMap(nativeDatabase(acquire), (database) =>
       coordinateTargetOAuthConnected<
         Database,
         A,
@@ -408,7 +408,7 @@ export const makeD1OAuthConnectedTarget = <DatabaseId, Database, Family extends 
 
           return yield* owner.close(Effect.provideContext(body, provided));
         }),
-      ),
+      ).pipe(Effect.provideService(NativeDatabase, database)),
     );
   }
   function coordinateOAuthConnectedRevocations<
@@ -436,7 +436,7 @@ export const makeD1OAuthConnectedTarget = <DatabaseId, Database, Family extends 
     | LifecycleHooks
     | DatabaseRequirements
   > {
-    return Effect.flatMap(acquire, (database) =>
+    return Effect.flatMap(nativeDatabase(acquire), (database) =>
       coordinateTargetOAuthConnectedRevocations<
         Database,
         A,
@@ -465,7 +465,7 @@ export const makeD1OAuthConnectedTarget = <DatabaseId, Database, Family extends 
 
           return yield* owner.close(Effect.provideContext(body, provided));
         }),
-      ),
+      ).pipe(Effect.provideService(NativeDatabase, database)),
     );
   }
 

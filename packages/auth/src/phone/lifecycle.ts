@@ -25,6 +25,7 @@ import {
 import { makeProofModule } from "../proofs/module";
 import type { ProofPolicy } from "../proofs/policy";
 import { defaultProofPolicy } from "../proofs/policy";
+import { Locale } from "../Schema";
 import { assessAuthentication } from "../sessions/assurance";
 import { AuthenticationAuthority } from "../sessions/AuthenticationAuthority";
 import { SessionInvalidationWindow, sessionInvalidationWindow } from "../sessions/invalidation";
@@ -67,7 +68,7 @@ const fields = {
 const Start = Schema.Struct({
   ...fields,
   requestId: ProofRequestId,
-  locale: Schema.NonEmptyString.check(Schema.isMaxLength(64)),
+  locale: Locale,
 });
 
 const Bound = Schema.Struct({ ...fields, requestBinding: RequestBindingCredential });

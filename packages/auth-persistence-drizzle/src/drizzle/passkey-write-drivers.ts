@@ -163,12 +163,15 @@ export const makePasskeyWriteTarget = <
     | RSetup
     | DatabaseRequirements
   > {
-    return Effect.flatMap(acquire, (database) =>
+    return Effect.flatMap(nativeDatabase(acquire), (database) =>
       coordinateTargetPasskeyManagement(
         database,
         options.mapping,
         configuration,
-        (transaction: TransactionOf<Database>, services) => {
+        (
+          transaction: TransactionOf<Database>,
+          services,
+        ): Effect.Effect<A, E, Exclude<R, PasskeyPersistence | PasskeyManagementPersistence>> => {
           const context = Context.make(PasskeyPersistence, services.passkeyPersistence).pipe(
             Context.add(PasskeyManagementPersistence, services.passkeyManagementPersistence),
           );
@@ -179,7 +182,7 @@ export const makePasskeyWriteTarget = <
             ? work
             : Effect.provideService(work, options.transaction, options.transaction.of(transaction));
         },
-      ),
+      ).pipe(Effect.provideService(NativeDatabase, database)),
     );
   }
 
@@ -338,7 +341,7 @@ export const makePasskeyWriteTarget = <
     PasskeyCoordinatorError<E> | DatabaseError,
     Exclude<R, PasskeyPersistence | AuthorityId> | LifecycleHooks | RSetup | DatabaseRequirements
   > {
-    return Effect.flatMap(acquire, (database) =>
+    return Effect.flatMap(nativeDatabase(acquire), (database) =>
       coordinateTargetPasskeyRegistrationWriter(
         database,
         options.mapping,
@@ -357,7 +360,7 @@ export const makePasskeyWriteTarget = <
             ? work
             : Effect.provideService(work, options.transaction, options.transaction.of(transaction));
         },
-      ),
+      ).pipe(Effect.provideService(NativeDatabase, database)),
     );
   }
 

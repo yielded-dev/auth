@@ -1,5 +1,6 @@
 /* oxlint-disable no-explicit-any -- D1 batches bridge consumer-owned Drizzle tables. */
 import type { D1Client } from "@effect/sql-d1/D1Client";
+import { NativeDatabase } from "@yielded/auth-persistence/Adapter";
 import {
   EmailAddressPersistence,
   EmailSignInTargets,
@@ -63,7 +64,9 @@ import {
   type EmailSqlDatabase,
 } from "./email-sql";
 import { column, isMappedConstraintConflict, PersistenceMappingError, updateValues } from "./model";
+import { nativeDatabase } from "./native-database";
 import type { D1ProofPersistenceMapping } from "./proof-model";
+import { validateDrizzleStorage } from "./storage-validation";
 import type { SuppliedService } from "./SuppliedService";
 
 type PlanPrepare<Method extends (...args: any[]) => any, A> = (
@@ -1271,29 +1274,40 @@ export const makeD1EmailSignInServices = <
 >(
   mapping: EmailSignInMapping<S, I, C, NativeId>,
 ) =>
-  Effect.map(DatabaseService, (database) => ({
-    emailSignInTargets: EmailSignInTargets.of({
-      lookup: (input) => {
-        if (!validEmailSignInConstraints(mapping as any)) return Effect.fail(unavailable());
+  Effect.flatMap(nativeDatabase(DatabaseService), (database) =>
+    validateDrizzleStorage(mapping).pipe(
+      Effect.provideService(NativeDatabase, database),
+      Effect.mapError(unavailable),
+      Effect.as({
+        emailSignInTargets: EmailSignInTargets.of({
+          lookup: (input) => {
+            if (!validEmailSignInConstraints(mapping as any)) return Effect.fail(unavailable());
 
-        return emailLookupRows(mapping as any, input.moduleId, input.identifier).pipe(
-          Effect.flatMap((rows) => {
-            const row = rows[0];
+            return emailLookupRows(mapping as any, input.moduleId, input.identifier).pipe(
+              Effect.flatMap((rows) => {
+                const row = rows[0];
 
-            if (row === undefined) return Effect.succeed(Option.none());
+                if (row === undefined) return Effect.succeed(Option.none());
 
-            return decodeEmailSnapshot(mapping as any, input.moduleId, input.identifier, row).pipe(
-              Effect.map((snapshot) =>
-                snapshot === undefined ? Option.none() : Option.some(snapshot),
-              ),
+                return decodeEmailSnapshot(
+                  mapping as any,
+                  input.moduleId,
+                  input.identifier,
+                  row,
+                ).pipe(
+                  Effect.map((snapshot) =>
+                    snapshot === undefined ? Option.none() : Option.some(snapshot),
+                  ),
+                );
+              }),
+              Effect.provideService(CurrentD1PlanningDatabase, database),
+              translateFailure,
             );
-          }),
-          Effect.provideService(CurrentD1PlanningDatabase, database),
-          translateFailure,
-        );
-      },
-    }),
-  }));
+          },
+        }),
+      }),
+    ),
+  );
 
 export const makeD1EmailAddressServices = Effect.fnUntraced(function* <
   S extends AnySQLiteTable,
@@ -1332,6 +1346,11 @@ export const makeD1EmailAddressServices = Effect.fnUntraced(function* <
   >,
 ) {
   const database = yield* DatabaseService;
+
+  yield* validateDrizzleStorage({ ...mapping, proof: proofMapping }).pipe(
+    Effect.provideServiceEffect(NativeDatabase, nativeDatabase(DatabaseService)),
+    Effect.mapError(unavailable),
+  );
 
   const hooks = yield* LifecycleHooks;
 
@@ -1418,6 +1437,11 @@ export const makeD1EmailRegistrationServices = Effect.fnUntraced(function* <
   >,
 ) {
   const database = yield* DatabaseService;
+
+  yield* validateDrizzleStorage({ ...mapping, proof: proofMapping }).pipe(
+    Effect.provideServiceEffect(NativeDatabase, nativeDatabase(DatabaseService)),
+    Effect.mapError(unavailable),
+  );
 
   const hooks = yield* LifecycleHooks;
 
@@ -1507,8 +1531,12 @@ export function coordinateD1EmailAddress<
   CoordinatorError<E> | DatabaseError,
   Exclude<R, EmailAddressPersistence | D1BatchStatements> | LifecycleHooks | DatabaseRequirements
 > {
-  return Effect.flatMap(acquire, (database) =>
+  return Effect.flatMap(nativeDatabase(acquire), (database) =>
     Effect.gen(function* () {
+      yield* validateDrizzleStorage({
+        ...options.mapping,
+        proof: options.proofMapping,
+      }).pipe(Effect.mapError(unavailable));
       const hooks = yield* LifecycleHooks;
 
       if (yield* hasCommitScope) return yield* unavailable();
@@ -1622,7 +1650,7 @@ export function coordinateD1EmailAddress<
       ).pipe(Effect.provideService(LifecycleHooks, hooks));
 
       return result.value;
-    }),
+    }).pipe(Effect.provideService(NativeDatabase, database)),
   );
 }
 
@@ -1678,8 +1706,12 @@ export function coordinateD1EmailRegistration<
   CoordinatorError<E> | DatabaseError,
   Exclude<R, TargetId | D1BatchStatements> | LifecycleHooks | DatabaseRequirements
 > {
-  return Effect.flatMap(acquire, (database) =>
+  return Effect.flatMap(nativeDatabase(acquire), (database) =>
     Effect.gen(function* () {
+      yield* validateDrizzleStorage({
+        ...options.mapping,
+        proof: options.proofMapping,
+      }).pipe(Effect.mapError(unavailable));
       const hooks = yield* LifecycleHooks;
 
       if (yield* hasCommitScope) return yield* unavailable();
@@ -1777,7 +1809,7 @@ export function coordinateD1EmailRegistration<
       ).pipe(Effect.provideService(LifecycleHooks, hooks));
 
       return result.value;
-    }),
+    }).pipe(Effect.provideService(NativeDatabase, database)),
   );
 }
 

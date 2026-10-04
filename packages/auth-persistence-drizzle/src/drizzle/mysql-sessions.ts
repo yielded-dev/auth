@@ -1,3 +1,4 @@
+import { NativeDatabase } from "@yielded/auth-persistence/Adapter";
 import type { LifecycleHooks, HookConfigurationError } from "@yielded/auth/Hooks";
 import {
   AuthenticationAuthority,
@@ -65,7 +66,10 @@ export const makeMysqlAuthenticationAuthorityServices = <
   Effect.flatMap(
     Effect.map(acquireTransactionService(DatabaseService), configuration),
     (configuration) => makeTargetAuthenticationAuthorityServices<Claims>(mapping, configuration),
-  ).pipe(Effect.provideServiceEffect(CurrentSessionSql, nativeDatabase(DatabaseService)));
+  ).pipe(
+    Effect.provideServiceEffect(CurrentSessionSql, nativeDatabase(DatabaseService)),
+    Effect.provideServiceEffect(NativeDatabase, nativeDatabase(DatabaseService)),
+  );
 
 export const makeMysqlPendingAuthenticationServices = <
   Claims,
@@ -80,7 +84,10 @@ export const makeMysqlPendingAuthenticationServices = <
   Effect.flatMap(
     Effect.map(acquireTransactionService(DatabaseService), configuration),
     (configuration) => makeTargetPendingAuthenticationServices<Claims>(mapping, configuration),
-  ).pipe(Effect.provideServiceEffect(CurrentSessionSql, nativeDatabase(DatabaseService)));
+  ).pipe(
+    Effect.provideServiceEffect(CurrentSessionSql, nativeDatabase(DatabaseService)),
+    Effect.provideServiceEffect(NativeDatabase, nativeDatabase(DatabaseService)),
+  );
 
 export const makeMysqlStatefulSessionServices = <
   Claims,
@@ -97,7 +104,10 @@ export const makeMysqlStatefulSessionServices = <
   Effect.flatMap(
     Effect.map(acquireTransactionService(DatabaseService), configuration),
     (configuration) => makeTargetStatefulSessionServices<Claims>(mapping, configuration),
-  ).pipe(Effect.provideServiceEffect(CurrentSessionSql, nativeDatabase(DatabaseService)));
+  ).pipe(
+    Effect.provideServiceEffect(CurrentSessionSql, nativeDatabase(DatabaseService)),
+    Effect.provideServiceEffect(NativeDatabase, nativeDatabase(DatabaseService)),
+  );
 
 export const makeMysqlSignedSessionValidityServices = <
   S extends AnyMySqlTable,
@@ -110,7 +120,10 @@ export const makeMysqlSignedSessionValidityServices = <
   Effect.flatMap(
     Effect.map(acquireTransactionService(DatabaseService), configuration),
     (configuration) => makeTargetSignedSessionValidityServices(mapping, configuration),
-  ).pipe(Effect.provideServiceEffect(CurrentSessionSql, nativeDatabase(DatabaseService)));
+  ).pipe(
+    Effect.provideServiceEffect(CurrentSessionSql, nativeDatabase(DatabaseService)),
+    Effect.provideServiceEffect(NativeDatabase, nativeDatabase(DatabaseService)),
+  );
 
 export function coordinateMysqlAuthenticationAuthority<
   D extends Database,
@@ -193,7 +206,7 @@ export function coordinateMysqlAuthenticationAuthority<
   E | SessionUnavailable | HookConfigurationError | SqlError | DatabaseError,
   Exclude<R, AuthenticationAuthority> | LifecycleHooks | DatabaseRequirements
 > {
-  return Effect.flatMap(acquire, (database) =>
+  return Effect.flatMap(nativeDatabase(acquire), (database) =>
     coordinateTargetAuthenticationAuthority<
       Claims,
       Transaction,
@@ -215,7 +228,7 @@ export function coordinateMysqlAuthenticationAuthority<
           ? work
           : Effect.provideService(work, options.transaction, options.transaction.of(transaction));
       },
-    ),
+    ).pipe(Effect.provideService(NativeDatabase, database)),
   );
 }
 
@@ -306,7 +319,7 @@ export function coordinateMysqlPendingAuthentication<
   E | SessionUnavailable | HookConfigurationError | SqlError | DatabaseError,
   Exclude<R, TargetId> | LifecycleHooks | DatabaseRequirements
 > {
-  return Effect.flatMap(acquire, (database) =>
+  return Effect.flatMap(nativeDatabase(acquire), (database) =>
     coordinateTargetPendingAuthentication<Claims, Transaction, A, E, Exclude<R, TargetId>>(
       database,
       options.mapping,
@@ -322,7 +335,7 @@ export function coordinateMysqlPendingAuthentication<
           ? work
           : Effect.provideService(work, options.transaction, options.transaction.of(transaction));
       },
-    ),
+    ).pipe(Effect.provideService(NativeDatabase, database)),
   );
 }
 
@@ -452,7 +465,7 @@ export function coordinateMysqlStatefulSessions<
   E | SessionUnavailable | HookConfigurationError | SqlError | DatabaseError,
   Exclude<R, PersistenceId | RepositoryId> | LifecycleHooks | DatabaseRequirements
 > {
-  return Effect.flatMap(acquire, (database) =>
+  return Effect.flatMap(nativeDatabase(acquire), (database) =>
     coordinateTargetStatefulSessions<
       Claims,
       Transaction,
@@ -481,7 +494,7 @@ export function coordinateMysqlStatefulSessions<
           ? work
           : Effect.provideService(work, options.transaction, options.transaction.of(transaction));
       },
-    ),
+    ).pipe(Effect.provideService(NativeDatabase, database)),
   );
 }
 
@@ -566,7 +579,7 @@ export function coordinateMysqlSignedSessionValidity<
   E | SessionUnavailable | HookConfigurationError | SqlError | DatabaseError,
   Exclude<R, TargetId> | LifecycleHooks | DatabaseRequirements
 > {
-  return Effect.flatMap(acquire, (database) =>
+  return Effect.flatMap(nativeDatabase(acquire), (database) =>
     coordinateTargetSignedSessionValidity<Transaction, A, E, Exclude<R, TargetId>>(
       database,
       options.mapping,
@@ -582,7 +595,7 @@ export function coordinateMysqlSignedSessionValidity<
           ? work
           : Effect.provideService(work, options.transaction, options.transaction.of(transaction));
       },
-    ),
+    ).pipe(Effect.provideService(NativeDatabase, database)),
   );
 }
 
@@ -605,7 +618,10 @@ export const makeMysqlSessionStepUpServices = <
   Effect.flatMap(
     Effect.map(acquireTransactionService(DatabaseService), configuration),
     (configuration) => makeTargetSessionStepUpServices(mapping, target, configuration),
-  ).pipe(Effect.provideServiceEffect(CurrentSessionSql, nativeDatabase(DatabaseService)));
+  ).pipe(
+    Effect.provideServiceEffect(CurrentSessionSql, nativeDatabase(DatabaseService)),
+    Effect.provideServiceEffect(NativeDatabase, nativeDatabase(DatabaseService)),
+  );
 
 export function coordinateMysqlSessionStepUp<
   Claims,
@@ -735,7 +751,7 @@ export function coordinateMysqlSessionStepUp<
   E | SessionUnavailable | HookConfigurationError | SqlError | DatabaseError,
   Exclude<R, Id> | LifecycleHooks | DatabaseRequirements
 > {
-  return Effect.flatMap(acquire, (database) =>
+  return Effect.flatMap(nativeDatabase(acquire), (database) =>
     coordinateTargetSessionStepUp<
       Claims,
       Id,
@@ -759,6 +775,6 @@ export function coordinateMysqlSessionStepUp<
           ? work
           : Effect.provideService(work, options.transaction, options.transaction.of(transaction));
       },
-    ),
+    ).pipe(Effect.provideService(NativeDatabase, database)),
   );
 }

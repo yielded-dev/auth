@@ -17,6 +17,10 @@ export const PasswordPolicy = Schema.Struct({
   ),
   maximumCodePoints: Schema.Int.check(Schema.isBetween({ minimum: 64, maximum: 16384 })),
   maximumBytes: Schema.Int.check(Schema.isBetween({ minimum: 256, maximum: 65536 })),
+  /** Deadline for compromised-password screening; defaults to ten seconds, without retries. */
+  screeningTimeoutMillis: Schema.optionalKey(
+    Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 30000 })),
+  ),
 });
 
 export type PasswordPolicy = typeof PasswordPolicy.Type;
@@ -29,6 +33,7 @@ export const defaultPasswordPolicy: PasswordPolicy = Object.freeze({
   normalization: "NFC",
   maximumCodePoints: 1024,
   maximumBytes: 4096,
+  screeningTimeoutMillis: 10_000,
 });
 
 export const validatePasswordPolicy = Effect.fn("validatePasswordPolicy")(function* (

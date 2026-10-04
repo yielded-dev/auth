@@ -15,7 +15,7 @@ import { ProofBinding, ProofPurpose, ProofRequestId, ProofRequestReceipt } from 
 import { makeProofModule } from "../proofs/module";
 import type { ProofPolicy } from "../proofs/policy";
 import { defaultProofPolicy } from "../proofs/policy";
-import { TokenDigest } from "../Schema";
+import { Locale, TokenDigest } from "../Schema";
 import { AuthenticationAuthority } from "../sessions/AuthenticationAuthority";
 import {
   AuthenticationFlowId,
@@ -42,7 +42,7 @@ const Start = Schema.Struct({
   flowId: RequestBindingFlowId,
   requestId: ProofRequestId,
   phoneNumber: PhoneNumber,
-  locale: Schema.NonEmptyString.check(Schema.isMaxLength(64)),
+  locale: Locale,
 });
 
 const Challenge = Schema.Struct({ ...ProofRequestReceipt.fields, flowId: RequestBindingFlowId });

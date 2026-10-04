@@ -193,7 +193,7 @@ const PasskeyActions = Layer.effect(
               flowId: Sessions.AuthenticationFlowId.make(challenge.flowId),
               bindingDigest: challenge.bindingDigest,
             },
-            requirement: challenge.action === "remove" ? requirement : sessionRequirement,
+            requirement,
           };
         },
         Effect.mapError((error) =>

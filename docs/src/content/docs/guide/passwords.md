@@ -127,6 +127,10 @@ can provide persistence and registration. `AuthDependencies` supplies the shared
 For sign-in-only `Password.make()`, supply hashing, password persistence, and claims
 alongside those shared services. Keep normalization stable for stored credentials.
 
+Compromised-password screening fails closed. `PasswordPolicy.screeningTimeoutMillis`
+defaults to 10,000 ms (allowed range: 1–30,000); a timed-out check returns
+`PasswordCheckUnavailable`, so no password is registered or changed.
+
 ## Recover a password
 
 Recovery uses `requestReset` → `verifyReset` → `completeReset` and requires an

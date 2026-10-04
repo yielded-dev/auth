@@ -128,14 +128,34 @@ export const OAuthExternalIdentity = Schema.Struct({
   subject: Schema.NonEmptyString.check(Schema.isMaxLength(1024)),
 });
 
+const displayUrl = Schema.NonEmptyString.check(
+  Schema.isMaxLength(2048),
+  Schema.makeFilter((value) => {
+    if (!/^https?:\/\//i.test(value) || /[\s\\\p{Cc}]/u.test(value)) return false;
+
+    try {
+      const url = new URL(value);
+
+      return (
+        (url.protocol === "https:" || url.protocol === "http:") &&
+        url.username === "" &&
+        url.password === ""
+      );
+    } catch {
+      return false;
+    }
+  }),
+);
+
 /** Provider-supplied metadata, never local identity or linking authority. Adapters
  * project identity responses into this bounded JSON snapshot; tokens and protocol
  * secrets do not belong here. Applications select their own public session claims. */
 export const OAuthDisplayProfile = Schema.Struct({
   displayName: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(256))),
   handle: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(256))),
-  avatarUrl: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(2048))),
-  profileUrl: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(2048))),
+  /** Absolute HTTP(S) metadata; applications still decide whether to display or fetch it. */
+  avatarUrl: Schema.optionalKey(displayUrl),
+  profileUrl: Schema.optionalKey(displayUrl),
   email: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(320))),
   emailVerified: Schema.optionalKey(Schema.Boolean),
   /** Provider-specific fields. Use the provider's exported profile Schema to

@@ -74,7 +74,7 @@ import { Auth, Http, Password, Sessions } from "@yielded/auth";
 import { AuthApi } from "@app/domain/auth-contract";
 
 export const AppAuth = Auth.make(AuthApi, {
-  sessions: Sessions.stateful(),
+  sessions: Sessions.stateful({ maxAge: "8 hours", idleTimeout: "30 minutes" }),
   strategies: { password: Password.make() },
   defaultStrategy: "password",
 });
@@ -84,6 +84,7 @@ export const AuthRoutes = Http.layer(AppAuth, { origin: "https://app.example.com
 
 <!-- #endregion auth-server -->
 
+The eight-hour lifetime and thirty-minute idle timeout are application policy.
 Supply your persistence and account Layers to `AuthRoutes`, then merge it with
 your router. For application routes that call auth, use the middleware shown in the
 [router composition](docs/src/content/docs/guide/http-and-client.mdx#configure-the-server).

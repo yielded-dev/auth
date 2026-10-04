@@ -1,3 +1,4 @@
+import type { NativeDatabase } from "@yielded/auth-persistence/Adapter";
 import {
   coordinateCommit,
   hasCommitScope,
@@ -23,6 +24,7 @@ import {
 } from "./password-sql";
 import type { ProofTargetConfiguration } from "./proof-target";
 import { sqlClientStandaloneGuard, type TransactionService } from "./standalone-guard";
+import { validateDrizzleStorage } from "./storage-validation";
 
 export interface PasswordTargetConfiguration {
   readonly mode: "interactive" | "synchronous";
@@ -133,12 +135,20 @@ export const coordinateTargetPasswordPersistence = <Transaction, A, E, R>(
     transaction: Transaction,
     services: { readonly passwordPersistence: PasswordPersistence["Service"] },
   ) => Effect.Effect<A, E, R>,
-): Effect.Effect<A, PasswordCoordinatorError<E>, R | LifecycleHooks> =>
-  Effect.gen(function* (): Effect.fn.Return<A, PasswordCoordinatorError<E>, R | LifecycleHooks> {
+): Effect.Effect<A, PasswordCoordinatorError<E>, R | LifecycleHooks | NativeDatabase> =>
+  Effect.gen(function* (): Effect.fn.Return<
+    A,
+    PasswordCoordinatorError<E>,
+    R | LifecycleHooks | NativeDatabase
+  > {
     const hooks = yield* LifecycleHooks;
 
     if (yield* hasCommitScope) return yield* PasswordUnavailable.make({});
     yield* configuration.coordinatorGuard ?? configuration.standaloneGuard;
+
+    yield* validateDrizzleStorage({ ...mapping, proof: proofMapping }).pipe(
+      Effect.mapError(() => PasswordUnavailable.make({})),
+    );
 
     const result = yield* coordinateCommit(
       () =>
@@ -173,12 +183,20 @@ export const coordinateTargetPasswordRegistration = <Registration, Transaction, 
       readonly registrationAuthority: PasswordRegistrationAuthority<Registration>;
     },
   ) => Effect.Effect<A, E, R>,
-): Effect.Effect<A, PasswordCoordinatorError<E>, R | LifecycleHooks> =>
-  Effect.gen(function* (): Effect.fn.Return<A, PasswordCoordinatorError<E>, R | LifecycleHooks> {
+): Effect.Effect<A, PasswordCoordinatorError<E>, R | LifecycleHooks | NativeDatabase> =>
+  Effect.gen(function* (): Effect.fn.Return<
+    A,
+    PasswordCoordinatorError<E>,
+    R | LifecycleHooks | NativeDatabase
+  > {
     const hooks = yield* LifecycleHooks;
 
     if (yield* hasCommitScope) return yield* PasswordUnavailable.make({});
     yield* configuration.coordinatorGuard ?? configuration.standaloneGuard;
+
+    yield* validateDrizzleStorage(mapping).pipe(
+      Effect.mapError(() => PasswordUnavailable.make({})),
+    );
 
     const result = yield* coordinateCommit(
       () =>

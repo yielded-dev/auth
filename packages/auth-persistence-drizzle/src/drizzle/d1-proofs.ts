@@ -1,5 +1,6 @@
 /* oxlint-disable no-explicit-any -- D1 planning bridges consumer Drizzle tables to Effect SQL statements. */
 import type { D1Client } from "@effect/sql-d1/D1Client";
+import { NativeDatabase } from "@yielded/auth-persistence/Adapter";
 import {
   coordinateCommit,
   CurrentCommitJournal,
@@ -52,6 +53,7 @@ import { balancedD1And } from "./d1-generated-statement";
 import { CurrentD1PlanningDatabase, makeD1Owner } from "./d1-planning";
 import { D1BatchStatements } from "./D1BatchStatements";
 import { column, PersistenceMappingError, isMappedConstraintConflict, updateValues } from "./model";
+import { nativeDatabase } from "./native-database";
 import {
   type D1ProofPersistenceMapping,
   requiredProofConstraints,
@@ -63,6 +65,7 @@ import {
   type ProofScopeKeys,
   type ProofScopeKind,
 } from "./proof-model";
+import { validateDrizzleStorage } from "./storage-validation";
 
 type PlanPrepare<Method extends (...args: any[]) => any, A> = (
   value: Parameters<Parameters<Method>[1]>[0],
@@ -2045,6 +2048,11 @@ export const makeD1ProofPersistenceServices = Effect.fnUntraced(function* <
 >(mapping: D1ProofPersistenceMapping<Rq, S, G, Cn, Rs, A, F, C, Sub, I, Cr, NativeId>) {
   const database = yield* DatabaseService;
 
+  yield* validateDrizzleStorage(mapping).pipe(
+    Effect.provideServiceEffect(NativeDatabase, nativeDatabase(DatabaseService)),
+    Effect.mapError(unavailable),
+  );
+
   const hooks = yield* LifecycleHooks;
   const plans = makeProofPlans(mapping as unknown as Mapping);
 
@@ -2109,8 +2117,9 @@ export function coordinateD1ProofPersistence<
   CoordinatorError<E> | DatabaseError,
   Exclude<R, ProofPersistence | D1BatchStatements> | LifecycleHooks | DatabaseRequirements
 > {
-  return Effect.flatMap(acquire, (database) =>
+  return Effect.flatMap(nativeDatabase(acquire), (database) =>
     Effect.gen(function* () {
+      yield* validateDrizzleStorage(options.mapping).pipe(Effect.mapError(unavailable));
       const hooks = yield* LifecycleHooks;
 
       if (yield* hasCommitScope) return yield* unavailable();
@@ -2200,7 +2209,7 @@ export function coordinateD1ProofPersistence<
       ).pipe(Effect.provideService(LifecycleHooks, hooks));
 
       return result.value;
-    }),
+    }).pipe(Effect.provideService(NativeDatabase, database)),
   );
 }
 

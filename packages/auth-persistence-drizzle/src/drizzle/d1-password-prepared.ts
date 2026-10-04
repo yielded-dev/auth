@@ -1,5 +1,6 @@
 /* oxlint-disable no-explicit-any -- driver exports preserve concrete consumer mappings. */
 import type { D1Client } from "@effect/sql-d1/D1Client";
+import { NativeDatabase } from "@yielded/auth-persistence/Adapter";
 import {
   coordinateCommit,
   CurrentCommitJournal,
@@ -39,6 +40,7 @@ import { CurrentD1PlanningDatabase, makeD1Owner } from "./d1-planning";
 import { checkD1ProofCompletion, compileD1ProofCompletionPlan } from "./d1-proofs";
 import { D1BatchStatements } from "./D1BatchStatements";
 import { PersistenceMappingError, column, updateValues } from "./model";
+import { nativeDatabase } from "./native-database";
 import type {
   D1PasswordPreparedPersistenceMapping,
   D1PasswordPreparedProofMapping,
@@ -57,6 +59,7 @@ import {
   unavailable,
 } from "./password-prepared-state";
 import { CurrentPasswordSql, type PasswordSqlDatabase } from "./password-sql";
+import { validateDrizzleStorage } from "./storage-validation";
 import type { SuppliedService } from "./SuppliedService";
 
 type PlanPrepare<Method extends (...args: any[]) => any, A> = (
@@ -990,6 +993,11 @@ export const makeD1PasswordPreparedPersistenceServices = Effect.fnUntraced(funct
 ) {
   const database = yield* DatabaseService;
 
+  yield* validateDrizzleStorage({ ...mapping, proof: proofMapping }).pipe(
+    Effect.provideServiceEffect(NativeDatabase, nativeDatabase(DatabaseService)),
+    Effect.mapError(unavailable),
+  );
+
   const hooks = yield* LifecycleHooks;
   const plans = makePreparedPlans(mapping as unknown as Mapping, proofMapping);
 
@@ -1079,8 +1087,12 @@ export function coordinateD1PasswordPreparedPersistence<
   E | PasswordUnavailable | HookConfigurationError | DatabaseError,
   Exclude<R, TargetId | D1BatchStatements> | LifecycleHooks | DatabaseRequirements
 > {
-  return Effect.flatMap(acquire, (database) =>
+  return Effect.flatMap(nativeDatabase(acquire), (database) =>
     Effect.gen(function* () {
+      yield* validateDrizzleStorage({
+        ...options.mapping,
+        proof: options.proofMapping,
+      }).pipe(Effect.mapError(unavailable));
       const hooks = yield* LifecycleHooks;
 
       if (yield* hasCommitScope) return yield* unavailable();
@@ -1206,7 +1218,7 @@ export function coordinateD1PasswordPreparedPersistence<
       ).pipe(Effect.provideService(LifecycleHooks, hooks));
 
       return result.value;
-    }),
+    }).pipe(Effect.provideService(NativeDatabase, database)),
   );
 }
 

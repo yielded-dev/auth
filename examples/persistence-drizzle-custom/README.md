@@ -38,7 +38,9 @@ const DatabaseReady = MigrationsLive.pipe(Layer.provideMerge(Persistence.Config.
 
 The library supplies transactional auth operations. The application supplies customer
 IDs, policy, claims, delivery, and custom hashing. Email confirmation and passkey
-enrollment preserve the existing session. Use `localhost:4182` consistently for passkeys.
+enrollment preserve the existing session. Enrollment requires authentication from
+the last five minutes; sign in again when prompted. Use `localhost:4182` consistently
+for passkeys.
 
 `AUTH_DATA_DIR` selects another data directory. Removing this example's `.data`
 resets only its accounts, sessions, credentials, and keys.

@@ -50,6 +50,7 @@ import {
 /* oxlint-disable no-explicit-any -- the shared dialect kernel erases consumer Drizzle table types internally. */
 import type { QueryFailure } from "./query-operations";
 import type { QueryOperations, SqlFragment, SqlColumn } from "./query-operations";
+import type { NativeDatabase } from "./transaction-kernel";
 
 type AdapterFailure = QueryFailure | PersistenceMappingError | SqlError.SqlError;
 type SignInMapping = AnyEmailSignInMapping;
@@ -382,8 +383,20 @@ export const makeEmailKernel = <
   const makeSqlEmailSignInTargets = Effect.fn("makeSqlEmailSignInTargets")(function* (
     mapping: SignInMapping,
     configuration: EmailSqlConfiguration,
-  ): Effect.fn.Return<EmailSignInTargets["Service"], never, CurrentEmailSql> {
+  ): Effect.fn.Return<
+    EmailSignInTargets["Service"],
+    EmailUnavailable,
+    CurrentEmailSql | NativeDatabase
+  > {
     const database = yield* CurrentEmailSql;
+
+    if (!configuration.coordinated)
+      yield* (
+        operations.validateStorage?.({
+          ...mapping,
+          proof: configuration.proof?.mapping,
+        }) ?? Effect.void
+      ).pipe(Effect.mapError(unavailable));
 
     return EmailSignInTargets.of({
       lookup: (input) =>
@@ -1221,8 +1234,20 @@ export const makeEmailKernel = <
   const makeSqlEmailAddressPersistence = Effect.fn("makeSqlEmailAddressPersistence")(function* (
     mapping: AddressMapping,
     configuration: EmailSqlConfiguration,
-  ): Effect.fn.Return<EmailAddressPersistence["Service"], never, LifecycleHooks | CurrentEmailSql> {
+  ): Effect.fn.Return<
+    EmailAddressPersistence["Service"],
+    EmailUnavailable,
+    LifecycleHooks | CurrentEmailSql | NativeDatabase
+  > {
     const database = yield* CurrentEmailSql;
+
+    if (!configuration.coordinated)
+      yield* (
+        operations.validateStorage?.({
+          ...mapping,
+          proof: configuration.proof?.mapping,
+        }) ?? Effect.void
+      ).pipe(Effect.mapError(unavailable));
     const hooks = yield* LifecycleHooks;
 
     return EmailAddressPersistence.of({

@@ -131,7 +131,7 @@ export function coordinateD1OAuthSignIn<
   OAuthCoordinatorError<E> | DatabaseError,
   Exclude<R, OAuthSignInPersistence | D1BatchStatements> | LifecycleHooks | DatabaseRequirements
 > {
-  return Effect.flatMap(acquire, (database) =>
+  return Effect.flatMap(nativeDatabase(acquire), (database) =>
     coordinateTargetOAuthSignIn<
       never,
       A,
@@ -162,7 +162,7 @@ export function coordinateD1OAuthSignIn<
 
         return yield* owner.close(Effect.provideContext(body, provided));
       }),
-    ),
+    ).pipe(Effect.provideService(NativeDatabase, database)),
   );
 }
 
@@ -191,7 +191,7 @@ export function coordinateD1OAuthRegistrationIntents<
   OAuthCoordinatorError<E> | DatabaseError,
   Exclude<R, OAuthRegistrationIntents | D1BatchStatements> | LifecycleHooks | DatabaseRequirements
 > {
-  return Effect.flatMap(acquire, (database) =>
+  return Effect.flatMap(nativeDatabase(acquire), (database) =>
     coordinateTargetOAuthRegistrationIntents<
       never,
       A,
@@ -219,7 +219,7 @@ export function coordinateD1OAuthRegistrationIntents<
 
         return yield* owner.close(Effect.provideContext(body, provided));
       }),
-    ),
+    ).pipe(Effect.provideService(NativeDatabase, database)),
   );
 }
 
@@ -246,7 +246,7 @@ export function coordinateD1OAuthAccounts<
   OAuthCoordinatorError<E> | DatabaseError,
   Exclude<R, OAuthAccountsPersistence | D1BatchStatements> | LifecycleHooks | DatabaseRequirements
 > {
-  return Effect.flatMap(acquire, (database) =>
+  return Effect.flatMap(nativeDatabase(acquire), (database) =>
     coordinateTargetOAuthAccounts<
       never,
       A,
@@ -281,7 +281,7 @@ export function coordinateD1OAuthAccounts<
 
         return yield* owner.close(Effect.provideContext(body, provided));
       }),
-    ),
+    ).pipe(Effect.provideService(NativeDatabase, database)),
   );
 }
 
@@ -314,7 +314,7 @@ export function coordinateD1OAuthRegistration<
   OAuthCoordinatorError<E> | DatabaseError,
   Exclude<R, TargetId | D1BatchStatements> | LifecycleHooks | DatabaseRequirements
 > {
-  return Effect.flatMap(acquire, (database) =>
+  return Effect.flatMap(nativeDatabase(acquire), (database) =>
     coordinateTargetOAuthRegistration<
       Registration,
       never,
@@ -346,6 +346,6 @@ export function coordinateD1OAuthRegistration<
 
         return yield* owner.close(Effect.provideContext(body, provided));
       }),
-    ),
+    ).pipe(Effect.provideService(NativeDatabase, database)),
   );
 }

@@ -1,3 +1,4 @@
+import type { NativeDatabase } from "@yielded/auth-persistence/Adapter";
 import {
   coordinateCommit,
   hasCommitScope,
@@ -28,6 +29,7 @@ import {
   type SessionSqlOptions,
 } from "./session-sql";
 import { sqlClientStandaloneGuard, type TransactionService } from "./standalone-guard";
+import { validateDrizzleStorage } from "./storage-validation";
 
 export interface SessionTargetConfiguration {
   readonly mode: "interactive" | "synchronous";
@@ -53,6 +55,7 @@ const options = (
   configuration: SessionTargetConfiguration,
   transactionBound = false,
 ): SessionSqlOptions => ({
+  coordinated: transactionBound,
   mode: configuration.mode,
   locking: configuration.locking,
   standaloneGuard: transactionBound ? Effect.void : configuration.standaloneGuard,
@@ -101,12 +104,21 @@ export const makeTargetSignedSessionValidityServices = (
 const coordinate = <Transaction, Services, A, E, R>(
   database: TransactionOwner<Transaction>,
   configuration: SessionTargetConfiguration,
-  make: (transaction: Transaction) => Effect.Effect<Services, never, LifecycleHooks>,
+  mapping: object,
+  make: (
+    transaction: Transaction,
+  ) => Effect.Effect<Services, SessionUnavailable, LifecycleHooks | NativeDatabase>,
   owner: (transaction: Transaction, services: Services) => Effect.Effect<A, E, R>,
-): Effect.Effect<A, CoordinatorError<E>, R | LifecycleHooks> =>
-  Effect.gen(function* (): Effect.fn.Return<A, CoordinatorError<E>, R | LifecycleHooks> {
+): Effect.Effect<A, CoordinatorError<E>, R | LifecycleHooks | NativeDatabase> =>
+  Effect.gen(function* (): Effect.fn.Return<
+    A,
+    CoordinatorError<E>,
+    R | LifecycleHooks | NativeDatabase
+  > {
     if (yield* hasCommitScope) return yield* SessionUnavailable.make({});
     yield* configuration.coordinatorGuard ?? configuration.standaloneGuard;
+
+    yield* validateDrizzleStorage(mapping).pipe(Effect.mapError(() => SessionUnavailable.make({})));
 
     const result = yield* coordinateCommit(
       () =>
@@ -137,6 +149,7 @@ export const coordinateTargetAuthenticationAuthority = <Claims, Transaction, A, 
   coordinate(
     database,
     configuration,
+    mapping,
     (transaction) =>
       Effect.map(
         makeSqlAuthenticationAuthority<Claims>(mapping, options(configuration, true)).pipe(
@@ -159,6 +172,7 @@ export const coordinateTargetPendingAuthentication = <Claims, Transaction, A, E,
   coordinate(
     database,
     configuration,
+    mapping,
     (transaction) =>
       Effect.map(
         makeSqlPendingAuthentication<Claims>(mapping, options(configuration, true)).pipe(
@@ -184,6 +198,7 @@ export const coordinateTargetStatefulSessions = <Claims, Transaction, A, E, R>(
   coordinate(
     database,
     configuration,
+    mapping,
     (transaction) =>
       makeSqlStatefulSessions<Claims>(mapping, options(configuration, true)).pipe(
         Effect.provideService(CurrentSessionSql, transaction as unknown as SessionSqlDatabase),
@@ -203,6 +218,7 @@ export const coordinateTargetSignedSessionValidity = <Transaction, A, E, R>(
   coordinate(
     database,
     configuration,
+    mapping,
     (transaction) =>
       Effect.map(
         makeSqlSignedValidity(mapping, options(configuration, true)).pipe(
@@ -307,6 +323,7 @@ export const coordinateTargetSessionStepUp = <Claims, Id, Transaction, A, E, R>(
   coordinate(
     database,
     configuration,
+    mapping,
     (transaction) =>
       Effect.map(
         makeSqlSessionStepUp<Claims>(mapping, options(configuration, true)).pipe(

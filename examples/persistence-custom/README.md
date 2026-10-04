@@ -66,3 +66,5 @@ and `AppAuth` directly.
 
 Hashing, Cloudflare delivery, forms, and Atom workflows live in [shared/account](../shared/account).
 [client.ts](src/client.ts) supplies the two username payload mappings.
+Adding a passkey requires authentication from the last five minutes. Sign in again
+when prompted; an older valid session still permits ordinary account reads.

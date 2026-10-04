@@ -1,3 +1,4 @@
+import { NativeDatabase } from "@yielded/auth-persistence/Adapter";
 import type { LifecycleHooks, HookConfigurationError } from "@yielded/auth/Hooks";
 import type { PasswordUnavailable, PasswordPreparedPersistence } from "@yielded/auth/Password";
 import type { AnyRelations } from "drizzle-orm";
@@ -51,7 +52,10 @@ export const makePgPasswordPreparedPersistenceServices = <
     Effect.map(acquireTransactionService(DatabaseService), configuration),
     (configuration) =>
       makeTargetPasswordPreparedPersistenceServices(mapping, configuration, proofMapping),
-  ).pipe(Effect.provideServiceEffect(CurrentPasswordSql, nativeDatabase(DatabaseService)));
+  ).pipe(
+    Effect.provideServiceEffect(CurrentPasswordSql, nativeDatabase(DatabaseService)),
+    Effect.provideServiceEffect(NativeDatabase, nativeDatabase(DatabaseService)),
+  );
 
 export function coordinatePgPasswordPreparedPersistence<
   TargetId,
@@ -185,7 +189,7 @@ export function coordinatePgPasswordPreparedPersistence<
   E | PasswordUnavailable | HookConfigurationError | SqlError | DatabaseError,
   Exclude<R, TargetId> | LifecycleHooks | DatabaseRequirements
 > {
-  return Effect.flatMap(acquire, (database) =>
+  return Effect.flatMap(nativeDatabase(acquire), (database) =>
     coordinateTargetPasswordPreparedPersistence<TransactionOf<D>, Out, E, Exclude<R, TargetId>>(
       database,
       options.mapping,
@@ -202,6 +206,6 @@ export function coordinatePgPasswordPreparedPersistence<
           ? work
           : Effect.provideService(work, options.transaction, options.transaction.of(transaction));
       },
-    ),
+    ).pipe(Effect.provideService(NativeDatabase, database)),
   );
 }

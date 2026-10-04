@@ -1,4 +1,5 @@
 import type { D1Client } from "@effect/sql-d1/D1Client";
+import { NativeDatabase } from "@yielded/auth-persistence/Adapter";
 import type { LifecycleHooks } from "@yielded/auth/Hooks";
 import {
   PasskeyUnavailable,
@@ -13,6 +14,7 @@ import { Effect, Context } from "effect";
 import { Database as DatabaseService } from "./d1-database";
 import { makeD1Owner } from "./d1-planning";
 import { D1BatchStatements } from "./D1BatchStatements";
+import { nativeDatabase } from "./native-database";
 import { makePasskeyTarget } from "./passkey-drivers";
 import type {
   D1PasskeyMapping,
@@ -96,7 +98,7 @@ export function coordinatePasskeyPersistence<
   | DatabaseRequirements
   | RSetup
 > {
-  return Effect.flatMap(acquire, (database) =>
+  return Effect.flatMap(nativeDatabase(acquire), (database) =>
     coordinateTargetPasskey(database, options.mapping, configuration, (_, services, append) =>
       Effect.gen(function* () {
         const original = services.passkeyPersistence;
@@ -123,7 +125,7 @@ export function coordinatePasskeyPersistence<
 
         return yield* owner.close(Effect.provideContext(body, provided));
       }),
-    ),
+    ).pipe(Effect.provideService(NativeDatabase, database)),
   );
 }
 
@@ -158,7 +160,7 @@ export function coordinatePasskeyRegistrationCeremony<
   | DatabaseRequirements
   | RSetup
 > {
-  return Effect.flatMap(acquire, (database) =>
+  return Effect.flatMap(nativeDatabase(acquire), (database) =>
     coordinateTargetPasskeyRegistration(
       database,
       options.mapping,
@@ -189,7 +191,7 @@ export function coordinatePasskeyRegistrationCeremony<
 
           return yield* owner.close(Effect.provideContext(body, provided));
         }),
-    ),
+    ).pipe(Effect.provideService(NativeDatabase, database)),
   );
 }
 
@@ -241,7 +243,7 @@ export function coordinatePasskeyManagement<
   | DatabaseRequirements
   | RSetup
 > {
-  return Effect.flatMap(acquire, (database) =>
+  return Effect.flatMap(nativeDatabase(acquire), (database) =>
     coordinateTargetPasskeyManagement(
       database,
       options.mapping,
@@ -286,7 +288,7 @@ export function coordinatePasskeyManagement<
 
           return yield* owner.close(Effect.provideContext(body, context));
         }),
-    ),
+    ).pipe(Effect.provideService(NativeDatabase, database)),
   );
 }
 
@@ -330,7 +332,7 @@ export function coordinatePasskeyRegistration<
   | DatabaseRequirements
   | RSetup
 > {
-  return Effect.flatMap(acquire, (database) =>
+  return Effect.flatMap(nativeDatabase(acquire), (database) =>
     coordinateTargetPasskeyRegistrationWriter(
       database,
       options.mapping,
@@ -372,6 +374,6 @@ export function coordinatePasskeyRegistration<
 
           return yield* owner.close(Effect.provideContext(body, context));
         }),
-    ),
+    ).pipe(Effect.provideService(NativeDatabase, database)),
   );
 }

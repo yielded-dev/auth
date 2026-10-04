@@ -159,9 +159,9 @@ export const d1Database = (
           Effect.provideService(SqlClient.SqlClient, client),
         );
 
-      // Drizzle only consumes SqlClient plus batch; native Workers binding/config
-      // are deliberately absent. Every statement uses the real SQLite client.
-      const transport = Object.assign(Object.create(client), { batch }) as D1ClientService;
+      // Keep the client callable for catalog validation as well as generated batches.
+      // Native Workers binding/config are absent; every query uses real SQLite.
+      const transport = Object.assign(client, { batch }) as unknown as D1ClientService;
 
       return yield* DrizzleD1.makeWithDefaults({}).pipe(Effect.provideService(D1Client, transport));
     }),

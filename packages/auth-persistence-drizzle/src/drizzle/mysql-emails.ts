@@ -1,3 +1,4 @@
+import { NativeDatabase } from "@yielded/auth-persistence/Adapter";
 import { EmailAddressPersistence, type EmailUnavailable } from "@yielded/auth/Email";
 import type { LifecycleHooks, HookConfigurationError } from "@yielded/auth/Hooks";
 /* oxlint-disable no-explicit-any -- proof mapping tables are independently typed by the proof owner; this driver forwards them unchanged to the shared target. */
@@ -77,7 +78,10 @@ export const makeMysqlEmailSignInServices = <
   Effect.flatMap(
     Effect.map(acquireTransactionService(DatabaseService), configuration),
     (configuration) => makeTargetEmailSignInServices(mapping, configuration),
-  ).pipe(Effect.provideServiceEffect(CurrentEmailSql, nativeDatabase(DatabaseService)));
+  ).pipe(
+    Effect.provideServiceEffect(CurrentEmailSql, nativeDatabase(DatabaseService)),
+    Effect.provideServiceEffect(NativeDatabase, nativeDatabase(DatabaseService)),
+  );
 
 export const makeMysqlEmailAddressServices = <
   S extends AnyMySqlTable,
@@ -93,7 +97,10 @@ export const makeMysqlEmailAddressServices = <
   Effect.flatMap(
     Effect.map(acquireTransactionService(DatabaseService), configuration),
     (configuration) => makeTargetEmailAddressServices(mapping, proofMapping, configuration),
-  ).pipe(Effect.provideServiceEffect(CurrentEmailSql, nativeDatabase(DatabaseService)));
+  ).pipe(
+    Effect.provideServiceEffect(CurrentEmailSql, nativeDatabase(DatabaseService)),
+    Effect.provideServiceEffect(NativeDatabase, nativeDatabase(DatabaseService)),
+  );
 
 export function coordinateMysqlEmailAddress<
   D extends Database,
@@ -179,7 +186,7 @@ export function coordinateMysqlEmailAddress<
   E | EmailUnavailable | HookConfigurationError | SqlError | DatabaseError,
   Exclude<R, EmailAddressPersistence> | LifecycleHooks | DatabaseRequirements
 > {
-  return Effect.flatMap(acquire, (database) =>
+  return Effect.flatMap(nativeDatabase(acquire), (database) =>
     coordinateTargetEmailAddress<TransactionOf<D>, Out, E, Exclude<R, EmailAddressPersistence>>(
       database,
       options.mapping,
@@ -196,7 +203,7 @@ export function coordinateMysqlEmailAddress<
           ? work
           : Effect.provideService(work, options.transaction, options.transaction.of(transaction));
       },
-    ),
+    ).pipe(Effect.provideService(NativeDatabase, database)),
   );
 }
 
@@ -216,7 +223,10 @@ export const makeMysqlEmailRegistrationServices = <
     Effect.map(acquireTransactionService(DatabaseService), configuration),
     (configuration) =>
       makeTargetEmailRegistrationServices<Registration>(mapping, proofMapping, configuration),
-  ).pipe(Effect.provideServiceEffect(CurrentEmailSql, nativeDatabase(DatabaseService)));
+  ).pipe(
+    Effect.provideServiceEffect(CurrentEmailSql, nativeDatabase(DatabaseService)),
+    Effect.provideServiceEffect(NativeDatabase, nativeDatabase(DatabaseService)),
+  );
 
 export function coordinateMysqlEmailRegistration<
   TargetId,
@@ -311,7 +321,7 @@ export function coordinateMysqlEmailRegistration<
   E | EmailUnavailable | HookConfigurationError | SqlError | DatabaseError,
   Exclude<R, TargetId> | LifecycleHooks | DatabaseRequirements
 > {
-  return Effect.flatMap(acquire, (database) =>
+  return Effect.flatMap(nativeDatabase(acquire), (database) =>
     coordinateTargetEmailRegistration<Registration, TransactionOf<D>, Out, E, Exclude<R, TargetId>>(
       database,
       options.mapping,
@@ -328,6 +338,6 @@ export function coordinateMysqlEmailRegistration<
           ? work
           : Effect.provideService(work, options.transaction, options.transaction.of(transaction));
       },
-    ),
+    ).pipe(Effect.provideService(NativeDatabase, database)),
   );
 }

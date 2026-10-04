@@ -43,6 +43,7 @@ import {
 import type { TableModel as Table } from "./query-operations";
 import type { QueryFailure } from "./query-operations";
 import type { QueryOperations, SqlFragment, SqlColumn } from "./query-operations";
+import type { NativeDatabase } from "./transaction-kernel";
 
 type AdapterFailure = QueryFailure | PersistenceMappingError | SqlError.SqlError;
 
@@ -661,8 +662,17 @@ export const makeProofKernel = <
   const makeSqlProofPersistence = Effect.fn("makeSqlProofPersistence")(function* (
     mapping: Mapping,
     configuration: ProofSqlConfiguration,
-  ): Effect.fn.Return<ProofPersistence["Service"], never, LifecycleHooks | CurrentProofSql> {
+  ): Effect.fn.Return<
+    ProofPersistence["Service"],
+    ProofUnavailable,
+    LifecycleHooks | CurrentProofSql | NativeDatabase
+  > {
     const database = yield* CurrentProofSql;
+
+    if (!configuration.coordinated)
+      yield* (operations.validateStorage?.(mapping) ?? Effect.void).pipe(
+        Effect.mapError(unavailable),
+      );
     const hooks = yield* LifecycleHooks;
 
     return ProofPersistence.of({

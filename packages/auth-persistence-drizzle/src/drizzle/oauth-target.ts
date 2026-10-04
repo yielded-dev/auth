@@ -70,6 +70,7 @@ import {
   settleRegistrationIntent,
 } from "./oauth-registration";
 import { captureOAuthMapping, invariant, nonce, unavailable } from "./oauth-state";
+import { validateDrizzleStorage } from "./storage-validation";
 import {
   coordinateTransactionOwner,
   makeTransactionExecution,
@@ -89,8 +90,11 @@ export const sqlClientOAuthStandaloneGuard = (
 
 export const makeOAuthExecution = Effect.fnUntraced(function* (
   configuration: OAuthTargetConfiguration,
-): Effect.fn.Return<OAuthExecution, never, LifecycleHooks | NativeDatabase> {
+  mapping: unknown,
+): Effect.fn.Return<OAuthExecution, OAuthUnavailable, LifecycleHooks | NativeDatabase> {
   const hooks = yield* LifecycleHooks;
+
+  yield* validateDrizzleStorage(mapping).pipe(Effect.mapError(unavailable));
 
   const execution = yield* makeTransactionExecution(
     CurrentOAuthTransaction,
@@ -393,7 +397,7 @@ export const makeTargetOAuthSignInServices = (
 ) => {
   const captured = captureOAuthMapping(mapping);
 
-  return Effect.map(makeOAuthExecution(configuration), (execution) => ({
+  return Effect.map(makeOAuthExecution(configuration, captured), (execution) => ({
     oauthSignInPersistence: makeOAuthSignIn(captured, execution),
   }));
 };
@@ -404,7 +408,7 @@ export const makeTargetOAuthRegistrationIntentServices = (
 ) => {
   const captured = captureOAuthMapping(mapping);
 
-  return Effect.map(makeOAuthExecution(configuration), (execution) => ({
+  return Effect.map(makeOAuthExecution(configuration, captured), (execution) => ({
     oauthRegistrationIntents: makeOAuthRegistrationIntents(captured, execution),
   }));
 };
@@ -415,7 +419,7 @@ export const makeTargetOAuthRegistrationServices = <Registration>(
 ) => {
   const captured = captureOAuthMapping(mapping);
 
-  return Effect.map(makeOAuthExecution(configuration), (execution) => ({
+  return Effect.map(makeOAuthExecution(configuration, captured), (execution) => ({
     registrationAuthority: makeOAuthRegistration<Registration>(captured, execution),
   }));
 };
@@ -431,7 +435,7 @@ export const coordinateOAuthOwner = <Services, Transaction, A, E, R>(
     services: Services,
     append: (statement: Statement<any>) => void,
   ) => Effect.Effect<A, E, R>,
-): Effect.Effect<A, OAuthCoordinatorError<E>, R | LifecycleHooks> => {
+): Effect.Effect<A, OAuthCoordinatorError<E>, R | LifecycleHooks | NativeDatabase> => {
   const captured = captureOAuthMapping(mapping);
 
   return Effect.flatMap(LifecycleHooks, (hooks) =>
@@ -439,7 +443,9 @@ export const coordinateOAuthOwner = <Services, Transaction, A, E, R>(
       database,
       CurrentOAuthTransaction,
       configuration,
-      Effect.suspend(() => allocate(captured)),
+      validateDrizzleStorage(captured).pipe(
+        Effect.andThen(Effect.suspend(() => allocate(captured))),
+      ),
       unavailable,
       nonce,
       (execution, resources) =>
@@ -691,7 +697,7 @@ export const makeTargetOAuthAccountsServices = (
 ) => {
   const captured = captureOAuthMapping(mapping);
 
-  return Effect.map(makeOAuthExecution(configuration), (execution) => ({
+  return Effect.map(makeOAuthExecution(configuration, captured), (execution) => ({
     oauthAccountsPersistence: makeOAuthAccounts(captured, execution),
   }));
 };

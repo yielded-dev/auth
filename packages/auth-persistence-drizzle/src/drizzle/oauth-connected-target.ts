@@ -189,7 +189,7 @@ export const makeTargetOAuthConnectedServices = (
 ) => {
   const retained = captured(mapping);
 
-  return Effect.map(makeOAuthExecution(configuration), (execution) => ({
+  return Effect.map(makeOAuthExecution(configuration, retained), (execution) => ({
     oauthConnectedPersistence: makeConnected(retained, execution),
   }));
 };
@@ -200,7 +200,7 @@ export const makeTargetOAuthConnectedRevocationServices = (
 ) => {
   const retained = captured(mapping);
 
-  return Effect.map(makeOAuthExecution(configuration), (execution) => ({
+  return Effect.map(makeOAuthExecution(configuration, retained), (execution) => ({
     oauthConnectedRevocations: makeRevocations(retained, execution),
   }));
 };

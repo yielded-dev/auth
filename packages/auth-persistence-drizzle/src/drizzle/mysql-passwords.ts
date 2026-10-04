@@ -1,3 +1,4 @@
+import { NativeDatabase } from "@yielded/auth-persistence/Adapter";
 import type { LifecycleHooks, HookConfigurationError } from "@yielded/auth/Hooks";
 import { type PasswordUnavailable, PasswordPersistence } from "@yielded/auth/Password";
 /* oxlint-disable no-explicit-any -- proof mapping tables are independently typed by the proof owner; this driver forwards them unchanged to the shared target. */
@@ -91,7 +92,10 @@ export const makeMysqlPasswordPersistenceServices = <
   Effect.flatMap(
     Effect.map(acquireTransactionService(DatabaseService), configuration),
     (configuration) => makeTargetPasswordPersistenceServices(mapping, configuration, proofMapping),
-  ).pipe(Effect.provideServiceEffect(CurrentPasswordSql, nativeDatabase(DatabaseService)));
+  ).pipe(
+    Effect.provideServiceEffect(CurrentPasswordSql, nativeDatabase(DatabaseService)),
+    Effect.provideServiceEffect(NativeDatabase, nativeDatabase(DatabaseService)),
+  );
 
 export function coordinateMysqlPasswordPersistence<
   D extends Database,
@@ -195,7 +199,7 @@ export function coordinateMysqlPasswordPersistence<
   E | PasswordUnavailable | HookConfigurationError | SqlError | DatabaseError,
   Exclude<R, PasswordPersistence> | LifecycleHooks | DatabaseRequirements
 > {
-  return Effect.flatMap(acquire, (database) =>
+  return Effect.flatMap(nativeDatabase(acquire), (database) =>
     coordinateTargetPasswordPersistence<TransactionOf<D>, Out, E, Exclude<R, PasswordPersistence>>(
       database,
       options.mapping,
@@ -212,7 +216,7 @@ export function coordinateMysqlPasswordPersistence<
           ? work
           : Effect.provideService(work, options.transaction, options.transaction.of(transaction));
       },
-    ),
+    ).pipe(Effect.provideService(NativeDatabase, database)),
   );
 }
 
@@ -230,7 +234,10 @@ export const makeMysqlPasswordRegistrationServices = <
   Effect.flatMap(
     Effect.map(acquireTransactionService(DatabaseService), configuration),
     (configuration) => makeTargetPasswordRegistrationServices<Registration>(mapping, configuration),
-  ).pipe(Effect.provideServiceEffect(CurrentPasswordSql, nativeDatabase(DatabaseService)));
+  ).pipe(
+    Effect.provideServiceEffect(CurrentPasswordSql, nativeDatabase(DatabaseService)),
+    Effect.provideServiceEffect(NativeDatabase, nativeDatabase(DatabaseService)),
+  );
 
 export function coordinateMysqlPasswordRegistration<
   TargetId,
@@ -322,7 +329,7 @@ export function coordinateMysqlPasswordRegistration<
   E | PasswordUnavailable | HookConfigurationError | SqlError | DatabaseError,
   Exclude<R, TargetId> | LifecycleHooks | DatabaseRequirements
 > {
-  return Effect.flatMap(acquire, (database) =>
+  return Effect.flatMap(nativeDatabase(acquire), (database) =>
     coordinateTargetPasswordRegistration<
       Registration,
       TransactionOf<D>,
@@ -344,7 +351,7 @@ export function coordinateMysqlPasswordRegistration<
           ? work
           : Effect.provideService(work, options.transaction, options.transaction.of(transaction));
       },
-    ),
+    ).pipe(Effect.provideService(NativeDatabase, database)),
   );
 }
 

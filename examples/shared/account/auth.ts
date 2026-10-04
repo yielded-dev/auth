@@ -22,7 +22,7 @@ export const accountStrategies = {
     policy: { generation: 2 },
     management: {
       maximumCredentials: 5,
-      maximumEvidenceAgeMillis: sessionLifetimeMillis,
+      maximumEvidenceAgeMillis: 300_000,
       requireImmediateInvalidation: true,
     },
   }),
@@ -64,7 +64,7 @@ export const requirement = Sessions.AuthenticationRequirement.make({
   maximumAgeMillis: 300_000,
 });
 
-// Email confirmation and adding a passkey accept the existing valid session.
+// Email confirmation accepts the existing valid session. Passkey enrollment uses fresh evidence.
 export const sessionRequirement = Sessions.AuthenticationRequirement.make({
   ...requirement,
   maximumAgeMillis: sessionLifetimeMillis,

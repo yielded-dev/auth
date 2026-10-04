@@ -123,7 +123,17 @@ const start = (user = "alice", scope = "read") =>
     );
 
     expect(response.status).toBe(303);
-    const cookie = response.headers.getSetCookie()[0].split(";")[0];
+    const consentCookie = response.headers.getSetCookie()[0];
+
+    // Requested hardening: the browser must enforce a host-only consent cookie on HTTPS.
+    expect(consentCookie.split("=", 1)[0]).toBe("__Host-yielded-mcp-consent");
+    expect(
+      consentCookie
+        .split(";")
+        .slice(1)
+        .map((attribute) => attribute.trim()),
+    ).toContain("Path=/");
+    const cookie = consentCookie.split(";")[0];
 
     const consent = yield* service.handle(get(server.paths.authorize, cookie, user));
 

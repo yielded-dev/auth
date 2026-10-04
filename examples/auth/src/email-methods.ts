@@ -41,6 +41,7 @@ const program = Effect.gen(function* () {
           keys: [
             {
               id: "binding",
+              // Demo-only key material. Production requires independently generated random keys.
               material: Redacted.make(Base64Url.encode(new Uint8Array(32).fill(31))),
             },
           ],
@@ -53,6 +54,7 @@ const program = Effect.gen(function* () {
           keys: [
             {
               id: "session",
+              // Demo-only key material. Production requires independently generated random keys.
               material: Redacted.make(Base64Url.encode(new Uint8Array(32).fill(42))),
             },
           ],

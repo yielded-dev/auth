@@ -29,3 +29,5 @@ All three SQL examples import the same [AuthApi](../shared/account/contract.ts),
 This app's [live.ts](src/live.ts) supplies its persistence and account Layers.
 Hashing, Cloudflare delivery, forms, and Atom workflows also live in
 [shared/account](../shared/account).
+Adding a passkey requires authentication from the last five minutes. Sign in again
+when prompted; an older valid session still permits ordinary account reads.

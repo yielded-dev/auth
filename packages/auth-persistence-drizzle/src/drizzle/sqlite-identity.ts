@@ -26,6 +26,7 @@ import {
   type IdentityTables,
   type SubjectProvisioningTables,
 } from "./model";
+import { validateDrizzleStorage } from "./storage-validation";
 
 type ClosedQueryEffectHKT = QueryEffectHKTBase & { readonly context: never };
 type RuntimeDatabase = SQLiteEffectDatabase<ClosedQueryEffectHKT, unknown, any>;
@@ -51,6 +52,8 @@ export const makeSqliteSubjectProvisioningServices = Effect.fnUntraced(function*
   mode: "interactive" | "synchronous",
 ) {
   const database = yield* NativeDatabase;
+
+  yield* validateDrizzleStorage(mapping).pipe(Effect.mapError(() => IdentityUnavailable.make()));
 
   const db = database as unknown as RuntimeDatabase;
   const requestTable = mapping.provisioningRequest.table;
@@ -199,6 +202,8 @@ export const makeSqliteExternalIdentityServices = Effect.fnUntraced(function* <
   NativeId,
 >(mapping: ExternalIdentityTables<Subject, External, NativeId>) {
   const database = yield* NativeDatabase;
+
+  yield* validateDrizzleStorage(mapping).pipe(Effect.mapError(() => IdentityUnavailable.make()));
 
   const db = database as unknown as RuntimeDatabase;
   const externalTable = mapping.externalIdentity.table;

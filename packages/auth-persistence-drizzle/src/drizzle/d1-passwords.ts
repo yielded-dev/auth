@@ -1,5 +1,6 @@
 /* oxlint-disable no-explicit-any -- D1 plans bridge consumer-owned Drizzle rows and SQL statements. */
 import type { D1Client } from "@effect/sql-d1/D1Client";
+import { NativeDatabase } from "@yielded/auth-persistence/Adapter";
 import {
   coordinateCommit,
   CurrentCommitJournal,
@@ -62,6 +63,7 @@ import { CurrentD1PlanningDatabase, makeD1Owner } from "./d1-planning";
 import { compileD1ProofCompletionPlan, type D1ProtectedProofMutation } from "./d1-proofs";
 import { D1BatchStatements } from "./D1BatchStatements";
 import { column, isMappedConstraintConflict, PersistenceMappingError, updateValues } from "./model";
+import { nativeDatabase } from "./native-database";
 import {
   type AnyPasswordRegistrationMapping,
   type D1PasswordPersistenceMapping,
@@ -74,6 +76,7 @@ import {
 } from "./password-model";
 import type { PasswordRegistrationAuthority } from "./password-registration";
 import type { D1ProofPersistenceMapping } from "./proof-model";
+import { validateDrizzleStorage } from "./storage-validation";
 import type { SuppliedService } from "./SuppliedService";
 
 type PlanPrepare<Method extends (...args: any[]) => any, A> = (
@@ -2022,6 +2025,11 @@ export const makeD1PasswordPersistenceServices = Effect.fnUntraced(function* <
 ) {
   const database = yield* DatabaseService;
 
+  yield* validateDrizzleStorage({ ...mapping, proof: proofMapping }).pipe(
+    Effect.provideServiceEffect(NativeDatabase, nativeDatabase(DatabaseService)),
+    Effect.mapError(unavailable),
+  );
+
   const hooks = yield* LifecycleHooks;
   const plans = makePasswordPlans(mapping as unknown as Mapping, proofMapping);
 
@@ -2112,8 +2120,12 @@ export function coordinateD1PasswordPersistence<
   CoordinatorError<E> | DatabaseError,
   Exclude<R, PasswordPersistence | D1BatchStatements> | LifecycleHooks | DatabaseRequirements
 > {
-  return Effect.flatMap(acquire, (database) =>
+  return Effect.flatMap(nativeDatabase(acquire), (database) =>
     Effect.gen(function* () {
+      yield* validateDrizzleStorage({
+        ...options.mapping,
+        proof: options.proofMapping,
+      }).pipe(Effect.mapError(unavailable));
       const hooks = yield* LifecycleHooks;
 
       if (yield* hasCommitScope) return yield* unavailable();
@@ -2234,7 +2246,7 @@ export function coordinateD1PasswordPersistence<
       ).pipe(Effect.provideService(LifecycleHooks, hooks));
 
       return result.value;
-    }),
+    }).pipe(Effect.provideService(NativeDatabase, database)),
   );
 }
 
@@ -2466,6 +2478,11 @@ export const makeD1PasswordRegistrationServices = Effect.fnUntraced(function* <
 >(mapping: PasswordRegistrationMapping<Registration, S, I, C, AC, Rq, NativeId>) {
   const database = yield* DatabaseService;
 
+  yield* validateDrizzleStorage(mapping).pipe(
+    Effect.provideServiceEffect(NativeDatabase, nativeDatabase(DatabaseService)),
+    Effect.mapError(unavailable),
+  );
+
   const hooks = yield* LifecycleHooks;
   const plans = makeRegistrationPlans(mapping as unknown as RegistrationMapping<Registration>);
 
@@ -2512,8 +2529,9 @@ export function coordinateD1PasswordRegistration<
   CoordinatorError<E> | DatabaseError,
   Exclude<R, TargetId | D1BatchStatements> | LifecycleHooks | DatabaseRequirements
 > {
-  return Effect.flatMap(acquire, (database) =>
+  return Effect.flatMap(nativeDatabase(acquire), (database) =>
     Effect.gen(function* () {
+      yield* validateDrizzleStorage(options.mapping).pipe(Effect.mapError(unavailable));
       const hooks = yield* LifecycleHooks;
 
       if (yield* hasCommitScope) return yield* unavailable();
@@ -2593,7 +2611,7 @@ export function coordinateD1PasswordRegistration<
       ).pipe(Effect.provideService(LifecycleHooks, hooks));
 
       return result.value;
-    }),
+    }).pipe(Effect.provideService(NativeDatabase, database)),
   );
 }
 

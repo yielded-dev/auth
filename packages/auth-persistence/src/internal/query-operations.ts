@@ -1,4 +1,8 @@
+import type { Effect } from "effect";
 import type { Statement } from "effect/sql/Statement";
+
+import type { PersistenceMappingError } from "./mapping-error";
+import type { NativeDatabase } from "./transaction-kernel";
 
 /** Adapter-owned table metadata. No driver or ORM type enters the shared models. */
 export interface TableModel {
@@ -47,6 +51,10 @@ export interface QueryOperations<
   Fragment extends SqlFragment = SqlFragment,
   Column extends SqlColumn = SqlColumn,
 > {
+  /** Acquisition-only validation; adapters provide their captured root database. */
+  readonly validateStorage?: (
+    mapping: unknown,
+  ) => Effect.Effect<void, PersistenceMappingError, NativeDatabase>;
   readonly and: Predicate<Fragment>;
   readonly or: Predicate<Fragment>;
   readonly balancedD1And: Predicate<Fragment>;

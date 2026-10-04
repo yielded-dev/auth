@@ -152,7 +152,7 @@ const runtime = Layer.unwrap(
 
 // OAuth requests/responses contain credentials. Keep their URLs out of access logs/traces.
 HttpRouter.serve(runtime, { disableLogger: true }).pipe(
-  Layer.provide(BunHttpServer.layer({ port: 3000 })),
+  Layer.provide(BunHttpServer.layer({ hostname: "127.0.0.1", port: 3000 })),
   Layer.provide(Layer.succeed(HttpMiddleware.TracerDisabledWhen, () => true)),
   Layer.provide(BunServices.layer),
   Layer.launch,
