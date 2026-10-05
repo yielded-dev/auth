@@ -58,7 +58,7 @@ const ConfiguredModuleRow = Schema.Struct({
   moduleId: Schema.String,
   active: Schema.Boolean,
   policyRevision: Schema.String,
-  admitted: Schema.Boolean,
+  admitted: Schema.Literals(["present", "missing"]),
 });
 
 const credentialData = PasskeyCredential.mapFields(
@@ -441,38 +441,36 @@ export const makeComposedPasskeys = (
 
       // Read live configuration on every acquisition. Matching modules and
       // admission ownership need no initialization writes or advisory lock.
-      const configured =
-        dialect === "pg"
-          ? yield* native
-              .select({
-                moduleId: columns.moduleId,
-                active: columns.active,
-                policyRevision: columns.policyRevision,
-                admitted: sql`exists(select 1 from ${admission}
-            where ${ac.authorityScope} = ${namespace} and ${ac.moduleId} = ${columns.moduleId})`,
-              })
-              .from(module)
-              .where(
-                inArray(
-                  columns.moduleId,
-                  policies.map(({ feature }) => feature.moduleId),
-                ),
-              )
-              .pipe(
-                Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(ConfiguredModuleRow))),
-                Effect.map((rows) =>
-                  policies.every(({ feature, policyRevision }) =>
-                    rows.some(
-                      (row) =>
-                        row.moduleId === feature.moduleId &&
-                        row.active &&
-                        row.admitted &&
-                        row.policyRevision === policyRevision,
-                    ),
-                  ),
-                ),
-              )
-          : false;
+      const configured = yield* native
+        .select({
+          moduleId: columns.moduleId,
+          active: columns.active,
+          policyRevision: columns.policyRevision,
+          admitted: sql`case when exists(select 1 from ${admission}
+            where ${ac.authorityScope} = ${namespace} and ${ac.moduleId} = ${columns.moduleId})
+              then 'present' else 'missing' end`,
+        })
+        .from(module)
+        .where(
+          inArray(
+            columns.moduleId,
+            policies.map(({ feature }) => feature.moduleId),
+          ),
+        )
+        .pipe(
+          Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(ConfiguredModuleRow))),
+          Effect.map((rows) =>
+            policies.every(({ feature, policyRevision }) =>
+              rows.some(
+                (row) =>
+                  row.moduleId === feature.moduleId &&
+                  row.active &&
+                  row.admitted === "present" &&
+                  row.policyRevision === policyRevision,
+              ),
+            ),
+          ),
+        );
 
       if (!configured)
         yield* client.withTransaction(

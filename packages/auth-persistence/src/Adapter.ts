@@ -300,6 +300,7 @@ export type {
 export {
   validateStorage,
   validateStorageBatch,
+  withStorageValidation,
   type PhysicalStorageTable,
   type StorageValidation,
 } from "./internal/storage-validation";
