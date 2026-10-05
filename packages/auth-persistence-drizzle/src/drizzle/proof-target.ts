@@ -23,6 +23,7 @@ import { validateDrizzleStorage } from "./storage-validation";
 export interface ProofTargetConfiguration {
   readonly mode: "interactive" | "synchronous";
   readonly locking: boolean;
+  readonly maxParameters?: number;
   readonly standaloneGuard: Effect.Effect<void, ProofUnavailable>;
   readonly coordinatorGuard?: Effect.Effect<void, ProofUnavailable>;
   readonly insertIfAbsent: (
@@ -55,6 +56,9 @@ const options = (
 ): ProofSqlConfiguration => ({
   mode: configuration.mode,
   locking: configuration.locking,
+  ...(configuration.maxParameters === undefined
+    ? {}
+    : { maxParameters: configuration.maxParameters }),
 
   standaloneGuard: !coordinated ? configuration.standaloneGuard : Effect.void,
   insertIfAbsent: configuration.insertIfAbsent,

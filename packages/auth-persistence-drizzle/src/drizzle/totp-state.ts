@@ -7,7 +7,7 @@ import {
   type TotpDecision,
 } from "@yielded/auth/Totp";
 /* oxlint-disable no-explicit-any -- private native driver bridge; public makers preserve table and ID types. */
-import { sql, type SQL } from "drizzle-orm";
+import { inArray, sql, type SQL } from "drizzle-orm";
 import { Context, Effect, Schema } from "effect";
 
 import { randomId, digest } from "./crypto";
@@ -46,18 +46,12 @@ export const captureTotp = Effect.fn("TotpNative.capture")(function* (
   const selected = yield* owner.read(
     subject.table,
     equal(subject.table, { [subject.id]: nativeId }),
-    { limit: 1 },
+    { limit: 1, condition: subject.activeCondition },
   );
 
   const subjectRow = selected.rows[0];
 
-  if (
-    subjectRow === undefined ||
-    !(yield* owner.check(
-      sql`exists(select 1 from ${subject.table} where ${both(owner.exact(subject.table, subjectRow), subject.activeCondition)})`,
-    ))
-  )
-    return undefined;
+  if (subjectRow === undefined || !selected.conditionHolds) return undefined;
 
   const scope = yield* scopeFor(mapping.moduleId, subjectId),
     found = yield* owner.read(factor.table, equal(factor.table, { [factor.scope]: scope }), {
@@ -195,22 +189,79 @@ export const mutateTotp = Effect.fn("TotpNative.mutate")(function* (
       return reject;
     const auth = mapping.credential;
 
-    for (const revision of [...evidence.revision.credentials].sort((a, b) =>
+    const expected = [...evidence.revision.credentials].sort((a, b) =>
       a.credentialId.localeCompare(b.credentialId),
-    )) {
-      const found = yield* owner.read(
-        auth.table,
-        equal(auth.table, { [auth.id]: revision.credentialId, [auth.subjectId]: nativeId }),
-        { limit: 1 },
-      );
+    );
 
-      const row = found.rows[0];
+    // Preserve sorted lock order and budget the compiled mapping predicate as
+    // well as each ID's IN, CASE comparison and CASE ordinal parameters.
+    const baseParameters = owner.database
+      .select({
+        condition: sql`case when ${auth.activeCondition} then 1 else 0 end`,
+      })
+      .from(auth.table)
+      .where(equal(auth.table, { [auth.subjectId]: nativeId }))
+      .limit(1)
+      .toSQL().params.length;
 
-      if (row === undefined || row[auth.revision] !== revision.revision) return reject;
-      const condition = sql`exists(select 1 from ${auth.table} where ${both(owner.exact(auth.table, row), auth.activeCondition)})`;
+    const size = owner.batch
+      ? 64
+      : Math.max(1, Math.min(64, Math.floor((owner.maxParameters - baseParameters - 1) / 3)));
 
-      if (!(yield* owner.check(condition))) return reject;
-      credentialGuards.push({ credentialId: revision.credentialId, condition });
+    for (let offset = 0; offset < expected.length; offset += size) {
+      const group = expected.slice(offset, offset + size);
+
+      const vector = owner.batch
+        ? undefined
+        : yield* owner.read(
+            auth.table,
+            both(
+              equal(auth.table, { [auth.subjectId]: nativeId }),
+              inArray(
+                col(auth.table, auth.id),
+                group.map((item) => item.credentialId),
+              ),
+            ),
+            {
+              limit: group.length,
+              observe: false,
+              condition: auth.activeCondition,
+              orderBy: sql`case ${sql.join(
+                group.map(
+                  (item, index) =>
+                    sql`when ${equal(auth.table, { [auth.id]: item.credentialId })} then ${index}`,
+                ),
+                sql` `,
+              )} else ${group.length} end`,
+            },
+          );
+
+      for (const revision of group) {
+        const matched = vector?.rows.find((row) => row[auth.id] === revision.credentialId);
+
+        const found =
+          matched === undefined
+            ? yield* owner.read(
+                auth.table,
+                equal(auth.table, { [auth.id]: revision.credentialId, [auth.subjectId]: nativeId }),
+                { limit: 1, condition: auth.activeCondition },
+              )
+            : vector!;
+
+        const row = matched ?? found.rows[0];
+
+        if (matched !== undefined)
+          yield* owner.observe(
+            auth.table,
+            equal(auth.table, { [auth.id]: revision.credentialId, [auth.subjectId]: nativeId }),
+            [matched],
+          );
+        if (row === undefined || row[auth.revision] !== revision.revision || !found.conditionHolds)
+          return reject;
+        const condition = sql`exists(select 1 from ${auth.table} where ${both(owner.exact(auth.table, row), auth.activeCondition)})`;
+
+        credentialGuards.push({ credentialId: revision.credentialId, condition });
+      }
     }
 
     const eligible = evidence.proofs.filter((proof) =>

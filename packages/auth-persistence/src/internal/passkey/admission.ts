@@ -24,7 +24,7 @@ export const makePasskeyAdmissionKernel = (
   >,
   transactions: Pick<ReturnType<typeof makeTransactionKernel>, "both">,
 ) => {
-  const { sql } = operations;
+  const { or, sql } = operations;
   const { col, equal, existsExact, key, mappedColumns, subjectScope, targetScope } = state;
   const invariant: (value: unknown) => asserts value = state.invariant;
   const { both } = transactions;
@@ -54,20 +54,8 @@ export const makePasskeyAdmissionKernel = (
       [table.moduleId]: mapping.moduleId,
     };
 
-    // The previous marker/time is telemetry, not an authentication CAS. Actual
-    // engine predicates serialize admission, including separately planned D1 batches.
-    const found = yield* owner.read(table.table, equal(table.table, identity), {
-      limit: 1,
-      observe: false,
-      columns: [table.authorityScope, table.moduleId],
-    });
-
-    invariant(found.rows.length === 1);
-    invariant(
-      found.rows[0]![table.authorityScope] === mapping.authorityScope &&
-        found.rows[0]![table.moduleId] === mapping.moduleId,
-    );
-
+    // The guarded write locks admission and requires one byte-exact identity.
+    // Previous marker/time is telemetry, not an authentication CAS.
     const marked = {
       ...identity,
       [table.version]: owner.marker,
@@ -82,7 +70,7 @@ export const makePasskeyAdmissionKernel = (
         [table.ownerMarker]: owner.marker,
         [table.admittedAt]: null,
       },
-      { rows: 1, postcondition: yield* existsExact(table.table, marked) },
+      { rows: 1, returned: marked, postcondition: yield* existsExact(table.table, marked) },
     );
   });
 
@@ -246,7 +234,7 @@ export const makePasskeyAdmissionKernel = (
     const anchor = mapping.admission;
     const clock = mapping.clock;
     const earliest = yield* owner.now(clock);
-    const identities: Record<string, unknown>[] = [];
+    const entries: Array<{ values: Record<string, unknown>; key: Record<string, unknown> }> = [];
 
     for (const { kind, scope } of (yield* chargeScopes(ceremony, subjectId)).filter((item) =>
       kinds.includes(item.kind),
@@ -277,8 +265,10 @@ export const makePasskeyAdmissionKernel = (
         [table.ownerMarker]: owner.marker,
       };
 
-      const observation = yield* owner.insert(table.table, values, identity);
-
+      entries.push({ values, key: identity });
+    }
+    invariant(entries.length === kinds.length);
+    for (const observation of yield* owner.insertMany(table.table, entries)) {
       observation.rows = observation.rows.map((row) =>
         Object.fromEntries(
           Object.entries(row).filter(
@@ -286,9 +276,7 @@ export const makePasskeyAdmissionKernel = (
           ),
         ),
       );
-      identities.push(identity);
     }
-    invariant(identities.length === kinds.length);
 
     const anchorIdentity = {
       [anchor.authorityScope]: mapping.authorityScope,
@@ -316,7 +304,10 @@ export const makePasskeyAdmissionKernel = (
       },
       { rows: 1, postcondition: validStamp },
     );
-    for (const identity of identities) {
+    const chargeConditions: SQL[] = [];
+    const pendingCharges: SQL[] = [];
+
+    for (const { key: identity } of entries) {
       const expected = {
         ...identity,
         [table.version]: owner.marker,
@@ -332,26 +323,30 @@ export const makePasskeyAdmissionKernel = (
         ),
       );
 
-      yield* owner.finalUpdate(
-        table.table,
+      pendingCharges.push(
         owner.exact(table.table, {
           ...expected,
           [table.admittedAt]: null,
           [table.retainUntil]: null,
         }),
-        {
-          [table.admittedAt]: stamp,
-          [table.retainUntil]: clock.fromMillis(sql`${stampMillis} + ${chargeRetentionMillis}`),
-        },
-        { rows: 1, postcondition },
       );
+      chargeConditions.push(postcondition);
     }
+    yield* owner.finalUpdate(
+      table.table,
+      or(...pendingCharges)!,
+      {
+        [table.admittedAt]: stamp,
+        [table.retainUntil]: clock.fromMillis(sql`${stampMillis} + ${chargeRetentionMillis}`),
+      },
+      { rows: entries.length, postcondition: both(...chargeConditions) },
+    );
     owner.postconditions.push(
       sql`(select count(*) from ${table.table} where ${owner.exact(table.table, {
         [table.moduleId]: ceremony.moduleId,
         [table.flowId]: ceremony.flowId,
         [table.ownerMarker]: owner.marker,
-      })}) = ${identities.length}`,
+      })}) = ${entries.length}`,
     );
   });
 

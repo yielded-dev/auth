@@ -23,7 +23,7 @@ import { DateTime, Effect, Schema } from "effect";
 import { digest as digestText } from "../crypto";
 import type { PersistenceMappingError } from "../mapping-error";
 import type { QueryOperations } from "../query-operations";
-import type { makeTransactionKernel } from "../transaction-kernel";
+import type { Observation, makeTransactionKernel } from "../transaction-kernel";
 import { CurrentPasskeyTransaction } from "./state";
 import type { makePasskeyStateKernel } from "./state";
 
@@ -32,6 +32,7 @@ export interface WriteSubject {
   readonly nativeId: any;
   readonly row: Record<string, any>;
   readonly revision: typeof PasskeyRevision.Type;
+  readonly nowMillis?: number;
 }
 
 export const makePasskeyWriteStateKernel = (
@@ -51,7 +52,7 @@ export const makePasskeyWriteStateKernel = (
   >,
   transactions: Pick<ReturnType<typeof makeTransactionKernel>, "both">,
 ) => {
-  const { sql } = operations;
+  const { inArray, sql } = operations;
 
   const {
     col,
@@ -96,7 +97,7 @@ export const makePasskeyWriteStateKernel = (
 
     invariant(read.subjectIds.toSubject(nativeId) === subjectId);
 
-    const row = (yield* owner.read(table.table, equal(table.table, { [table.id]: nativeId }), {
+    const found = yield* owner.read(table.table, equal(table.table, { [table.id]: nativeId }), {
       limit: 1,
       columns: [
         ...new Set<string>([
@@ -106,13 +107,17 @@ export const makePasskeyWriteStateKernel = (
           ...mapping.write.policy.subjectColumns,
         ]),
       ],
-    })).rows[0];
+      condition: table.activeCondition,
+      clock: mapping.clock,
+    });
+
+    const row = found.rows[0];
 
     if (row === undefined || !table.isActiveStatus(row[table.status])) return undefined;
     invariant(read.subjectIds.equals(table.decodeId(copiedRow(row)), nativeId));
     const active = sql`exists(select 1 from ${table.table} where ${both(equal(table.table, { [table.id]: nativeId }), table.activeCondition)})`;
 
-    if (!(yield* owner.check(active))) return undefined;
+    if (!found.conditionHolds) return undefined;
     owner.postconditions.push(active);
     const factor = read.authority;
 
@@ -140,7 +145,9 @@ export const makePasskeyWriteStateKernel = (
         revision.credentials.length,
     );
 
-    return { subjectId, nativeId, row, revision };
+    invariant(found.nowMillis !== undefined);
+
+    return { subjectId, nativeId, row, revision, nowMillis: found.nowMillis };
   });
 
   const credentialRows = Effect.fn("passkey.writeCredentialRows")(function* (
@@ -179,76 +186,119 @@ export const makePasskeyWriteStateKernel = (
     });
   };
 
+  const ownedCredentials = Effect.fn("passkey.ownedWriteCredentials")(function* (
+    mapping: any,
+    subject: WriteSubject,
+    rows: ReadonlyArray<any>,
+  ) {
+    invariant(rows.length <= 64);
+    if (rows.length === 0) return [];
+    const owner = yield* CurrentPasskeyTransaction;
+    const read = mapping.read;
+    const table = read.credential;
+    const credentials = [];
+
+    for (const row of rows) {
+      const decoded = snapshotPasskeySync(PasskeyCredential, {
+        ...table.decode(copiedRow(row)),
+        revision: subject.revision,
+        active: true,
+      });
+
+      invariant(
+        decoded.credentialId === row[table.credentialId] &&
+          decoded.profile.rpId === decoded.rpId &&
+          read.subjectIds.equals(table.decodeSubjectId(copiedRow(row)), subject.nativeId),
+      );
+      credentials.push({
+        row,
+        decoded,
+        key: yield* credentialKey(decoded.rpId, decoded.protocolCredentialId),
+        hashedHandle: yield* handleKey(decoded.rpId, decoded.userHandle),
+      });
+    }
+    const ownership = read.credentialOwnership;
+    const keys = [...new Set(credentials.map(({ key }) => key))];
+
+    // Lock each bounded collection in key order through the owner so D1 admission
+    // guards and final observations retain the exact mapped rows.
+    const tuples = (yield* owner.read(
+      ownership.table,
+      inArray(col(ownership.table, ownership.credentialKey), keys),
+      {
+        limit: keys.length,
+        columns: mappedColumns(ownership),
+        orderBy: col(ownership.table, ownership.credentialKey),
+      },
+    )).rows;
+
+    const tuplesByKey = new Map(tuples.map((tuple) => [tuple[ownership.credentialKey], tuple]));
+
+    invariant(tuplesByKey.size === tuples.length);
+    for (const { row, decoded, key } of credentials) {
+      const tuple = tuplesByKey.get(key);
+
+      if (
+        tuple === undefined ||
+        !ownership.isOwnedState(tuple[ownership.state]) ||
+        !read.subjectIds.equals(ownership.decodeSubjectId(copiedRow(tuple)), subject.nativeId)
+      )
+        return undefined;
+      invariant(
+        tuple[ownership.rpId] === decoded.rpId &&
+          tuple[ownership.protocolCredentialId] === decoded.protocolCredentialId &&
+          tuple[ownership.credentialId] === decoded.credentialId &&
+          row[table.credentialKey] === key,
+      );
+    }
+    const handle = read.handleOwnership;
+    const handleKeys = [...new Set(credentials.map(({ hashedHandle }) => hashedHandle))];
+
+    const handles = (yield* owner.read(
+      handle.table,
+      inArray(col(handle.table, handle.handleKey), handleKeys),
+      {
+        limit: handleKeys.length,
+        columns: mappedColumns(handle),
+        orderBy: col(handle.table, handle.handleKey),
+      },
+    )).rows;
+
+    const handlesByKey = new Map(handles.map((held) => [held[handle.handleKey], held]));
+
+    invariant(handlesByKey.size === handles.length);
+    for (const { row, decoded, hashedHandle } of credentials) {
+      const held = handlesByKey.get(hashedHandle);
+
+      if (
+        held === undefined ||
+        !handle.isOwnedState(held[handle.state]) ||
+        !read.subjectIds.equals(handle.decodeSubjectId(copiedRow(held)), subject.nativeId)
+      )
+        return undefined;
+      invariant(
+        held[handle.rpId] === decoded.rpId &&
+          held[handle.userHandle] === decoded.userHandle &&
+          row[table.handleKey] === hashedHandle,
+      );
+      invariant(
+        subject.revision.credentials.some(
+          (item) =>
+            item.credentialId === decoded.credentialId &&
+            item.revision === row[table.credentialRevision],
+        ),
+      );
+    }
+
+    return credentials.map(({ decoded }) => decoded);
+  });
+
   const ownedCredential = Effect.fn("passkey.ownedWriteCredential")(function* (
     mapping: any,
     subject: WriteSubject,
     row: any,
   ) {
-    const owner = yield* CurrentPasskeyTransaction;
-    const read = mapping.read;
-    const table = read.credential;
-
-    const decoded = snapshotPasskeySync(PasskeyCredential, {
-      ...table.decode(copiedRow(row)),
-      revision: subject.revision,
-      active: true,
-    });
-
-    invariant(
-      decoded.credentialId === row[table.credentialId] &&
-        decoded.profile.rpId === decoded.rpId &&
-        read.subjectIds.equals(table.decodeSubjectId(copiedRow(row)), subject.nativeId),
-    );
-    const ownership = read.credentialOwnership;
-    const key = yield* credentialKey(decoded.rpId, decoded.protocolCredentialId);
-
-    const tuple = (yield* owner.read(
-      ownership.table,
-      equal(ownership.table, { [ownership.credentialKey]: key }),
-      { limit: 1, columns: mappedColumns(ownership) },
-    )).rows[0];
-
-    if (
-      tuple === undefined ||
-      !ownership.isOwnedState(tuple[ownership.state]) ||
-      !read.subjectIds.equals(ownership.decodeSubjectId(copiedRow(tuple)), subject.nativeId)
-    )
-      return undefined;
-    invariant(
-      tuple[ownership.rpId] === decoded.rpId &&
-        tuple[ownership.protocolCredentialId] === decoded.protocolCredentialId &&
-        tuple[ownership.credentialId] === decoded.credentialId &&
-        row[table.credentialKey] === key,
-    );
-    const handle = read.handleOwnership;
-    const hashedHandle = yield* handleKey(decoded.rpId, decoded.userHandle);
-
-    const held = (yield* owner.read(
-      handle.table,
-      equal(handle.table, { [handle.handleKey]: hashedHandle }),
-      { limit: 1, columns: mappedColumns(handle) },
-    )).rows[0];
-
-    if (
-      held === undefined ||
-      !handle.isOwnedState(held[handle.state]) ||
-      !read.subjectIds.equals(handle.decodeSubjectId(copiedRow(held)), subject.nativeId)
-    )
-      return undefined;
-    invariant(
-      held[handle.rpId] === decoded.rpId &&
-        held[handle.userHandle] === decoded.userHandle &&
-        row[table.handleKey] === hashedHandle,
-    );
-    invariant(
-      subject.revision.credentials.some(
-        (item) =>
-          item.credentialId === decoded.credentialId &&
-          item.revision === row[table.credentialRevision],
-      ),
-    );
-
-    return decoded;
+    return (yield* ownedCredentials(mapping, subject, [row]))?.[0];
   });
 
   const managementPolicy = (mapping: any, subject: WriteSubject) =>
@@ -360,7 +410,7 @@ export const makePasskeyWriteStateKernel = (
         )
       )
         return false;
-    const now = yield* owner.now(mapping.clock);
+    const now = subject.nowMillis ?? (yield* owner.now(mapping.clock));
 
     if (
       evidence.proofs.some(
@@ -512,6 +562,7 @@ export const makePasskeyWriteStateKernel = (
     ceremony: PasskeyCeremony,
     verified: any,
     now: number,
+    absent: Observation,
   ) {
     const owner = yield* CurrentPasskeyTransaction;
 
@@ -559,13 +610,7 @@ export const makePasskeyWriteStateKernel = (
     const hashedHandle = yield* handleKey(credential.rpId, credential.userHandle);
     const tuple = read.credentialOwnership;
 
-    const absent = yield* owner.read(
-      tuple.table,
-      equal(tuple.table, { [tuple.credentialKey]: tupleKey }),
-      { limit: 1 },
-    );
-
-    invariant(absent.rows.length === 0);
+    invariant(absent.table === tuple.table && absent.rows.length === 0);
 
     const inserted = yield* owner.insert(
       tuple.table,
@@ -665,6 +710,7 @@ export const makePasskeyWriteStateKernel = (
     credentialRows,
     summary,
     ownedCredential,
+    ownedCredentials,
     managementPolicy,
     metadataAllowed,
     enrollmentDigest,

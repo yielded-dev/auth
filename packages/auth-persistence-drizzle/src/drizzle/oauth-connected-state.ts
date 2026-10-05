@@ -2,8 +2,9 @@ import { type OAuthAccountRevision, snapshotOAuthSync } from "@yielded/auth/OAut
 import * as M from "@yielded/auth/OAuth";
 import { AuthenticationRequirement } from "@yielded/auth/Sessions";
 /* oxlint-disable no-explicit-any -- private table erasure retains declared callback error/requirements channels. */
-import { and, eq, isNull, sql, type SQL, type Table } from "drizzle-orm";
+import { and, eq, inArray, is, isNull, sql, type SQL, type Table } from "drizzle-orm";
 import type { EffectDrizzleQueryError } from "drizzle-orm/effect-core";
+import { MySqlTable } from "drizzle-orm/mysql-core";
 import { DateTime, Effect, Schema } from "effect";
 
 import type {
@@ -544,10 +545,29 @@ export const lockClientById = Effect.fn("oauthConnected.lockClientById")(functio
     initial = discovery.rows[0];
 
   invariant(initial !== undefined);
+
+  return yield* lockDiscoveredClient(mapping, id, initial);
+});
+
+const lockDiscoveredClient = Effect.fn("oauthConnected.lockDiscoveredClient")(function* (
+  mapping: Authority,
+  id: string,
+  initial: Row,
+  locked?: Row,
+) {
+  const owner = yield* CurrentOAuthTransaction;
+
+  const c = mapping.client,
+    cache = yield* anchors(clientCache, c.table),
+    cached = cache.get(id);
+
+  if (cached !== undefined) return cached;
   const scope = yield* readScope(mapping, initial[c.provider], initial[c.issuer]);
 
-  const read = yield* owner.read(c.table, equal(c.table, { [c.clientKey]: id }), { limit: 1 }),
-    row = read.rows[0];
+  const where = equal(c.table, { [c.clientKey]: id });
+  const row = locked ?? (yield* owner.read(c.table, where, { limit: 1 })).rows[0];
+
+  if (locked !== undefined) yield* owner.observe(c.table, where, [locked]);
 
   invariant(
     row !== undefined &&
@@ -593,20 +613,86 @@ export const prelockClients = Effect.fn("oauthConnected.prelockClients")(functio
 
   for (const value of releaseScopes)
     scopes.set(yield* scopeKey(value.provider, value.issuer), { ...value, required: false });
-  for (const id of unique) {
-    const read = yield* owner.read(c.table, equal(c.table, { [c.clientKey]: id }), {
-        limit: 1,
-        lock: false,
-        observe: false,
-      }),
-      row = read.rows[0];
+  const discovered = new Map<string, Row>();
+  const size = Math.max(1, Math.min(owner.batch ? 64 : 100, owner.maxParameters - 1));
 
-    invariant(row !== undefined);
-    scopes.set(yield* scopeKey(row[c.provider], row[c.issuer]), {
-      provider: row[c.provider],
-      issuer: row[c.issuer],
-      required: true,
+  for (let offset = 0; offset < unique.length; offset += size) {
+    const ids = unique.slice(offset, offset + size);
+
+    const read = yield* owner.read(c.table, inArray(col(c.table, c.clientKey), ids), {
+      limit: ids.length,
+      lock: false,
+      observe: false,
     });
+
+    for (const row of read.rows) {
+      discovered.set(row[c.clientKey], row);
+      scopes.set(yield* scopeKey(row[c.provider], row[c.issuer]), {
+        provider: row[c.provider],
+        issuer: row[c.issuer],
+        required: true,
+      });
+    }
+  }
+  invariant(discovered.size === unique.length);
+  const orderedScopes = [...scopes].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+
+  if (!owner.batch && owner.maxParameters > 100 && !is(c.table, MySqlTable)) {
+    const lockedRows = (ids: ReadonlyArray<string>) =>
+      owner.read(c.table, inArray(col(c.table, c.clientKey), [...ids]), {
+        limit: ids.length,
+        observe: false,
+        orderBy: sql`case ${sql.join(
+          ids.map((id, index) => sql`when ${equal(c.table, { [c.clientKey]: id })} then ${index}`),
+          sql` `,
+        )} else ${ids.length} end`,
+      });
+
+    const cache = yield* anchors(scopeCache, c.table);
+
+    for (let offset = 0; offset < orderedScopes.length; offset += 100) {
+      const group = orderedScopes.slice(offset, offset + 100);
+      const rows = (yield* lockedRows(group.map(([id]) => id))).rows;
+      const aliased = rows.some((row) => !group.some(([id]) => row[c.clientKey] === id));
+
+      for (const [id, { provider, issuer, required }] of group) {
+        const exact = rows.find((row) => row[c.clientKey] === id);
+        const where = equal(c.table, { [c.clientKey]: id });
+
+        const row =
+          exact ??
+          (aliased ? (yield* owner.read(c.table, where, { limit: 1 })).rows[0] : undefined);
+
+        if (exact !== undefined || !aliased)
+          yield* owner.observe(c.table, where, row === undefined ? [] : [row]);
+        invariant(!required || row !== undefined);
+        if (row !== undefined) {
+          invariant(
+            row[c.provider] === provider &&
+              row[c.issuer] === issuer &&
+              row[c.clientRegistrationId] === "" &&
+              nativeOrder(mapping, row[c.counter]) === 0,
+          );
+          cache.set(id, { id, row });
+        }
+      }
+    }
+    // Every scope is held before any client; CASE follows the same sorted IDs
+    // as the former point reads. Collation aliases retain the point fallback.
+    for (let offset = 0; offset < unique.length; offset += 100) {
+      const ids = unique.slice(offset, offset + 100);
+      const rows = (yield* lockedRows(ids)).rows;
+
+      for (const id of ids)
+        yield* lockDiscoveredClient(
+          mapping,
+          id,
+          discovered.get(id)!,
+          rows.find((row) => row[c.clientKey] === id),
+        );
+    }
+
+    return;
   }
   for (const [id, { provider, issuer, required }] of [...scopes].sort(([a], [b]) =>
     a < b ? -1 : a > b ? 1 : 0,
@@ -627,7 +713,9 @@ export const prelockClients = Effect.fn("oauthConnected.prelockClients")(functio
       }
     }
   }
-  for (const id of unique) yield* lockClientById(mapping, id);
+  // Discovery chooses the scope only. Re-read and validate each client under
+  // that scope, in the same globally sorted lock order as individual calls.
+  for (const id of unique) yield* lockDiscoveredClient(mapping, id, discovered.get(id)!);
 });
 
 export const client = Effect.fn("oauthConnected.client")(function* (
@@ -785,6 +873,19 @@ export const cohort = Effect.fn("oauthConnected.cohort")(function* (
       cutoff: 0,
       blocked: false,
     };
+
+  return decodeCohort(mapping, clientId, identityId, id, row);
+});
+
+export const decodeCohort = (
+  mapping: Authority,
+  clientId: string,
+  identityId: string,
+  id: string,
+  row: Row,
+) => {
+  const c = mapping.cohort;
+
   invariant(
     row[c.clientKey] === clientId &&
       row[c.identityKey] === identityId &&
@@ -803,7 +904,7 @@ export const cohort = Effect.fn("oauthConnected.cohort")(function* (
     cutoff: nativeOrder(mapping, row[c.cutoff]),
     blocked: row[c.state] === "Blocked",
   };
-});
+};
 
 export const readGrant = Effect.fn("oauthConnected.readGrant")(function* (
   mapping: Authority,
@@ -824,6 +925,17 @@ export const readGrant = Effect.fn("oauthConnected.readGrant")(function* (
 
   if (row === undefined) return undefined;
   if (lock) owner.observations.push(read);
+
+  return yield* decodeGrant(mapping, moduleId, grantId, row);
+});
+
+export const decodeGrant = Effect.fnUntraced(function* (
+  mapping: Authority,
+  moduleId: string,
+  grantId: string,
+  row: Row,
+) {
+  const g = mapping.grant;
   const context = tokenContextStorage.decode(row[g.context]);
   const native = yield* mapping.subjectId.toNative(context.subjectId);
 

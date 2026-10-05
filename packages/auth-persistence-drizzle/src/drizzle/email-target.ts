@@ -30,6 +30,7 @@ import { validateDrizzleStorage } from "./storage-validation";
 export interface EmailTargetConfiguration {
   readonly mode: "interactive" | "synchronous";
   readonly locking: boolean;
+  readonly maxParameters?: number;
   readonly standaloneGuard: Effect.Effect<void, EmailUnavailable>;
   readonly coordinatorGuard?: Effect.Effect<void, EmailUnavailable>;
   readonly generatedSubjectRows: (query: EmailSqlQuery) => EmailSqlQuery;
@@ -56,6 +57,9 @@ export const sqlClientEmailStandaloneGuard = (
 const proofConfiguration = (configuration: EmailTargetConfiguration, coordinated = false) => ({
   mode: configuration.proof.mode,
   locking: configuration.proof.locking,
+  ...(configuration.proof.maxParameters === undefined
+    ? {}
+    : { maxParameters: configuration.proof.maxParameters }),
 
   standaloneGuard: Effect.void,
   coordinated,

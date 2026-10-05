@@ -33,12 +33,7 @@ export const makePasskeyRegistrationWriteKernel = (
   >,
   flow: Pick<
     ReturnType<typeof makePasskeyFlowKernel>,
-    | "compatiblePolicy"
-    | "exactClaim"
-    | "issueAssertion"
-    | "liveCondition"
-    | "readFlow"
-    | "terminalFlow"
+    "compatiblePolicy" | "exactClaim" | "issueFlow" | "liveCondition" | "readFlow" | "terminalFlow"
   >,
   registrationCustody: Pick<
     ReturnType<typeof makePasskeyRegistrationCustodyKernel>,
@@ -58,8 +53,7 @@ export const makePasskeyRegistrationWriteKernel = (
   const { lockAdmission, readCharges, guardChargeSet } = admission;
   const { readModule, readPolicyGuards } = credentials;
 
-  const { compatiblePolicy, exactClaim, issueAssertion, liveCondition, readFlow, terminalFlow } =
-    flow;
+  const { compatiblePolicy, exactClaim, issueFlow, liveCondition, readFlow, terminalFlow } = flow;
 
   const { releaseRegistrationCustody } = registrationCustody;
   const { ceremonyStorage, credentialKey, equal, handleKey } = state;
@@ -141,7 +135,9 @@ export const makePasskeyRegistrationWriteKernel = (
       value.displayName !== ceremony.context.displayName
     )
       return { _tag: "Rejected" } as const;
-    if ((yield* readModule(mapping)) === undefined) return { _tag: "Rejected" } as const;
+    const current = yield* readModule(mapping);
+
+    if (current === undefined) return { _tag: "Rejected" } as const;
     yield* lockAdmission(mapping);
     yield* readPolicyGuards(mapping);
     const eligible = mapping.registration.eligible(value.registration);
@@ -182,7 +178,7 @@ export const makePasskeyRegistrationWriteKernel = (
       absentFlow.rows.length !== 0
     )
       return { _tag: "Rejected" } as const;
-    const issued = yield* issueAssertion(mapping, ceremony, input.policy);
+    const issued = yield* issueFlow(mapping, ceremony, input.policy, current);
 
     if (issued._tag !== "Issued") return issued;
 
@@ -264,7 +260,7 @@ export const makePasskeyRegistrationWriteKernel = (
           input.verified.protocolCredentialId,
         ),
       }),
-      { limit: 1, observe: false },
+      { limit: 1 },
     );
 
     const handle = mapping.handle;
@@ -287,7 +283,11 @@ export const makePasskeyRegistrationWriteKernel = (
       { limit: 1 },
     )).rows[0];
 
-    const read = yield* readFlow(mapping, ceremony.flowId);
+    const read = yield* readFlow(
+      mapping,
+      ceremony.flowId,
+      liveCondition(mapping, ceremony, input.claim),
+    );
 
     if (read === undefined || !exactClaim(read, input.claim)) return { _tag: "Rejected" } as const;
 
@@ -315,7 +315,7 @@ export const makePasskeyRegistrationWriteKernel = (
       !validRegistration(ceremony, input.verified) ||
       !input.verified.userVerified ||
       !ceremony.profile.primarySignIn ||
-      !(yield* owner.check(liveCondition(mapping, ceremony, input.claim)))
+      !read.conditionHolds
     )
       return yield* reject;
 
@@ -396,7 +396,8 @@ export const makePasskeyRegistrationWriteKernel = (
       subject,
       ceremony,
       input.verified,
-      yield* owner.now(mapping.clock),
+      read.nowMillis,
+      absentCredential,
     );
     yield* owner.update(
       intent.table,

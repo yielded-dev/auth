@@ -353,6 +353,9 @@ export const createPersistence = <T extends object, R>(
           SessionSqlDatabase &
           TransactionNativeDatabase;
 
+        const limits =
+          native.maxParameters === undefined ? {} : { maxParameters: native.maxParameters };
+
         const options = {
           mode: "interactive" as const,
           locking: dialect === "pg",
@@ -392,6 +395,7 @@ export const createPersistence = <T extends object, R>(
               configuration: {
                 mode: "interactive" as const,
                 locking: dialect === "pg",
+                ...limits,
                 standaloneGuard: standalone(() => ProofUnavailable.make({})),
                 insertIfAbsent: (query: ProofSqlQuery) => query.onConflictDoNothing(),
               },
@@ -416,6 +420,7 @@ export const createPersistence = <T extends object, R>(
             .makeSqlPasswordPersistence(mappings.passwords(), {
               mode: "interactive",
               locking: dialect === "pg",
+              ...limits,
               standaloneGuard: standalone(() => PasswordUnavailable.make({})),
               insertIfAbsent: (query) => query.onConflictDoNothing(),
               ...(proofConfiguration === undefined ? {} : { proof: proofConfiguration }),
@@ -522,6 +527,7 @@ export const createPersistence = <T extends object, R>(
                 mode: "interactive",
                 dialect,
                 locking: dialect === "pg",
+                ...limits,
                 standaloneGuard: () => standalone(() => PhoneOtpUnavailable.make({})),
               },
               () => PhoneOtpUnavailable.make({}),

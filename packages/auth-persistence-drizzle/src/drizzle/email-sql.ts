@@ -1,6 +1,6 @@
 import { makeEmailKernel } from "@yielded/auth-persistence/Adapter";
 
-import { completeProofPlanIn } from "./proof-sql";
+import { checkProofCompletionIn, completeProofPlanIn } from "./proof-sql";
 import { drizzleQueryOperations } from "./query-operations";
 
 export { CurrentEmailSql } from "@yielded/auth-persistence/Adapter";
@@ -22,4 +22,4 @@ export const {
   snapshotEmailMutation,
   validateEmailAuthority,
   makeSqlEmailAddressPersistence,
-} = makeEmailKernel(drizzleQueryOperations, { completeProofPlanIn });
+} = makeEmailKernel(drizzleQueryOperations, { completeProofPlanIn, checkProofCompletionIn });

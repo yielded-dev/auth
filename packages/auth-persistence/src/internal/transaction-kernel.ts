@@ -23,6 +23,8 @@ export type Row = Record<string, any>;
 type NativeQuery<A> = Effect.Effect<A, QueryFailure | SqlError>;
 
 export interface TransactionNativeDatabase {
+  /** Bind budget supplied by a backend with stricter limits than its dialect. */
+  readonly maxParameters?: number;
   readonly $client: SqlClient.SqlClient & {
     readonly batch: (statements: ReadonlyArray<Statement<any>>) => Effect.Effect<any, SqlError>;
   };
@@ -41,6 +43,8 @@ export interface Observation {
   readonly table: Table;
   readonly where: SQL;
   rows: ReadonlyArray<Row>;
+  readonly conditionHolds?: boolean;
+  readonly nowMillis?: number;
 }
 
 /** Expressions deliberately do not replace observed values. Read only semantic
@@ -48,6 +52,8 @@ export interface Observation {
 export interface GuardedUpdate {
   readonly rows: number;
   readonly postcondition: SQL;
+  /** Row-local values can be checked by RETURNING; the full commit fence stays. */
+  readonly returned?: Row;
 }
 
 export interface TransactionOwner<Failure> {
@@ -55,6 +61,8 @@ export interface TransactionOwner<Failure> {
   readonly journal: CommitJournal;
   readonly marker: string;
   readonly batch: boolean;
+  /** Generated bind budget; batch compilers may compact physical parameters. */
+  readonly maxParameters: number;
   readonly observations: Observation[];
   readonly postconditions: Array<SQL | (() => SQL)>;
   readonly statements: Statement<any>[];
@@ -71,8 +79,14 @@ export interface TransactionOwner<Failure> {
       readonly takeOnly?: boolean;
       readonly orderBy?: any;
       readonly columns?: ReadonlyArray<string>;
+      /** Evaluate a row predicate in the same locked snapshot as its columns. */
+      readonly condition?: SQL;
+      /** Read the authority clock with the row that owns a timed decision. */
+      readonly clock?: { readonly engineNowMillis: SQL };
     },
   ): Effect.Effect<Observation, Failure>;
+  /** Retain an already selected, locked set under its bounded identity predicate. */
+  observe(table: Table, where: SQL, rows: ReadonlyArray<Row>): Effect.Effect<Observation, Failure>;
   write(query: any): Effect.Effect<void, Failure>;
   insert(
     table: Table,
@@ -80,6 +94,10 @@ export interface TransactionOwner<Failure> {
     key: Row,
     absent?: boolean,
   ): Effect.Effect<Observation, Failure>;
+  insertMany(
+    table: Table,
+    entries: ReadonlyArray<{ readonly values: Row; readonly key: Row }>,
+  ): Effect.Effect<ReadonlyArray<Observation>, Failure>;
   update(table: Table, key: Row, values: Row): Effect.Effect<void, Failure>;
   updateGuarded(
     table: Table,
@@ -106,7 +124,7 @@ export const makeTransactionKernel = <
 >(
   operations: QueryOperations<Fragment, Column>,
 ) => {
-  const { eq, getTableColumns, isNull, sql, balancedD1And, compactD1GeneratedStatement } =
+  const { eq, getTableColumns, isNull, or, sql, balancedD1And, compactD1GeneratedStatement } =
     operations;
 
   const isUnavailableCause = <Failure>(cause: Cause.Cause<unknown>, unavailable: () => Failure) => {
@@ -244,6 +262,7 @@ export const makeTransactionKernel = <
       readonly locking: boolean;
       readonly mysql: boolean;
       readonly dialect: "pg" | "mysql" | "sqlite";
+      readonly maxParameters?: number;
     },
   ): TransactionOwner<Failure> => {
     const invariant: (value: unknown) => asserts value = (value) => {
@@ -251,6 +270,12 @@ export const makeTransactionKernel = <
     };
 
     const { col, equal, matchesNativeRow } = makeTransactionRows(unavailable);
+
+    const maxParameters =
+      configuration.maxParameters ??
+      (configuration.batch || configuration.dialect !== "sqlite" ? 16_000 : 900);
+
+    invariant(Number.isSafeInteger(maxParameters) && maxParameters > 0);
     let phase: "open" | "finishing" | "finished" = "open";
     let poisoned = false;
     const open = () => invariant(phase === "open" && !poisoned);
@@ -271,7 +296,12 @@ export const makeTransactionKernel = <
     const statements: Statement<any>[] = [];
     const postconditions: Array<SQL | (() => SQL)> = [];
     const guards: PreparedCommit<void>[] = [];
-    const finalUpdates: Array<{ readonly query: any; readonly guard: GuardedUpdate }> = [];
+
+    const finalUpdates: Array<{
+      readonly table: Table;
+      readonly query: any;
+      readonly guard: GuardedUpdate;
+    }> = [];
 
     const exactRow = (table: Table, row: Row) =>
       both(
@@ -314,24 +344,36 @@ export const makeTransactionKernel = <
       ),
     ];
 
-    // All chunks remain inside the same native owner or atomic D1 batch. A single
-    // wide row is compacted; separate observations cannot accumulate unbounded
-    // bind parameters or expression depth in one final SELECT.
+    // D1 and Durable Object SQLite have tighter limits than local SQLite.
+    // Keep native fences bounded without turning each observed row into a trip.
     const chunks = (conditions: ReadonlyArray<SQL>) => {
       const output: SQL[] = [];
       let pending: SQL[] = [];
+      let parameters = 1;
+      let bytes = 0;
+      const parameterLimit = configuration.batch ? 96 : maxParameters;
+      const byteLimit = configuration.batch || maxParameters <= 100 ? 48_000 : 512_000;
 
       for (const condition of conditions) {
-        const candidate = [...pending, condition];
-        const rendered = assertion(both(...candidate)).toSQL();
+        const rendered = queryCondition(condition).toSQL();
+
+        // Count each predicate once. Re-rendering the growing conjunction made
+        // large bounded collections quadratic before they reached the database.
+        const size =
+          new TextEncoder().encode(rendered.sql).length + rendered.params.length * 4 + 16;
 
         if (
           pending.length > 0 &&
-          (rendered.params.length > 96 || new TextEncoder().encode(rendered.sql).length > 48_000)
+          (parameters + rendered.params.length > parameterLimit || bytes + size > byteLimit)
         ) {
           output.push(both(...pending));
-          pending = [condition];
-        } else pending = candidate;
+          pending = [];
+          parameters = 1;
+          bytes = 0;
+        }
+        pending.push(condition);
+        parameters += rendered.params.length;
+        bytes += size;
       }
       if (pending.length > 0) output.push(both(...pending));
 
@@ -351,6 +393,47 @@ export const makeTransactionKernel = <
       return observation;
     };
 
+    const projection = (
+      table: Table,
+      names?: ReadonlyArray<string>,
+      condition?: SQL,
+      clock?: { readonly engineNowMillis: SQL },
+    ) => {
+      const columns = getTableColumns(table);
+
+      const selection: Record<string, Column | SQL> =
+        names === undefined
+          ? { ...columns }
+          : Object.fromEntries(names.map((key) => [key, col(table, key)]));
+
+      let conditionKey = "__auth_condition";
+      let clockKey = "__auth_now";
+
+      while (conditionKey in columns) conditionKey += "_";
+      while (clockKey in columns) clockKey += "_";
+      if (condition !== undefined)
+        selection[conditionKey] = sql`case when ${condition} then 1 else 0 end`
+          .mapWith(Number)
+          .as(conditionKey);
+      if (clock !== undefined)
+        selection[clockKey] = sql`${clock.engineNowMillis}`.mapWith(Number).as(clockKey);
+
+      const rows = (selected: ReadonlyArray<Row>) =>
+        condition === undefined && clock === undefined
+          ? selected
+          : selected.map((row) => {
+              if (condition !== undefined)
+                invariant(row[conditionKey] === 0 || row[conditionKey] === 1);
+              if (clock !== undefined)
+                invariant(Number.isSafeInteger(row[clockKey]) && row[clockKey] >= 0);
+              const { [conditionKey]: _condition, [clockKey]: _clock, ...values } = row;
+
+              return values;
+            });
+
+      return { selection, conditionKey, clockKey, rows };
+    };
+
     const queryCondition = (condition: SQL) =>
       database
         .select({
@@ -362,7 +445,7 @@ export const makeTransactionKernel = <
       Effect.gen(function* () {
         const query = queryCondition(condition);
 
-        const rows: ReadonlyArray<Row> = yield* configuration.dialect === "sqlite"
+        const rows: ReadonlyArray<Row> = yield* configuration.batch
           ? toStatement(query)
           : (query as NativeQuery<Row[]>);
 
@@ -372,12 +455,15 @@ export const makeTransactionKernel = <
       });
 
     const guardedQuery = (table: Table, where: SQL, values: Row, guard: GuardedUpdate) => {
-      invariant(Number.isSafeInteger(guard.rows) && guard.rows > 0 && guard.rows <= 128);
+      invariant(Number.isSafeInteger(guard.rows) && guard.rows > 0 && guard.rows <= 1000);
 
-      return { query: database.update(table).set(values).where(where), guard: { ...guard } };
+      return { table, query: database.update(table).set(values).where(where), guard: { ...guard } };
     };
 
-    const applyGuarded = (entry: { readonly query: any; readonly guard: GuardedUpdate }) =>
+    const applyGuarded = (
+      entry: { readonly table: Table; readonly query: any; readonly guard: GuardedUpdate },
+      final = false,
+    ) =>
       Effect.gen(function* () {
         if (configuration.batch) {
           statements.push(toStatement(entry.query));
@@ -390,13 +476,21 @@ export const makeTransactionKernel = <
 
             invariant(changed.affectedRows === entry.guard.rows);
           } else {
-            const changed = yield* entry.query.returning({ value: sql`1` }) as NativeQuery<
-              ReadonlyArray<Row>
-            >;
+            const returning =
+              entry.guard.returned === undefined
+                ? undefined
+                : projection(entry.table, [], exactRow(entry.table, entry.guard.returned));
+
+            const changed = yield* entry.query.returning(
+              returning?.selection ?? { value: sql`1` },
+            ) as NativeQuery<ReadonlyArray<Row>>;
 
             invariant(changed.length === entry.guard.rows);
+            if (returning !== undefined)
+              invariant(changed.every((row) => row[returning.conditionKey] === 1));
           }
-          invariant(yield* conditionHolds(entry.guard.postcondition));
+          if (!final && (configuration.mysql || entry.guard.returned === undefined))
+            invariant(yield* conditionHolds(entry.guard.postcondition));
         }
       });
 
@@ -405,38 +499,83 @@ export const makeTransactionKernel = <
       journal,
       marker,
       batch: configuration.batch,
+      maxParameters,
       observations,
       statements,
       postconditions,
       guards,
       exact: exactRow,
+      observe: (table, where, rows) =>
+        result(
+          Effect.sync(() => {
+            open();
+            if (configuration.batch) appendAssertions(observedConditions(table, where, rows));
+
+            return observed(table, where, rows);
+          }),
+        ),
       read: (table, where, options = {}) =>
         result(
           Effect.gen(function* () {
             open();
             const limit = options.limit ?? 64;
 
+            const selectedRows = projection(
+              table,
+              options.columns,
+              options.condition,
+              options.clock,
+            );
+
+            const { selection, conditionKey } = selectedRows;
+
             let query = database
-              .select(
-                options.columns === undefined
-                  ? undefined
-                  : Object.fromEntries(options.columns.map((key) => [key, col(table, key)])),
-              )
+              .select(selection)
               .from(table)
               .where(where)
               .limit(options.takeOnly ? limit : limit + 1);
 
             if (options.orderBy !== undefined) query = query.orderBy(options.orderBy);
             if (options.lock !== false && configuration.locking) query = query.for("update");
-            const rows: Row[] = yield* query as NativeQuery<Row[]>;
+            const selected: Row[] = yield* query as NativeQuery<Row[]>;
+
+            const rows = selectedRows.rows(selected);
 
             invariant(rows.length <= limit);
             if (configuration.batch && (options.observe !== false || options.admissionOnly))
               appendAssertions(observedConditions(table, where, rows));
+            if (configuration.batch && options.condition !== undefined)
+              appendAssertions(
+                rows.map(
+                  (row, index) =>
+                    sql`exists(select 1 from ${table} where ${both(
+                      where,
+                      exactRow(table, row),
+                      selected[index]?.[conditionKey] === 1
+                        ? options.condition
+                        : sql`case when ${options.condition} then 0 else 1 end = 1`,
+                    )})`,
+                ),
+              );
 
-            return options.observe === false || options.admissionOnly
-              ? { table, where, rows }
-              : observed(table, where, rows);
+            const observation =
+              options.observe === false || options.admissionOnly
+                ? { table, where, rows }
+                : observed(table, where, rows);
+
+            return Object.assign(observation, {
+              ...(options.condition === undefined
+                ? {}
+                : {
+                    conditionHolds:
+                      rows.length > 0 && selected.every((row) => row[conditionKey] === 1),
+                  }),
+              ...(options.clock === undefined || selected.length === 0
+                ? {}
+                : {
+                    nowMillis: selected[0]![selectedRows.clockKey] as number,
+                  }),
+            });
           }),
         ),
       write: (query) =>
@@ -459,21 +598,108 @@ export const makeTransactionKernel = <
                     set: { [Object.keys(key)[0]!]: col(table, Object.keys(key)[0]!) },
                   })
                 : query.onConflictDoNothing();
-            yield* owner.write(query);
             const where = equal(table, key);
 
-            if (configuration.batch) return observed(table, where, [values]);
-            const found = yield* owner.read(table, where, { limit: 1 });
+            if (configuration.batch) {
+              yield* owner.write(query);
+
+              return observed(table, where, [values]);
+            }
+
+            if (!configuration.mysql) {
+              const selectedRows = projection(table, undefined, exactRow(table, values));
+              const selected = yield* query.returning(selectedRows.selection) as NativeQuery<Row[]>;
+
+              if (absent && selected.length === 0)
+                return yield* owner.read(table, where, { limit: 1 });
+              invariant(selected.length === 1 && selected[0]?.[selectedRows.conditionKey] === 1);
+
+              // RETURNING sees the written row; the final observation also checks
+              // changes made by AFTER triggers and later application work.
+              return observed(table, where, selectedRows.rows(selected));
+            }
+            yield* owner.write(query);
+
+            const found = yield* owner.read(table, where, {
+              limit: 1,
+              condition: exactRow(table, values),
+            });
+
             const markerColumn = Object.keys(values).find((key) => values[key] === marker);
 
             if (!absent || (markerColumn !== undefined && found.rows[0]?.[markerColumn] === marker))
-              invariant(
-                yield* owner.check(
-                  sql`exists(select 1 from ${table} where ${both(where, exactRow(table, values))})`,
-                ),
-              );
+              invariant(found.rows.length === 1 && found.conditionHolds);
 
             return found;
+          }),
+        ),
+      insertMany: (table, entries) =>
+        result(
+          Effect.gen(function* () {
+            open();
+            invariant(entries.length <= 128);
+            if (entries.length === 0) return [];
+
+            const fields = (row: Row) =>
+              Object.keys(row)
+                .filter((key) => row[key] !== undefined)
+                .sort()
+                .join("\0");
+
+            const shape = fields(entries[0]!.values);
+
+            // Heterogeneous application inserts may rely on different column defaults.
+            if (!entries.every(({ values }) => fields(values) === shape))
+              return yield* Effect.forEach(entries, ({ values, key }) =>
+                owner.insert(table, values, key),
+              );
+            const query = database.insert(table).values(entries.map(({ values }) => values));
+
+            if (configuration.batch) {
+              yield* owner.write(query);
+
+              return entries.map(({ values, key }) => observed(table, equal(table, key), [values]));
+            }
+
+            const condition = or(
+              ...entries.map(({ values, key }) =>
+                both(exactRow(table, key), exactRow(table, values)),
+              ),
+            )!;
+
+            let rows: ReadonlyArray<Row>;
+
+            if (configuration.mysql) {
+              yield* owner.write(query);
+
+              const found = yield* owner.read(
+                table,
+                or(...entries.map(({ key }) => equal(table, key)))!,
+                {
+                  limit: entries.length,
+                  observe: false,
+                  condition,
+                },
+              );
+
+              invariant(found.conditionHolds);
+              rows = found.rows;
+            } else {
+              const selectedRows = projection(table, undefined, condition);
+              const selected = yield* query.returning(selectedRows.selection) as NativeQuery<Row[]>;
+
+              invariant(selected.every((row) => row[selectedRows.conditionKey] === 1));
+              rows = selectedRows.rows(selected);
+            }
+            invariant(rows.length === entries.length);
+
+            return entries.map(({ key }) => {
+              const matching = rows.filter((row) => matchesNativeRow(table, row, key));
+
+              invariant(matching.length === 1);
+
+              return observed(table, equal(table, key), matching);
+            });
           }),
         ),
       update: (table, key, values) =>
@@ -525,7 +751,11 @@ export const makeTransactionKernel = <
             const holds = yield* conditionHolds(condition);
 
             if (configuration.batch)
-              statements.push(toStatement(assertion(holds ? condition : sql`not (${condition})`)));
+              statements.push(
+                toStatement(
+                  assertion(holds ? condition : sql`case when ${condition} then 0 else 1 end = 1`),
+                ),
+              );
 
             return holds;
           }),
@@ -576,7 +806,7 @@ export const makeTransactionKernel = <
               invariant(status._tag === "Failure" && status.failure._tag === "CommitPending");
             }
             invariant(!poisoned);
-            for (const entry of finalUpdates) yield* applyGuarded(entry);
+            for (const entry of finalUpdates) yield* applyGuarded(entry, true);
             if (configuration.batch) appendAssertions(conditions);
             else
               for (const condition of chunks(conditions))

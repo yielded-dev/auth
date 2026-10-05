@@ -37,6 +37,7 @@ import { CurrentProofSql } from "./proof-kernel";
 import type { SqlExpression as SQL, QueryOperations, TableModel } from "./query-operations";
 import { requireStandalone } from "./standalone";
 import { storageTables, type StorageRole } from "./storage-tables";
+import { NativeDatabase } from "./transaction-kernel";
 
 const profileJson = Schema.fromJsonString(PasskeyProfile);
 const policyJson = Schema.fromJsonString(PasskeyMethodPolicy);
@@ -395,6 +396,7 @@ export const makeComposedPasskeys = (
   const make: Backend<object, never>["passkeys"] = Effect.fn("AuthPersistence.passkeys")(
     function* ({ storage, namespace, dialect, features, passwordModules }) {
       const client = yield* SqlClient.SqlClient;
+      const database = yield* NativeDatabase;
 
       const policies = yield* Effect.forEach(features, (feature) =>
         Effect.gen(function* () {
@@ -430,6 +432,7 @@ export const makeComposedPasskeys = (
         mode: "interactive",
         dialect,
         locking: dialect === "pg",
+        ...(database.maxParameters === undefined ? {} : { maxParameters: database.maxParameters }),
         standaloneGuard: () => requireStandalone(unavailable, client.transactionService),
       };
 

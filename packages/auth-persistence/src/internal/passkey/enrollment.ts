@@ -32,12 +32,7 @@ export const makePasskeyEnrollmentKernel = (
   >,
   flow: Pick<
     ReturnType<typeof makePasskeyFlowKernel>,
-    | "compatiblePolicy"
-    | "exactClaim"
-    | "issueAssertion"
-    | "liveCondition"
-    | "readFlow"
-    | "terminalFlow"
+    "compatiblePolicy" | "exactClaim" | "issueFlow" | "liveCondition" | "readFlow" | "terminalFlow"
   >,
   state: Pick<
     ReturnType<typeof makePasskeyStateKernel>,
@@ -60,8 +55,7 @@ export const makePasskeyEnrollmentKernel = (
   const { lockAdmission, readCharges, guardChargeSet } = admission;
   const { readModule, readPolicyGuards } = credentials;
 
-  const { compatiblePolicy, exactClaim, issueAssertion, liveCondition, readFlow, terminalFlow } =
-    flow;
+  const { compatiblePolicy, exactClaim, issueFlow, liveCondition, readFlow, terminalFlow } = flow;
 
   const { equal, handleKey, sameRevision, credentialKey: credentialKeyFor } = state;
   const invariant: (value: unknown) => asserts value = state.invariant;
@@ -213,7 +207,7 @@ export const makePasskeyEnrollmentKernel = (
           authorization: input.authorization,
         })),
     );
-    const issued = yield* issueAssertion(mapping, ceremony, input.policy);
+    const issued = yield* issueFlow(mapping, ceremony, input.policy, current, subject.subjectId);
 
     if (issued._tag !== "Issued") return issued;
     invariant(yield* enrollmentHandle(mapping, subject, ceremony, true));
@@ -242,7 +236,12 @@ export const makePasskeyEnrollmentKernel = (
     const subject = yield* currentSubject(mapping, ceremony.context.revision.subjectId);
 
     yield* readPolicyGuards(mapping);
-    const read = yield* readFlow(mapping, ceremony.flowId);
+
+    const read = yield* readFlow(
+      mapping,
+      ceremony.flowId,
+      liveCondition(mapping, ceremony, input.claim),
+    );
 
     if (read === undefined || !exactClaim(read, input.claim)) return { _tag: "Rejected" } as const;
 
@@ -257,7 +256,7 @@ export const makePasskeyEnrollmentKernel = (
       !sameRevision(subject.revision, ceremony.context.revision) ||
       !compatiblePolicy(ceremony, read.policy, current) ||
       !validRegistration(ceremony, input.verified) ||
-      !(yield* owner.check(liveCondition(mapping, ceremony, input.claim)))
+      !read.conditionHolds
     )
       return yield* reject;
     const policy = managementPolicy(mapping, subject);
@@ -295,13 +294,13 @@ export const makePasskeyEnrollmentKernel = (
     // Credential ownership is RP-global, including retained registration custody.
     const key = yield* credentialKeyFor(ceremony.profile.rpId, input.verified.protocolCredentialId);
 
-    if (
-      (yield* owner.read(tuple.table, equal(tuple.table, { [tuple.credentialKey]: key }), {
-        limit: 1,
-        observe: false,
-      })).rows.length !== 0
-    )
-      return yield* reject;
+    const absent = yield* owner.read(
+      tuple.table,
+      equal(tuple.table, { [tuple.credentialKey]: key }),
+      { limit: 1 },
+    );
+
+    if (absent.rows.length !== 0) return yield* reject;
     yield* readCharges(mapping, ceremony, read.policy, subject.subjectId);
     yield* guardChargeSet(mapping, ceremony, subject.subjectId);
 
@@ -310,7 +309,8 @@ export const makePasskeyEnrollmentKernel = (
       subject,
       ceremony,
       input.verified,
-      yield* owner.now(mapping.clock),
+      read.nowMillis,
+      absent,
     );
 
     yield* terminalFlow(mapping, read, "Verified");

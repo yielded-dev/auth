@@ -9,7 +9,7 @@ import { sql } from "drizzle-orm";
 import { Effect } from "effect";
 
 import * as S from "./oauth-connected-state";
-import { both, copiedRow, equal, CurrentOAuthTransaction } from "./oauth-owner";
+import { both, copiedRow, equal, CurrentOAuthTransaction, type Row } from "./oauth-owner";
 import { acquireTuple, readTuple } from "./oauth-registration";
 import { digest, invariant, oauthIdentityKey, sameIdentity, sameRevision } from "./oauth-state";
 
@@ -441,6 +441,38 @@ export const terminal = Effect.fn("oauthConnected.terminal")(function* (
   );
 });
 
+export const validateTuple = (
+  mapping: S.Authority,
+  identity: M.OAuthConnectedTokenContext["identity"],
+  row: Row | undefined,
+  external: ReadonlyArray<Row>,
+) => {
+  const t = mapping.ownership.tuple;
+
+  if (row !== undefined)
+    invariant(
+      row[t.provider] === identity.provider &&
+        row[t.issuer] === identity.issuer &&
+        row[t.externalSubject] === identity.subject &&
+        ["Owned", "Unowned", "Reserved"].includes(row[t.state]),
+    );
+  if (mapping.ownership.mode === "separate") {
+    const o = mapping.ownership.external;
+
+    if (row?.[t.state] === "Owned") {
+      const e = external[0];
+
+      invariant(
+        e !== undefined &&
+          e[o.provider] === identity.provider &&
+          e[o.issuer] === identity.issuer &&
+          e[o.externalSubject] === identity.subject &&
+          mapping.subjectId.equals(o.decodeSubjectId(copiedRow(e)), row[t.subjectId]),
+      );
+    } else invariant(external.length === 0);
+  }
+};
+
 export const inspectTuple = Effect.fn("oauthConnected.inspectTuple")(function* (
   mapping: S.Authority,
   identity: M.OAuthConnectedTokenContext["identity"],
@@ -453,36 +485,24 @@ export const inspectTuple = Effect.fn("oauthConnected.inspectTuple")(function* (
   const read = yield* owner.read(t.table, equal(t.table, { [t.identityKey]: key }), { limit: 1 });
   const row = read.rows[0];
 
-  if (row !== undefined) {
-    invariant(
-      row[t.provider] === identity.provider &&
-        row[t.issuer] === identity.issuer &&
-        row[t.externalSubject] === identity.subject &&
-        ["Owned", "Unowned", "Reserved"].includes(row[t.state]),
-    );
-  }
-  if (mapping.ownership.mode === "separate") {
+  const external =
+    mapping.ownership.mode === "separate"
+      ? (yield* owner.read(
+          mapping.ownership.external.table,
+          equal(mapping.ownership.external.table, {
+            [mapping.ownership.external.identityKey]: key,
+          }),
+          { limit: 1 },
+        )).rows
+      : [];
+
+  validateTuple(mapping, identity, row, external);
+  if (mapping.ownership.mode === "separate" && row?.[t.state] === "Owned") {
     const o = mapping.ownership.external;
+    const condition = sql`exists(select 1 from ${o.table} where ${both(equal(o.table, { [o.identityKey]: key }), o.ownedCondition)})`;
 
-    const external = yield* owner.read(o.table, equal(o.table, { [o.identityKey]: key }), {
-      limit: 1,
-    });
-
-    if (row?.[t.state] === "Owned") {
-      const e = external.rows[0];
-
-      invariant(
-        e !== undefined &&
-          e[o.provider] === identity.provider &&
-          e[o.issuer] === identity.issuer &&
-          e[o.externalSubject] === identity.subject &&
-          mapping.subjectId.equals(o.decodeSubjectId(copiedRow(e)), row[t.subjectId]),
-      );
-      const condition = sql`exists(select 1 from ${o.table} where ${both(equal(o.table, { [o.identityKey]: key }), o.ownedCondition)})`;
-
-      invariant(yield* owner.check(condition));
-      owner.postconditions.push(condition);
-    } else invariant(external.rows.length === 0);
+    invariant(yield* owner.check(condition));
+    owner.postconditions.push(condition);
   }
 
   return { key, row };

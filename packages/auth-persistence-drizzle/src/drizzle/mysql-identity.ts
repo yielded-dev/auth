@@ -75,13 +75,6 @@ export const makeMysqlSubjectProvisioningServices = Effect.fnUntraced(function* 
 
   const identifierTable = mapping.identifier.table;
 
-  const identifierNamespaceColumn = column(
-    identifierTable,
-    mapping.identifier.namespace,
-  ) as MySqlColumn;
-
-  const identifierValueColumn = column(identifierTable, mapping.identifier.value) as MySqlColumn;
-
   const findReceipt = Effect.fn("DrizzleMysqlIdentity.findReceipt")(function* (requestId: string) {
     const rows = yield* db
       .select({ fingerprint: requestFingerprintColumn, subjectId: requestSubjectColumn })
@@ -170,21 +163,8 @@ export const makeMysqlSubjectProvisioningServices = Effect.fnUntraced(function* 
             Effect.flatMap((receipt) => {
               if (receipt !== undefined && receipt.fingerprint === fingerprint)
                 return Effect.succeed(receipt.subjectId as NativeId);
-              if (input.identifier === undefined) return IdentityConflict.make();
 
-              return db
-                .select({
-                  subjectId: column(identifierTable, mapping.identifier.subjectId) as MySqlColumn,
-                })
-                .from(identifierTable as any)
-                .where(
-                  and(
-                    eq(identifierNamespaceColumn, input.identifier.namespace),
-                    eq(identifierValueColumn, input.identifier.value),
-                  ),
-                )
-                .limit(1)
-                .pipe(Effect.flatMap(() => IdentityConflict.make()));
+              return IdentityConflict.make();
             }),
           );
         },

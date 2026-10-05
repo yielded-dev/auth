@@ -33,7 +33,7 @@ import {
   type AuthenticationRequirement,
   type SecurityRevision,
 } from "@yielded/auth/Sessions";
-import { Cause, Context, DateTime, Effect, Option, Redacted, Schema } from "effect";
+import { Array, Cause, Context, DateTime, Effect, Option, Redacted, Schema } from "effect";
 import type * as SqlError from "effect/sql/SqlError";
 
 import { PersistenceMappingError } from "./mapping-error";
@@ -89,6 +89,7 @@ export class CurrentPasswordSql extends Context.Service<CurrentPasswordSql, Pass
 export interface PasswordSqlConfiguration {
   readonly mode: "interactive" | "synchronous";
   readonly locking: boolean;
+  readonly maxParameters?: number;
   readonly standaloneGuard: Effect.Effect<void, PasswordUnavailable>;
   readonly coordinated?: boolean;
   readonly insertIfAbsent: (
@@ -116,12 +117,15 @@ export const makePasswordKernel = <
   Column extends SqlColumn = SqlColumn,
 >(
   operations: QueryOperations<Fragment, Column>,
-  proofs: Pick<ReturnType<typeof makeProofKernel>, "completeProofPlanIn">,
+  proofs: Pick<
+    ReturnType<typeof makeProofKernel<Fragment, Column>>,
+    "completeProofPlanIn" | "checkProofCompletionIn"
+  >,
 ) => {
   type Mapping = AnyPasswordPersistenceMapping<Fragment>;
 
-  const { and, eq, gt, gte, inArray, lte, notExists, sql, column, updateValues } = operations;
-  const { completeProofPlanIn } = proofs;
+  const { and, eq, gt, gte, inArray, lte, notExists, or, sql, column, updateValues } = operations;
+  const { completeProofPlanIn, checkProofCompletionIn } = proofs;
   const unavailable = () => PasswordUnavailable.make({});
 
   const translateFailure = <A, E, R>(
@@ -145,6 +149,29 @@ export const makePasswordKernel = <
 
   const selectRows = (query: PasswordSqlQuery, locking: boolean) =>
     locking && typeof query.for === "function" ? query.for("update") : query;
+
+  // Admission has at most three scopes. Preserve application column defaults
+  // when an encoder returns different shapes for different scope kinds.
+  const insertScopeRows = Effect.fn("DrizzlePassword.insertScopeRows")(function* (
+    query: PasswordSqlQuery,
+    rows: ReadonlyArray<Record<string, unknown>>,
+    prepare: (query: PasswordSqlQuery) => PasswordSqlQuery = (query) => query,
+  ) {
+    const first = rows[0];
+
+    if (first === undefined) return;
+
+    const fields = (row: Record<string, unknown>) =>
+      Object.keys(row)
+        .filter((key) => row[key] !== undefined)
+        .sort()
+        .join("\0");
+
+    const shape = fields(first);
+    const batches = rows.every((row) => fields(row) === shape) ? [rows] : rows.map((row) => [row]);
+
+    for (const batch of batches) yield* prepare(query.values(batch));
+  });
 
   const subjectColumns = (mapping: Mapping) => ({
     id: column(mapping.subject.table, mapping.subject.id),
@@ -497,127 +524,168 @@ export const makePasswordKernel = <
     return values;
   };
 
-  const lockScope = Effect.fn("DrizzlePassword.lockScope")(function* (
+  const lockScopes = Effect.fn("DrizzlePassword.lockScopes")(function* (
     mapping: Mapping,
     configuration: PasswordSqlConfiguration,
     moduleId: string,
     action: PasswordAttemptAction,
-    entry: ScopeEntry,
+    entries: ReadonlyArray<ScopeEntry>,
   ) {
     const database = yield* CurrentPasswordSql;
-
-    const query = database.insert(mapping.rateScope.table).values(
-      mapping.rateScope.encodeInsert({
-        moduleId,
-        action,
-        scopeKind: entry.kind,
-        scopeKey: entry.key,
-      }),
-    );
-
-    yield* configuration.insertIfAbsent(query, mapping.rateScope.scopeKey, entry.key);
     const c = scopeColumns(mapping);
 
-    yield* selectRows(
+    // The global anchor is a separate first phase. VALUES and the lock read use
+    // canonical scope order. moduleId is a shared no-op conflict value on MySQL.
+    yield* insertScopeRows(
+      database.insert(mapping.rateScope.table),
+      entries.map((entry) =>
+        mapping.rateScope.encodeInsert({
+          moduleId,
+          action,
+          scopeKind: entry.kind,
+          scopeKey: entry.key,
+        }),
+      ),
+      (query) => configuration.insertIfAbsent(query, mapping.rateScope.moduleId, moduleId),
+    );
+
+    const locked = yield* selectRows(
       database
-        .select()
+        .select({ scopeKind: c.scopeKind, scopeKey: c.scopeKey })
         .from(mapping.rateScope.table)
         .where(
           and(
             eq(c.moduleId, moduleId),
             eq(c.action, action),
-            eq(c.scopeKind, entry.kind),
-            eq(c.scopeKey, entry.key),
+            or(
+              ...entries.map((entry) =>
+                and(eq(c.scopeKind, entry.kind), eq(c.scopeKey, entry.key)),
+              ),
+            ),
           ),
         )
-        .limit(1),
+        .orderBy(c.scopeKind, c.scopeKey),
       configuration.locking,
     );
+
+    if (locked.length !== entries.length) return yield* unavailable();
   });
 
-  const scopeAdmits = Effect.fn("DrizzlePassword.scopeAdmits")(function* (
+  const admittedScopes = Effect.fn("DrizzlePassword.admittedScopes")(function* (
     mapping: Mapping,
     moduleId: string,
     action: PasswordAttemptAction,
-    entry: ScopeEntry,
+    entries: ReadonlyArray<ScopeEntry>,
     policy: PasswordAttemptPolicy,
     identifier: LoginIdentifier,
     nativeSubjectId: unknown | undefined,
     now: number,
   ) {
+    if (entries.length === 0) return [];
     const database = yield* CurrentPasswordSql;
-
     const c = chargeColumns(mapping);
 
-    const charges = yield* selectRows(
-      database
-        .select({ attemptId: c.attemptId })
-        .from(mapping.charge.table)
-        .where(
-          and(
-            eq(c.moduleId, moduleId),
-            eq(c.action, action),
-            eq(c.scopeKind, entry.kind),
-            eq(c.scopeKey, entry.key),
-            gte(c.occurredAt, mapping.encodeInstant(now - entry.windowMillis)),
-          ),
-        )
-        .limit(entry.limit),
-      true,
-    );
+    // Bound each scan by its own budget and retain locking reads, including on
+    // repeatable-read adapters. Charge rows are locked before pending attempts.
+    const [charges] = yield* database
+      .select(
+        Object.fromEntries(
+          entries.map((entry, index) => {
+            const query = selectRows(
+              database
+                .select({ attemptId: c.attemptId })
+                .from(mapping.charge.table)
+                .where(
+                  and(
+                    eq(c.moduleId, moduleId),
+                    eq(c.action, action),
+                    eq(c.scopeKind, entry.kind),
+                    eq(c.scopeKey, entry.key),
+                    gte(c.occurredAt, mapping.encodeInstant(now - entry.windowMillis)),
+                  ),
+                )
+                .limit(entry.limit),
+              true,
+            );
 
-    if (charges.length >= entry.limit) return false;
+            return [
+              `scope${index}`,
+              sql`(select count(*) from (${query.getSQL()}) as password_charges)`.mapWith(Number),
+            ];
+          }),
+        ),
+      )
+      .from(sql`(select 1) as password_admission`);
+
+    const withinBudget = entries.filter((entry, index) => charges?.[`scope${index}`] < entry.limit);
+
+    if (withinBudget.length === 0) return [];
     const a = attemptColumns(mapping);
 
-    // Retention is the pending horizon. Expired rows stay until cleanup, but they
-    // no longer consume the admission budget after that horizon.
-    const pendingWhere = and(
-      entry.kind === "action"
-        ? and(eq(a.moduleId, moduleId), eq(a.action, action))
-        : entry.kind === "identifier"
-          ? and(
-              eq(a.moduleId, moduleId),
-              eq(a.action, action),
-              eq(a.identifierNamespace, identifier.namespace),
-              eq(a.identifierValue, identifier.value),
-            )
-          : and(eq(a.moduleId, moduleId), eq(a.action, action), eq(a.subjectId, nativeSubjectId)),
-      eq(a.state, "pending"),
-      gt(a.retentionUntil, mapping.encodeInstant(now)),
-    );
+    const [pending] = yield* database
+      .select(
+        Object.fromEntries(
+          withinBudget.map((entry, index) => {
+            // Retention is the pending horizon; retained expired rows do not charge it.
+            const query = selectRows(
+              database
+                .select({ attemptId: a.attemptId })
+                .from(mapping.attempt.table)
+                .where(
+                  and(
+                    eq(a.moduleId, moduleId),
+                    eq(a.action, action),
+                    entry.kind === "action"
+                      ? undefined
+                      : entry.kind === "identifier"
+                        ? and(
+                            eq(a.identifierNamespace, identifier.namespace),
+                            eq(a.identifierValue, identifier.value),
+                          )
+                        : eq(a.subjectId, nativeSubjectId),
+                    eq(a.state, "pending"),
+                    gt(a.retentionUntil, mapping.encodeInstant(now)),
+                  ),
+                )
+                .limit(policy.maximumPending),
+              true,
+            );
 
-    const pending = yield* selectRows(
-      database
-        .select({ attemptId: a.attemptId })
-        .from(mapping.attempt.table)
-        .where(pendingWhere)
-        .limit(policy.maximumPending),
-      true,
-    );
+            return [
+              `scope${index}`,
+              sql`(select count(*) from (${query.getSQL()}) as password_pending)`.mapWith(Number),
+            ];
+          }),
+        ),
+      )
+      .from(sql`(select 1) as password_admission`);
 
-    return pending.length < policy.maximumPending;
+    return withinBudget.filter((_, index) => pending?.[`scope${index}`] < policy.maximumPending);
   });
 
-  const insertCharge = Effect.fn("Drizzle.insertCharge")(function* (
+  const insertCharges = Effect.fn("DrizzlePassword.insertCharges")(function* (
     mapping: Mapping,
     moduleId: string,
     action: PasswordAttemptAction,
-    entry: ScopeEntry,
+    entries: ReadonlyArray<ScopeEntry>,
     attemptId: any,
     now: number,
   ) {
     const database = yield* CurrentPasswordSql;
 
-    return yield* database.insert(mapping.charge.table).values(
-      mapping.charge.encodeInsert({
-        moduleId,
-        action,
-        scopeKind: entry.kind,
-        scopeKey: entry.key,
-        attemptId,
-        occurredAtMillis: now,
-        retentionUntilMillis: now + entry.windowMillis,
-      }),
+    yield* insertScopeRows(
+      database.insert(mapping.charge.table),
+      entries.map((entry) =>
+        mapping.charge.encodeInsert({
+          moduleId,
+          action,
+          scopeKind: entry.kind,
+          scopeKey: entry.key,
+          attemptId,
+          occurredAtMillis: now,
+          retentionUntilMillis: now + entry.windowMillis,
+        }),
+      ),
     );
   });
 
@@ -710,45 +778,18 @@ export const makePasswordKernel = <
   ) {
     const database = yield* CurrentPasswordSql;
 
-    if (configuration.proof === undefined) return yield* Effect.fail(unavailable());
-    const validProbe = { _tag: "PasswordProofCompletionValid" } as const;
+    const proof = configuration.proof;
 
-    const plan: ProofCompletionPlan = {
-      input,
-      prepare: (decision, journal, project) => journal.prepare(project(decision)),
-    };
-
-    const probe = coordinateCommit(
-      () =>
-        database.transaction((transaction) =>
-          completeProofPlanIn(
-            configuration.proof!.mapping,
-            configuration.proof!.configuration,
-            plan,
-            Effect.fail(validProbe),
-            () => false,
-          ).pipe(
-            Effect.provideService(CurrentProofSql, transaction as unknown as ProofSqlDatabase),
-          ),
-        ),
-      { mode: configuration.mode },
-    );
-
+    if (proof === undefined) return yield* unavailable();
     if (configuration.coordinated === true || (yield* hasCommitScope)) return yield* unavailable();
     yield* configuration.standaloneGuard;
 
-    return yield* probe.pipe(
-      Effect.as(false),
-      Effect.catchCause((cause) => {
-        const reason = cause.reasons[0];
-
-        return cause.reasons.length === 1 &&
-          reason !== undefined &&
-          Cause.isFailReason(reason) &&
-          reason.error === validProbe
-          ? Effect.succeed(true)
-          : Effect.failCause(cause);
-      }),
+    // This is advisory preflight. Completion still revalidates and consumes the
+    // continuation with the password mutation and its exact receipt checks.
+    return yield* database.transaction((transaction) =>
+      checkProofCompletionIn(proof.mapping, proof.configuration, input).pipe(
+        Effect.provideService(CurrentProofSql, transaction as unknown as ProofSqlDatabase),
+      ),
     );
   });
 
@@ -1174,47 +1215,55 @@ export const makePasswordKernel = <
               });
 
               const scopes = scopeEntries(keys, input.policy);
-              const admitted: ScopeEntry[] = [];
 
-              yield* lockScope(mapping, configuration, input.moduleId, input.action, scopes[0]!);
-              let currentNow = yield* nowMillis;
+              yield* lockScopes(
+                mapping,
+                configuration,
+                input.moduleId,
+                input.action,
+                scopes.slice(0, 1),
+              );
+              const actionNow = yield* nowMillis;
 
-              if (
-                yield* scopeAdmits(
+              const admitted = yield* admittedScopes(
+                mapping,
+                input.moduleId,
+                input.action,
+                scopes.slice(0, 1),
+                input.policy,
+                input.identifier,
+                resolved?.nativeSubjectId,
+                actionNow,
+              );
+
+              if (admitted.length === 1) {
+                const remainingScopes = scopes.slice(1);
+
+                yield* lockScopes(
                   mapping,
+                  configuration,
                   input.moduleId,
                   input.action,
-                  scopes[0]!,
-                  input.policy,
-                  input.identifier,
-                  resolved?.nativeSubjectId,
-                  currentNow,
-                )
-              )
-                admitted.push(scopes[0]!);
-              if (admitted.length === 1) {
-                for (const entry of scopes.slice(1)) {
-                  yield* lockScope(mapping, configuration, input.moduleId, input.action, entry);
-                  currentNow = yield* nowMillis;
-                  if (
-                    yield* scopeAdmits(
-                      mapping,
-                      input.moduleId,
-                      input.action,
-                      entry,
-                      input.policy,
-                      input.identifier,
-                      resolved?.nativeSubjectId,
-                      currentNow,
-                    )
-                  )
-                    admitted.push(entry);
-                }
+                  remainingScopes,
+                );
+                const scopeNow = yield* nowMillis;
+
+                admitted.push(
+                  ...(yield* admittedScopes(
+                    mapping,
+                    input.moduleId,
+                    input.action,
+                    remainingScopes,
+                    input.policy,
+                    input.identifier,
+                    resolved?.nativeSubjectId,
+                    scopeNow,
+                  )),
+                );
               }
               const now = yield* nowMillis;
 
-              for (const entry of admitted)
-                yield* insertCharge(mapping, input.moduleId, input.action, entry, attemptId, now);
+              yield* insertCharges(mapping, input.moduleId, input.action, admitted, attemptId, now);
               if (admitted.length !== scopes.length)
                 return prepare({ _tag: "Denied" as const }, journal);
               const snapshot = resolved?.snapshot;
@@ -1733,12 +1782,17 @@ export const makePasswordKernel = <
             let hasMore = false;
             const a = attemptColumns(mapping);
             const c = chargeColumns(mapping);
+            const parameterLimit = configuration.maxParameters ?? 16_000;
+
+            const chunkSize = (width: number, maximum = 128) =>
+              Math.max(1, Math.min(maximum, Math.floor((parameterLimit - 2) / width)));
 
             const attempts = yield* selectRows(
               transaction
                 .select({ attemptId: a.attemptId })
                 .from(mapping.attempt.table)
                 .where(and(eq(a.moduleId, input.moduleId), lte(a.retentionUntil, nativeNow)))
+                .orderBy(a.attemptId)
                 .limit(remaining + 1),
               false,
             );
@@ -1758,6 +1812,7 @@ export const makePasswordKernel = <
                 })
                 .from(mapping.charge.table)
                 .where(and(eq(c.moduleId, input.moduleId), lte(c.retentionUntil, nativeNow)))
+                .orderBy(c.action, c.scopeKind, c.scopeKey, c.attemptId)
                 .limit(remaining + 1),
               false,
             );
@@ -1790,6 +1845,7 @@ export const makePasswordKernel = <
                     ),
                   ),
                 )
+                .orderBy(sc.action, sc.scopeKind, sc.scopeKey)
                 .limit(remaining + 1),
               remaining === 0 ? false : configuration.locking,
             );
@@ -1800,7 +1856,8 @@ export const makePasswordKernel = <
             remaining -= selectedScopes.length;
             const selectedCharges: typeof chargeCandidates = [];
 
-            for (const candidate of chargeCandidates) {
+            // Bound composite keys by both the page and the driver's bind budget.
+            for (const chunk of Array.chunksOf(chargeCandidates, chunkSize(4))) {
               const locked = yield* selectRows(
                 transaction
                   .select({
@@ -1813,22 +1870,28 @@ export const makePasswordKernel = <
                   .where(
                     and(
                       eq(c.moduleId, input.moduleId),
-                      eq(c.action, candidate.action),
-                      eq(c.scopeKind, candidate.scopeKind),
-                      eq(c.scopeKey, candidate.scopeKey),
-                      eq(c.attemptId, candidate.attemptId),
+                      or(
+                        ...chunk.map((candidate) =>
+                          and(
+                            eq(c.action, candidate.action),
+                            eq(c.scopeKind, candidate.scopeKind),
+                            eq(c.scopeKey, candidate.scopeKey),
+                            eq(c.attemptId, candidate.attemptId),
+                          ),
+                        ),
+                      ),
                       lte(c.retentionUntil, nativeNow),
                     ),
                   )
-                  .limit(1),
+                  .orderBy(c.action, c.scopeKind, c.scopeKey, c.attemptId),
                 configuration.locking,
               );
 
-              if (locked[0] !== undefined) selectedCharges.push(locked[0] as any);
+              selectedCharges.push(...locked);
             }
             const selectedAttempts: typeof attemptCandidates = [];
 
-            for (const candidate of attemptCandidates) {
+            for (const chunk of Array.chunksOf(attemptCandidates, chunkSize(1))) {
               const locked = yield* selectRows(
                 transaction
                   .select({ attemptId: a.attemptId })
@@ -1836,15 +1899,18 @@ export const makePasswordKernel = <
                   .where(
                     and(
                       eq(a.moduleId, input.moduleId),
-                      eq(a.attemptId, candidate.attemptId),
+                      inArray(
+                        a.attemptId,
+                        chunk.map((candidate) => candidate.attemptId),
+                      ),
                       lte(a.retentionUntil, nativeNow),
                     ),
                   )
-                  .limit(1),
+                  .orderBy(a.attemptId),
                 configuration.locking,
               );
 
-              if (locked[0] !== undefined) selectedAttempts.push(locked[0] as any);
+              selectedAttempts.push(...locked);
             }
 
             const prepared = prepare(
@@ -1855,37 +1921,49 @@ export const makePasswordKernel = <
               journal,
             );
 
-            for (const row of selectedCharges)
+            for (const chunk of Array.chunksOf(selectedCharges, chunkSize(4)))
               yield* transaction
                 .delete(mapping.charge.table)
                 .where(
                   and(
                     eq(c.moduleId, input.moduleId),
-                    eq(c.action, row.action),
-                    eq(c.scopeKind, row.scopeKind),
-                    eq(c.scopeKey, row.scopeKey),
-                    eq(c.attemptId, row.attemptId),
+                    or(
+                      ...chunk.map((row) =>
+                        and(
+                          eq(c.action, row.action),
+                          eq(c.scopeKind, row.scopeKind),
+                          eq(c.scopeKey, row.scopeKey),
+                          eq(c.attemptId, row.attemptId),
+                        ),
+                      ),
+                    ),
                     lte(c.retentionUntil, nativeNow),
                   ),
                 );
-            if (selectedAttempts.length > 0)
+            for (const chunk of Array.chunksOf(selectedAttempts, chunkSize(1, 1000)))
               yield* transaction.delete(mapping.attempt.table).where(
                 and(
                   eq(a.moduleId, input.moduleId),
                   inArray(
                     a.attemptId,
-                    selectedAttempts.map((row: any) => row.attemptId),
+                    chunk.map((row: any) => row.attemptId),
                   ),
                   lte(a.retentionUntil, nativeNow),
                 ),
               );
-            for (const row of selectedScopes)
+            for (const chunk of Array.chunksOf(selectedScopes, chunkSize(3)))
               yield* transaction.delete(mapping.rateScope.table).where(
                 and(
                   eq(sc.moduleId, input.moduleId),
-                  eq(sc.action, row.action),
-                  eq(sc.scopeKind, row.scopeKind),
-                  eq(sc.scopeKey, row.scopeKey),
+                  or(
+                    ...chunk.map((row) =>
+                      and(
+                        eq(sc.action, row.action),
+                        eq(sc.scopeKind, row.scopeKind),
+                        eq(sc.scopeKey, row.scopeKey),
+                      ),
+                    ),
+                  ),
                   notExists(
                     transaction
                       .select({ one: sql`1` })

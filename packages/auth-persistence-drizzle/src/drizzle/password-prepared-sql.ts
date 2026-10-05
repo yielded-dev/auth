@@ -26,7 +26,20 @@ import { reportPersistenceFailure } from "@yielded/auth/Persistence";
 import { type ProofCompletionPlan, ProofUnavailable, ProofBinding } from "@yielded/auth/Proofs";
 import { AuthenticationRevision } from "@yielded/auth/Sessions";
 /* oxlint-disable no-explicit-any -- concrete driver makers retain consumer table types. */
-import { and, count, eq, gt, isNotNull, isNull, lte, or, type SQL } from "drizzle-orm";
+import {
+  and,
+  count,
+  eq,
+  getTableColumns,
+  gt,
+  inArray,
+  isNotNull,
+  isNull,
+  lte,
+  or,
+  sql,
+  type SQL,
+} from "drizzle-orm";
 import { Cause, DateTime, Effect, Option, Predicate, Redacted, Schema } from "effect";
 
 import { column } from "./model";
@@ -390,21 +403,10 @@ const terminal = Effect.fn("DrizzlePasswordPrepared.terminal")(function* (
     .set(mapping.intent.encodeTerminal(state))
     .where(rowCondition(mapping, row));
 
-  const c = columns(mapping),
-    t = mapping.intent;
-
-  const rows = yield* readIntent(
-    mapping,
-    and(eq(c.moduleId, row[t.moduleId]), eq(c.intentId, row[t.intentId]))!,
-    false,
-  );
-
+  const t = mapping.intent;
   const expected = { ...row, [t.state]: t.states[state], [t.snapshot]: null, [t.digest]: null };
 
-  if (
-    rows.length !== 1 ||
-    (yield* readIntent(mapping, rowCondition(mapping, expected), false)).length !== 1
-  )
+  if ((yield* readIntent(mapping, rowCondition(mapping, expected), false)).length !== 1)
     return yield* unavailable();
 });
 
@@ -756,50 +758,54 @@ export const makeSqlPasswordPreparedPersistence = Effect.fn("makeSqlPasswordPrep
                 revision: authority.revision,
               });
 
-              const active =
-                (yield* read(
-                  transaction
-                    .select({ total: count() })
-                    .from(t.table)
-                    .where(
-                      and(
-                        eq(c.moduleId, input.moduleId),
-                        eq(c.subjectId, authority.nativeSubjectId),
-                        or(
-                          and(
-                            eq(c.state, t.states.Preparing),
-                            gt(c.preparationExpiresAt, nativeNow),
-                          ),
-                          and(eq(c.state, t.states.Ready), gt(c.expiresAt, nativeNow)),
-                        ),
-                      ),
-                    ),
-                  false,
-                ))[0]?.total ?? 0;
+              // Keep each original indexed predicate and stop at the rejection
+              // threshold. A single round trip must not widen a short scope/window
+              // probe into a scan of the module's longest retained window.
+              const boundedCount = (condition: SQL, limit: number) =>
+                sql<number>`(select count(*) from (select 1 from ${t.table} where ${and(eq(c.moduleId, input.moduleId), condition)} limit ${limit}) as prepared_count)`.mapWith(
+                  Number,
+                );
 
-              if (active >= input.policy.maximumPendingPerSubject) return yield* unavailable();
-              for (const [condition, budget] of [
-                [eq(c.action, input.action), input.policy.admission.action],
-                [eq(c.identifierScope, scope), input.policy.admission.identifier],
-                [eq(c.subjectId, authority.nativeSubjectId), input.policy.admission.subject],
-              ] as const) {
-                const total =
-                  (yield* read(
-                    transaction
-                      .select({ total: count() })
-                      .from(t.table)
-                      .where(
-                        and(
-                          eq(c.moduleId, input.moduleId),
-                          condition,
-                          gt(c.admittedAt, p.encodeInstant(now - budget.windowMillis)),
-                        ),
-                      ),
-                    false,
-                  ))[0]?.total ?? 0;
+              const windowCount = (
+                condition: SQL,
+                budget: { readonly windowMillis: number; readonly limit: number },
+              ) =>
+                boundedCount(
+                  and(condition, gt(c.admittedAt, p.encodeInstant(now - budget.windowMillis)))!,
+                  budget.limit,
+                );
 
-                if (total >= budget.limit) return yield* unavailable();
-              }
+              const pending = and(
+                eq(c.subjectId, authority.nativeSubjectId),
+                or(
+                  and(eq(c.state, t.states.Preparing), gt(c.preparationExpiresAt, nativeNow)),
+                  and(eq(c.state, t.states.Ready), gt(c.expiresAt, nativeNow)),
+                ),
+              )!;
+
+              const totals = (yield* transaction
+                .select({
+                  active: boundedCount(pending, input.policy.maximumPendingPerSubject),
+                  action: windowCount(eq(c.action, input.action), input.policy.admission.action),
+                  identifier: windowCount(
+                    eq(c.identifierScope, scope),
+                    input.policy.admission.identifier,
+                  ),
+                  subject: windowCount(
+                    eq(c.subjectId, authority.nativeSubjectId),
+                    input.policy.admission.subject,
+                  ),
+                })
+                .from(sql`(select 1) as prepared_counts`))[0];
+
+              if (
+                totals === undefined ||
+                totals.active >= input.policy.maximumPendingPerSubject ||
+                totals.action >= input.policy.admission.action.limit ||
+                totals.identifier >= input.policy.admission.identifier.limit ||
+                totals.subject >= input.policy.admission.subject.limit
+              )
+                return yield* unavailable();
 
               const reservation = yield* snapshotPasswordPreparedReservation({
                 _tag: "Preparing",
@@ -936,7 +942,12 @@ export const makeSqlPasswordPreparedPersistence = Effect.fn("makeSqlPasswordPrep
 
               const saved = yield* readIntent(
                 mapping,
-                and(eq(c.moduleId, ready.moduleId), eq(c.intentId, ready.intentId))!,
+                and(
+                  eq(c.moduleId, ready.moduleId),
+                  eq(c.intentId, ready.intentId),
+                  eq(c.admittedAt, row[t.admittedAt]),
+                  eq(c.admissionRetainUntil, row[t.admissionRetainUntil]),
+                )!,
                 false,
               );
 
@@ -948,17 +959,7 @@ export const makeSqlPasswordPreparedPersistence = Effect.fn("makeSqlPasswordPrep
                   ready,
                   authority.nativeSubjectId,
                   readySnapshot,
-                )) ||
-                (yield* readIntent(
-                  mapping,
-                  and(
-                    eq(c.moduleId, ready.moduleId),
-                    eq(c.intentId, ready.intentId),
-                    eq(c.admittedAt, row[t.admittedAt]),
-                    eq(c.admissionRetainUntil, row[t.admissionRetainUntil]),
-                  )!,
-                  false,
-                )).length !== 1
+                ))
               )
                 return yield* unavailable();
               if (
@@ -1132,40 +1133,90 @@ export const makeSqlPasswordPreparedPersistence = Effect.fn("makeSqlPasswordPrep
 
               const rows = yield* read(
                 transaction
-                  .select()
+                  .select({
+                    row: getTableColumns(t.table),
+                    expired:
+                      sql<number>`case when ${and(lte(c.retainUntil, now), lte(c.admissionRetainUntil, now))} then 1 else 0 end`.mapWith(
+                        Number,
+                      ),
+                  })
                   .from(t.table)
                   .where(due)
                   .orderBy(c.createdAt, c.intentId)
-                  .limit(input.limit + 1),
+                  .limit(input.limit),
                 configuration.locking,
               );
 
               let removed = 0;
+              // Exact predicates include private snapshots. Bound both binds and expression
+              // depth for SQLite, and retain the admission charge until BOTH horizons pass.
+              const chunks: Array<typeof rows> = [];
 
-              for (const row of rows.slice(0, input.limit)) {
-                const expired =
-                  (yield* readIntent(
-                    mapping,
+              const size = Math.max(
+                1,
+                Math.min(
+                  32,
+                  Math.floor(
+                    ((configuration.maxParameters ?? 900) - 4) /
+                      (Object.keys(getTableColumns(t.table)).length + 1),
+                  ),
+                ),
+              );
+
+              for (let offset = 0; offset < rows.length; offset += size) {
+                const chunk = rows.slice(offset, offset + size);
+
+                chunks.push(chunk);
+                const expired = chunk.filter((entry) => entry.expired === 1);
+                const retained = chunk.filter((entry) => entry.expired !== 1);
+
+                if (expired.length > 0) {
+                  yield* transaction
+                    .delete(t.table)
+                    .where(or(...expired.map(({ row }) => rowCondition(mapping, row))));
+                  removed += expired.length;
+                }
+                if (retained.length > 0)
+                  yield* transaction
+                    .update(t.table)
+                    .set(t.encodeTerminal("Expired"))
+                    .where(or(...retained.map(({ row }) => rowCondition(mapping, row))));
+              }
+              // Check after every write, including AFTER triggers affecting another chunk.
+              // Unique module/intent keys make matching cardinality an exact row fence.
+              for (const chunk of chunks) {
+                const retained = chunk.filter((entry) => entry.expired !== 1);
+
+                const expected =
+                  or(
+                    ...retained.map(({ row }) =>
+                      rowCondition(mapping, {
+                        ...row,
+                        [t.state]: t.states.Expired,
+                        [t.snapshot]: null,
+                        [t.digest]: null,
+                      }),
+                    ),
+                  ) ?? sql`0 = 1`;
+
+                const checked = (yield* transaction
+                  .select({
+                    total: count(),
+                    retained: count(sql`case when ${expected} then 1 end`),
+                  })
+                  .from(t.table)
+                  .where(
                     and(
-                      rowCondition(mapping, row),
-                      lte(c.retainUntil, now),
-                      lte(c.admissionRetainUntil, now),
-                    )!,
-                    false,
-                  )).length === 1;
+                      eq(c.moduleId, input.moduleId),
+                      inArray(
+                        c.intentId,
+                        chunk.map(({ row }) => row[t.intentId]),
+                      ),
+                    ),
+                  ))[0];
 
-                if (expired) {
-                  yield* transaction.delete(t.table).where(rowCondition(mapping, row));
-                  if (
-                    (yield* readIntent(
-                      mapping,
-                      and(eq(c.moduleId, input.moduleId), eq(c.intentId, row[t.intentId]))!,
-                      false,
-                    )).length
-                  )
-                    return yield* unavailable();
-                  removed++;
-                } else yield* terminal(mapping, row, "Expired");
+                if (checked?.total !== retained.length || checked.retained !== retained.length)
+                  return yield* unavailable();
               }
 
               return prepare(

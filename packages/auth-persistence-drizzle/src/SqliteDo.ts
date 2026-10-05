@@ -57,7 +57,8 @@ const sessionTarget = makeSqliteSessionTarget<Database, DatabaseValue<AnyRelatio
 
 const proofTarget = makeSqliteProofTarget<Database, DatabaseValue<AnyRelations>>(
   Database,
-  (service) => sqliteProofConfiguration("interactive", sqlClientProofStandaloneGuard(service)),
+  (service) =>
+    sqliteProofConfiguration("interactive", sqlClientProofStandaloneGuard(service), undefined, 96),
 );
 
 const passwordTarget = makeSqlitePasswordTarget<Database, DatabaseValue<AnyRelations>>(
@@ -67,6 +68,8 @@ const passwordTarget = makeSqlitePasswordTarget<Database, DatabaseValue<AnyRelat
       "interactive",
       sqlClientPasswordStandaloneGuard(service),
       sqlClientProofStandaloneGuard(service),
+      undefined,
+      96,
     ),
 );
 
@@ -77,6 +80,8 @@ const emailTarget = makeSqliteEmailTarget<Database, DatabaseValue<AnyRelations>>
       "interactive",
       sqlClientEmailStandaloneGuard(service),
       sqlClientProofStandaloneGuard(service),
+      undefined,
+      96,
     ),
 );
 
@@ -158,6 +163,8 @@ const passwordPreparedTarget = makeSqlitePasswordPreparedTarget<
     "interactive",
     sqlClientPasswordStandaloneGuard(service),
     sqlClientProofStandaloneGuard(service),
+    undefined,
+    96,
   ),
 );
 
@@ -176,6 +183,7 @@ const oauthTarget = makeOAuthTarget<
 >(Database, {
   mode: "interactive",
   dialect: "sqlite",
+  maxParameters: 96,
   locking: false,
   standaloneGuard: sqlClientOAuthStandaloneGuard,
 });
@@ -205,6 +213,7 @@ const passkeyTarget = makePasskeyTarget<
 >(Database, {
   mode: "interactive",
   dialect: "sqlite",
+  maxParameters: 96,
   locking: false,
   standaloneGuard: sqlClientPasskeyStandaloneGuard,
 });
@@ -231,6 +240,7 @@ const totpTarget = makeTotpTarget<
 >(Database, {
   mode: "interactive",
   dialect: "sqlite",
+  maxParameters: 96,
   locking: false,
   standaloneGuard: sqlClientTotpStandaloneGuard,
 });
@@ -246,6 +256,7 @@ const phoneTarget = makePhoneTarget<
 >(Database, {
   mode: "interactive",
   dialect: "sqlite",
+  maxParameters: 96,
   locking: false,
   standaloneGuard: sqlClientPhoneStandaloneGuard,
 });

@@ -15,7 +15,7 @@ import {
   type SessionStepUpPersistence,
 } from "@yielded/auth/Sessions";
 /* oxlint-disable no-explicit-any -- target entrypoints restore each concrete Drizzle database/table type. */
-import { type Context, Effect, Layer } from "effect";
+import { Context, Effect, Layer } from "effect";
 import type * as SqlError from "effect/sql/SqlError";
 
 import {
@@ -257,14 +257,11 @@ export const statefulSessionLayers = <Claims, E, R>(
     R
   >,
 ) =>
-  Layer.merge(
-    Layer.effect(
-      module.StatefulSessionPersistence,
-      Effect.map(services, (value) => value.statefulSessionPersistence),
-    ),
-    Layer.effect(
-      module.SessionRepository,
-      Effect.map(services, (value) => value.sessionRepository),
+  Layer.effectContext(
+    Effect.map(services, (value) =>
+      Context.make(module.StatefulSessionPersistence, value.statefulSessionPersistence).pipe(
+        Context.add(module.SessionRepository, value.sessionRepository),
+      ),
     ),
   );
 

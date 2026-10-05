@@ -23,7 +23,7 @@ export const makePasskeyKernel = (operations: QueryOperations) => {
   const state = makePasskeyStateKernel(operations, transactions);
   const credentials = makePasskeyCredentialsKernel(operations, state, transactions);
   const admission = makePasskeyAdmissionKernel(operations, state, transactions);
-  const registrationCustody = makePasskeyRegistrationCustodyKernel(state);
+  const registrationCustody = makePasskeyRegistrationCustodyKernel(state, operations);
 
   const flow = makePasskeyFlowKernel(
     operations,

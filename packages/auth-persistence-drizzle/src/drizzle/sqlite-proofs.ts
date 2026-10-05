@@ -52,9 +52,11 @@ export const sqliteProofConfiguration = (
   mode: "interactive" | "synchronous",
   standaloneGuard: Effect.Effect<void, ProofUnavailable>,
   coordinatorGuard?: Effect.Effect<void, ProofUnavailable>,
+  maxParameters?: number,
 ): ProofTargetConfiguration => ({
   mode,
   locking: false,
+  ...(maxParameters === undefined ? {} : { maxParameters }),
   standaloneGuard,
   insertIfAbsent: (query) => query.onConflictDoNothing(),
   ...(coordinatorGuard === undefined ? {} : { coordinatorGuard }),

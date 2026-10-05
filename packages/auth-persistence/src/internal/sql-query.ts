@@ -109,6 +109,7 @@ interface QueryState {
   readonly selection?: Selection;
   readonly where?: Fragment | undefined;
   readonly values?: Row;
+  readonly insertRows?: ReadonlyArray<Row>;
   readonly returning?: Selection | true;
   readonly order?: ReadonlyArray<Fragment>;
   readonly limit?: number;
@@ -190,12 +191,14 @@ const compile = (state: QueryState, compiler: Compiler): string => {
       });
     const target = table.render(compiler);
 
-    const fields = Object.entries(state.values ?? {}).filter(
+    const fields = Object.entries(state.insertRows?.[0] ?? state.values ?? {}).filter(
       ([key, value]) => table.columns[key] !== undefined && value !== undefined,
     );
 
     if (state.operation === "insert") {
-      query = `INSERT INTO ${target} (${fields.map(([key]) => identifier(table.columns[key].options.name)).join(", ")}) VALUES (${fields.map(([, value]) => render(value, compiler)).join(", ")})`;
+      const rows = state.insertRows ?? [state.values ?? {}];
+
+      query = `INSERT INTO ${target} (${fields.map(([key]) => identifier(table.columns[key].options.name)).join(", ")}) VALUES ${rows.map((row) => `(${fields.map(([key]) => render(row[key], compiler)).join(", ")})`).join(", ")}`;
     } else if (state.operation === "update") {
       query = `UPDATE ${target} SET ${fields.map(([key, value]) => `${identifier(table.columns[key].options.name)} = ${render(value, compiler)}`).join(", ")}`;
     } else query = `DELETE FROM ${target}`;
@@ -249,7 +252,10 @@ export const makeSqlDatabase = Effect.fnUntraced(function* (dialect: Dialect) {
       limit: (limit: number) => query({ ...state, limit }),
       orderBy: (...order: Fragment[]) => query({ ...state, order }),
       for: (_lock: "update") => query({ ...state, lock: true }),
-      values: (values: Row) => query({ ...state, values }),
+      values: (values: Row | ReadonlyArray<Row>) =>
+        Array.isArray(values)
+          ? query({ ...state, insertRows: values })
+          : query({ ...state, values: values as Row }),
       set: (values: Row) => query({ ...state, values }),
       returning: (returning: Selection | true = true) => query({ ...state, returning }),
       onConflictDoNothing: () => query({ ...state, conflict: true }),
@@ -258,6 +264,8 @@ export const makeSqlDatabase = Effect.fnUntraced(function* (dialect: Dialect) {
 
   const database: SqlDatabase = {
     $client: client,
+    // Generic SQLite clients include Durable Objects; keep their batches portable.
+    maxParameters: dialect === "sqlite" ? 96 : 16_000,
     select: (selection?: Selection) =>
       query({ operation: "select", ...(selection === undefined ? {} : { selection }) }),
     insert: (table: Table) => query({ operation: "insert", table }),
@@ -281,7 +289,7 @@ interface Query extends Effect.Effect<Row[], SqlError> {
   limit(limit: number): Query;
   orderBy(...order: Fragment[]): Query;
   for(lock: "update"): Query;
-  values(values: Row): Query;
+  values(values: Row | ReadonlyArray<Row>): Query;
   set(values: Row): Query;
   returning(returning?: Selection | true): Query;
   onConflictDoNothing(): Query;
@@ -289,6 +297,7 @@ interface Query extends Effect.Effect<Row[], SqlError> {
 
 export interface SqlDatabase {
   readonly $client: SqlClient;
+  readonly maxParameters: number;
   select(selection?: Selection): Query;
   insert(table: Table): Query;
   update(table: Table): Query;

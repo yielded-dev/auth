@@ -21,7 +21,7 @@ import {
   ProofRequestConflict,
   ProofUnavailable,
 } from "@yielded/auth/Proofs";
-import { Cause, Context, DateTime, Effect, Option, Schema } from "effect";
+import { Array, Cause, Context, DateTime, Effect, Option, Schema } from "effect";
 import type * as SqlError from "effect/sql/SqlError";
 
 import { PersistenceMappingError } from "./mapping-error";
@@ -77,6 +77,7 @@ export class CurrentProofSql extends Context.Service<CurrentProofSql, ProofSqlDa
 export interface ProofSqlConfiguration {
   readonly mode: "interactive" | "synchronous";
   readonly locking: boolean;
+  readonly maxParameters?: number;
   readonly standaloneGuard: Effect.Effect<void, ProofUnavailable>;
   readonly coordinated?: boolean;
   /** Dialect-native insert-if-absent used to create serialization anchors. */
@@ -103,7 +104,9 @@ export const makeProofKernel = <
 ) => {
   type Mapping = AnyProofPersistenceMapping<Fragment>;
 
-  const { and, eq, gte, inArray, isNull, lte, notExists, sql, column, updateValues } = operations;
+  const { and, eq, gte, inArray, isNull, lte, notExists, or, sql, column, updateValues } =
+    operations;
+
   const unavailable = () => ProofUnavailable.make({});
 
   const translateFailure = <A, E, R>(
@@ -142,6 +145,29 @@ export const makeProofKernel = <
 
   const selectRows = (query: ProofSqlQuery, locking: boolean) =>
     locking && typeof query.for === "function" ? query.for("update") : query;
+
+  // Admission has at most three scopes. Preserve application column defaults
+  // when an encoder returns different shapes for different scope kinds.
+  const insertScopeRows = Effect.fn("DrizzleProof.insertScopeRows")(function* (
+    query: ProofSqlQuery,
+    rows: ReadonlyArray<Record<string, unknown>>,
+    prepare: (query: ProofSqlQuery) => ProofSqlQuery = (query) => query,
+  ) {
+    const first = rows[0];
+
+    if (first === undefined) return;
+
+    const fields = (row: Record<string, unknown>) =>
+      Object.keys(row)
+        .filter((key) => row[key] !== undefined)
+        .sort()
+        .join("\0");
+
+    const shape = fields(first);
+    const batches = rows.every((row) => fields(row) === shape) ? [rows] : rows.map((row) => [row]);
+
+    for (const batch of batches) yield* prepare(query.values(batch));
+  });
 
   const allocateVersion = (
     mapping: Mapping,
@@ -406,38 +432,45 @@ export const makeProofKernel = <
     entries: ReadonlyArray<ScopeEntry>,
   ) {
     const database = yield* CurrentProofSql;
-
     const c = scopeColumns(mapping);
 
-    for (const entry of entries) {
-      const values = mapping.rateScope.encodeInsert({
-        moduleId,
-        purpose,
-        action,
-        scopeKind: entry.kind,
-        scopeKey: entry.key,
-      });
+    // The global anchor is a separate first phase. VALUES and the lock read use
+    // canonical scope order. moduleId is a shared no-op conflict value on MySQL.
+    yield* insertScopeRows(
+      database.insert(mapping.rateScope.table),
+      entries.map((entry) =>
+        mapping.rateScope.encodeInsert({
+          moduleId,
+          purpose,
+          action,
+          scopeKind: entry.kind,
+          scopeKey: entry.key,
+        }),
+      ),
+      (query) => configuration.insertIfAbsent(query, mapping.rateScope.moduleId, moduleId),
+    );
 
-      const query = database.insert(mapping.rateScope.table).values(values);
-
-      yield* configuration.insertIfAbsent(query, mapping.rateScope.scopeKey, entry.key);
-      yield* selectRows(
-        database
-          .select()
-          .from(mapping.rateScope.table)
-          .where(
-            and(
-              eq(c.moduleId, moduleId),
-              eq(c.purpose, purpose),
-              eq(c.action, action),
-              eq(c.scopeKind, entry.kind),
-              eq(c.scopeKey, entry.key),
+    const locked = yield* selectRows(
+      database
+        .select({ scopeKind: c.scopeKind, scopeKey: c.scopeKey })
+        .from(mapping.rateScope.table)
+        .where(
+          and(
+            eq(c.moduleId, moduleId),
+            eq(c.purpose, purpose),
+            eq(c.action, action),
+            or(
+              ...entries.map((entry) =>
+                and(eq(c.scopeKind, entry.kind), eq(c.scopeKey, entry.key)),
+              ),
             ),
-          )
-          .limit(1),
-        configuration.locking,
-      );
-    }
+          ),
+        )
+        .orderBy(c.scopeKind, c.scopeKey),
+      configuration.locking,
+    );
+
+    if (locked.length !== entries.length) return yield* unavailable();
   });
 
   const admittedScopes = Effect.fn("DrizzleProof.admittedScopes")(function* (
@@ -448,34 +481,44 @@ export const makeProofKernel = <
     entries: ReadonlyArray<ScopeEntry>,
     now: number,
   ) {
+    if (entries.length === 0) return [];
     const database = yield* CurrentProofSql;
-
     const c = abuseColumns(mapping);
-    const admitted: ScopeEntry[] = [];
 
-    for (const entry of entries) {
-      const rows = yield* selectRows(
-        database
-          .select({ commandId: c.commandId })
-          .from(mapping.abuseEvent.table)
-          .where(
-            and(
-              eq(c.moduleId, moduleId),
-              eq(c.purpose, purpose),
-              eq(c.action, action),
-              eq(c.scopeKind, entry.kind),
-              eq(c.scopeKey, entry.key),
-              gte(c.occurredAt, mapping.encodeInstant(now - entry.budget.windowMillis)),
-            ),
-          )
-          .limit(entry.budget.limit),
-        true,
-      );
+    // Each scalar scan stays bounded by its own budget and keeps its locking
+    // read. One statement returns counts without transferring every event row.
+    const [counts] = yield* database
+      .select(
+        Object.fromEntries(
+          entries.map((entry, index) => {
+            const query = selectRows(
+              database
+                .select({ commandId: c.commandId })
+                .from(mapping.abuseEvent.table)
+                .where(
+                  and(
+                    eq(c.moduleId, moduleId),
+                    eq(c.purpose, purpose),
+                    eq(c.action, action),
+                    eq(c.scopeKind, entry.kind),
+                    eq(c.scopeKey, entry.key),
+                    gte(c.occurredAt, mapping.encodeInstant(now - entry.budget.windowMillis)),
+                  ),
+                )
+                .limit(entry.budget.limit),
+              true,
+            );
 
-      if (rows.length < entry.budget.limit) admitted.push(entry);
-    }
+            return [
+              `scope${index}`,
+              sql`(select count(*) from (${query.getSQL()}) as proof_events)`.mapWith(Number),
+            ];
+          }),
+        ),
+      )
+      .from(sql`(select 1) as proof_admission`);
 
-    return admitted;
+    return entries.filter((entry, index) => counts?.[`scope${index}`] < entry.budget.limit);
   });
 
   const insertScopeEvents = Effect.fn("Drizzle.insertScopeEvents")(function* (
@@ -490,22 +533,20 @@ export const makeProofKernel = <
   ) {
     const database = yield* CurrentProofSql;
 
-    return yield* Effect.forEach(
-      entries,
-      (entry) =>
-        database.insert(mapping.abuseEvent.table).values(
-          mapping.abuseEvent.encodeInsert({
-            moduleId,
-            purpose,
-            action,
-            scopeKind: entry.kind,
-            scopeKey: entry.key,
-            commandId,
-            occurredAtMillis: now,
-            retentionUntilMillis: retentionUntil,
-          }),
-        ),
-      { discard: true },
+    yield* insertScopeRows(
+      database.insert(mapping.abuseEvent.table),
+      entries.map((entry) =>
+        mapping.abuseEvent.encodeInsert({
+          moduleId,
+          purpose,
+          action,
+          scopeKind: entry.kind,
+          scopeKey: entry.key,
+          commandId,
+          occurredAtMillis: now,
+          retentionUntilMillis: retentionUntil,
+        }),
+      ),
     );
   });
 
@@ -1505,6 +1546,11 @@ export const makeProofKernel = <
             const mc = commandColumns(mapping);
             const sc = seriesColumns(mapping);
             const rsc = scopeColumns(mapping);
+            const parameterLimit = configuration.maxParameters ?? 16_000;
+
+            const chunkSize = (width: number, maximum = 128) =>
+              Math.max(1, Math.min(maximum, Math.floor((parameterLimit - 2) / width)));
+
             let remaining = input.limit;
             let hasMore = false;
 
@@ -1528,7 +1574,7 @@ export const makeProofKernel = <
                 .select({ continuationId: cc.continuationId })
                 .from(mapping.continuation.table)
                 .where(and(eq(cc.moduleId, input.moduleId), lte(cc.retentionUntil, nativeNow)))
-                .orderBy(cc.retentionUntil),
+                .orderBy(cc.retentionUntil, cc.continuationId),
             );
 
             const generations = yield* take(
@@ -1536,7 +1582,7 @@ export const makeProofKernel = <
                 .select({ proofId: gc.proofId })
                 .from(mapping.generation.table)
                 .where(and(eq(gc.moduleId, input.moduleId), lte(gc.retentionUntil, nativeNow)))
-                .orderBy(gc.retentionUntil),
+                .orderBy(gc.retentionUntil, gc.proofId),
             );
 
             const requests = yield* take(
@@ -1544,7 +1590,7 @@ export const makeProofKernel = <
                 .select({ requestId: rc.requestId })
                 .from(mapping.request.table)
                 .where(and(eq(rc.moduleId, input.moduleId), lte(rc.retentionUntil, nativeNow)))
-                .orderBy(rc.retentionUntil),
+                .orderBy(rc.retentionUntil, rc.requestId),
             );
 
             const abuse = yield* take(
@@ -1557,7 +1603,7 @@ export const makeProofKernel = <
                 })
                 .from(mapping.abuseEvent.table)
                 .where(and(eq(ac.moduleId, input.moduleId), lte(ac.retentionUntil, nativeNow)))
-                .orderBy(ac.retentionUntil),
+                .orderBy(ac.retentionUntil, ac.action, ac.scopeKind, ac.scopeKey, ac.commandId),
             );
 
             const failures = yield* take(
@@ -1565,7 +1611,7 @@ export const makeProofKernel = <
                 .select({ seriesKey: fc.seriesKey, commandId: fc.commandId })
                 .from(mapping.failureEvent.table)
                 .where(and(eq(fc.moduleId, input.moduleId), lte(fc.retentionUntil, nativeNow)))
-                .orderBy(fc.retentionUntil),
+                .orderBy(fc.retentionUntil, fc.seriesKey, fc.commandId),
             );
 
             const commands = yield* take(
@@ -1573,7 +1619,7 @@ export const makeProofKernel = <
                 .select({ commandId: mc.commandId })
                 .from(mapping.command.table)
                 .where(and(eq(mc.moduleId, input.moduleId), lte(mc.retentionUntil, nativeNow)))
-                .orderBy(mc.retentionUntil),
+                .orderBy(mc.retentionUntil, mc.commandId),
             );
 
             const series = yield* take(
@@ -1609,7 +1655,8 @@ export const makeProofKernel = <
                         ),
                     ),
                   ),
-                ),
+                )
+                .orderBy(sc.purpose, sc.scopeKey),
             );
 
             const rateScopes = yield* take(
@@ -1639,7 +1686,8 @@ export const makeProofKernel = <
                         ),
                     ),
                   ),
-                ),
+                )
+                .orderBy(rsc.purpose, rsc.action, rsc.scopeKind, rsc.scopeKey),
             );
 
             // Removing the final history row can make an anchor eligible only after this
@@ -1648,18 +1696,18 @@ export const makeProofKernel = <
             const removed = input.limit - remaining;
             const prepared = prepare({ removed, hasMore } satisfies ProofCleanupResult, journal);
 
-            if (continuations.length > 0)
+            for (const chunk of Array.chunksOf(continuations, chunkSize(1, 1000)))
               yield* transaction.delete(mapping.continuation.table).where(
                 and(
                   eq(cc.moduleId, input.moduleId),
                   inArray(
                     cc.continuationId,
-                    continuations.map((row: any) => row.continuationId),
+                    chunk.map((row: any) => row.continuationId),
                   ),
                   lte(cc.retentionUntil, nativeNow),
                 ),
               );
-            if (generations.length > 0)
+            for (const chunk of Array.chunksOf(generations, chunkSize(1, 1000)))
               yield* transaction
                 .update(mapping.series.table)
                 .set(updateValues([[mapping.series.activeProofId, null]]))
@@ -1668,73 +1716,85 @@ export const makeProofKernel = <
                     eq(sc.moduleId, input.moduleId),
                     inArray(
                       sc.activeProofId,
-                      generations.map((row: any) => row.proofId),
+                      chunk.map((row: any) => row.proofId),
                     ),
                   ),
                 );
-            if (generations.length > 0)
+            for (const chunk of Array.chunksOf(generations, chunkSize(1, 1000)))
               yield* transaction.delete(mapping.generation.table).where(
                 and(
                   eq(gc.moduleId, input.moduleId),
                   inArray(
                     gc.proofId,
-                    generations.map((row: any) => row.proofId),
+                    chunk.map((row: any) => row.proofId),
                   ),
                   lte(gc.retentionUntil, nativeNow),
                 ),
               );
-            if (requests.length > 0)
+            for (const chunk of Array.chunksOf(requests, chunkSize(1, 1000)))
               yield* transaction.delete(mapping.request.table).where(
                 and(
                   eq(rc.moduleId, input.moduleId),
                   inArray(
                     rc.requestId,
-                    requests.map((row: any) => row.requestId),
+                    chunk.map((row: any) => row.requestId),
                   ),
                   lte(rc.retentionUntil, nativeNow),
                 ),
               );
-            for (const row of abuse)
+            for (const chunk of Array.chunksOf(abuse, chunkSize(4)))
               yield* transaction
                 .delete(mapping.abuseEvent.table)
                 .where(
                   and(
                     eq(ac.moduleId, input.moduleId),
-                    eq(ac.action, row.action),
-                    eq(ac.scopeKind, row.scopeKind),
-                    eq(ac.scopeKey, row.scopeKey),
-                    eq(ac.commandId, row.commandId),
+                    or(
+                      ...chunk.map((row) =>
+                        and(
+                          eq(ac.action, row.action),
+                          eq(ac.scopeKind, row.scopeKind),
+                          eq(ac.scopeKey, row.scopeKey),
+                          eq(ac.commandId, row.commandId),
+                        ),
+                      ),
+                    ),
                     lte(ac.retentionUntil, nativeNow),
                   ),
                 );
-            for (const row of failures)
+            for (const chunk of Array.chunksOf(failures, chunkSize(2)))
               yield* transaction
                 .delete(mapping.failureEvent.table)
                 .where(
                   and(
                     eq(fc.moduleId, input.moduleId),
-                    eq(fc.seriesKey, row.seriesKey),
-                    eq(fc.commandId, row.commandId),
+                    or(
+                      ...chunk.map((row) =>
+                        and(eq(fc.seriesKey, row.seriesKey), eq(fc.commandId, row.commandId)),
+                      ),
+                    ),
                     lte(fc.retentionUntil, nativeNow),
                   ),
                 );
-            if (commands.length > 0)
+            for (const chunk of Array.chunksOf(commands, chunkSize(1, 1000)))
               yield* transaction.delete(mapping.command.table).where(
                 and(
                   eq(mc.moduleId, input.moduleId),
                   inArray(
                     mc.commandId,
-                    commands.map((row: any) => row.commandId),
+                    chunk.map((row: any) => row.commandId),
                   ),
                   lte(mc.retentionUntil, nativeNow),
                 ),
               );
-            for (const row of series)
+            for (const chunk of Array.chunksOf(series, chunkSize(2)))
               yield* transaction.delete(mapping.series.table).where(
                 and(
                   eq(sc.moduleId, input.moduleId),
-                  eq(sc.purpose, row.purpose),
-                  eq(sc.scopeKey, row.scopeKey),
+                  or(
+                    ...chunk.map((row) =>
+                      and(eq(sc.purpose, row.purpose), eq(sc.scopeKey, row.scopeKey)),
+                    ),
+                  ),
                   isNull(sc.activeProofId),
                   notExists(
                     transaction
@@ -1750,14 +1810,20 @@ export const makeProofKernel = <
                   ),
                 ),
               );
-            for (const row of rateScopes)
+            for (const chunk of Array.chunksOf(rateScopes, chunkSize(4)))
               yield* transaction.delete(mapping.rateScope.table).where(
                 and(
                   eq(rsc.moduleId, input.moduleId),
-                  eq(rsc.purpose, row.purpose),
-                  eq(rsc.action, row.action),
-                  eq(rsc.scopeKind, row.scopeKind),
-                  eq(rsc.scopeKey, row.scopeKey),
+                  or(
+                    ...chunk.map((row) =>
+                      and(
+                        eq(rsc.purpose, row.purpose),
+                        eq(rsc.action, row.action),
+                        eq(rsc.scopeKind, row.scopeKind),
+                        eq(rsc.scopeKey, row.scopeKey),
+                      ),
+                    ),
+                  ),
                   notExists(
                     transaction
                       .select({ one: sql`1` })

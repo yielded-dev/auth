@@ -20,11 +20,7 @@ import {
 } from "@yielded/auth/Hooks";
 import type { LoginIdentifier } from "@yielded/auth/Identity";
 import { reportPersistenceFailure } from "@yielded/auth/Persistence";
-import {
-  ProofUnavailable,
-  type ProofCompletionDecision,
-  type ProofCompletionInput,
-} from "@yielded/auth/Proofs";
+import { ProofUnavailable } from "@yielded/auth/Proofs";
 import {
   assessAuthentication,
   snapshotAuthenticationEvidence,
@@ -116,12 +112,15 @@ export const makeEmailKernel = <
   Column extends SqlColumn = SqlColumn,
 >(
   operations: QueryOperations<Fragment, Column>,
-  proofs: Pick<ReturnType<typeof makeProofKernel>, "completeProofPlanIn">,
+  proofs: Pick<
+    ReturnType<typeof makeProofKernel<Fragment, Column>>,
+    "completeProofPlanIn" | "checkProofCompletionIn"
+  >,
 ) => {
   type AddressMapping = AnyEmailAddressMapping<Fragment>;
 
-  const { and, eq, inArray, lte, column, updateValues } = operations;
-  const { completeProofPlanIn } = proofs;
+  const { and, eq, inArray, lte, column, updateValues, sql } = operations;
+  const { completeProofPlanIn, checkProofCompletionIn } = proofs;
   const unavailable = () => EmailUnavailable.make({});
 
   const translateFailure = <A, E, R>(
@@ -1042,82 +1041,83 @@ export const makeEmailKernel = <
       }),
     );
 
-    const sourceStillActive =
+    // Read both authority rows together, retaining the database's key comparison
+    // semantics even when a custom mapping uses a non-binary collation.
+    const targetAuthorityCondition = and(
+      eq(a.subjectId, current.nativeSubjectId),
+      eq(a.credentialId, targetCredentialId),
+    );
+
+    const sourceCredentialId = current.source?.snapshot.credentialId;
+
+    const sourceAuthorityCondition =
+      sourceCredentialId === undefined
+        ? sql`1 = 0`
+        : and(eq(a.subjectId, current.nativeSubjectId), eq(a.credentialId, sourceCredentialId));
+
+    const command = commandColumns(mapping);
+
+    const commandCondition = and(
+      eq(command.moduleId, input.moduleId),
+      eq(command.commandId, input.commandId),
+      eq(command.action, action),
+      eq(command.bindingDigest, input.authorization.challenge.bindingDigest),
+      eq(command.retentionUntil, mapping.encodeInstant(now + mapping.commandRetentionMillis)),
+    );
+
+    const source =
       action === "verify-address"
         ? []
-        : yield* selectRows(
-            database
-              .select()
-              .from(mapping.credential.table)
-              .where(
-                and(
-                  eq(c.moduleId, input.moduleId),
-                  eq(c.credentialId, current.source!.snapshot.credentialId),
-                  eq(c.subjectId, current.nativeSubjectId),
-                ),
+        : yield* database
+            .select({ credential: mapping.credential.table, identifier: mapping.identifier.table })
+            .from(mapping.credential.table)
+            .innerJoin(
+              mapping.identifier.table,
+              and(
+                eq(i.namespace, current.source!.snapshot.identifier.namespace),
+                eq(i.value, current.source!.snapshot.identifier.value),
               ),
-            false,
-          );
+            )
+            .where(
+              and(
+                eq(c.moduleId, input.moduleId),
+                eq(c.credentialId, sourceCredentialId),
+                eq(c.subjectId, current.nativeSubjectId),
+              ),
+            );
 
     const target = (yield* emailLookupRows(mapping, input.moduleId, input.target))[0];
 
-    const targetAuthority = yield* selectRows(
-      database
-        .select()
-        .from(mapping.authorityCredential.table)
-        .where(
-          and(eq(a.subjectId, current.nativeSubjectId), eq(a.credentialId, targetCredentialId)),
-        )
-        .limit(1),
-      false,
-    );
-
-    const command = yield* selectRows(
-      database
-        .select()
-        .from(mapping.command.table)
-        .where(
-          and(
-            eq(commandColumns(mapping).moduleId, input.moduleId),
-            eq(commandColumns(mapping).commandId, input.commandId),
-            eq(commandColumns(mapping).action, action),
-            eq(commandColumns(mapping).bindingDigest, input.authorization.challenge.bindingDigest),
-            eq(
-              commandColumns(mapping).retentionUntil,
-              mapping.encodeInstant(now + mapping.commandRetentionMillis),
-            ),
+    const authority = yield* database
+      .select({
+        row: mapping.authorityCredential.table,
+        target: sql`case when ${targetAuthorityCondition} then 1 else 0 end`.mapWith(Number),
+        source: sql`case when ${sourceAuthorityCondition} then 1 else 0 end`.mapWith(Number),
+        command:
+          sql`case when exists(select 1 from ${mapping.command.table} where ${commandCondition}) then 1 else 0 end`.mapWith(
+            Number,
           ),
-        )
-        .limit(1),
-      false,
-    );
+      })
+      .from(mapping.authorityCredential.table)
+      .where(
+        and(
+          eq(a.subjectId, current.nativeSubjectId),
+          inArray(
+            a.credentialId,
+            sourceCredentialId === undefined
+              ? [targetCredentialId]
+              : [targetCredentialId, sourceCredentialId],
+          ),
+        ),
+      );
+
+    const targetAuthority = authority.filter((entry: any) => entry.target === 1);
+    const sourceAuthority = authority.filter((entry: any) => entry.source === 1);
 
     const targetVerifiedAt =
       target === undefined
         ? undefined
         : yield* mapping.decodeInstant(target.identifier[mapping.identifier.verifiedAt]);
-
-    const sourceIdentifier =
-      action === "verify-address"
-        ? []
-        : yield* identifierRow(mapping, current.source!.snapshot.identifier, false);
-
-    const sourceAuthority =
-      action === "verify-address"
-        ? []
-        : yield* selectRows(
-            database
-              .select()
-              .from(mapping.authorityCredential.table)
-              .where(
-                and(
-                  eq(a.subjectId, current.nativeSubjectId),
-                  eq(a.credentialId, current.source!.snapshot.credentialId),
-                ),
-              )
-              .limit(1),
-            false,
-          );
 
     return (
       target !== undefined &&
@@ -1137,80 +1137,30 @@ export const makeEmailKernel = <
       mapping.identifier.isCurrent(target.identifier) &&
       mapping.credential.isActiveStatus(target.credential[mapping.credential.status]) &&
       targetAuthority.length === 1 &&
-      targetAuthority[0]![mapping.authorityCredential.revision] ===
+      targetAuthority[0]!.row[mapping.authorityCredential.revision] ===
         allocated.targetCredentialRevision &&
       mapping.authorityCredential.isActiveStatus(
-        targetAuthority[0]![mapping.authorityCredential.status],
+        targetAuthority[0]!.row[mapping.authorityCredential.status],
       ) &&
-      command.length === 1 &&
+      targetAuthority[0]!.command === 1 &&
       (action === "verify-address" ||
-        (sourceStillActive.length === 1 &&
-          sourceStillActive[0]![mapping.credential.credentialRevision] ===
+        (source.length === 1 &&
+          source[0]!.credential[mapping.credential.credentialRevision] ===
             allocated.sourceCredentialRevision &&
-          !mapping.credential.isActiveStatus(sourceStillActive[0]![mapping.credential.status]) &&
-          sourceIdentifier.length === 1 &&
+          !mapping.credential.isActiveStatus(source[0]!.credential[mapping.credential.status]) &&
           mapping.subjectId.equals(
-            sourceIdentifier[0]![mapping.identifier.subjectId],
+            source[0]!.identifier[mapping.identifier.subjectId],
             current.nativeSubjectId,
           ) &&
-          sourceIdentifier[0]![mapping.identifier.bindingRevision] ===
+          source[0]!.identifier[mapping.identifier.bindingRevision] ===
             allocated.sourceIdentifierRevision &&
-          !mapping.identifier.isCurrent(sourceIdentifier[0]!) &&
+          !mapping.identifier.isCurrent(source[0]!.identifier) &&
           sourceAuthority.length === 1 &&
-          sourceAuthority[0]![mapping.authorityCredential.revision] ===
+          sourceAuthority[0]!.row[mapping.authorityCredential.revision] ===
             allocated.sourceCredentialRevision &&
           !mapping.authorityCredential.isActiveStatus(
-            sourceAuthority[0]![mapping.authorityCredential.status],
+            sourceAuthority[0]!.row[mapping.authorityCredential.status],
           )))
-    );
-  });
-
-  const probeProofCompletion = Effect.fn("Drizzle.probeProofCompletion")(function* (
-    configuration: EmailSqlConfiguration,
-    input: ProofCompletionInput,
-  ) {
-    const database = yield* CurrentEmailSql;
-
-    if (configuration.proof === undefined) return yield* Effect.fail(unavailable());
-    const validProbe = { _tag: "EmailProofCompletionValid" } as const;
-
-    const plan = {
-      input,
-      prepare: <A>(
-        decision: ProofCompletionDecision,
-        journal: CommitJournal,
-        project: (decision: ProofCompletionDecision) => A,
-      ) => journal.prepare(project(decision)),
-    };
-
-    const probe = coordinateCommit(
-      () =>
-        database.transaction((transaction) =>
-          completeProofPlanIn(
-            configuration.proof!.mapping,
-            configuration.proof!.configuration,
-            plan,
-            Effect.fail(validProbe),
-            () => false,
-          ).pipe(
-            Effect.provideService(CurrentProofSql, transaction as unknown as ProofSqlDatabase),
-          ),
-        ),
-      { mode: configuration.mode },
-    );
-
-    return yield* probe.pipe(
-      Effect.as(false),
-      Effect.catchCause((cause) => {
-        const reason = cause.reasons[0];
-
-        return cause.reasons.length === 1 &&
-          reason !== undefined &&
-          Cause.isFailReason(reason) &&
-          reason.error === validProbe
-          ? Effect.succeed(true)
-          : Effect.failCause(cause);
-      }),
     );
   });
 
@@ -1314,19 +1264,20 @@ export const makeEmailKernel = <
               false,
             );
 
-            return current !== undefined && sameEmailRevision(current.revision, binding.revision);
+            if (current === undefined || !sameEmailRevision(current.revision, binding.revision))
+              return false;
+
+            return yield* checkProofCompletionIn(
+              configuration.proof!.mapping,
+              configuration.proof!.configuration,
+              input,
+            );
           }),
-        )
-          .pipe(
-            Effect.flatMap((current) =>
-              current ? probeProofCompletion(configuration, input) : Effect.succeed(false),
-            ),
-          )
-          .pipe(
-            Effect.provideService(CurrentEmailSql, database),
-            Effect.provideService(LifecycleHooks, hooks),
-            translateFailure,
-          );
+        ).pipe(
+          Effect.provideService(CurrentEmailSql, database),
+          Effect.provideService(LifecycleHooks, hooks),
+          translateFailure,
+        );
       },
       verifyWithProof: (uncaptured, prepare) =>
         mutateAddress(mapping, configuration, uncaptured, "verify-address", prepare).pipe(

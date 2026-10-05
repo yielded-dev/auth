@@ -204,7 +204,9 @@ against the captured database's catalog during acquisition. Apply migrations bef
 building these Layers; a Drizzle declaration does not install a constraint. Permit
 catalog reads on PostgreSQL, MySQL, and SQLite, and reacquire services after schema
 changes. These checks cover usable, unconditional unique keys; application predicates
-and column codecs remain application contracts.
+and column codecs remain application contracts. Retain the acquired persistence Layer
+at the application composition root so requests reuse its schema validation and
+configuration. Operations still check current authority inside their transactions.
 
 ## Compose the application Layer
 
@@ -480,6 +482,11 @@ Durable Object SQLite uses the captured Effect SQL client's asynchronous
 crypto Effects may suspend inside that owned transaction. An arbitrary raw Drizzle
 outer transaction, including its `transactionSync` callbacks, is unsupported.
 No synchronous crypto implementation or `Effect.runSync` bridge is required.
+
+Cleanup groups respect the driver's bind limits and retain atomic commit checks.
+Durable Object SQLite needs smaller groups than PostgreSQL; a large cleanup page
+can still issue hundreds of local statements. Direct Effect SQL uses portable
+SQLite batch limits that also fit Durable Objects.
 
 </details>
 

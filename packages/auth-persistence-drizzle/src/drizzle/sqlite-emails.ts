@@ -66,15 +66,18 @@ export const sqliteEmailConfiguration = (
   standaloneGuard: EmailTargetConfiguration["standaloneGuard"],
   proofStandaloneGuard: EmailTargetConfiguration["proof"]["standaloneGuard"],
   coordinatorGuard?: EmailTargetConfiguration["coordinatorGuard"],
+  maxParameters?: number,
 ): EmailTargetConfiguration => ({
   mode,
   locking: false,
+  ...(maxParameters === undefined ? {} : { maxParameters }),
   standaloneGuard,
   ...(coordinatorGuard === undefined ? {} : { coordinatorGuard }),
   generatedSubjectRows: (query: EmailSqlQuery) => query.returning(),
   proof: {
     mode,
     locking: false,
+    ...(maxParameters === undefined ? {} : { maxParameters }),
     standaloneGuard: proofStandaloneGuard,
     insertIfAbsent: (query: ProofSqlQuery) => query.onConflictDoNothing(),
   },

@@ -29,6 +29,7 @@ import { validateDrizzleStorage } from "./storage-validation";
 export interface PasswordTargetConfiguration {
   readonly mode: "interactive" | "synchronous";
   readonly locking: boolean;
+  readonly maxParameters?: number;
   readonly standaloneGuard: Effect.Effect<void, PasswordUnavailable>;
   readonly coordinatorGuard?: Effect.Effect<void, PasswordUnavailable>;
   readonly insertIfAbsent: (
@@ -64,6 +65,9 @@ export const passwordOptions = (
 ): PasswordSqlConfiguration => ({
   mode: configuration.mode,
   locking: configuration.locking,
+  ...(configuration.maxParameters === undefined
+    ? {}
+    : { maxParameters: configuration.maxParameters }),
 
   standaloneGuard: !coordinated ? configuration.standaloneGuard : Effect.void,
   insertIfAbsent: configuration.insertIfAbsent,
@@ -76,6 +80,9 @@ export const passwordOptions = (
           configuration: {
             mode: configuration.proof.mode,
             locking: configuration.proof.locking,
+            ...(configuration.proof.maxParameters === undefined
+              ? {}
+              : { maxParameters: configuration.proof.maxParameters }),
 
             standaloneGuard: Effect.void,
 

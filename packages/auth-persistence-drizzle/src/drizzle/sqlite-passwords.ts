@@ -49,9 +49,11 @@ export const sqlitePasswordConfiguration = (
   standaloneGuard: PasswordTargetConfiguration["standaloneGuard"],
   proofStandaloneGuard: PasswordTargetConfiguration["proof"]["standaloneGuard"],
   coordinatorGuard?: PasswordTargetConfiguration["coordinatorGuard"],
+  maxParameters?: number,
 ): PasswordTargetConfiguration => ({
   mode,
   locking: false,
+  ...(maxParameters === undefined ? {} : { maxParameters }),
   standaloneGuard,
   ...(coordinatorGuard === undefined ? {} : { coordinatorGuard }),
   insertIfAbsent: (query: PasswordSqlQuery) => query.onConflictDoNothing(),
@@ -59,6 +61,7 @@ export const sqlitePasswordConfiguration = (
   proof: {
     mode,
     locking: false,
+    ...(maxParameters === undefined ? {} : { maxParameters }),
     standaloneGuard: proofStandaloneGuard,
     insertIfAbsent: (query: ProofSqlQuery) => query.onConflictDoNothing(),
   },

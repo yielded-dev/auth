@@ -364,7 +364,7 @@ export const makePasskeyManagement = <
             ).pipe(Effect.mapError(() => PasskeyActionRequired.make({})));
 
             if (!assessment.satisfied) return yield* PasskeyActionRequired.make({});
-            const { claim, verified } = yield* runtime.verifyRegistration(input, original);
+            const { claim, verified } = yield* runtime.verifyRegistration(input, inspected);
             const authority = yield* PasskeyManagementPersistence;
             const timestamp = DateTime.toEpochMillis(yield* DateTime.now);
 

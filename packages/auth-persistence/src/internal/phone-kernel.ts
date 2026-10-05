@@ -11,7 +11,7 @@ import {
 } from "@yielded/auth/PhoneOtp";
 import type { SubjectId } from "@yielded/auth/Schema";
 import { AuthenticationRequirement, SecurityRevision } from "@yielded/auth/Sessions";
-import { Context, Effect, Option, Schema } from "effect";
+import { Array, Context, Effect, Option, Schema } from "effect";
 
 import { digest, randomId } from "./crypto";
 /* oxlint-disable no-explicit-any -- existing storage kernels erase foreign table shapes; domain errors remain typed. */
@@ -31,7 +31,7 @@ export const makePhoneKernel = <
   operations: QueryOperations<Fragment, Column>,
   transactions: Pick<ReturnType<typeof makeTransactionKernel>, "both" | "makeTransactionRows">,
 ) => {
-  const { sql } = operations;
+  const { sql, inArray, or } = operations;
   const { both, makeTransactionRows } = transactions;
   const unavailable = () => PhoneOtpUnavailable.make({});
 
@@ -39,7 +39,7 @@ export const makePhoneKernel = <
     if (!value) throw unavailable();
   };
 
-  const { equal, copiedRow, col } = makeTransactionRows(unavailable);
+  const { equal, copiedRow, col, matchesNativeRow } = makeTransactionRows(unavailable);
 
   const AdmissionReceipt = Schema.Struct({
     fingerprint: Schema.NonEmptyString,
@@ -149,6 +149,7 @@ export const makePhoneKernel = <
       readonly subjectId?: SubjectId;
       readonly sourcePhoneNumber?: any;
     },
+    forLookup = false,
   ) {
     const owner = yield* CurrentPhoneTransaction;
     const destination = yield* custodyRead(mapping, input.phoneNumber);
@@ -166,16 +167,18 @@ export const makePhoneKernel = <
         : yield* owner.read(
             mapping.subject.table,
             equal(mapping.subject.table, { [mapping.subject.id]: mapping.subjectIds.toNative(id) }),
-            { limit: 1 },
+            { limit: 1, ...(owner.batch ? {} : { condition: mapping.subject.activeCondition }) },
           );
 
     const row = subject?.rows[0];
 
     const active =
       row !== undefined &&
-      (yield* owner.check(
-        sql`exists(select 1 from ${mapping.subject.table} where ${both(owner.exact(mapping.subject.table, row), mapping.subject.activeCondition)})`,
-      ));
+      (owner.batch
+        ? yield* owner.check(
+            sql`exists(select 1 from ${mapping.subject.table} where ${both(owner.exact(mapping.subject.table, row), mapping.subject.activeCondition)})`,
+          )
+        : subject?.conditionHolds === true);
 
     const targetIdentifier = yield* owner.read(
       mapping.identifier.table,
@@ -183,7 +186,19 @@ export const makePhoneKernel = <
         [mapping.identifier.namespace]: "phone",
         [mapping.identifier.value]: input.phoneNumber,
       }),
-      { limit: 1 },
+      {
+        limit: 1,
+        ...(owner.batch || !forLookup || id === undefined
+          ? {}
+          : {
+              condition: both(
+                equal(mapping.identifier.table, {
+                  [mapping.identifier.subjectId]: mapping.subjectIds.toNative(id),
+                }),
+                mapping.identifier.activeCondition,
+              ),
+            }),
+      },
     );
 
     let eligible =
@@ -217,7 +232,7 @@ export const makePhoneKernel = <
             [c.id]: custody.credentialId,
             [c.subjectId]: mapping.subjectIds.toNative(id),
           }),
-          { limit: 1 },
+          { limit: 1, ...(owner.batch ? {} : { condition: c.activeCondition }) },
         );
 
         const cr = found.rows[0];
@@ -225,9 +240,11 @@ export const makePhoneKernel = <
         if (
           cr === undefined ||
           cr[c.revision] !== custody.credentialRevision ||
-          !(yield* owner.check(
-            sql`exists(select 1 from ${c.table} where ${both(owner.exact(c.table, cr), c.activeCondition)})`,
-          ))
+          !(owner.batch
+            ? yield* owner.check(
+                sql`exists(select 1 from ${c.table} where ${both(owner.exact(c.table, cr), c.activeCondition)})`,
+              )
+            : found.conditionHolds === true)
         )
           eligible = false;
         else
@@ -260,10 +277,11 @@ export const makePhoneKernel = <
   ) {
     invariant(input.moduleId === mapping.moduleId);
 
-    const captured = yield* capturePhone(mapping, {
-      action: "verify",
-      phoneNumber: input.phoneNumber,
-    });
+    const captured = yield* capturePhone(
+      mapping,
+      { action: "verify", phoneNumber: input.phoneNumber },
+      true,
+    );
 
     const { custody, revision } = captured.target;
 
@@ -283,9 +301,11 @@ export const makePhoneKernel = <
     if (
       row === undefined ||
       row[i.revision] !== custody.custodyRevision ||
-      !(yield* owner.check(
-        sql`exists(select 1 from ${i.table} where ${both(owner.exact(i.table, row), equal(i.table, { [i.subjectId]: mapping.subjectIds.toNative(custody.subjectId) }), i.activeCondition)})`,
-      ))
+      !(owner.batch
+        ? yield* owner.check(
+            sql`exists(select 1 from ${i.table} where ${both(owner.exact(i.table, row), equal(i.table, { [i.subjectId]: mapping.subjectIds.toNative(custody.subjectId) }), i.activeCondition)})`,
+          )
+        : captured.targetIdentifier.conditionHolds === true)
     )
       return Option.none();
 
@@ -490,23 +510,85 @@ export const makePhoneKernel = <
         return { decision: rejected };
       const c = mapping.credential;
 
-      for (const item of [...evidence.revision.credentials].sort((a, b) =>
+      const expected = [...evidence.revision.credentials].sort((a, b) =>
         a.credentialId.localeCompare(b.credentialId),
-      )) {
-        const found = yield* owner.read(
-            c.table,
-            equal(c.table, {
-              [c.id]: item.credentialId,
-              [c.subjectId]: mapping.subjectIds.toNative(revision.subjectId),
-            }),
-            { limit: 1 },
-          ),
-          row = found.rows[0];
+      );
+
+      // D1 keeps its per-key assertion schedule and bounded statement parameters.
+      // Native transactions lock and observe the authority vector in driver-sized groups.
+      const vectors = [];
+
+      if (!owner.batch && expected.length > 0) {
+        const subject = equal(c.table, {
+          [c.subjectId]: mapping.subjectIds.toNative(revision.subjectId),
+        });
+
+        const baseParameters = owner.database
+          .select({ active: sql`case when ${c.activeCondition} then 1 else 0 end` })
+          .from(c.table)
+          .where(subject)
+          .limit(65)
+          .toSQL().params.length;
+
+        const size = Math.max(
+          1,
+          Math.min(64, Math.floor((owner.maxParameters - baseParameters - 1) / 3)),
+        );
+
+        for (const group of Array.chunksOf(expected, size))
+          vectors.push(
+            yield* owner.read(
+              c.table,
+              both(
+                subject,
+                inArray(
+                  col(c.table, c.id),
+                  group.map((item) => item.credentialId),
+                ),
+              ),
+              {
+                limit: group.length,
+                orderBy: sql`case ${sql.join(
+                  group.map(
+                    (item, index) =>
+                      sql`when ${equal(c.table, { [c.id]: item.credentialId })} then ${index}`,
+                  ),
+                  sql` `,
+                )} else ${group.length} end`,
+                condition: c.activeCondition,
+              },
+            ),
+          );
+      }
+
+      for (const item of expected) {
+        const vector = vectors.find((read) =>
+          read.rows.some((candidate) => candidate[c.id] === item.credentialId),
+        );
+
+        const matched = vector?.rows.find((candidate) => candidate[c.id] === item.credentialId);
+
+        // Custom collations may resolve an input ID to a differently encoded
+        // stored ID. Preserve the original database lookup in that case.
+        const found =
+          matched === undefined
+            ? yield* owner.read(
+                c.table,
+                equal(c.table, {
+                  [c.id]: item.credentialId,
+                  [c.subjectId]: mapping.subjectIds.toNative(revision.subjectId),
+                }),
+                { limit: 1, ...(owner.batch ? {} : { condition: c.activeCondition }) },
+              )
+            : vector!;
+
+        const row = matched ?? found.rows[0];
 
         if (row === undefined || row[c.revision] !== item.revision) return { decision: rejected };
         const condition = sql`exists(select 1 from ${c.table} where ${both(owner.exact(c.table, row), c.activeCondition)})`;
 
-        if (!(yield* owner.check(condition))) return { decision: rejected };
+        if (!(owner.batch ? yield* owner.check(condition) : found.conditionHolds === true))
+          return { decision: rejected };
         credentialGuards.push({ id: item.credentialId, condition });
       }
       const proofs = evidence.proofs;
@@ -644,14 +726,16 @@ export const makePhoneKernel = <
             [i.value]: old.phoneNumber,
             [i.subjectId]: nativeId,
           }),
-          { limit: 1 },
+          { limit: 1, ...(owner.batch ? {} : { condition: i.activeCondition }) },
         );
 
         invariant(ir.rows.length === 1 && ir.rows[0]![i.revision] === old.custodyRevision);
         invariant(
-          yield* owner.check(
-            sql`exists(select 1 from ${i.table} where ${both(owner.exact(i.table, ir.rows[0]!), i.activeCondition)})`,
-          ),
+          owner.batch
+            ? yield* owner.check(
+                sql`exists(select 1 from ${i.table} where ${both(owner.exact(i.table, ir.rows[0]!), i.activeCondition)})`,
+              )
+            : ir.conditionHolds === true,
         );
         yield* owner.update(
           i.table,
@@ -825,6 +909,71 @@ export const makePhoneKernel = <
 
     let deleted = 0;
     const rows = [...page.rows];
+
+    if (!owner.batch) {
+      const expired = [];
+
+      // The page is already locked. Keep point observations so final fences are
+      // bounded and detect skipped deletes, reinsertions and changed survivors.
+      for (const row of rows) {
+        yield* owner.observe(state.table, equal(state.table, { [state.scope]: row[state.scope] }), [
+          row,
+        ]);
+        const stored = Schema.decodeSync(storageCodec)(row[state.state]);
+
+        if (stored.moduleId !== mapping.moduleId) continue;
+        const record = stored.record;
+
+        const expiresAt = Schema.is(AdmissionReceipt)(record)
+          ? record.expiresAtMillis
+          : Schema.is(AdmissionCounter)(record)
+            ? (record.window + 1) * mapping.admission.windowMillis
+            : undefined;
+
+        if (expiresAt !== undefined && expiresAt <= now) expired.push({ row, expiresAt });
+      }
+      // Scope, encoded state and version retain the decoded eligibility decision
+      // in each DELETE. A trigger that refreshes a later candidate causes the
+      // final absence fence to abort the entire transaction.
+      const chunkSize = Math.max(1, Math.min(64, Math.floor(owner.maxParameters / 4)));
+
+      for (let offset = 0; offset < expired.length; offset += chunkSize) {
+        const selected = expired.slice(offset, offset + chunkSize);
+
+        yield* owner.write(
+          owner.database.delete(state.table).where(
+            or(
+              ...selected.map(({ row, expiresAt }) =>
+                both(
+                  owner.exact(state.table, {
+                    [state.scope]: row[state.scope],
+                    [state.state]: row[state.state],
+                    [state.version]: row[state.version],
+                  }),
+                  sql`${mapping.engineNowMillis} >= ${expiresAt}`,
+                ),
+              ),
+            ),
+          ),
+        );
+        for (const observation of owner.observations)
+          if (observation.table === state.table)
+            observation.rows = observation.rows.filter(
+              (row) =>
+                !selected.some((entry) =>
+                  matchesNativeRow(state.table, row, {
+                    [state.scope]: entry.row[state.scope],
+                  }),
+                ),
+            );
+      }
+
+      return {
+        deleted: expired.length,
+        nextCursor:
+          rows.length === input.limit ? String(rows[rows.length - 1]![state.scope]) : null,
+      };
+    }
 
     for (const candidate of rows) {
       const current = yield* owner.read(

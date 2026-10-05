@@ -15,6 +15,7 @@ import { eq, sql } from "drizzle-orm";
 import { Effect } from "effect";
 
 import type { SubjectIdCodec } from "./model";
+import { observeCleanupRows, writeCleanupRows } from "./oauth-cleanup";
 import { CurrentOAuthTransaction, type Row, both, col, copiedRow, equal } from "./oauth-owner";
 import { invariant, oauthIdentityKey, storage } from "./oauth-state";
 
@@ -413,11 +414,78 @@ export const cleanupFlows = (
       or (${col(f.table, f.state)} = 'Claimed' and ${col(f.table, f.claimExpiresAt)} <= ${mapping.clock.encodeInstant(now)})
       or (${col(f.table, f.state)} not in ('Pending','Claimed') and ${col(f.table, f.retentionUntil)} < ${mapping.clock.encodeInstant(now)}))`,
         ),
-        { limit: input.limit, observe: false, takeOnly: true },
+        {
+          limit: input.limit,
+          observe: false,
+          takeOnly: true,
+          ...(owner.batch ? {} : { clock: mapping.clock }),
+        },
       );
 
       let terminalized = 0,
         removed = 0;
+
+      if (!owner.batch) {
+        const key = (row: Row) => ({ [f.moduleId]: row[f.moduleId], [f.flowId]: row[f.flowId] });
+
+        yield* observeCleanupRows(f.table, candidates.rows, key);
+
+        const transitioned: Row[] = [],
+          deleted: Row[] = [];
+
+        let transitionHorizon = -1,
+          deletionHorizon = -1;
+
+        for (const row of candidates.rows) {
+          invariant(candidates.nowMillis !== undefined);
+          const at = candidates.nowMillis;
+          const state = row[f.state];
+
+          if (state === "Pending" || state === "Claimed") {
+            const deadline = instant(
+              mapping,
+              row[state === "Pending" ? f.expiresAt : f.claimExpiresAt],
+            );
+
+            if (at < deadline) continue;
+            transitionHorizon = Math.max(transitionHorizon, deadline);
+            transitioned.push(row);
+          } else {
+            const deadline = Math.max(
+              instant(mapping, row[f.retentionUntil]),
+              row[f.claimExpiresAt] === null ? 0 : instant(mapping, row[f.claimExpiresAt]),
+            );
+
+            if (at <= deadline) continue;
+            deletionHorizon = Math.max(deletionHorizon, deadline);
+            deleted.push(row);
+          }
+        }
+        yield* writeCleanupRows(f.table, transitioned, key, {
+          values: {
+            [f.state]: sql`case when ${col(f.table, f.state)} = 'Pending' then 'Rejected' else 'Ambiguous' end`,
+            [f.snapshot]: null,
+            [f.version]: owner.marker,
+          },
+          expected: (row) => ({
+            ...row,
+            [f.state]: row[f.state] === "Pending" ? "Rejected" : "Ambiguous",
+            [f.snapshot]: null,
+            [f.version]: owner.marker,
+          }),
+        });
+        yield* writeCleanupRows(f.table, deleted, key);
+        if (transitionHorizon >= 0)
+          owner.postconditions.push(sql`${mapping.clock.engineNowMillis} >= ${transitionHorizon}`);
+        if (deletionHorizon >= 0)
+          owner.postconditions.push(sql`${mapping.clock.engineNowMillis} > ${deletionHorizon}`);
+
+        return {
+          terminalized: transitioned.length,
+          removed: deleted.length,
+          hasMore: candidates.rows.length === input.limit,
+        };
+      }
 
       for (const candidate of candidates.rows) {
         const key = { [f.moduleId]: candidate[f.moduleId], [f.flowId]: candidate[f.flowId] };

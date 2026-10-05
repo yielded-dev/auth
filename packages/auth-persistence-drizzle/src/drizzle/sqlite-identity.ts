@@ -75,12 +75,6 @@ export const makeSqliteSubjectProvisioningServices = Effect.fnUntraced(function*
 
   const identifierTable = mapping.identifier.table;
 
-  const identifierNamespaceColumn = column(
-    identifierTable,
-    mapping.identifier.namespace,
-  ) as SQLiteColumn;
-
-  const identifierValueColumn = column(identifierTable, mapping.identifier.value) as SQLiteColumn;
   const subjectIdColumn = column(mapping.subject.table, mapping.subject.id) as SQLiteColumn;
 
   const findReceipt = Effect.fn("DrizzleSqliteIdentity.findReceipt")(function* (requestId: string) {
@@ -167,21 +161,8 @@ export const makeSqliteSubjectProvisioningServices = Effect.fnUntraced(function*
             Effect.flatMap((receipt) => {
               if (receipt !== undefined && receipt.fingerprint === fingerprint)
                 return Effect.succeed(receipt.subjectId as NativeId);
-              if (input.identifier === undefined) return IdentityConflict.make();
 
-              return db
-                .select({
-                  subjectId: column(identifierTable, mapping.identifier.subjectId) as SQLiteColumn,
-                })
-                .from(identifierTable as any)
-                .where(
-                  and(
-                    eq(identifierNamespaceColumn, input.identifier.namespace),
-                    eq(identifierValueColumn, input.identifier.value),
-                  ),
-                )
-                .limit(1)
-                .pipe(Effect.flatMap(() => IdentityConflict.make()));
+              return IdentityConflict.make();
             }),
           );
         },

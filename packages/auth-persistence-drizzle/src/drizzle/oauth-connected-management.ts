@@ -1,13 +1,13 @@
 import * as M from "@yielded/auth/OAuth";
 import { snapshotOAuthSync } from "@yielded/auth/OAuth";
-import { asc, eq, gt, lte } from "drizzle-orm";
+import { asc, eq, gt, inArray, lte } from "drizzle-orm";
 import { Effect } from "effect";
 
 import * as A from "./oauth-connected-access";
 import * as C from "./oauth-connected-custody";
 import * as F from "./oauth-connected-flow";
 import * as S from "./oauth-connected-state";
-import { both, col, equal, CurrentOAuthTransaction } from "./oauth-owner";
+import { both, col, equal, CurrentOAuthTransaction, type Row } from "./oauth-owner";
 import { digest, invariant } from "./oauth-state";
 
 export const list = Effect.fn("oauthConnected.list")(function* (
@@ -70,6 +70,60 @@ export const list = Effect.fn("oauthConnected.list")(function* (
     where: more ? both(where, lte(col(g.table, g.grantId), last)) : where,
     rows,
   });
+  const cohorts = new Map<unknown, Row>();
+  const jobs = new Map<unknown, Row>();
+
+  if (rows.length > 0) {
+    const keys = [...new Set(rows.map((row) => row[g.cohortKey]))];
+    const size = Math.max(1, Math.min(owner.batch ? 64 : 100, owner.maxParameters - 1));
+
+    for (let offset = 0; offset < keys.length; offset += size) {
+      const batch = keys.slice(offset, offset + size);
+
+      const read = yield* owner.read(h.table, inArray(col(h.table, h.cohortKey), batch), {
+        limit: batch.length,
+        lock: false,
+        observe: false,
+      });
+
+      for (const row of read.rows) {
+        cohorts.set(row[h.cohortKey], row);
+        // Retain the original per-key fences without repeating the entire IN list
+        // in every final predicate (including on D1).
+        owner.observations.push({
+          table: h.table,
+          where: equal(h.table, { [h.cohortKey]: row[h.cohortKey] }),
+          rows: [row],
+        });
+      }
+    }
+
+    const jobIds = [
+      ...new Set(rows.map((row) => row[g.revocationJobId]).filter((id) => id !== null)),
+    ];
+
+    if (j !== undefined && jobIds.length > 0) {
+      for (let offset = 0; offset < jobIds.length; offset += size) {
+        const batch = jobIds.slice(offset, offset + size);
+
+        const read = yield* owner.read(j.table, inArray(col(j.table, j.jobId), batch), {
+          limit: batch.length,
+          lock: false,
+          observe: false,
+          columns: [j.jobId, j.moduleId, j.grantId, j.cohortKey, j.state],
+        });
+
+        for (const row of read.rows) {
+          jobs.set(row[j.jobId], row);
+          owner.observations.push({
+            table: j.table,
+            where: equal(j.table, { [j.jobId]: row[j.jobId] }),
+            rows: [row],
+          });
+        }
+      }
+    }
+  }
   const items: Array<typeof M.OAuthConnectedSummary.Type> = [];
 
   for (const row of rows) {
@@ -81,12 +135,7 @@ export const list = Effect.fn("oauthConnected.list")(function* (
         mapping.subjectId.equals(found.nativeId, row[g.subjectId]),
     );
 
-    const co = yield* owner.read(h.table, equal(h.table, { [h.cohortKey]: row[g.cohortKey] }), {
-      limit: 1,
-      lock: false,
-    });
-
-    const cr = co.rows[0];
+    const cr = cohorts.get(row[g.cohortKey]);
 
     invariant(
       cr !== undefined &&
@@ -105,17 +154,7 @@ export const list = Effect.fn("oauthConnected.list")(function* (
     if (row[g.revocationJobId] !== null) {
       if (j === undefined) remote = "Unknown";
       else {
-        const job = yield* owner.read(
-          j.table,
-          equal(j.table, { [j.jobId]: row[g.revocationJobId] }),
-          {
-            limit: 1,
-            lock: false,
-            columns: [j.jobId, j.moduleId, j.grantId, j.cohortKey, j.state],
-          },
-        );
-
-        const jr = job.rows[0];
+        const jr = jobs.get(row[g.revocationJobId]);
 
         invariant(
           jr !== undefined &&

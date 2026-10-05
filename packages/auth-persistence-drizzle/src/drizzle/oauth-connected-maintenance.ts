@@ -4,14 +4,15 @@ import {
   type OAuthConnectedRevocations,
   snapshotOAuthSync,
 } from "@yielded/auth/OAuth";
-import { asc, eq, lte, sql } from "drizzle-orm";
+import { asc, eq, inArray, lte, sql } from "drizzle-orm";
 import { Effect } from "effect";
 
+import { observeCleanupRows, writeCleanupRows } from "./oauth-cleanup";
 import { collect, discover } from "./oauth-connected-collection";
 import * as C from "./oauth-connected-custody";
 import * as F from "./oauth-connected-flow";
 import * as S from "./oauth-connected-state";
-import { both, col, equal, CurrentOAuthTransaction } from "./oauth-owner";
+import { both, col, equal, CurrentOAuthTransaction, type Row } from "./oauth-owner";
 import { invariant, storage } from "./oauth-state";
 
 type WorkerInput<K extends keyof OAuthConnectedRevocations["Service"]> = Parameters<
@@ -214,72 +215,181 @@ export const cleanup = Effect.fn("oauthConnected.cleanup")(function* (
     j = S.jobTable(mapping),
     h = mapping.cohort;
 
+  // Later collections cannot visit more than the remaining global budget.
+  // Admissions/commands may reduce it further; scopes still precede all tuples.
+  let remaining = input.limit - Math.min(candidates.rows.length, input.limit);
+  const jobs = collectionCandidates.jobs.slice(0, remaining);
+
+  remaining -= jobs.length;
+  const grants = collectionCandidates.grants.slice(0, remaining);
+
+  remaining -= grants.length;
+  const cohorts = collectionCandidates.cohorts.slice(0, remaining);
+
+  remaining -= cohorts.length;
+  const tuples = collectionCandidates.tuples.slice(0, remaining);
+
   yield* S.prelockClients(
     mapping,
     [
       ...candidates.rows.slice(0, input.limit).map((row) => row[f.clientKey]),
-      ...collectionCandidates.jobs.slice(0, input.limit).map((row) => row[j!.clientKey]),
-      ...collectionCandidates.grants.slice(0, input.limit).map((row) => row[g.clientKey]),
-      ...collectionCandidates.cohorts.slice(0, input.limit).map((row) => row[h.clientKey]),
+      ...jobs.map((row) => row[j!.clientKey]),
+      ...grants.map((row) => row[g.clientKey]),
+      ...cohorts.map((row) => row[h.clientKey]),
     ],
-    collectionCandidates.tuples.slice(0, input.limit).map((row) => ({
+    tuples.map((row) => ({
       provider: row[mapping.ownership.tuple.provider],
       issuer: row[mapping.ownership.tuple.issuer],
     })),
   );
   hasMore = candidates.rows.length > input.limit;
-  for (const candidate of candidates.rows.slice(0, input.limit)) {
-    visited++;
-    // A terminal ledger retains client key but may erase the decryptable browser snapshot.
-    const heldClient = yield* S.lockClientById(mapping, candidate[f.clientKey]);
+  if (!owner.batch) {
+    const selected = candidates.rows.slice(0, input.limit);
+    const key = (row: Row) => ({ [f.moduleId]: input.moduleId, [f.flowId]: row[f.flowId] });
 
-    const read = yield* owner.read(
+    const transitioned: Row[] = [],
+      deleted: Row[] = [];
+
+    let horizon = -1;
+
+    visited += selected.length;
+    const size = Math.max(1, Math.min(100, owner.maxParameters - 4));
+
+    for (let offset = 0; offset < selected.length; offset += size) {
+      const group = selected.slice(offset, offset + size);
+
+      // Client and scope locks are all held before acquiring any flow row.
+      const current = yield* owner.read(
         f.table,
-        equal(f.table, { [f.moduleId]: input.moduleId, [f.flowId]: candidate[f.flowId] }),
-        { limit: 1 },
-      ),
-      row = read.rows[0];
-
-    if (row === undefined) continue;
-    invariant(row[f.clientKey] === heldClient.id);
-
-    const now = yield* owner.now(mapping.clock),
-      state = row[f.state];
-
-    const expires = mapping.clock.decodeInstant(
-      state === "Claimed" ? row[f.claimExpiresAt] : row[f.expiresAt],
-    );
-
-    if ((state === "Prepared" || state === "Pending" || state === "Claimed") && now >= expires) {
-      yield* owner.update(
-        f.table,
-        { [f.moduleId]: input.moduleId, [f.flowId]: row[f.flowId], [f.version]: row[f.version] },
+        both(
+          eq(col(f.table, f.moduleId), input.moduleId),
+          inArray(
+            col(f.table, f.flowId),
+            group.map((row) => row[f.flowId]),
+          ),
+        ),
         {
-          [f.state]: state === "Claimed" ? "Ambiguous" : "Expired",
-          [f.snapshot]: null,
-          [f.version]: owner.marker,
+          limit: group.length,
+          observe: false,
+          clock: mapping.clock,
+          orderBy: asc(col(f.table, f.flowId)),
         },
       );
-      owner.postconditions.push(sql`${mapping.clock.engineNowMillis} >= ${expires}`);
-      terminalized++;
-    } else if (
-      state !== "Prepared" &&
-      state !== "Pending" &&
-      state !== "Claimed" &&
-      row[f.work] !== "Unresolved" &&
-      now >= mapping.clock.decodeInstant(row[f.retentionUntil])
-    ) {
-      yield* owner.remove(f.table, {
-        [f.moduleId]: input.moduleId,
-        [f.flowId]: row[f.flowId],
-        [f.version]: row[f.version],
-      });
-      owner.postconditions.push(
-        sql`${mapping.clock.engineNowMillis} >= ${mapping.clock.decodeInstant(row[f.retentionUntil])}`,
-      );
-      removed++;
+
+      for (const candidate of group) {
+        const exact = current.rows.find((row) => candidate[f.flowId] === row[f.flowId]);
+        // Preserve point-lookup collation and absence fences after discovery.
+        const point = equal(f.table, key(candidate));
+
+        const selected =
+          exact === undefined
+            ? yield* owner.read(f.table, point, { limit: 1, clock: mapping.clock })
+            : current;
+
+        const row = exact ?? selected.rows[0];
+
+        if (exact !== undefined) yield* owner.observe(f.table, point, [exact]);
+        if (row === undefined) continue;
+        invariant(candidate[f.clientKey] === row[f.clientKey] && selected.nowMillis !== undefined);
+        const now = selected.nowMillis;
+        const state = row[f.state];
+
+        const expires = mapping.clock.decodeInstant(
+          state === "Claimed" ? row[f.claimExpiresAt] : row[f.expiresAt],
+        );
+
+        if (
+          (state === "Prepared" || state === "Pending" || state === "Claimed") &&
+          now >= expires
+        ) {
+          transitioned.push(row);
+          horizon = Math.max(horizon, expires);
+        } else if (
+          state !== "Prepared" &&
+          state !== "Pending" &&
+          state !== "Claimed" &&
+          row[f.work] !== "Unresolved"
+        ) {
+          const until = mapping.clock.decodeInstant(row[f.retentionUntil]);
+
+          if (now >= until) {
+            deleted.push(row);
+            horizon = Math.max(horizon, until);
+          }
+        }
+      }
     }
-  }
+    yield* writeCleanupRows(f.table, transitioned, key, {
+      values: {
+        [f.state]: sql`case when ${col(f.table, f.state)} = 'Claimed' then 'Ambiguous' else 'Expired' end`,
+        [f.snapshot]: null,
+        [f.version]: owner.marker,
+      },
+      expected: (row) => ({
+        ...row,
+        [f.state]: row[f.state] === "Claimed" ? "Ambiguous" : "Expired",
+        [f.snapshot]: null,
+        [f.version]: owner.marker,
+      }),
+    });
+    yield* writeCleanupRows(f.table, deleted, key);
+    if (horizon >= 0)
+      owner.postconditions.push(sql`${mapping.clock.engineNowMillis} >= ${horizon}`);
+    terminalized += transitioned.length;
+    removed += deleted.length;
+  } else
+    for (const candidate of candidates.rows.slice(0, input.limit)) {
+      visited++;
+      // A terminal ledger retains client key but may erase the decryptable browser snapshot.
+      const heldClient = yield* S.lockClientById(mapping, candidate[f.clientKey]);
+
+      const read = yield* owner.read(
+          f.table,
+          equal(f.table, { [f.moduleId]: input.moduleId, [f.flowId]: candidate[f.flowId] }),
+          { limit: 1 },
+        ),
+        row = read.rows[0];
+
+      if (row === undefined) continue;
+      invariant(row[f.clientKey] === heldClient.id);
+
+      const now = yield* owner.now(mapping.clock),
+        state = row[f.state];
+
+      const expires = mapping.clock.decodeInstant(
+        state === "Claimed" ? row[f.claimExpiresAt] : row[f.expiresAt],
+      );
+
+      if ((state === "Prepared" || state === "Pending" || state === "Claimed") && now >= expires) {
+        yield* owner.update(
+          f.table,
+          { [f.moduleId]: input.moduleId, [f.flowId]: row[f.flowId], [f.version]: row[f.version] },
+          {
+            [f.state]: state === "Claimed" ? "Ambiguous" : "Expired",
+            [f.snapshot]: null,
+            [f.version]: owner.marker,
+          },
+        );
+        owner.postconditions.push(sql`${mapping.clock.engineNowMillis} >= ${expires}`);
+        terminalized++;
+      } else if (
+        state !== "Prepared" &&
+        state !== "Pending" &&
+        state !== "Claimed" &&
+        row[f.work] !== "Unresolved" &&
+        now >= mapping.clock.decodeInstant(row[f.retentionUntil])
+      ) {
+        yield* owner.remove(f.table, {
+          [f.moduleId]: input.moduleId,
+          [f.flowId]: row[f.flowId],
+          [f.version]: row[f.version],
+        });
+        owner.postconditions.push(
+          sql`${mapping.clock.engineNowMillis} >= ${mapping.clock.decodeInstant(row[f.retentionUntil])}`,
+        );
+        removed++;
+      }
+    }
   // Expired admission and command metadata have no external-operation obligation.
   for (const table of [a, d]) {
     if (visited >= input.limit) {
@@ -300,12 +410,37 @@ export const cleanup = Effect.fn("oauthConnected.cleanup")(function* (
         limit: input.limit - visited + 1,
         takeOnly: true,
         observe: false,
-        lock: false,
+        lock: !owner.batch,
+        ...(owner.batch ? {} : { clock: mapping.clock }),
         orderBy: asc(col(table.table, key)),
       },
     );
 
     if (rows.rows.length > input.limit - visited) hasMore = true;
+    if (!owner.batch) {
+      const selected = rows.rows.slice(0, input.limit - visited);
+      const identity = (row: Row) => ({ [table.moduleId]: input.moduleId, [key]: row[key] });
+
+      yield* observeCleanupRows(table.table, selected, identity);
+      const expired: Row[] = [];
+      let horizon = -1;
+
+      visited += selected.length;
+      for (const row of selected) {
+        const until = mapping.clock.decodeInstant(row[deadline]);
+
+        invariant(rows.nowMillis !== undefined);
+        if (rows.nowMillis >= until) {
+          expired.push(row);
+          horizon = Math.max(horizon, until);
+        }
+      }
+      yield* writeCleanupRows(table.table, expired, identity);
+      if (horizon >= 0)
+        owner.postconditions.push(sql`${mapping.clock.engineNowMillis} >= ${horizon}`);
+      removed += expired.length;
+      continue;
+    }
     for (const candidate of rows.rows.slice(0, input.limit - visited)) {
       visited++;
 

@@ -27,7 +27,8 @@ import {
 } from "@yielded/auth/OAuth";
 import type { SecurityRevision } from "@yielded/auth/Sessions";
 /* oxlint-disable no-explicit-any -- concrete driver entry points restore table/database generics. */
-import { eq, sql } from "drizzle-orm";
+import { eq, inArray, is, sql } from "drizzle-orm";
+import { MySqlTable } from "drizzle-orm/mysql-core";
 import { type Crypto, type Context, Effect, Layer } from "effect";
 import type { Statement } from "effect/sql/Statement";
 
@@ -41,6 +42,7 @@ import {
   settleLink,
   unlink,
 } from "./oauth-accounts";
+import { observeCleanupRows, writeCleanupRows } from "./oauth-cleanup";
 import {
   claimFlow,
   cleanupFlows,
@@ -60,7 +62,14 @@ import {
   signInInputs,
 } from "./oauth-input";
 import type { OAuthRegistrationAuthority } from "./oauth-model";
-import { both, col, equal, CurrentOAuthTransaction, type OAuthNativeDatabase } from "./oauth-owner";
+import {
+  both,
+  col,
+  equal,
+  CurrentOAuthTransaction,
+  type OAuthNativeDatabase,
+  type Row,
+} from "./oauth-owner";
 import {
   inspectIntent,
   register,
@@ -244,6 +253,117 @@ export const makeOAuthRegistrationIntents = (
     execute.poison,
   );
 
+/** The intent page is already locked. Acquire command locks in first-reference
+ * order, then retain full point observations through all writes and triggers. */
+const cleanupRegistrationNative = Effect.fnUntraced(function* (
+  mapping: any,
+  moduleId: string,
+  rows: ReadonlyArray<Row>,
+  now: number | undefined,
+) {
+  const owner = yield* CurrentOAuthTransaction;
+
+  const i = mapping.intent,
+    r = mapping.command;
+
+  const intentKey = (row: Row) => ({
+    [i.moduleId]: moduleId,
+    [i.reference]: row[i.reference],
+  });
+
+  const commandKey = (row: Row) => ({
+    [r.moduleId]: moduleId,
+    [r.commandId]: row[r.commandId],
+  });
+
+  const eligible: Row[] = [];
+
+  for (const row of rows) {
+    invariant(now !== undefined);
+    const horizon = mapping.clock.decodeInstant(row[i.retentionUntil]);
+
+    if (row[i.state] !== "ProvisioningPending" && Number.isSafeInteger(horizon) && horizon < now)
+      eligible.push(row);
+  }
+
+  const ids = [
+    ...new Set<string>(
+      eligible.flatMap((row) => (row[i.commandId] === null ? [] : [row[i.commandId]])),
+    ),
+  ];
+
+  const commands = new Map<
+    string,
+    { readonly row: Row | undefined; readonly now: number | undefined }
+  >();
+
+  // MySQL's physical multi-row lock order is not established by ORDER BY.
+  const size = is(r.table, MySqlTable)
+    ? 1
+    : Math.max(1, Math.min(100, Math.floor((owner.maxParameters - 3) / 2)));
+
+  for (let offset = 0; offset < ids.length; offset += size) {
+    const group = ids.slice(offset, offset + size);
+
+    const selected = yield* owner.read(
+      r.table,
+      both(eq(col(r.table, r.moduleId), moduleId), inArray(col(r.table, r.commandId), group)),
+      {
+        limit: group.length,
+        observe: false,
+        clock: mapping.clock,
+        orderBy: sql`case ${col(r.table, r.commandId)} ${sql.join(
+          group.map((id, index) => sql`when ${id} then ${sql.raw(String(index))}`),
+          sql` `,
+        )} end`,
+      },
+    );
+
+    // Keep the existing point-operation behavior for collation aliases. No
+    // writes have occurred, so the caller can use its original ordered loop.
+    if (selected.rows.some((row) => !group.includes(row[r.commandId]))) return undefined;
+    for (const id of group) {
+      const row = selected.rows.find((row) => row[r.commandId] === id);
+
+      yield* owner.observe(
+        r.table,
+        equal(r.table, { [r.moduleId]: moduleId, [r.commandId]: id }),
+        row === undefined ? [] : [row],
+      );
+      commands.set(id, { row, now: selected.nowMillis });
+    }
+  }
+  yield* observeCleanupRows(i.table, rows, intentKey);
+
+  const deletedIntents: Row[] = [],
+    deletedCommands: Row[] = [];
+
+  const consumed = new Set<string>();
+  let maximum = -1;
+
+  for (const row of eligible) {
+    let horizon = mapping.clock.decodeInstant(row[i.retentionUntil]);
+
+    if (row[i.commandId] !== null) {
+      const command = commands.get(row[i.commandId]);
+
+      if (command?.row === undefined || consumed.has(row[i.commandId])) continue;
+      invariant(command.now !== undefined);
+      horizon = Math.max(horizon, mapping.clock.decodeInstant(command.row[r.retentionUntil]));
+      if (!Number.isSafeInteger(horizon) || horizon >= command.now) continue;
+      consumed.add(row[i.commandId]);
+      deletedCommands.push(command.row);
+    }
+    maximum = Math.max(maximum, horizon);
+    deletedIntents.push(row);
+  }
+  yield* writeCleanupRows(r.table, deletedCommands, commandKey);
+  yield* writeCleanupRows(i.table, deletedIntents, intentKey);
+  if (maximum >= 0) owner.postconditions.push(sql`${mapping.clock.engineNowMillis} > ${maximum}`);
+
+  return deletedIntents.length;
+});
+
 export const makeOAuthRegistration = <Registration>(
   mapping: any,
   execute: OAuthExecution,
@@ -332,9 +452,28 @@ export const makeOAuthRegistration = <Registration>(
                 eq(col(i.table, i.moduleId), input.moduleId),
                 sql`${col(i.table, i.state)} <> 'ProvisioningPending' and ${col(i.table, i.retentionUntil)} < ${mapping.clock.encodeInstant(now)}`,
               ),
-              { limit: input.limit, observe: false, takeOnly: true },
+              {
+                limit: input.limit,
+                observe: false,
+                takeOnly: true,
+                ...(owner.batch ? {} : { clock: mapping.clock }),
+              },
             );
 
+            if (!owner.batch) {
+              const removed = yield* cleanupRegistrationNative(
+                mapping,
+                input.moduleId,
+                candidates.rows,
+                candidates.nowMillis,
+              );
+
+              if (removed !== undefined)
+                return yield* prepareValue(
+                  { removed, hasMore: candidates.rows.length === input.limit },
+                  prepare,
+                );
+            }
             let removed = 0;
 
             for (const candidate of candidates.rows) {
@@ -664,23 +803,54 @@ export const makeOAuthAccounts = (
                   eq(col(r.table, r.moduleId), input.moduleId),
                   sql`${col(r.table, r.retentionUntil)} < ${mapping.clock.encodeInstant(now)}`,
                 ),
-                { limit: remaining, observe: false, takeOnly: true },
+                {
+                  limit: remaining,
+                  observe: false,
+                  takeOnly: true,
+                  ...(owner.batch ? {} : { clock: mapping.clock }),
+                },
               );
 
-              for (const row of rows.rows) {
-                const key = { [r.moduleId]: input.moduleId, [r.commandId]: row[r.commandId] };
-                const selected = yield* owner.read(r.table, equal(r.table, key), { limit: 1 });
-                const current = selected.rows[0];
+              if (!owner.batch) {
+                const key = (row: Row) => ({
+                  [r.moduleId]: input.moduleId,
+                  [r.commandId]: row[r.commandId],
+                });
 
-                if (current === undefined) continue;
-                const horizon = mapping.clock.decodeInstant(current[r.retentionUntil]);
+                yield* observeCleanupRows(r.table, rows.rows, key);
+                const expired: Row[] = [];
+                let maximum = -1;
 
-                if (!Number.isSafeInteger(horizon) || horizon >= (yield* owner.now(mapping.clock)))
-                  continue;
-                yield* owner.remove(r.table, key);
-                owner.postconditions.push(sql`${mapping.clock.engineNowMillis} > ${horizon}`);
-                removed++;
-              }
+                for (const row of rows.rows) {
+                  invariant(rows.nowMillis !== undefined);
+                  const horizon = mapping.clock.decodeInstant(row[r.retentionUntil]);
+
+                  if (!Number.isSafeInteger(horizon) || horizon >= rows.nowMillis) continue;
+                  expired.push(row);
+                  maximum = Math.max(maximum, horizon);
+                }
+                yield* writeCleanupRows(r.table, expired, key);
+                if (maximum >= 0)
+                  owner.postconditions.push(sql`${mapping.clock.engineNowMillis} > ${maximum}`);
+                removed = expired.length;
+              } else
+                for (const row of rows.rows) {
+                  const key = { [r.moduleId]: input.moduleId, [r.commandId]: row[r.commandId] };
+                  const selected = yield* owner.read(r.table, equal(r.table, key), { limit: 1 });
+                  const current = selected.rows[0];
+
+                  if (current === undefined) continue;
+                  const horizon = mapping.clock.decodeInstant(current[r.retentionUntil]);
+
+                  if (
+                    !Number.isSafeInteger(horizon) ||
+                    horizon >= (yield* owner.now(mapping.clock))
+                  )
+                    continue;
+                  yield* owner.remove(r.table, key);
+                  owner.postconditions.push(sql`${mapping.clock.engineNowMillis} > ${horizon}`);
+                  removed++;
+                }
             }
 
             return yield* prepareValue(

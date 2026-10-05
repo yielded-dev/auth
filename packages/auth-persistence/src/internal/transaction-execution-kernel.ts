@@ -24,6 +24,8 @@ export interface TransactionTargetConfiguration<Failure> {
   readonly mode: "interactive" | "synchronous" | "batch";
   readonly dialect: "pg" | "mysql" | "sqlite";
   readonly locking: boolean;
+  /** Driver bind budget, when lower than the dialect's native batch size. */
+  readonly maxParameters?: number;
   /** The captured database's transaction marker; batch drivers may omit it. */
   readonly standaloneGuard: (
     transactionService: SqlClient.SqlClient["transactionService"] | undefined,
@@ -177,6 +179,9 @@ export const makeTransactionExecutionKernel = (
                             locking: configuration.locking,
                             mysql: configuration.dialect === "mysql",
                             dialect: configuration.dialect,
+                            ...(configuration.maxParameters === undefined
+                              ? {}
+                              : { maxParameters: configuration.maxParameters }),
                           });
 
                           const value = yield* Effect.provideContext(
@@ -269,6 +274,9 @@ export const makeTransactionExecutionKernel = (
                 dialect: configuration.dialect,
                 mysql: configuration.dialect === "mysql",
                 locking: configuration.locking,
+                ...(configuration.maxParameters === undefined
+                  ? {}
+                  : { maxParameters: configuration.maxParameters }),
               });
 
               const bound: TransactionBound<Failure> = {

@@ -40,6 +40,7 @@ export const makePasskeyManagementKernel = (
     | "managementPolicy"
     | "metadataAllowed"
     | "ownedCredential"
+    | "ownedCredentials"
     | "removeDigest"
     | "summary"
   >,
@@ -61,6 +62,7 @@ export const makePasskeyManagementKernel = (
     managementPolicy,
     metadataAllowed,
     ownedCredential,
+    ownedCredentials,
     removeDigest,
     summary,
   } = writeState;
@@ -187,12 +189,9 @@ export const makePasskeyManagementKernel = (
     );
 
     const page = eligible.slice(0, input.limit);
-    const credentials = [];
 
-    for (const row of page) {
-      invariant((yield* ownedCredential(mapping, subject, row)) !== undefined);
-      credentials.push(summary(mapping, row));
-    }
+    invariant((yield* ownedCredentials(mapping, subject, page)) !== undefined);
+    const credentials = page.map((row) => summary(mapping, row));
 
     return {
       credentials,

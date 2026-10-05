@@ -11,10 +11,10 @@ import {
   snapshotPasskeySync,
 } from "@yielded/auth/Passkey";
 import type { SubjectId } from "@yielded/auth/Schema";
-import { DateTime, Effect } from "effect";
+import { Array, DateTime, Effect } from "effect";
 
 import type { PasskeyFlowState } from "../models/passkey-model";
-import type { QueryOperations } from "../query-operations";
+import type { QueryOperations, SqlExpression as SQL } from "../query-operations";
 import type { makeTransactionKernel } from "../transaction-kernel";
 import type { makePasskeyAdmissionKernel } from "./admission";
 import type { CredentialRead, SubjectRead, makePasskeyCredentialsKernel } from "./credentials";
@@ -27,6 +27,8 @@ export interface FlowRead {
   readonly ceremony: PasskeyCeremony;
   readonly policy: PasskeyMethodPolicy;
   readonly state: PasskeyFlowState;
+  readonly nowMillis: number;
+  readonly conditionHolds?: boolean;
   readonly claim?: PasskeyClaim;
   readonly credential?: PasskeyCredential;
 }
@@ -49,7 +51,7 @@ export const makePasskeyFlowKernel = (
   >,
   registrationCustody: Pick<
     ReturnType<typeof makePasskeyRegistrationCustodyKernel>,
-    "releaseRegistrationCustody" | "scrubRegistrationIntent"
+    "releaseRegistrationCustody" | "scrubRegistrationIntent" | "cleanupRegistrationCustody"
   >,
   state: Pick<
     ReturnType<typeof makePasskeyStateKernel>,
@@ -70,7 +72,7 @@ export const makePasskeyFlowKernel = (
   >,
   transactions: Pick<ReturnType<typeof makeTransactionKernel>, "both">,
 ) => {
-  const { sql } = operations;
+  const { or, sql } = operations;
 
   const {
     admissionCondition,
@@ -83,7 +85,9 @@ export const makePasskeyFlowKernel = (
   } = admission;
 
   const { readCredential, readModule, readPolicyGuards, readRevision, readSubject } = credentials;
-  const { releaseRegistrationCustody, scrubRegistrationIntent } = registrationCustody;
+
+  const { releaseRegistrationCustody, scrubRegistrationIntent, cleanupRegistrationCustody } =
+    registrationCustody;
 
   const {
     ceremonyStorage,
@@ -181,20 +185,20 @@ export const makePasskeyFlowKernel = (
     ceremony.requestBindingVerifier === access.requestBindingVerifier &&
     ceremony.requestBindingExpiresAtMillis === access.requestBindingExpiresAtMillis;
 
-  const readFlow = Effect.fn("passkey.readFlow")(function* (mapping: any, flowId: string) {
-    const owner = yield* CurrentPasskeyTransaction;
+  const decodeFlow = Effect.fn("passkey.decodeFlow")(function* (
+    mapping: any,
+    flowId: string,
+    row: Record<string, any>,
+    nowMillis: number,
+    conditionHolds?: boolean,
+  ) {
     const table = mapping.flow;
 
-    const row = (yield* owner.read(
-      table.table,
-      equal(table.table, {
-        [table.moduleId]: mapping.moduleId,
-        [table.flowId]: flowId,
-      }),
-      { limit: 1, columns: mappedColumns(table) },
-    )).rows[0];
+    const timing = {
+      nowMillis,
+      ...(conditionHolds === undefined ? {} : { conditionHolds }),
+    };
 
-    if (row === undefined) return undefined;
     const ceremony = ceremonyStorage.decode(row[table.snapshot]);
     const policy = policyStorage.decode(row[table.policySnapshot]);
 
@@ -244,7 +248,7 @@ export const makePasskeyFlowKernel = (
           credential === undefined,
       );
 
-      return { row, ceremony, policy, state };
+      return { row, ceremony, policy, state, ...timing };
     }
 
     const claim =
@@ -269,9 +273,40 @@ export const makePasskeyFlowKernel = (
       ceremony,
       policy,
       state,
+      ...timing,
       ...(claim === undefined ? {} : { claim }),
       ...(credential === undefined ? {} : { credential }),
     };
+  });
+
+  const readFlow = Effect.fn("passkey.readFlow")(function* (
+    mapping: any,
+    flowId: string,
+    condition?: SQL,
+  ) {
+    const owner = yield* CurrentPasskeyTransaction;
+    const table = mapping.flow;
+
+    const found = yield* owner.read(
+      table.table,
+      equal(table.table, {
+        [table.moduleId]: mapping.moduleId,
+        [table.flowId]: flowId,
+      }),
+      {
+        limit: 1,
+        columns: mappedColumns(table),
+        clock: mapping.clock,
+        ...(condition === undefined ? {} : { condition }),
+      },
+    );
+
+    const row = found.rows[0];
+
+    if (row === undefined) return undefined;
+    invariant(found.nowMillis !== undefined);
+
+    return yield* decodeFlow(mapping, flowId, row, found.nowMillis, found.conditionHolds);
   });
 
   const terminalFlow = Effect.fn("passkey.terminalFlow")(function* (
@@ -333,29 +368,23 @@ export const makePasskeyFlowKernel = (
     return current !== undefined && sameRevision(current, target);
   });
 
-  const issueAssertion = Effect.fn("passkey.issueAssertion")(function* (
+  /** The caller owns module, admission, subject and policy locks. Enrollment
+   * and registration already acquire them while authorizing their write. */
+  const issueFlow = Effect.fn("passkey.issueFlow")(function* (
     mapping: any,
     ceremony: PasskeyCeremony,
     suppliedPolicy: PasskeyMethodPolicy,
+    current: PasskeyMethodPolicy,
+    subjectId?: SubjectId,
   ) {
     const owner = yield* CurrentPasskeyTransaction;
-    const current = yield* readModule(mapping);
 
     if (
-      current === undefined ||
       ceremony.moduleId !== mapping.moduleId ||
       !compatiblePolicy(ceremony, suppliedPolicy, current) ||
       policyStorage.encode(suppliedPolicy) !== policyStorage.encode(current)
     )
       return { _tag: "Rejected" } as const;
-    yield* lockAdmission(mapping);
-    const subjectId = knownSubject(ceremony);
-
-    const subject =
-      subjectId === undefined ? undefined : yield* readSubject(mapping.read, subjectId);
-
-    yield* readPolicyGuards(mapping);
-    if (!(yield* currentTarget(mapping, subject, ceremony))) return { _tag: "Rejected" } as const;
     if (
       ceremony.context._tag === "SignIn" &&
       (!ceremony.profile.primarySignIn ||
@@ -365,25 +394,27 @@ export const makePasskeyFlowKernel = (
       return { _tag: "Rejected" } as const;
     const table = mapping.flow;
 
-    const sameCommand = yield* owner.read(
+    const sameIdentity = yield* owner.read(
       table.table,
-      equal(table.table, {
-        [table.moduleId]: mapping.moduleId,
-        [table.commandId]: ceremony.commandId,
-      }),
-      { limit: 1 },
+      both(
+        equal(table.table, { [table.moduleId]: mapping.moduleId }),
+        or(
+          equal(table.table, { [table.commandId]: ceremony.commandId }),
+          equal(table.table, { [table.flowId]: ceremony.flowId }),
+        ),
+      ),
+      { limit: 2, columns: [table.moduleId, table.commandId, table.flowId] },
     );
 
-    const sameFlow = yield* readFlow(mapping, ceremony.flowId);
-
-    if (sameCommand.rows.length !== 0 || sameFlow !== undefined)
-      return { _tag: "Rejected" } as const;
+    if (sameIdentity.rows.length !== 0) return { _tag: "Rejected" } as const;
     const kinds = (yield* chargeScopes(ceremony, subjectId)).map((item) => item.kind);
 
     if (
-      !(yield* owner.check(liveCondition(mapping, ceremony))) ||
       !(yield* owner.check(
-        yield* admissionCondition(mapping, [current], ceremony, subjectId, kinds, true, false),
+        both(
+          liveCondition(mapping, ceremony),
+          yield* admissionCondition(mapping, [current], ceremony, subjectId, kinds, true, false),
+        ),
       ))
     )
       return { _tag: "Rejected" } as const;
@@ -420,16 +451,33 @@ export const makePasskeyFlowKernel = (
       [table.flowId]: ceremony.flowId,
     });
 
-    sameCommand.rows = inserted.rows;
-    for (const observation of owner.observations)
-      if (observation.table === table.table && observation.rows.length === 0)
-        observation.rows = inserted.rows;
+    sameIdentity.rows = inserted.rows;
     yield* insertCharges(mapping, ceremony, suppliedPolicy, kinds, subjectId);
     yield* guardChargeSet(mapping, ceremony, subjectId);
     yield* guardAdmission(mapping, [current], ceremony, subjectId);
     owner.postconditions.push(liveCondition(mapping, ceremony));
 
     return { _tag: "Issued", ceremony } as const;
+  });
+
+  const issueAssertion = Effect.fn("passkey.issueAssertion")(function* (
+    mapping: any,
+    ceremony: PasskeyCeremony,
+    suppliedPolicy: PasskeyMethodPolicy,
+  ) {
+    const current = yield* readModule(mapping);
+
+    if (current === undefined) return { _tag: "Rejected" } as const;
+    yield* lockAdmission(mapping);
+    const subjectId = knownSubject(ceremony);
+
+    const subject =
+      subjectId === undefined ? undefined : yield* readSubject(mapping.read, subjectId);
+
+    yield* readPolicyGuards(mapping);
+    if (!(yield* currentTarget(mapping, subject, ceremony))) return { _tag: "Rejected" } as const;
+
+    return yield* issueFlow(mapping, ceremony, suppliedPolicy, current, subjectId);
   });
 
   const contextAssertion = Effect.fn("passkey.contextAssertion")(function* (
@@ -497,7 +545,11 @@ export const makePasskeyFlowKernel = (
             requested,
           );
 
-    const read = yield* readFlow(mapping, input.access.flowId);
+    const read = yield* readFlow(
+      mapping,
+      input.access.flowId,
+      liveCondition(mapping, input.ceremony),
+    );
 
     if (
       read === undefined ||
@@ -548,7 +600,7 @@ export const makePasskeyFlowKernel = (
       )
         return yield* reject;
     }
-    if (!(yield* owner.check(liveCondition(mapping, read.ceremony)))) return yield* reject;
+    if (!read.conditionHolds) return yield* reject;
     yield* readCharges(mapping, read.ceremony, read.policy, expectedSubject);
     const resolved = expectedSubject === undefined && subjectId !== undefined;
 
@@ -566,7 +618,7 @@ export const makePasskeyFlowKernel = (
       ))
     )
       return yield* reject;
-    const claimedAtMillis = yield* owner.now(mapping.clock);
+    const claimedAtMillis = read.nowMillis;
 
     const claim = snapshotPasskeySync(PasskeyClaim, {
       ceremony: read.ceremony,
@@ -917,62 +969,155 @@ export const makePasskeyFlowKernel = (
     const flow = mapping.flow,
       charge = mapping.charge;
 
-    const rows = (yield* owner.read(flow.table, flowDue(mapping, purposes), {
+    const flowChunkSize = Math.max(1, Math.min(1000, owner.maxParameters - 32));
+    const chargeChunkSize = Math.max(1, Math.min(1000, Math.floor((owner.maxParameters - 1) / 2)));
+
+    type CleanupRow = Record<string, any>;
+
+    const flowIdentity = (rows: ReadonlyArray<CleanupRow>) =>
+      rows.length === 0
+        ? sql`1 = 0`
+        : both(
+            equal(flow.table, { [flow.moduleId]: mapping.moduleId }),
+            operations.inArray(
+              col(flow.table, flow.flowId),
+              rows.map((row) => row[flow.flowId]),
+            ),
+          );
+
+    const chargeIdentity = (rows: ReadonlyArray<CleanupRow>) =>
+      rows.length === 0
+        ? sql`1 = 0`
+        : both(
+            equal(charge.table, { [charge.moduleId]: mapping.moduleId }),
+            sql`(${col(charge.table, charge.flowId)}, ${col(charge.table, charge.kind)}) in (${sql.join(
+              rows.map(
+                (row) =>
+                  sql`(${sql.param(row[charge.flowId], col(charge.table, charge.flowId))}, ${sql.param(row[charge.kind], col(charge.table, charge.kind))})`,
+              ),
+              sql`, `,
+            )})`,
+          );
+
+    // Reusing a small identity set keeps each D1 exact-row guard bounded, even
+    // when the caller selects the maximum 1,000 rows. This does not reread SQL.
+    const observeRows = Effect.fnUntraced(function* (
+      table: any,
+      rows: ReadonlyArray<CleanupRow>,
+      identity: (rows: ReadonlyArray<CleanupRow>) => SQL,
+    ) {
+      const observations = [];
+
+      for (let offset = 0; offset < rows.length; offset += 16) {
+        const group = rows.slice(offset, offset + 16);
+
+        observations.push(yield* owner.observe(table, identity(group), group));
+      }
+
+      return observations;
+    });
+
+    const selected = yield* owner.read(flow.table, flowDue(mapping, purposes), {
       limit: input.limit,
       takeOnly: true,
       observe: false,
+      columns: mappedColumns(flow),
+      clock: mapping.clock,
       orderBy: sql`${col(flow.table, flow.flowId)}`,
-    })).rows;
+    });
 
-    const touched: string[] = [];
     const transitioned: FlowRead[] = [];
+    const deleted: FlowRead[] = [];
+    const flowObservations = yield* observeRows(flow.table, selected.rows, flowIdentity);
+    let horizon = 0;
 
-    let terminalized = 0,
-      removed = 0;
-
-    for (const candidate of rows) {
-      const read = yield* readFlow(mapping, candidate[flow.flowId]);
-
-      if (read === undefined) continue;
-      invariant(
-        yield* owner.check(
-          sql`exists (select 1 from ${flow.table} where ${both(equal(flow.table, { [flow.moduleId]: mapping.moduleId, [flow.flowId]: read.ceremony.flowId }), flowDue(mapping, purposes))})`,
-        ),
-      );
-      touched.push(read.ceremony.flowId);
-      if (read.state === "Pending" || read.state === "Claimed") {
-        const deadline =
-          read.state === "Pending"
-            ? read.ceremony.expiresAtMillis
-            : read.claim!.claimExpiresAtMillis;
-
-        if (read.state === "Pending") yield* releaseRegistrationCustody(mapping, read.ceremony);
-        yield* terminalFlow(mapping, read, read.state === "Pending" ? "Rejected" : "Ambiguous");
-        owner.postconditions.push(sql`${mapping.clock.engineNowMillis} >= ${deadline}`);
-        transitioned.push(read);
-        terminalized++;
-      } else {
-        yield* scrubRegistrationIntent(mapping, read.ceremony);
-        yield* owner.remove(flow.table, {
-          [flow.moduleId]: mapping.moduleId,
-          [flow.flowId]: read.ceremony.flowId,
-        });
-        owner.postconditions.push(
-          sql`${mapping.clock.engineNowMillis} >= ${read.ceremony.retentionUntilMillis}`,
-          custodyFree(mapping, sql`${read.ceremony.flowId}`),
-          sql`not exists (select 1 from ${charge.table} where ${both(
-            equal(charge.table, {
-              [charge.moduleId]: mapping.moduleId,
-              [charge.flowId]: read.ceremony.flowId,
-            }),
-            sql`(${col(charge.table, charge.retainUntil)} is null or ${mapping.clock.toMillis(sql`${col(charge.table, charge.retainUntil)}`)} > ${mapping.clock.engineNowMillis})`,
-          )})`,
+    if (selected.rows.length > 0) {
+      invariant(selected.nowMillis !== undefined);
+      for (const rows of Array.chunksOf(selected.rows, flowChunkSize))
+        invariant(
+          yield* owner.check(
+            sql`not exists (select 1 from ${flow.table} where ${both(
+              flowIdentity(rows),
+              sql`not (${flowDue(mapping, purposes)})`,
+            )})`,
+          ),
         );
-        removed++;
+      for (const row of selected.rows) {
+        const read = yield* decodeFlow(mapping, row[flow.flowId], row, selected.nowMillis);
+
+        if (read.state === "Pending" || read.state === "Claimed") {
+          if (owner.batch && read.state === "Pending")
+            yield* releaseRegistrationCustody(mapping, read.ceremony);
+          horizon = Math.max(
+            horizon,
+            read.state === "Pending"
+              ? read.ceremony.expiresAtMillis
+              : read.claim!.claimExpiresAtMillis,
+          );
+          transitioned.push(read);
+        } else {
+          if (owner.batch) yield* scrubRegistrationIntent(mapping, read.ceremony);
+          horizon = Math.max(horizon, read.ceremony.retentionUntilMillis);
+          owner.postconditions.push(
+            custodyFree(mapping, sql`${read.ceremony.flowId}`),
+            sql`not exists (select 1 from ${charge.table} where ${both(
+              equal(charge.table, {
+                [charge.moduleId]: mapping.moduleId,
+                [charge.flowId]: read.ceremony.flowId,
+              }),
+              sql`(${col(charge.table, charge.retainUntil)} is null or ${mapping.clock.toMillis(sql`${col(charge.table, charge.retainUntil)}`)} > ${mapping.clock.engineNowMillis})`,
+            )})`,
+          );
+          deleted.push(read);
+        }
       }
     }
-    const removedCharges: Array<{ flowId: string; kind: string }> = [];
-    const remaining = input.limit - terminalized - removed;
+
+    if (!owner.batch)
+      yield* cleanupRegistrationCustody(
+        mapping,
+        transitioned.filter((read) => read.state === "Pending").map((read) => read.ceremony),
+        deleted.map((read) => read.ceremony),
+      );
+
+    for (const rows of Array.chunksOf(transitioned, flowChunkSize)) {
+      const stateColumn = col(flow.table, flow.state);
+
+      yield* owner.write(
+        owner.database
+          .update(flow.table)
+          .set({
+            [flow.state]: sql`case when ${stateColumn} = ${sql.param(flow.states.Pending, stateColumn)} then ${sql.param(flow.states.Rejected, stateColumn)} else ${sql.param(flow.states.Ambiguous, stateColumn)} end`,
+            [flow.version]: owner.marker,
+          })
+          .where(flowIdentity(rows.map((read) => read.row))),
+      );
+    }
+    for (const rows of Array.chunksOf(deleted, flowChunkSize))
+      yield* owner.write(
+        owner.database.delete(flow.table).where(flowIdentity(rows.map((read) => read.row))),
+      );
+
+    const expected = new Map(
+      transitioned.map((read) => [
+        read.ceremony.flowId,
+        {
+          ...read.row,
+          [flow.state]: read.state === "Pending" ? flow.states.Rejected : flow.states.Ambiguous,
+          [flow.version]: owner.marker,
+        },
+      ]),
+    );
+
+    for (const observation of flowObservations)
+      observation.rows = observation.rows.flatMap((row) => {
+        const next = expected.get(row[flow.flowId]);
+
+        return next === undefined ? [] : [next];
+      });
+
+    let removedCharges: ReadonlyArray<CleanupRow> = [];
+    const remaining = input.limit - selected.rows.length;
 
     if (remaining > 0) {
       const charges = (yield* owner.read(charge.table, chargeDue(mapping, purposes), {
@@ -982,65 +1127,77 @@ export const makePasskeyFlowKernel = (
         orderBy: sql`${col(charge.table, charge.flowId)}, ${col(charge.table, charge.kind)}`,
       })).rows;
 
-      for (const candidate of charges) {
-        const identity = {
-          [charge.moduleId]: mapping.moduleId,
-          [charge.flowId]: candidate[charge.flowId],
-          [charge.kind]: candidate[charge.kind],
-        };
+      const observations = yield* observeRows(charge.table, charges, chargeIdentity);
 
-        const selected = (yield* owner.read(charge.table, equal(charge.table, identity), {
-          limit: 1,
-        })).rows[0];
+      for (const row of charges) {
+        const until = mapping.clock.decodeInstant(row[charge.retainUntil]);
 
-        invariant(selected !== undefined);
-        const horizon = mapping.clock.decodeInstant(selected[charge.retainUntil]);
-
-        invariant(Number.isSafeInteger(horizon));
-        yield* owner.remove(charge.table, identity);
-        owner.postconditions.push(
-          sql`${mapping.clock.engineNowMillis} >= ${horizon}`,
-          custodyFree(mapping, sql`${candidate[charge.flowId]}`),
-        );
-        removedCharges.push({ flowId: candidate[charge.flowId], kind: candidate[charge.kind] });
-        removed++;
+        invariant(Number.isSafeInteger(until));
+        horizon = Math.max(horizon, until);
+        owner.postconditions.push(custodyFree(mapping, sql`${row[charge.flowId]}`));
       }
+      for (const rows of Array.chunksOf(charges, chargeChunkSize))
+        yield* owner.write(owner.database.delete(charge.table).where(chargeIdentity(rows)));
+      for (const observation of observations) observation.rows = [];
+      removedCharges = charges;
     }
+    if (selected.rows.length > 0 || removedCharges.length > 0)
+      owner.postconditions.push(sql`${mapping.clock.engineNowMillis} >= ${horizon}`);
 
-    const excludeFlows =
-      touched.length === 0
-        ? undefined
-        : sql`${col(flow.table, flow.flowId)} not in (${sql.join(
-            touched.map((id) => sql`${id}`),
-            sql`, `,
+    const actual = sql`exists (select 1 from ${flow.table} where ${flowDue(mapping, purposes)}) or exists (select 1 from ${charge.table} where ${chargeDue(mapping, purposes)})`;
+    let hasMore: boolean;
+
+    if (!owner.batch) {
+      hasMore = yield* owner.check(actual);
+    } else {
+      const excludeCharges = sql`not (${chargeIdentity(removedCharges)})`;
+      const predicted = sql`exists (select 1 from ${flow.table} where ${both(flowDue(mapping, purposes), sql`not (${flowIdentity(selected.rows)})`)}) or exists (select 1 from ${charge.table} where ${both(chargeDue(mapping, purposes), excludeCharges)})`;
+
+      hasMore = yield* owner.check(predicted);
+      if (!hasMore && transitioned.length > 0 && mapping.intent === undefined) {
+        // These rows will be terminal, but this batch must not also delete them.
+        // Include indefinite charges just as flowDue does for retained terminals.
+        const transitionedDue = sql`exists (select 1 from ${flow.table} where ${both(
+          flowIdentity(transitioned.map((read) => read.row)),
+          sql`${mapping.clock.toMillis(sql`${col(flow.table, flow.retentionUntil)}`)} <= ${mapping.clock.engineNowMillis}`,
+          sql`not exists (select 1 from ${charge.table} where ${both(
+            equal(charge.table, { [charge.moduleId]: mapping.moduleId }),
+            sql`${col(charge.table, charge.flowId)} = ${col(flow.table, flow.flowId)}`,
+            sql`(${col(charge.table, charge.retainUntil)} is null or ${mapping.clock.toMillis(sql`${col(charge.table, charge.retainUntil)}`)} > ${mapping.clock.engineNowMillis})`,
+            excludeCharges,
+          )})`,
+        )})`;
+
+        hasMore = yield* owner.check(transitionedDue);
+      } else if (!hasMore && mapping.intent !== undefined) {
+        // Registration custody is mapping-owned; retain its per-flow prediction.
+        for (const read of transitioned) {
+          if (read.ceremony.retentionUntilMillis > read.nowMillis) continue;
+
+          const liveCharges = sql`exists (select 1 from ${charge.table} where ${both(
+            equal(charge.table, {
+              [charge.moduleId]: mapping.moduleId,
+              [charge.flowId]: read.ceremony.flowId,
+            }),
+            sql`(${col(charge.table, charge.retainUntil)} is null or ${mapping.clock.toMillis(sql`${col(charge.table, charge.retainUntil)}`)} > ${mapping.clock.engineNowMillis})`,
+            excludeCharges,
           )})`;
 
-    const excludeCharges = removedCharges.map(
-      (item) =>
-        sql`not (${equal(charge.table, { [charge.flowId]: item.flowId, [charge.kind]: item.kind })})`,
-    );
-
-    const predicted = sql`exists (select 1 from ${flow.table} where ${both(flowDue(mapping, purposes), excludeFlows)}) or exists (select 1 from ${charge.table} where ${both(chargeDue(mapping, purposes), ...excludeCharges)})`;
-    // A transitioned row cannot also be removed by this call, but may be due now.
-    // Read through check only for unchanged rows; D1's prebatch assertion must use
-    // this predictive predicate, while the final assertion uses actual states.
-    let hasMore = yield* owner.check(predicted);
-
-    for (const read of transitioned) {
-      if (read.ceremony.retentionUntilMillis > (yield* owner.now(mapping.clock))) continue;
-      const liveCharges = sql`exists (select 1 from ${charge.table} where ${both(equal(charge.table, { [charge.moduleId]: mapping.moduleId, [charge.flowId]: read.ceremony.flowId }), sql`${mapping.clock.toMillis(sql`${col(charge.table, charge.retainUntil)}`)} > ${mapping.clock.engineNowMillis}`, ...excludeCharges)})`;
-
-      if (
-        !(yield* owner.check(liveCharges)) &&
-        (yield* owner.check(custodyFree(mapping, sql`${read.ceremony.flowId}`)))
-      )
-        hasMore = true;
+          if (
+            !(yield* owner.check(liveCharges)) &&
+            (yield* owner.check(custodyFree(mapping, sql`${read.ceremony.flowId}`)))
+          )
+            hasMore = true;
+        }
+      }
     }
-    const actual = sql`exists (select 1 from ${flow.table} where ${flowDue(mapping, purposes)}) or exists (select 1 from ${charge.table} where ${chargeDue(mapping, purposes)})`;
-
     owner.postconditions.push(hasMore ? actual : sql`not (${actual})`);
 
-    return { terminalized, removed, hasMore };
+    return {
+      terminalized: transitioned.length,
+      removed: deleted.length + removedCharges.length,
+      hasMore,
+    };
   });
 
   return {
@@ -1052,6 +1209,7 @@ export const makePasskeyFlowKernel = (
     matchesAccess,
     readFlow,
     terminalFlow,
+    issueFlow,
     issueAssertion,
     contextAssertion,
     claimAssertion,
