@@ -1,18 +1,21 @@
 import { SqliteClient } from "@effect/sql-sqlite-do/SqliteClient";
 import { NativeDatabase, PersistenceConfigurationError } from "@yielded/auth-persistence/Adapter";
 import type { AnyRelations } from "drizzle-orm";
-import { type EffectSQLiteDoDatabase, makeWithDefaults } from "drizzle-orm/effect-sqlite-do";
+import { makeWithDefaults } from "drizzle-orm/effect-sqlite-do";
+
+import { type DatabaseValue, makeDatabase } from "./drizzle/sqlite-do-database";
+export { type DatabaseValue, type Transaction, makeDatabase } from "./drizzle/sqlite-do-database";
 import type { AnySQLiteTable } from "drizzle-orm/sqlite-core";
 import { Context, Effect, Layer } from "effect";
 
 import { nativeDatabase } from "./drizzle/native-database";
 
-/** The application-owned Drizzle database used to construct persistence services. */
-export class Database extends Context.Service<Database, EffectSQLiteDoDatabase<AnyRelations>>()(
+/** The application-owned Drizzle queries with Effect SQL transaction ownership. */
+export class Database extends Context.Service<Database, DatabaseValue<AnyRelations>>()(
   "effect-auth/persistence-drizzle/SqliteDo/Database",
 ) {}
 
-/** The SQL-client Layer must configure storage so Drizzle owns transactionSync. */
+/** Construct Drizzle with asynchronous transactions owned by Effect SQL. */
 export const databaseLayer = Layer.effect(
   Database,
   Effect.gen(function* () {
@@ -21,19 +24,22 @@ export const databaseLayer = Layer.effect(
 
     if (storage === undefined)
       return yield* PersistenceConfigurationError.make({
-        reason:
-          "SqliteDo requires a SQL client configured with storage for synchronous transactions",
+        reason: "SqliteDo requires a SQL client configured with Durable Object storage",
       });
 
-    return yield* makeWithDefaults({ storage });
+    return yield* makeDatabase(yield* makeWithDefaults({ storage }));
   }),
 );
 
+import { sqlClientEmailStandaloneGuard } from "./drizzle/email-target";
 import type {
   ExternalIdentityTables,
   IdentityTables,
   SubjectProvisioningTables,
 } from "./drizzle/model";
+import { sqlClientPasswordStandaloneGuard } from "./drizzle/password-target";
+import { sqlClientProofStandaloneGuard } from "./drizzle/proof-target";
+import { sqlClientSessionStandaloneGuard } from "./drizzle/session-target";
 import { makeSqliteEmailTarget, sqliteEmailConfiguration } from "./drizzle/sqlite-emails";
 import {
   makeSqliteExternalIdentityServices,
@@ -44,31 +50,36 @@ import { makeSqlitePasswordTarget, sqlitePasswordConfiguration } from "./drizzle
 import { makeSqliteProofTarget, sqliteProofConfiguration } from "./drizzle/sqlite-proofs";
 import { makeSqliteSessionTarget, sqliteSessionConfiguration } from "./drizzle/sqlite-sessions";
 
-const sessionTarget = makeSqliteSessionTarget<Database, EffectSQLiteDoDatabase<AnyRelations>, true>(
+const sessionTarget = makeSqliteSessionTarget<Database, DatabaseValue<AnyRelations>>(
   Database,
-  sqliteSessionConfiguration("synchronous", Effect.void),
+  (service) => sqliteSessionConfiguration("interactive", sqlClientSessionStandaloneGuard(service)),
 );
 
-const proofTarget = makeSqliteProofTarget<Database, EffectSQLiteDoDatabase<AnyRelations>, true>(
+const proofTarget = makeSqliteProofTarget<Database, DatabaseValue<AnyRelations>>(
   Database,
-  sqliteProofConfiguration("synchronous", Effect.void),
+  (service) => sqliteProofConfiguration("interactive", sqlClientProofStandaloneGuard(service)),
 );
 
-const passwordTarget = makeSqlitePasswordTarget<
+const passwordTarget = makeSqlitePasswordTarget<Database, DatabaseValue<AnyRelations>>(
   Database,
-  EffectSQLiteDoDatabase<AnyRelations>,
-  true
->(Database, sqlitePasswordConfiguration("synchronous", Effect.void, Effect.void));
-
-const emailTarget = makeSqliteEmailTarget<Database, EffectSQLiteDoDatabase<AnyRelations>, true>(
-  Database,
-  sqliteEmailConfiguration("synchronous", Effect.void, Effect.void),
+  (service) =>
+    sqlitePasswordConfiguration(
+      "interactive",
+      sqlClientPasswordStandaloneGuard(service),
+      sqlClientProofStandaloneGuard(service),
+    ),
 );
 
-/**
- * Email mutations must own their outer transactionSync. Arbitrary raw Drizzle
- * nesting is not detectable; owner bodies and mapping allocators stay runSync-compatible.
- */
+const emailTarget = makeSqliteEmailTarget<Database, DatabaseValue<AnyRelations>>(
+  Database,
+  (service) =>
+    sqliteEmailConfiguration(
+      "interactive",
+      sqlClientEmailStandaloneGuard(service),
+      sqlClientProofStandaloneGuard(service),
+    ),
+);
+
 export const {
   coordinateEmailAddress,
   coordinateEmailRegistration,
@@ -77,11 +88,6 @@ export const {
   makeEmailSignInServices,
 } = emailTarget;
 
-/**
- * Password mutations and registration must own their outer transactionSync.
- * Arbitrary raw Drizzle nesting is not detectable; owner bodies must remain
- * runSync-compatible. Detectable Effect commit scopes are rejected pre-write.
- */
 export const {
   coordinatePasswordPersistence,
   coordinatePasswordRegistration,
@@ -89,21 +95,8 @@ export const {
   makePasswordRegistrationServices,
 } = passwordTarget;
 
-/**
- * Proof mutations and coordinateProofPersistence must own their outermost
- * transactionSync call. The installed driver cannot detect an arbitrary raw
- * Drizzle outer transaction; calling either boundary from one is unsupported.
- * The owner body must remain runSync-compatible.
- */
 export const { coordinateProofPersistence, makeProofPersistenceServices } = proofTarget;
 
-/**
- * Session mutation methods and coordinate* functions must own their outermost
- * transactionSync call. The installed Drizzle driver exposes no context marker
- * for an arbitrary raw outer database.transaction call, so invoking either
- * boundary from one is unsupported and cannot be detected. Detectable Effect
- * commit scopes are rejected before writes.
- */
 export const {
   coordinateAuthenticationAuthority,
   coordinatePendingAuthentication,
@@ -117,7 +110,7 @@ export const {
   makeStatefulSessionServices,
 } = sessionTarget;
 
-export const commitMode = "synchronous" as const;
+export const commitMode = "interactive" as const;
 
 export const makeIdentityServices = <
   Subject extends AnySQLiteTable,
@@ -128,7 +121,7 @@ export const makeIdentityServices = <
 >(
   mapping: IdentityTables<Subject, Identifier, External, Request, NativeId>,
 ) =>
-  makeSqliteIdentityServices(mapping, "synchronous").pipe(
+  makeSqliteIdentityServices(mapping, "interactive").pipe(
     Effect.provideServiceEffect(NativeDatabase, nativeDatabase(Database)),
   );
 
@@ -140,7 +133,7 @@ export const makeSubjectProvisioningServices = <
 >(
   mapping: SubjectProvisioningTables<Subject, Identifier, Request, NativeId>,
 ) =>
-  makeSqliteSubjectProvisioningServices(mapping, "synchronous").pipe(
+  makeSqliteSubjectProvisioningServices(mapping, "interactive").pipe(
     Effect.provideServiceEffect(NativeDatabase, nativeDatabase(Database)),
   );
 
@@ -159,9 +152,14 @@ import { makeSqlitePasswordPreparedTarget } from "./drizzle/sqlite-password-prep
 
 const passwordPreparedTarget = makeSqlitePasswordPreparedTarget<
   Database,
-  EffectSQLiteDoDatabase<AnyRelations>,
-  true
->(Database, sqlitePasswordConfiguration("synchronous", Effect.void, Effect.void));
+  DatabaseValue<AnyRelations>
+>(Database, (service) =>
+  sqlitePasswordConfiguration(
+    "interactive",
+    sqlClientPasswordStandaloneGuard(service),
+    sqlClientProofStandaloneGuard(service),
+  ),
+);
 
 export const { makePasswordPreparedPersistenceServices, coordinatePasswordPreparedPersistence } =
   passwordPreparedTarget;
@@ -169,17 +167,17 @@ export const { makePasswordPreparedPersistenceServices, coordinatePasswordPrepar
 export { passwordPreparedPersistenceLayer } from "./drizzle/password-prepared-target";
 
 import { makeOAuthTarget } from "./drizzle/oauth-drivers";
+import { sqlClientOAuthStandaloneGuard } from "./drizzle/oauth-target";
 
 const oauthTarget = makeOAuthTarget<
   Database,
-  EffectSQLiteDoDatabase<AnyRelations>,
-  AnySQLiteTable<{ dialect: "sqlite" }>,
-  true
+  DatabaseValue<AnyRelations>,
+  AnySQLiteTable<{ dialect: "sqlite" }>
 >(Database, {
-  mode: "synchronous",
+  mode: "interactive",
   dialect: "sqlite",
   locking: false,
-  standaloneGuard: () => Effect.void,
+  standaloneGuard: sqlClientOAuthStandaloneGuard,
 });
 
 export const {
@@ -198,18 +196,17 @@ export const {
 } = oauthTarget;
 
 import { makePasskeyTarget } from "./drizzle/passkey-drivers";
+import { sqlClientPasskeyStandaloneGuard } from "./drizzle/passkey-target";
 
 const passkeyTarget = makePasskeyTarget<
   Database,
-  EffectSQLiteDoDatabase<AnyRelations>,
-  AnySQLiteTable<{ dialect: "sqlite" }>,
-  unknown,
-  true
+  DatabaseValue<AnyRelations>,
+  AnySQLiteTable<{ dialect: "sqlite" }>
 >(Database, {
-  mode: "synchronous",
+  mode: "interactive",
   dialect: "sqlite",
   locking: false,
-  standaloneGuard: () => Effect.void,
+  standaloneGuard: sqlClientPasskeyStandaloneGuard,
 });
 
 export const {
@@ -225,36 +222,32 @@ export const {
   coordinatePasskeyRegistration,
 } = passkeyTarget;
 
-import { makeTotpTarget } from "./drizzle/totp-target";
+import { makeTotpTarget, sqlClientTotpStandaloneGuard } from "./drizzle/totp-target";
 
 const totpTarget = makeTotpTarget<
   Database,
-  EffectSQLiteDoDatabase<AnyRelations>,
-  AnySQLiteTable<{ dialect: "sqlite" }>,
-  unknown,
-  true
+  DatabaseValue<AnyRelations>,
+  AnySQLiteTable<{ dialect: "sqlite" }>
 >(Database, {
-  mode: "synchronous",
+  mode: "interactive",
   dialect: "sqlite",
   locking: false,
-  standaloneGuard: () => Effect.void,
+  standaloneGuard: sqlClientTotpStandaloneGuard,
 });
 
 export const { makeTotpPersistenceServices, coordinateTotpPersistence } = totpTarget;
 
-import { makePhoneTarget } from "./drizzle/phone-target";
+import { makePhoneTarget, sqlClientPhoneStandaloneGuard } from "./drizzle/phone-target";
 
 const phoneTarget = makePhoneTarget<
   Database,
-  EffectSQLiteDoDatabase<AnyRelations>,
-  AnySQLiteTable<{ dialect: "sqlite" }>,
-  unknown,
-  true
+  DatabaseValue<AnyRelations>,
+  AnySQLiteTable<{ dialect: "sqlite" }>
 >(Database, {
-  mode: "synchronous",
+  mode: "interactive",
   dialect: "sqlite",
   locking: false,
-  standaloneGuard: () => Effect.void,
+  standaloneGuard: sqlClientPhoneStandaloneGuard,
 });
 
 export const { makePhonePersistenceServices, coordinatePhonePersistence } = phoneTarget;

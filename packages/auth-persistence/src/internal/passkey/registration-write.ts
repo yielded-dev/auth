@@ -67,7 +67,7 @@ export const makePasskeyRegistrationWriteKernel = (
   const { digest, insertCredential, jsonStorage, validRegistration } = writeState;
   const { both } = transactions;
 
-  const registrationData = (mapping: any, registration: any) => {
+  const registrationData = Effect.fnUntraced(function* (mapping: any, registration: any) {
     const codec = jsonStorage(mapping.registration.schema);
     const encoded = codec.encode(registration);
 
@@ -76,26 +76,26 @@ export const makePasskeyRegistrationWriteKernel = (
     return {
       encoded,
       registration: codec.decode(encoded),
-      fingerprint: digest(mapping.registration.schema, registration),
+      fingerprint: yield* digest(mapping.registration.schema, registration),
     };
-  };
+  });
 
-  const describe = (mapping: any, registration: any) => {
-    const data = registrationData(mapping, registration);
+  const describe = Effect.fnUntraced(function* (mapping: any, registration: any) {
+    const data = yield* registrationData(mapping, registration);
 
     const labels = Schema.decodeSync(
       Schema.Struct({ name: PasskeyLabel, displayName: PasskeyLabel }),
     )(mapping.registration.describe(data.registration));
 
     return { ...data, ...labels };
-  };
+  });
 
   const inspectRegistration = Effect.fn("passkey.inspectRegistration")(function* (
     mapping: any,
     registration: any,
   ) {
     const owner = yield* CurrentPasskeyTransaction;
-    const value = describe(mapping, registration);
+    const value = yield* describe(mapping, registration);
     const current = yield* readModule(mapping);
 
     yield* readPolicyGuards(mapping);
@@ -133,7 +133,7 @@ export const makePasskeyRegistrationWriteKernel = (
       ceremony.allowedCredentials.length !== 0
     )
       return { _tag: "Rejected" } as const;
-    const value = describe(mapping, input.registration);
+    const value = yield* describe(mapping, input.registration);
 
     if (
       value.fingerprint !== ceremony.context.fingerprint ||
@@ -148,7 +148,7 @@ export const makePasskeyRegistrationWriteKernel = (
 
     if (!(yield* owner.check(eligible))) return { _tag: "Rejected" } as const;
     const handle = mapping.handle;
-    const hashed = handleKey(ceremony.profile.rpId, ceremony.context.userHandle);
+    const hashed = yield* handleKey(ceremony.profile.rpId, ceremony.context.userHandle);
 
     const absentHandle = yield* owner.read(
       handle.table,
@@ -259,7 +259,7 @@ export const makePasskeyRegistrationWriteKernel = (
     const absentCredential = yield* owner.read(
       tuple.table,
       equal(tuple.table, {
-        [tuple.credentialKey]: credentialKey(
+        [tuple.credentialKey]: yield* credentialKey(
           ceremony.profile.rpId,
           input.verified.protocolCredentialId,
         ),
@@ -268,7 +268,7 @@ export const makePasskeyRegistrationWriteKernel = (
     );
 
     const handle = mapping.handle;
-    const hashed = handleKey(ceremony.profile.rpId, ceremony.context.userHandle);
+    const hashed = yield* handleKey(ceremony.profile.rpId, ceremony.context.userHandle);
 
     const held = (yield* owner.read(
       handle.table,
@@ -319,7 +319,7 @@ export const makePasskeyRegistrationWriteKernel = (
     )
       return yield* reject;
 
-    const data = describe(
+    const data = yield* describe(
       mapping,
       jsonStorage(mapping.registration.schema).decode(row[intent.applicationSnapshot]),
     );

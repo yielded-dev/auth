@@ -1,6 +1,5 @@
 import { DateTime, Effect, Layer, Redacted, Schema } from "effect";
 
-import { cryptoLayer } from "../auth/defaults";
 import { hasCommitScope } from "../hooks/commit";
 import { credentialSlots } from "../http-operation/models";
 import { OperationHttpServerConfig } from "../http-operation/OperationHttpServerConfig";
@@ -314,7 +313,7 @@ export const make = <
         ),
       );
     }),
-  ).pipe(Layer.provide(cryptoLayer));
+  );
 
   /** Mount this wrapper: authorization is browser-only; all host operations are
    * native-only. The existing transport still enforces native admission, Origin,

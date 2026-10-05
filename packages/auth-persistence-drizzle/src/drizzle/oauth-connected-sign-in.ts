@@ -83,7 +83,7 @@ export const claimSignIn = Effect.fn("oauthConnected.claimSignIn")(function* (
       [f.stateDigest]: c.stateDigest,
       [f.snapshot]: null,
       [f.claimId]: claim.claimId,
-      [f.claimDigest]: digest(reservationStorage.encode(reservation)),
+      [f.claimDigest]: yield* digest(reservationStorage.encode(reservation)),
       [f.claimOrder]: mapping.order.encode(order),
       [f.claimedAt]: mapping.clock.encodeInstant(claim.claimedAtMillis),
       [f.claimExpiresAt]: mapping.clock.encodeInstant(claim.claimExpiresAtMillis),
@@ -116,13 +116,13 @@ const exact = Effect.fn("oauthConnected.exactSignIn")(function* (
     row === undefined ||
     row[f.work] !== "Unresolved" ||
     row[f.claimId] !== reservation.claim.claimId ||
-    row[f.claimDigest] !== digest(reservationStorage.encode(reservation))
+    row[f.claimDigest] !== (yield* digest(reservationStorage.encode(reservation)))
   )
     return undefined;
   invariant(
     row[f.subjectId] === null &&
       row[f.commandId] === c.commandId &&
-      row[f.clientKey] === S.clientKey(reservation.configuration) &&
+      row[f.clientKey] === (yield* S.clientKey(reservation.configuration)) &&
       S.nativeOrder(mapping, row[f.claimOrder]) === S.orderNumber(reservation.order),
   );
   const now = yield* owner.now(mapping.clock);
@@ -164,7 +164,7 @@ const credential = Effect.fn("oauthConnected.signInCredential")(function* (
       [c.moduleId]: context.moduleId,
       [c.credentialId]: input.credentialId,
       [c.subjectId]: found.nativeId,
-      [c.identityKey]: oauthIdentityKey(input.identity),
+      [c.identityKey]: yield* oauthIdentityKey(input.identity),
       [c.credentialRevision]: input.credentialRevision,
     }),
     c.activeCondition,
@@ -242,18 +242,19 @@ const slot = Effect.fn("oauthConnected.signInSlot")(function* (
 
 /** Orders belong to one client registration. Moving a profile to another client
  * requires a newer profile generation; retired clients cannot replace it later. */
-const canReplace = (
+const canReplace = Effect.fnUntraced(function* (
   reservation: M.OAuthSignInAccessClaim,
   previous: M.OAuthConnectedTokenContext,
-) => {
+) {
   const generation = reservation.configuration.profile.generation;
   const oldGeneration = previous.configuration.profile.generation;
 
-  return S.clientKey(reservation.configuration) === S.clientKey(previous.configuration)
+  return (yield* S.clientKey(reservation.configuration)) ===
+    (yield* S.clientKey(previous.configuration))
     ? generation >= oldGeneration &&
         S.orderNumber(reservation.order) > S.orderNumber(previous.exchangeOrder)
     : generation > oldGeneration;
-};
+});
 
 export const inspectSignIn = Effect.fn("oauthConnected.inspectSignIn")(function* (
   mapping: S.Mapping,
@@ -293,7 +294,7 @@ export const inspectSignIn = Effect.fn("oauthConnected.inspectSignIn")(function*
     co.blocked ||
     S.orderNumber(r.order) <= co.cutoff ||
     previous?.row[mapping.grant.refreshWork] === "Unresolved" ||
-    (previous !== undefined && !canReplace(r, previous.context));
+    (previous !== undefined && !(yield* canReplace(r, previous.context)));
 
   return snapshotOAuthSync(M.OAuthSignInAccessInspection, {
     _tag: quarantine ? "Quarantine" : "Target",
@@ -377,7 +378,7 @@ export const settleSignIn = Effect.fn("oauthConnected.settleSignIn")(function* (
         F.sameTarget(out.previous, previous.context) &&
         sameIdentity(previous.context.identity, token.identity) &&
         previous.row[mapping.grant.refreshWork] !== "Unresolved" &&
-        canReplace(r, previous.context);
+        (yield* canReplace(r, previous.context));
 
   const previousSafe = yield* C.noFormerOwner(mapping, tuple.key, cl.id, native);
 

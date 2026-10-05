@@ -1,4 +1,4 @@
-import { Passkey, Password, Schema as AuthSchema, Sessions, WebCrypto } from "@yielded/auth";
+import { Passkey, Password, Schema as AuthSchema, Sessions } from "@yielded/auth";
 import { layer as layerSimpleWebAuthnPasskeyProtocol } from "@yielded/auth-simplewebauthn/Server";
 import { eq } from "drizzle-orm";
 import * as Drizzle from "drizzle-orm/effect-sqlite-bun";
@@ -7,6 +7,7 @@ import { Crypto, Effect, Layer, Option, Schema } from "effect";
 import { AppAuth } from "../../shared/account/auth";
 import { Claims, minimumPasswordLength } from "../../shared/account/contract";
 import { HashingLive } from "../../shared/account/hashing";
+import { CryptoLive } from "../../shared/crypto";
 import { MigrationsLive } from "./migrations";
 import { ActionPoliciesLive } from "./policy";
 import { customers, Persistence, storage } from "./schema";
@@ -42,7 +43,7 @@ const ProvisioningLive = Layer.effect(
       ),
     };
   }),
-).pipe(Layer.provide(WebCrypto.layerWebCrypto));
+);
 
 const ClaimsLive = Layer.effect(
   AppAuth.strategies.password.SessionClaims,
@@ -169,4 +170,5 @@ export const AuthLive = AppAuth.layer.pipe(
       developmentLocalhost: true,
     }),
   ),
+  Layer.provide(CryptoLive),
 );

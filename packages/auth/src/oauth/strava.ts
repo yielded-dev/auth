@@ -8,7 +8,6 @@ import {
 } from "effect/http";
 
 import { selectCallback } from "./callback";
-import { wipeConnectedMaterial } from "./connectedAccess";
 import {
   OAuthConnectedConfiguration,
   OAuthConnectedGrantResponse,
@@ -16,6 +15,7 @@ import {
   OAuthConnectedTokenMaterial,
   OAuthPermissionProfileKey,
 } from "./connectedModels";
+import { wipeConnectedMaterial } from "./grantTokens";
 import { OAuthConnectedProtocol } from "./OAuthConnectedProtocol";
 import type { ProviderDefinition } from "./providerDefinition";
 import { OAuthProviderKey } from "./schema";

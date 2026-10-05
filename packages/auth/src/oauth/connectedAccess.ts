@@ -23,7 +23,7 @@ import {
 import { AuthenticationRequired } from "../operations/errors";
 import { SecurityRevision } from "../sessions/models";
 import * as M from "./connectedModels";
-import { retainGrantTokens } from "./grantTokens";
+import { retainGrantTokens, wipeConnectedMaterial } from "./grantTokens";
 import { OAuthConnectedPersistence } from "./OAuthConnectedPersistence";
 import { OAuthConnectedProtocol } from "./OAuthConnectedProtocol";
 import { OAuthConnectedTokenProtector } from "./OAuthConnectedTokenProtector";
@@ -187,13 +187,6 @@ export const connectedUseAuthorization = Effect.fn("OAuthConnected.useAuthorizat
 
   return authorization;
 });
-
-export const wipeConnectedMaterial = (material: M.OAuthConnectedTokenMaterial) => {
-  Redacted.wipeUnsafe(material.accessToken);
-  if (material.refreshToken) Redacted.wipeUnsafe(material.refreshToken);
-  if (material.continuation._tag === "Oidc" && material.continuation.nonce)
-    Redacted.wipeUnsafe(material.continuation.nonce);
-};
 
 /** Private bounded projection shared by initial and refresh orchestration. */
 export const connectedGrantResponse = Effect.fn("OAuthConnected.grantResponse")(function* (

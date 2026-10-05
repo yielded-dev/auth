@@ -3,6 +3,7 @@ import * as SqliteClient from "@effect/sql-sqlite-bun/SqliteClient";
 import { OAuthServerPersistence } from "@yielded/auth-persistence";
 import * as OAuthServer from "@yielded/auth/OAuthServer";
 import * as Strava from "@yielded/auth/Strava";
+import { layerWebCrypto } from "@yielded/auth/WebCrypto";
 import { Config, Effect, Layer, Redacted, Schema } from "effect";
 import { McpProtocol, McpServer, Tool, Toolkit } from "effect/ai";
 import { HttpMiddleware, HttpRouter, HttpServerRequest } from "effect/http";
@@ -155,6 +156,7 @@ HttpRouter.serve(runtime, { disableLogger: true }).pipe(
   Layer.provide(BunHttpServer.layer({ hostname: "127.0.0.1", port: 3000 })),
   Layer.provide(Layer.succeed(HttpMiddleware.TracerDisabledWhen, () => true)),
   Layer.provide(BunServices.layer),
+  Layer.provide(layerWebCrypto),
   Layer.launch,
   BunRuntime.runMain,
 );

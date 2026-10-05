@@ -55,7 +55,6 @@ while issuing new shorter-lived tokens.
 
 Inside an existing Effect handler covered by `http.middleware`:
 
-{/* prettier-ignore */}
 ```ts
 const auth = yield* AppAuth;
 const session = yield* auth.getSession();
@@ -68,7 +67,6 @@ needed in application code.
 
 For a handler that requires authentication:
 
-{/* prettier-ignore */}
 ```ts
 const auth = yield* AppAuth;
 const session = yield* auth.requireSession();
@@ -80,7 +78,6 @@ session for an entire HttpApi group.
 
 Outside a request, verify an explicit credential:
 
-{/* prettier-ignore */}
 ```ts
 const auth = yield* AppAuth;
 const session = yield* auth.verifySession(redactedCredential);
@@ -90,7 +87,6 @@ const session = yield* auth.verifySession(redactedCredential);
 
 In the same request context, call the service directly:
 
-{/* prettier-ignore */}
 ```ts
 const auth = yield* AppAuth;
 const result = yield* auth.signOut();
@@ -105,7 +101,6 @@ request context and cookie delivery.
 
 ## Renew a session
 
-{/* prettier-ignore */}
 ```ts
 const auth = yield* AppAuth;
 const session = yield* auth.renewSession();

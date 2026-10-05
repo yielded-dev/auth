@@ -6,9 +6,7 @@ import {
   Schema as AuthSchema,
   Sessions,
   Totp,
-  WebCrypto,
 } from "@yielded/auth";
-import * as TotpCrypto from "@yielded/auth-crypto/Totp";
 import * as Mapping from "@yielded/auth-persistence-drizzle";
 import * as Native from "@yielded/auth-persistence-drizzle/Postgres";
 import * as PasskeyProtocol from "@yielded/auth-simplewebauthn/Server";
@@ -17,6 +15,7 @@ import { boolean, integer, pgTable, text, timestamp, uuid } from "drizzle-orm/pg
 import type { Redacted } from "effect";
 import { DateTime, Effect, Layer, Schema } from "effect";
 
+import { CryptoLive } from "../../shared/crypto";
 import { StudioAuth, StudioClaims, sessions, authenticatorPolicy } from "./studio-auth";
 import * as Studio from "./studio-passkey-schema";
 export { StudioAuth, StudioClaims, sessions, authenticatorPolicy } from "./studio-auth";
@@ -533,10 +532,9 @@ export const makeStudioLive = (binding: Operations.RequestBindingConfiguration) 
         storage,
         Passkey.PasskeyConfig.layer({ profiles: [Studio.profile] }),
         hookLayer,
-        WebCrypto.layerWebCrypto,
         Auth.RequestBindingConfig.layer(binding),
-        TotpCrypto.layer,
-      );
+        Totp.TotpCryptography.layer,
+      ).pipe(Layer.provideMerge(CryptoLive));
 
       const strategy = sessions.statefulLayer(sessionPolicy).pipe(Layer.provide(base));
 

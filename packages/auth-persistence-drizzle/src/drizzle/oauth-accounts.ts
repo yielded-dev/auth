@@ -30,7 +30,7 @@ import {
   readFlow,
   terminalFlow,
 } from "./oauth-flow";
-import type { OAuthEligibilityFact } from "./oauth-model";
+import type { OAuthReferenceGuardDescriptor, OAuthEligibilityFact } from "./oauth-model";
 import { both, col, copiedRow, equal, CurrentOAuthTransaction } from "./oauth-owner";
 import { acquireTuple, readTuple } from "./oauth-registration";
 import {
@@ -71,7 +71,7 @@ const authorization = (
         mapping.subject.decodeActionRequirement(copiedRow(current.row), action),
       );
 
-      const accepted = validAction(
+      const accepted = yield* validAction(
         auth,
         {
           moduleId: auth.challenge.moduleId,
@@ -493,7 +493,7 @@ const targetCredential = (mapping: any, moduleId: string, credentialId: string, 
         subject: ownership[t.externalSubject],
       };
 
-      invariant(oauthIdentityKey(identity) === row[cr.identityKey]);
+      invariant((yield* oauthIdentityKey(identity)) === row[cr.identityKey]);
 
       const shared = current.revision.credentials.find(
         (item: any) => item.credentialId === credentialId,
@@ -648,23 +648,24 @@ export const unlink = (mapping: any, input: any) =>
       const current = yield* accountCurrent(mapping, expected.revision.subjectId);
 
       if (current === undefined) return { _tag: "Rejected" } as const;
-      const guards = mapping.connectedReferenceGuards ?? [];
+
+      const guards: ReadonlyArray<OAuthReferenceGuardDescriptor<unknown>> =
+        mapping.connectedReferenceGuards ?? [];
 
       invariant(guards.length <= 32);
       let referencesGuarded = mapping.connectedReference !== undefined && guards.length > 0;
 
       if (mapping.connectedReference !== undefined)
         for (const guard of guards) {
+          const condition = guard.condition({
+            identity: snapshotOAuthSync(OAuthCredentialSnapshot.fields.identity, expected.identity),
+            identityKey: yield* oauthIdentityKey(expected.identity),
+            subjectId: copiedRow({ value: current.nativeId }).value,
+          });
+
           const read = yield* owner.read(
             guard.table,
-            guard.condition({
-              identity: snapshotOAuthSync(
-                OAuthCredentialSnapshot.fields.identity,
-                expected.identity,
-              ),
-              identityKey: oauthIdentityKey(expected.identity),
-              subjectId: copiedRow({ value: current.nativeId }).value,
-            }),
+            Effect.isEffect(condition) ? yield* condition : condition,
             { orderBy: col(guard.table, guard.orderBy) },
           );
 
@@ -730,7 +731,7 @@ export const unlink = (mapping: any, input: any) =>
         cr = mapping.credential,
         a = mapping.authority;
 
-      const key = oauthIdentityKey(expected.identity),
+      const key = yield* oauthIdentityKey(expected.identity),
         t = mapping.ownership.tuple;
 
       const connected = mapping.connectedReference?.({

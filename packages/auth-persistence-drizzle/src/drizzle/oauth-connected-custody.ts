@@ -113,9 +113,9 @@ export const storeJob = Effect.fn("oauthConnected.storeJob")(function* (
   );
 
   const j = mapping.revocation.job,
-    identity = oauthIdentityKey(token.identity),
-    client = S.clientKey(token.configuration),
-    cohort = S.cohortKey(client, identity);
+    identity = yield* oauthIdentityKey(token.identity),
+    client = yield* S.clientKey(token.configuration),
+    cohort = yield* S.cohortKey(client, identity);
 
   const h = mapping.cohort;
 
@@ -254,14 +254,16 @@ export const noFormerOwner = (
   client: string,
   native: unknown,
 ) =>
-  Effect.flatMap(CurrentOAuthTransaction, (owner) => {
+  Effect.gen(function* () {
+    const owner = yield* CurrentOAuthTransaction;
+
     const g = mapping.grant,
       f = mapping.flow,
       j = S.jobTable(mapping);
 
     const condition = both(
       sql`not exists(select 1 from ${g.table} where ${both(eq(col(g.table, g.identityKey), identity), sql`not (${owner.exact(g.table, { [g.subjectId]: native })})`)})`,
-      sql`not exists(select 1 from ${f.table} where ${both(eq(col(f.table, f.cohortKey), S.cohortKey(client, identity)), eq(col(f.table, f.work), "Unresolved"), sql`not (${owner.exact(f.table, { [f.subjectId]: native })})`)})`,
+      sql`not exists(select 1 from ${f.table} where ${both(eq(col(f.table, f.cohortKey), yield* S.cohortKey(client, identity)), eq(col(f.table, f.work), "Unresolved"), sql`not (${owner.exact(f.table, { [f.subjectId]: native })})`)})`,
       ...(j === undefined
         ? []
         : [
@@ -269,7 +271,7 @@ export const noFormerOwner = (
           ]),
     );
 
-    return Effect.map(owner.check(condition), (accepted) => {
+    return yield* Effect.map(owner.check(condition), (accepted) => {
       if (accepted) owner.postconditions.push(condition);
 
       return accepted;

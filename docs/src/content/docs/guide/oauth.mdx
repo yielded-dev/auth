@@ -22,7 +22,7 @@ Your app owns accounts, claims, and permission policy.
 ```ts title="apps/server/auth.ts"
 import { Auth, Sessions } from "@yielded/auth";
 import { OAuth } from "@yielded/auth/strategies";
-import * as GitHub from "@yielded/auth-openid-client/GitHub";
+import * as GitHub from "@yielded/auth/GitHub";
 import { AuthApi } from "@app/domain/auth-contract";
 import { clientId } from "./config";
 
@@ -107,7 +107,6 @@ use registration first, then connect provider access after authentication.
 
 Under the HTTP middleware, use the regular Auth API:
 
-{/* prettier-ignore */}
 ```ts
 const auth = yield* AppAuth;
 const session = yield* auth.requireSession();
@@ -116,7 +115,6 @@ const connections = yield* auth.listAccountConnections({ limit: 20 });
 
 The server-side connected service handles refresh and token use:
 
-{/* prettier-ignore */}
 ```ts
 const access = yield* AppAuth.strategies.social.access.ConnectedAccess;
 yield* access.withAccessToken(invocation, { grantId, profileKey: profile.key }, readProfile);
@@ -225,7 +223,7 @@ the setup and token lifecycle.
 
 ## Other providers
 
-`OpenIdClient.provider` supports OIDC discovery and plain OAuth endpoints.
+`OpenIdConnect.provider` supports OIDC discovery and plain OAuth endpoints.
 Its optional `access` settings declare permission profiles and the provider's
 refresh/resource/revocation contract. A custom `ProviderDefinition.configure`
 returns the sign-in protocol and optionally a `connected` protocol. Configuration,

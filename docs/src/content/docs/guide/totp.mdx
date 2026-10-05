@@ -34,8 +34,10 @@ allows a recovery code to finish a pending sign-in; the default is
 `lostFactorRecovery: "deny"` by default. Enabling one does not enable the other.
 
 Your `AuthenticationAuthority` decides which accounts require two factors.
-Provide `TotpCryptography` with `layer` from `@yielded/auth-crypto/Totp`, supplying
-that Layer with application-owned `TotpSecretKeys`. The workflow also needs
+Provide `Totp.TotpCryptography.layer` with application-owned `TotpSecretKeys`,
+Effect `Crypto`, and the `Aead` and `Hmac` services from `@yielded/crypto`.
+The [shared crypto Layer](../reference/crypto#use-with-auth) supplies those primitives;
+merge your key Layer with it when providing `TotpCryptography`. The workflow also needs
 `TotpPersistence`, `TotpActionEvidence`, and stateful sessions with
 pending-authentication support. Storage, secret keys, and action authorization
 have no automatic defaults. This definition omits `sessions`
@@ -61,7 +63,6 @@ pending proof instead of failing when a second factor is required.
 
 ## Begin enrollment
 
-{/* prettier-ignore */}
 ```ts
 const auth = yield* AppAuth;
 const result = yield* auth.beginEnrollment("totp", { commandId, accountName, actionProof });
@@ -75,7 +76,6 @@ a temporary `totp-enrollment` reveal for your QR-code screen.
 
 ## Confirm the first code
 
-{/* prettier-ignore */}
 ```ts
 const auth = yield* AppAuth;
 const result = yield* auth.confirmEnrollment("totp", {
@@ -98,7 +98,6 @@ management change invalidates the current session.
 For this local method, `pendingCredential` is the private proof issued by the
 primary method. The shared action below injects it from the request cookie.
 
-{/* prettier-ignore */}
 ```ts
 const auth = yield* AppAuth;
 const result = yield* auth.verifyPending("totp", { pendingCredential, code });
@@ -128,7 +127,6 @@ const result = yield* auth.verifyPending("totp", { pendingCredential, code });
 With `allowRecoveryCodeForPending: true` as above, a guest who has completed the
 primary method can supply its pending proof and an unused recovery code:
 
-{/* prettier-ignore */}
 ```ts
 const auth = yield* AppAuth;
 const result = yield* auth.recoverPending("totp", { pendingCredential, code });
@@ -145,7 +143,6 @@ expired pending proof, or exhausted attempt budget fails closed.
 An authenticated caller with fresh independent evidence for this exact
 `regenerate` command can replace the whole set:
 
-{/* prettier-ignore */}
 ```ts
 const auth = yield* AppAuth;
 const result = yield* auth.regenerateRecoveryCodes("totp", { commandId, actionProof });
@@ -177,7 +174,6 @@ Totp.make({
 A guest completes the primary method again and submits its pending proof with an
 unused recovery code. Choose reset instead of spending that code on sign-in:
 
-{/* prettier-ignore */}
 ```ts
 const auth = yield* AppAuth;
 const result = yield* auth.recoverLostFactor("totp", { pendingCredential, code });

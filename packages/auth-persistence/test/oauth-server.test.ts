@@ -2,6 +2,7 @@ import * as SqliteClient from "@effect/sql-sqlite-node/SqliteClient";
 import { it } from "@effect/vitest";
 import * as OAuthServer from "@yielded/auth/OAuthServer";
 import { SubjectId } from "@yielded/auth/Schema";
+import * as WebCrypto from "@yielded/auth/WebCrypto";
 import { Clock, Effect, Exit, Layer, Redacted, Schema } from "effect";
 import { McpProtocol, McpServer, Tool, Toolkit } from "effect/ai";
 import { Base64Url } from "effect/encoding";
@@ -69,7 +70,13 @@ const harness = (fault?: Effect.Effect<void, OAuthServer.Unavailable>) => {
     }),
   });
 
-  return server.layer(config).pipe(Layer.provide(identity), Layer.provideMerge(durable));
+  return server
+    .layer(config)
+    .pipe(
+      Layer.provide(identity),
+      Layer.provideMerge(durable),
+      Layer.provideMerge(WebCrypto.layerWebCrypto),
+    );
 };
 
 const get = (path: string, cookie?: string, user = "alice") =>

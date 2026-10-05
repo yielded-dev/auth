@@ -15,7 +15,7 @@ import {
 } from "effect";
 import { Base64Url } from "effect/encoding";
 
-import { cryptoLayer, hooksLayer } from "../auth/defaults";
+import { hooksLayer } from "../auth/defaults";
 import { type PreparedCommit, hasCommitScope, coordinateCommit } from "../hooks/commit";
 import { LifecycleHooks } from "../hooks/LifecycleHooks";
 import type { HookDenied } from "../hooks/models";
@@ -2025,12 +2025,9 @@ export const makeSessionModule = <
   return Object.freeze({
     moduleId,
     claims,
-    /** Stateful sessions and authentication completion with portable defaults. */
+    /** Stateful sessions and authentication completion with application crypto and default hooks. */
     layer: (policy: SessionPolicy) =>
-      completionLayer().pipe(
-        Layer.provideMerge(statefulLayer(policy)),
-        Layer.provide([cryptoLayer, hooksLayer]),
-      ),
+      completionLayer().pipe(Layer.provideMerge(statefulLayer(policy)), Layer.provide(hooksLayer)),
     Session,
     CompletionResult,
     SessionStrategy,

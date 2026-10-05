@@ -1,7 +1,7 @@
-import { Array, Layer } from "effect";
+import { Crypto, Array, Layer } from "effect";
 
 import { makeAuthStrategy } from "../auth/AuthStrategy";
-import { cryptoLayer, defaultLayer, hooksLayer } from "../auth/defaults";
+import { defaultLayer, hooksLayer } from "../auth/defaults";
 import type {
   BindingOf,
   ClaimsCodec,
@@ -71,7 +71,7 @@ const bindSignIn = <
         signIn: module.signIn,
         completeSignIn: module.operations.Complete.invoke,
       },
-      module.layer(options.policy).pipe(Layer.provideMerge(cryptoLayer)),
+      module.layer(options.policy).pipe(Layer.merge(Layer.effect(Crypto.Crypto, Crypto.Crypto))),
       { completion: true },
     ),
   });
@@ -100,7 +100,7 @@ const bindAccess = <
   const connectedLayer = access.handlersLayer.pipe(
     Layer.provide(defaultLayer(access.Connected, access.layer)),
     Layer.provide(defaultLayer(access.binding.RequestBinding, access.binding.layer)),
-    Layer.provide([cryptoLayer, hooksLayer]),
+    Layer.provide(hooksLayer),
   );
 
   return Object.freeze({
@@ -114,7 +114,7 @@ const bindAccess = <
         disconnectAccount: access.operations.Disconnect.invoke,
       },
       Layer.merge(base.layer(captured.options.policy), connectedLayer).pipe(
-        Layer.provideMerge(cryptoLayer),
+        Layer.merge(Layer.effect(Crypto.Crypto, Crypto.Crypto)),
       ),
       { completion: true },
     ),
@@ -252,7 +252,7 @@ const bindDefineRegistration = <
       ),
     ),
     Layer.provide(defaultLayer(module.binding.RequestBinding, module.binding.layer)),
-    Layer.provide([cryptoLayer, hooksLayer]),
+    Layer.provide(hooksLayer),
   );
 
   return Object.freeze({
@@ -264,7 +264,7 @@ const bindDefineRegistration = <
         completeSignIn: module.operations.Complete.invoke,
         register: registration.operations.Complete.invoke,
       },
-      layer.pipe(Layer.provideMerge(cryptoLayer)),
+      layer.pipe(Layer.merge(Layer.effect(Crypto.Crypto, Crypto.Crypto))),
       { completion: true },
     ),
   });

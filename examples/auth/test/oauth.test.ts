@@ -1,6 +1,5 @@
 import { it } from "@effect/vitest";
 import { Auth, Sessions } from "@yielded/auth";
-import * as OAuthCrypto from "@yielded/auth-crypto/OAuth";
 import { AuthRequest } from "@yielded/auth/Auth";
 import { AuthContract } from "@yielded/auth/contracts";
 import { LifecycleHooks } from "@yielded/auth/Hooks";
@@ -22,7 +21,6 @@ import { SubjectId } from "@yielded/auth/Schema";
 import { AuthenticationFlowId, AuthenticationRequirement } from "@yielded/auth/Sessions";
 import { OAuth } from "@yielded/auth/strategies";
 import * as Strava from "@yielded/auth/Strava";
-import { layerWebCrypto } from "@yielded/auth/WebCrypto";
 import { sql as drizzleSql } from "drizzle-orm";
 import {
   Context,
@@ -43,6 +41,7 @@ import { SqlClient } from "effect/sql";
 import { TestClock } from "effect/testing";
 import { expect } from "vite-plus/test";
 
+import { CryptoLive } from "../../shared/crypto";
 import { makeStorage } from "../src/oauth-storage";
 
 const keys = (byte: number) => ({
@@ -268,14 +267,13 @@ const harness = (
         : Layer.succeed(OAuthConnectedActionEvidence, settings.actionEvidence),
     ),
     Layer.provide(protocols),
-    Layer.provide(OAuthCrypto.transactionLayer(keys(2))),
-    Layer.provide(OAuthCrypto.connectedTransactionLayer(keys(2))),
-    Layer.provide(OAuthCrypto.connectedTokenLayer(keys(3))),
+    Layer.provide(OAuth.OAuthTransactionProtector.layer(keys(2))),
+    Layer.provide(OAuth.OAuthConnectedTransactionProtector.layer(keys(2))),
+    Layer.provide(OAuth.OAuthConnectedTokenProtector.layer(keys(3))),
     Layer.provide(
       Auth.RequestBindingConfig.layer({ generation: 1, lifetimeMillis: 600_000, keyring: keys(4) }),
     ),
     Layer.provide(OAuthReturnTargets.exactRoutes(["/sync"])),
-    Layer.provide(layerWebCrypto),
     Layer.provide(Layer.succeed(HttpClient.HttpClient, client)),
     Layer.provide(
       Layer.succeed(oauth.SessionClaims, {
@@ -283,6 +281,7 @@ const harness = (
       }),
     ),
     Layer.provideMerge(storage),
+    Layer.provide(CryptoLive),
   );
 
   return { live, requests, signals };
@@ -412,7 +411,7 @@ it.effect("libSQL persistence rejects ambient transactions", () =>
       .pipe(Effect.flip);
 
     expect(error._tag).toBe("OAuthUnavailable");
-  }).pipe(Effect.provide(durable)),
+  }).pipe(Effect.provide(durable.pipe(Layer.provide(CryptoLive)))),
 );
 
 // Requested regression seam: resolve an internally generated connected target

@@ -6,7 +6,7 @@ import {
   OAuthUnavailable,
 } from "@yielded/auth/OAuth";
 import type { Table } from "drizzle-orm";
-import { Effect, Context } from "effect";
+import { type Crypto, Effect, Context } from "effect";
 
 import { makeD1Owner } from "./d1-planning";
 import { D1BatchStatements } from "./D1BatchStatements";
@@ -69,6 +69,7 @@ export const makeOAuthConnectedTarget = <
     A,
     OAuthCoordinatorError<E> | DatabaseError,
     | (Synchronous extends true ? never : Exclude<R, OAuthConnectedPersistence>)
+    | Crypto.Crypto
     | LifecycleHooks
     | DatabaseRequirements
   >;
@@ -108,6 +109,7 @@ export const makeOAuthConnectedTarget = <
     A,
     OAuthCoordinatorError<E> | DatabaseError,
     | (Synchronous extends true ? never : Exclude<R, OAuthConnectedPersistence | TxId>)
+    | Crypto.Crypto
     | LifecycleHooks
     | DatabaseRequirements
   >;
@@ -142,7 +144,7 @@ export const makeOAuthConnectedTarget = <
   ): Effect.Effect<
     A,
     OAuthCoordinatorError<E> | DatabaseError,
-    Exclude<R, OAuthConnectedPersistence> | LifecycleHooks | DatabaseRequirements
+    Exclude<R, OAuthConnectedPersistence> | Crypto.Crypto | LifecycleHooks | DatabaseRequirements
   > {
     return Effect.flatMap(nativeDatabase(acquire), (database) =>
       coordinateTargetOAuthConnected<TransactionOf<D>, A, E, Exclude<R, OAuthConnectedPersistence>>(
@@ -193,6 +195,7 @@ export const makeOAuthConnectedTarget = <
     A,
     OAuthCoordinatorError<E> | DatabaseError,
     | (Synchronous extends true ? never : Exclude<R, OAuthConnectedRevocations>)
+    | Crypto.Crypto
     | LifecycleHooks
     | DatabaseRequirements
   >;
@@ -228,6 +231,7 @@ export const makeOAuthConnectedTarget = <
     A,
     OAuthCoordinatorError<E> | DatabaseError,
     | (Synchronous extends true ? never : Exclude<R, OAuthConnectedRevocations | TxId>)
+    | Crypto.Crypto
     | LifecycleHooks
     | DatabaseRequirements
   >;
@@ -258,7 +262,7 @@ export const makeOAuthConnectedTarget = <
   ): Effect.Effect<
     A,
     OAuthCoordinatorError<E> | DatabaseError,
-    Exclude<R, OAuthConnectedRevocations> | LifecycleHooks | DatabaseRequirements
+    Exclude<R, OAuthConnectedRevocations> | Crypto.Crypto | LifecycleHooks | DatabaseRequirements
   > {
     return Effect.flatMap(nativeDatabase(acquire), (database) =>
       coordinateTargetOAuthConnectedRevocations<
@@ -361,6 +365,7 @@ export const makeD1OAuthConnectedTarget = <DatabaseId, Database, Family extends 
     A,
     OAuthCoordinatorError<E> | DatabaseError,
     | Exclude<R, OAuthConnectedPersistence | D1BatchStatements>
+    | Crypto.Crypto
     | LifecycleHooks
     | DatabaseRequirements
   > {
@@ -435,6 +440,7 @@ export const makeD1OAuthConnectedTarget = <DatabaseId, Database, Family extends 
     A,
     OAuthCoordinatorError<E> | DatabaseError,
     | Exclude<R, OAuthConnectedRevocations | D1BatchStatements>
+    | Crypto.Crypto
     | LifecycleHooks
     | DatabaseRequirements
   > {

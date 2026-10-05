@@ -1,7 +1,6 @@
 import { Context, Crypto, Effect, Layer, Schema, type Types } from "effect";
 
 import { makeAuthStrategy } from "../../auth/AuthStrategy";
-import { cryptoLayer } from "../../auth/defaults";
 import { HookDenied } from "../../hooks/models";
 import type { AuthInvocation } from "../../operations/context";
 import { makeOperation, operationGroup } from "../../operations/operation";
@@ -113,12 +112,10 @@ export const makePasswordSignIn = <
     }),
   );
 
-  const layer = handlersLayer.pipe(Layer.provide(cryptoLayer));
-
   return Object.freeze({
     persistence: { kind: "password" as const, moduleId, management: false as const },
     SessionClaims,
-    layer,
+    layer: handlersLayer,
     handlersLayer,
     operations: { SignIn },
     group: operationGroup(SignIn),
@@ -135,7 +132,7 @@ export const makePasswordSignIn = <
           return yield* SignIn.invoke(invocation, { ...request, flowId });
         }),
       },
-      layer.pipe(Layer.provideMerge(cryptoLayer)),
+      handlersLayer.pipe(Layer.merge(Layer.effect(Crypto.Crypto, Crypto.Crypto))),
       { completion: true },
     ),
   });

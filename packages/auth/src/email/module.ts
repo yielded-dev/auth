@@ -2,7 +2,7 @@ import { Context, Crypto, DateTime, Effect, Layer, Option, Schema, type Types } 
 import { Base64Url } from "effect/encoding";
 
 import { makeAuthStrategy } from "../auth/AuthStrategy";
-import { cryptoLayer, defaultLayer, hooksLayer } from "../auth/defaults";
+import { defaultLayer, hooksLayer } from "../auth/defaults";
 import { hasCommitScope, type PreparedCommit } from "../hooks/commit";
 import { HookDenied } from "../hooks/models";
 import { LoginIdentifier } from "../identity/models";
@@ -474,7 +474,7 @@ export const makeEmailSignInModule = <
           Layer.provide(defaultLayer(SignIn, layer)),
           Layer.provide(defaultLayer(proof.Proofs, proof.emailLayer)),
           Layer.provide(defaultLayer(binding.RequestBinding, binding.layer)),
-          Layer.provide([cryptoLayer, hooksLayer]),
+          Layer.provide(hooksLayer),
           Layer.merge(defaultIngressLayer),
         ),
         { completion: true },
@@ -555,7 +555,7 @@ export const makeEmailAccountModule = <
           Layer.provide(defaultLayer(module.Registrations, module.layer)),
           Layer.provide(defaultLayer(registrationProof.Proofs, registrationProof.emailLayer)),
           Layer.provide(defaultLayer(binding.RequestBinding, binding.layer)),
-          Layer.provide([cryptoLayer, hooksLayer]),
+          Layer.provide(hooksLayer),
           Layer.merge(defaultIngressLayer),
         ),
       ),
@@ -594,7 +594,7 @@ export const makeEmailAccountModule = <
             defaultLayer(changeProof.Proofs, changeProof.emailLayer),
           ]),
           Layer.provide(defaultLayer(binding.RequestBinding, binding.layer)),
-          Layer.provide([cryptoLayer, hooksLayer]),
+          Layer.provide(hooksLayer),
           Layer.merge(defaultIngressLayer),
         ),
       ),

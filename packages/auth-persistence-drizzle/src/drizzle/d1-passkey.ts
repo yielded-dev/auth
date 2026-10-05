@@ -9,7 +9,7 @@ import {
 import type { AnyRelations } from "drizzle-orm";
 import type { EffectSQLiteD1Database } from "drizzle-orm/effect-d1";
 import type { AnySQLiteTable } from "drizzle-orm/sqlite-core";
-import { Effect, Context } from "effect";
+import { type Crypto, Effect, Context } from "effect";
 
 import { Database as DatabaseService } from "./d1-database";
 import { makeD1Owner } from "./d1-planning";
@@ -94,6 +94,7 @@ export function coordinatePasskeyPersistence<
   A,
   PasskeyCoordinatorError<E> | DatabaseError,
   | Exclude<R, PasskeyPersistence | D1BatchStatements>
+  | Crypto.Crypto
   | LifecycleHooks
   | DatabaseRequirements
   | RSetup
@@ -156,6 +157,7 @@ export function coordinatePasskeyRegistrationCeremony<
   A,
   PasskeyCoordinatorError<E> | DatabaseError,
   | Exclude<R, PasskeyPersistence | D1BatchStatements>
+  | Crypto.Crypto
   | LifecycleHooks
   | DatabaseRequirements
   | RSetup
@@ -239,6 +241,7 @@ export function coordinatePasskeyManagement<
   A,
   PasskeyCoordinatorError<E> | DatabaseError,
   | Exclude<R, PasskeyPersistence | PasskeyManagementPersistence | D1BatchStatements>
+  | Crypto.Crypto
   | LifecycleHooks
   | DatabaseRequirements
   | RSetup
@@ -328,6 +331,7 @@ export function coordinatePasskeyRegistration<
   A,
   PasskeyCoordinatorError<E> | DatabaseError,
   | Exclude<R, PasskeyPersistence | AuthorityId | D1BatchStatements>
+  | Crypto.Crypto
   | LifecycleHooks
   | DatabaseRequirements
   | RSetup

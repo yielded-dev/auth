@@ -5,6 +5,7 @@ import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 
 import { AppAuth } from "../../shared/account/auth";
 import { handoff, nativeSession } from "../../shared/account/browser-login-contract";
+import { CryptoLive } from "../../shared/crypto";
 import { NativeSessionLive } from "./live";
 
 const configuration = (origin: URL) =>
@@ -125,6 +126,7 @@ export const browserLoginRoutes = (origin: URL) =>
         ),
         Layer.provide(Layer.mergeAll(configuration(origin), invocation)),
         Layer.provide(NativeSessionLive),
+        Layer.provide(CryptoLive),
       );
     }),
   );

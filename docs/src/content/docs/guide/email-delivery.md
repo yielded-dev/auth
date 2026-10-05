@@ -94,7 +94,6 @@ can implement the same service. Declare
 `const sender = yield* Cloudflare.Email.SendEmail("AUTH_EMAIL")` in your stack, then
 bind it inside the Worker's construction effect:
 
-<!-- prettier-ignore -->
 ```ts
 import {
   EmailDelivery,

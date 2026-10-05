@@ -1,10 +1,10 @@
 import { Auth, Email, Http, OAuth, Sessions } from "@yielded/auth";
-import * as OAuthCrypto from "@yielded/auth-crypto/OAuth";
-import * as OpenIdClient from "@yielded/auth-openid-client";
-import * as GitHub from "@yielded/auth-openid-client/GitHub";
+import * as GitHub from "@yielded/auth/GitHub";
+import * as OpenIdConnect from "@yielded/auth/OpenIdConnect";
 import { Effect, Layer, Schema } from "effect";
-import { HttpRouter, HttpServerResponse } from "effect/http";
+import { FetchHttpClient, HttpRouter, HttpServerResponse } from "effect/http";
 
+import { CryptoLive } from "../../shared/crypto";
 import { LoginApi, Registration } from "./login-contract";
 
 export const makeAppAuth = (email: Email.EmailCodeOptions) =>
@@ -63,7 +63,7 @@ export const makeServer = (config: {
         ...(config.google === undefined
           ? {}
           : {
-              google: OpenIdClient.provider({
+              google: OpenIdConnect.provider({
                 protocol: "oidc",
                 issuer: "https://accounts.google.com",
                 tokenEndpointAuthMethod: "client_secret_post",
@@ -113,11 +113,12 @@ export const makeServer = (config: {
           lifetimeMillis: 600_000,
           keyring: config.binding,
         }),
-        OAuthCrypto.transactionLayer(config.transactions),
+        OAuth.OAuthTransactionProtector.layer(config.transactions),
         OAuth.OAuthReturnTargets.exactRoutes(["/account"]),
         Email.EmailReturnTargets.exactRoutes(["/account"]),
       ),
     ),
+    Layer.provide(Layer.merge(CryptoLive, FetchHttpClient.layer)),
   );
 
   return { AppAuth, http, Routes };

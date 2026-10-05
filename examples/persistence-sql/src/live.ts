@@ -1,4 +1,4 @@
-import { Passkey, Password, Schema as AuthSchema, Sessions, WebCrypto } from "@yielded/auth";
+import { Passkey, Password, Schema as AuthSchema, Sessions } from "@yielded/auth";
 import { layer as layerSimpleWebAuthnPasskeyProtocol } from "@yielded/auth-simplewebauthn/Server";
 import { Crypto, Effect, Layer, Option, Schema } from "effect";
 import { SqlClient } from "effect/sql";
@@ -6,6 +6,7 @@ import { SqlClient } from "effect/sql";
 import { AppAuth, sessionConfiguration } from "../../shared/account/auth";
 import { Claims, minimumPasswordLength } from "../../shared/account/contract";
 import { HashingLive } from "../../shared/account/hashing";
+import { CryptoLive } from "../../shared/crypto";
 import { MigrationsLive } from "./migrations";
 import { ActionPoliciesLive } from "./policy";
 import { Persistence, storage } from "./schema";
@@ -38,7 +39,7 @@ const ProvisioningLive = Layer.effect(
       ),
     };
   }),
-).pipe(Layer.provide(WebCrypto.layerWebCrypto));
+);
 
 const ClaimsLive = Layer.effect(
   AppAuth.strategies.password.SessionClaims,
@@ -148,7 +149,11 @@ const ServicesLive = Layer.mergeAll(ClaimsLive, PasskeyClaimsLive, ActionPolicie
 
 export const NativeSessionLive = AppAuth.sessions
   .layer(sessionConfiguration.policy(AppAuth.sessions.moduleId))
-  .pipe(Layer.provideMerge(ServicesLive), Layer.provideMerge(DatabaseReady));
+  .pipe(
+    Layer.provideMerge(ServicesLive),
+    Layer.provideMerge(DatabaseReady),
+    Layer.provide(CryptoLive),
+  );
 
 // The host supplies SQL, delivery, proof keys, and compromised-password screening.
 export const AuthLive = AppAuth.layer.pipe(
@@ -162,4 +167,5 @@ export const AuthLive = AppAuth.layer.pipe(
   Layer.provide(ServicesLive),
   Layer.provideMerge(DatabaseReady),
   Layer.provideMerge(HashingLive),
+  Layer.provide(CryptoLive),
 );

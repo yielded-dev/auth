@@ -78,7 +78,7 @@ export const makePasskeyRegistrationCeremonyKernel = (
     })).rows[0];
 
     if (advisory === undefined) return false;
-    const hashedHandle = handleKey(ceremony.profile.rpId, context.userHandle);
+    const hashedHandle = yield* handleKey(ceremony.profile.rpId, context.userHandle);
 
     const held = (yield* owner.read(
       handle.table,
@@ -204,7 +204,7 @@ export const makePasskeyRegistrationCeremonyKernel = (
       policyStorage.encode(current) !== policyStorage.encode(input.policy) ||
       !(yield* owner.check(liveCondition(mapping, read.ceremony))) ||
       !(yield* owner.check(
-        admissionCondition(
+        yield* admissionCondition(
           mapping,
           [read.policy, current],
           read.ceremony,

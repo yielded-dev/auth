@@ -7,7 +7,6 @@ import {
   connectedRead,
   connectedSame,
   validateConnectedPolicy,
-  wipeConnectedMaterial,
 } from "./connectedAccess";
 import {
   OAuthConnectedConfiguration,
@@ -20,6 +19,7 @@ import {
   OAuthConnectedTokenContext,
   OAuthGrantId,
 } from "./connectedModels";
+import { wipeConnectedMaterial } from "./grantTokens";
 import { OAuthConnectedPersistence } from "./OAuthConnectedPersistence";
 import { OAuthConnectedProtocol } from "./OAuthConnectedProtocol";
 import { OAuthConnectedTokenProtector } from "./OAuthConnectedTokenProtector";

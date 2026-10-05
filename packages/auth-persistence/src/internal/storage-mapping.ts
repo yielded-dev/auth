@@ -1,4 +1,3 @@
-import { randomId } from "@yielded/auth-crypto";
 import { EmailCredentialSnapshot } from "@yielded/auth/Email";
 import { LoginIdentifier } from "@yielded/auth/Identity";
 import {
@@ -26,9 +25,10 @@ import {
   SessionCredentialVersion,
   type StatefulSessionRecord,
 } from "@yielded/auth/Sessions";
-import { DateTime, Effect, Redacted, Schema } from "effect";
+import { Crypto, DateTime, Effect, Redacted, Schema } from "effect";
 
 import type { MappingInput } from "./configuration";
+import { randomId } from "./crypto";
 import { PersistenceMappingError } from "./mapping-error";
 import { requiredEmailAddressConstraints, type AnyEmailAddressMapping } from "./models/email-model";
 import {
@@ -77,11 +77,19 @@ const ProofContinuation = Schema.Struct({
 });
 
 /** Derive shared row mappings from a managed or custom storage layout.
+ * Acquire Effect Crypto once; the returned allocators retain that implementation.
  * Each factory requires its role tables to exist. Adapter authors supply typed
  * table handles and dialect-specific clocks/commit predicates, and may refine
  * authority policy for explicit services. This does not alter composed defaults.
  */
-export const makeMappings = (input: MappingInput) => {
+export const makeMappings = Effect.fnUntraced(function* (input: MappingInput) {
+  const crypto = yield* Crypto.Crypto;
+
+  const allocate = randomId.pipe(
+    Effect.provideService(Crypto.Crypto, crypto),
+    Effect.mapError(failure),
+  );
+
   const table = (role: StorageRole) => {
     const found = input.tables[role];
 
@@ -107,7 +115,7 @@ export const makeMappings = (input: MappingInput) => {
     d1ActiveStatusValue: s.activeValue,
     decodeRequirement: s.requirements,
     decodeActionRequirement: s.actionRequirements,
-    nextSecurityRevisionSync: () => SecurityRevision.make(randomId()),
+    nextSecurityRevision: () => allocate.pipe(Effect.map(SecurityRevision.make)),
   };
 
   const authorityCredential = () => ({
@@ -127,7 +135,7 @@ export const makeMappings = (input: MappingInput) => {
     constraints: requiredProofConstraints,
     encodeInstant: instant,
     decodeInstant: readInstant,
-    allocateVersionSync: () => ProofVersion.make(randomId()),
+    allocateVersion: allocate.pipe(Effect.map(ProofVersion.make)),
     isRequestConflict: () => false,
     isSeriesConflict: () => false,
     isCommandConflict: () => false,
@@ -373,9 +381,9 @@ export const makeMappings = (input: MappingInput) => {
       }),
       encodeInstant: instant,
       decodeInstant: readInstant,
-      allocateAttemptIdSync: () => PasswordAttemptId.make(randomId()),
-      allocateCredentialIdSync: randomId,
-      allocateRevisionSync: () => SecurityRevision.make(randomId()),
+      allocateAttemptId: allocate.pipe(Effect.map(PasswordAttemptId.make)),
+      allocateCredentialId: allocate,
+      allocateRevision: allocate.pipe(Effect.map(SecurityRevision.make)),
       commandRetentionMillis: 86_400_000,
       sessionInvalidation: "same-authority-immediate",
       identifier: {
@@ -521,8 +529,8 @@ export const makeMappings = (input: MappingInput) => {
     changeDisposition: "retire-source",
     encodeInstant: instant,
     decodeInstant: readInstant,
-    allocateCredentialIdSync: randomId,
-    allocateRevisionSync: () => SecurityRevision.make(randomId()),
+    allocateCredentialId: allocate,
+    allocateRevision: allocate.pipe(Effect.map(SecurityRevision.make)),
     commandRetentionMillis: 86_400_000,
     sessionInvalidation: "same-authority-immediate",
     isCommandConflict: () => false,
@@ -694,8 +702,8 @@ export const makeMappings = (input: MappingInput) => {
         expiresAt: "expiresAt",
         absoluteExpiresAt: "absoluteExpiresAt",
         encodeInstant: (date) => instant(DateTime.toEpochMillis(date)),
-        allocateIdSync: randomId,
-        allocateVersionSync: () => SecurityRevision.make(randomId()),
+        allocateId: allocate,
+        allocateVersion: allocate.pipe(Effect.map(SecurityRevision.make)),
         encodeInsert: (value, ids) => ({ ...encodeRow(value), ...ids }),
         encodeRotation: encodeRow,
         decode: (row) =>
@@ -710,4 +718,4 @@ export const makeMappings = (input: MappingInput) => {
   };
 
   return { table, authority, proofs, passwords, emails, sessions, string };
-};
+});

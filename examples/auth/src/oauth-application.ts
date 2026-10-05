@@ -1,5 +1,4 @@
 import { Auth, Http, Sessions } from "@yielded/auth";
-import * as OAuthCrypto from "@yielded/auth-crypto/OAuth";
 import { LifecycleHooks } from "@yielded/auth/Hooks";
 import {
   OAuthReturnTargets,
@@ -8,10 +7,10 @@ import {
 } from "@yielded/auth/OAuth";
 import type { SessionSigningKeyring } from "@yielded/auth/Sessions";
 import { OAuth } from "@yielded/auth/strategies";
-import { layerWebCrypto } from "@yielded/auth/WebCrypto";
 import { Effect, FileSystem, Layer } from "effect";
 import { FetchHttpClient, HttpRouter, HttpServerResponse } from "effect/http";
 
+import { CryptoLive } from "../../shared/crypto";
 import { OAuthApi } from "./oauth-contract";
 import { makeStorage } from "./oauth-storage";
 
@@ -66,12 +65,12 @@ export const makeExample = <E, R>(config: {
       lifetimeMillis: 600_000,
       keyring: config.transactionKeys,
     }),
-    OAuthCrypto.transactionLayer(config.transactionKeys),
-    OAuthCrypto.connectedTransactionLayer(config.transactionKeys),
-    OAuthCrypto.connectedTokenLayer(config.tokenKeys),
+    OAuth.OAuthTransactionProtector.layer(config.transactionKeys),
+    OAuth.OAuthConnectedTransactionProtector.layer(config.transactionKeys),
+    OAuth.OAuthConnectedTokenProtector.layer(config.tokenKeys),
     OAuthReturnTargets.exactRoutes([returnTarget]),
     FetchHttpClient.layer,
-  ).pipe(Layer.provideMerge(layerWebCrypto), Layer.provideMerge(LifecycleHooks.empty));
+  ).pipe(Layer.provideMerge(CryptoLive), Layer.provideMerge(LifecycleHooks.empty));
 
   const live = http.layer.pipe(Layer.provideMerge(dependencies));
 

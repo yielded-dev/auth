@@ -1,4 +1,4 @@
-import { cryptoLayer, hooksLayer } from "@yielded/auth/Persistence";
+import { hooksLayer } from "@yielded/auth/Persistence";
 import {
   type PhoneAdmissionPolicy,
   type PhoneLifecyclePolicy,
@@ -175,7 +175,7 @@ export interface PhonePersistenceServices {
   readonly phoneSignInTargets: PhoneSignInTargets["Service"];
 }
 
-/** Bundle phone storage, admission, and lookup with overridable crypto and hook defaults. */
+/** Bundle phone storage, admission, and lookup with empty hook defaults. */
 export const phonePersistenceLayer = <E, R>(
   services: Effect.Effect<PhonePersistenceServices, E, R>,
 ) =>
@@ -187,4 +187,4 @@ export const phonePersistenceLayer = <E, R>(
         Layer.succeed(PhoneSignInTargets, value.phoneSignInTargets),
       ),
     ),
-  ).pipe(Layer.provide([cryptoLayer, hooksLayer]));
+  ).pipe(Layer.provide(hooksLayer));

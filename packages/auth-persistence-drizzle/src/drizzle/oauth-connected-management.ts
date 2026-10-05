@@ -341,7 +341,7 @@ export const disconnect = Effect.fn("oauthConnected.disconnect")(function* (
       [d.grantId]: token.grantId,
       [d.intent]: S.commandStorage.encode({
         context: token,
-        originalDigest: digest(S.disconnectStorage.encode(input.grant)),
+        originalDigest: yield* digest(S.disconnectStorage.encode(input.grant)),
         ...(input.revocation === undefined
           ? {}
           : { revocationJobId: input.revocation.context.jobId }),

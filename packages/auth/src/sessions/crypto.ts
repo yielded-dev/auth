@@ -1,8 +1,8 @@
+import { Hmac, type Key } from "@yielded/crypto/Hmac";
 import { Crypto, Effect, Redacted, Result, Schema } from "effect";
 import { Base64Url } from "effect/encoding";
 
 import { TokenDigest } from "../Schema";
-import { SubtleCrypto } from "../WebCrypto";
 import { SessionConfigurationError, SessionInvalid, SessionUnavailable } from "./errors";
 
 export interface SessionSigningKeyring {
@@ -74,7 +74,7 @@ export const makeSessionSecrets = Effect.fn("makeSessionSecrets")(function* (mod
   };
 });
 
-/** Immutable key snapshot: retirement is effective only after every runtime installs it. */
+/** Scoped key snapshot: retirement is effective only after every runtime installs it. */
 export const makeSessionSigningCodec = Effect.fn("makeSessionSigningCodec")(function* <
   S extends Schema.Top,
 >(schema: S, configuration: SessionSigningKeyring, maximumTokenBytes: number) {
@@ -82,9 +82,9 @@ export const makeSessionSigningCodec = Effect.fn("makeSessionSigningCodec")(func
     Effect.mapError(() => SessionConfigurationError.make({ reason: "keyring" })),
   );
 
-  const subtle = yield* SubtleCrypto;
+  const hmac = yield* Hmac;
   const services = yield* Effect.context<S["DecodingServices"] | S["EncodingServices"]>();
-  const keys = new Map<string, CryptoKey>();
+  const keys = new Map<string, Key>();
 
   for (const entry of checked.keys) {
     yield* Schema.decodeEffect(keyIdSchema)(entry.id).pipe(
@@ -97,17 +97,10 @@ export const makeSessionSigningCodec = Effect.fn("makeSessionSigningCodec")(func
       return yield* SessionConfigurationError.make({ reason: "keyring" });
     }
 
-    const key = yield* Effect.tryPromise({
-      try: () =>
-        subtle.importKey(
-          "raw",
-          material as BufferSource,
-          { name: "HMAC", hash: "SHA-256" },
-          false,
-          ["sign", "verify"],
-        ),
-      catch: () => SessionConfigurationError.make({ reason: "keyring" }),
-    });
+    const key = yield* hmac.importKey({ algorithm: "SHA-256", key: Redacted.make(material) }).pipe(
+      Effect.mapError(() => SessionConfigurationError.make({ reason: "keyring" })),
+      Effect.ensuring(Effect.sync(() => material.fill(0))),
+    );
 
     keys.set(entry.id, key);
   }
@@ -128,12 +121,11 @@ export const makeSessionSigningCodec = Effect.fn("makeSessionSigningCodec")(func
 
       const message = `eas1.${activeKeyId}.${Base64Url.encode(json)}`;
 
-      const signature = yield* Effect.tryPromise({
-        try: () => subtle.sign("HMAC", activeKey, textEncoder.encode(message)),
-        catch: () => SessionUnavailable.make({}),
-      });
+      const signature = yield* activeKey
+        .sign(textEncoder.encode(message))
+        .pipe(Effect.mapError(() => SessionUnavailable.make({})));
 
-      const token = `${message}.${Base64Url.encode(new Uint8Array(signature))}`;
+      const token = `${message}.${Base64Url.encode(signature)}`;
 
       if (token.length > maximumTokenBytes) return yield* SessionUnavailable.make({});
 
@@ -155,16 +147,9 @@ export const makeSessionSigningCodec = Effect.fn("makeSessionSigningCodec")(func
       if (key === undefined || signature === undefined || signature.length !== 32)
         return yield* SessionInvalid.make({});
 
-      const valid = yield* Effect.tryPromise({
-        try: () =>
-          subtle.verify(
-            "HMAC",
-            key,
-            signature as BufferSource,
-            textEncoder.encode(`${version}.${keyId}.${payload}`),
-          ),
-        catch: () => SessionUnavailable.make({}),
-      });
+      const valid = yield* key
+        .verify(textEncoder.encode(`${version}.${keyId}.${payload}`), signature)
+        .pipe(Effect.mapError(() => SessionUnavailable.make({})));
 
       if (!valid) return yield* SessionInvalid.make({});
       const json = Result.getOrUndefined(Base64Url.decodeString(payload));

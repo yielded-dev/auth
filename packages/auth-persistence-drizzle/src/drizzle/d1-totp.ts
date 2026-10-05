@@ -5,7 +5,7 @@ import { TotpUnavailable, TotpPersistence } from "@yielded/auth/Totp";
 import type { AnyRelations } from "drizzle-orm";
 import type { EffectSQLiteD1Database } from "drizzle-orm/effect-d1";
 import type { AnySQLiteTable } from "drizzle-orm/sqlite-core";
-import { Context, Effect } from "effect";
+import { type Crypto, Context, Effect } from "effect";
 
 import { Database as DatabaseService } from "./d1-database";
 import { makeD1Owner } from "./d1-planning";
@@ -50,7 +50,11 @@ export const coordinateTotpPersistence = <
 ): Effect.Effect<
   A,
   TotpCoordinatorError<E> | DatabaseError,
-  Exclude<R, TotpPersistence | D1BatchStatements> | LifecycleHooks | RSetup | DatabaseRequirements
+  | Exclude<R, TotpPersistence | D1BatchStatements>
+  | Crypto.Crypto
+  | LifecycleHooks
+  | RSetup
+  | DatabaseRequirements
 > =>
   Effect.flatMap(nativeDatabase(acquire), (database) =>
     coordinateTargetTotp(

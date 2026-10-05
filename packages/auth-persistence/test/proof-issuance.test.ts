@@ -1,3 +1,4 @@
+import { NodeCrypto } from "@effect/platform-node";
 import * as SqliteClient from "@effect/sql-sqlite-node/SqliteClient";
 import { it } from "@effect/vitest";
 import { Auth, PhoneOtp, Proofs, Sessions } from "@yielded/auth";
@@ -83,6 +84,7 @@ const database = Layer.effectDiscard(
 
 const live = persistence.layer.pipe(
   Layer.provide(persistence.Config.layer(storage)),
+  Layer.provide(NodeCrypto.layer),
   Layer.provideMerge(database),
 );
 
