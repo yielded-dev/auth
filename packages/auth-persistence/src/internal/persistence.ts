@@ -52,7 +52,11 @@ import {
   type StorageRole,
   type StorageTable,
 } from "./storage-tables";
-import { validateStorageBatch, type StorageValidation } from "./storage-validation";
+import {
+  validateStorageBatch,
+  withStorageValidation,
+  type StorageValidation,
+} from "./storage-validation";
 import { makeTransactionExecutionKernel } from "./transaction-execution-kernel";
 import {
   makeTransactionKernel,
@@ -586,6 +590,7 @@ export const createPersistence = <T extends object, R>(
         // The checked capability metadata above determines exactly these service keys.
         return context as Context.Context<Ports<C, Id, A>>;
       }).pipe(
+        withStorageValidation,
         Effect.mapError((error) =>
           Schema.is(PersistenceConfigurationError)(error)
             ? error

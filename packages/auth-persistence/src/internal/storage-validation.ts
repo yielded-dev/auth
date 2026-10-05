@@ -1,4 +1,4 @@
-import { Effect, Schema } from "effect";
+import { Context, Effect, Schema } from "effect";
 import { SqlClient } from "effect/sql/SqlClient";
 
 import { PersistenceConfigurationError } from "./configuration";
@@ -169,14 +169,45 @@ const validateStorageSingle = Effect.fnUntraced(
     ),
 );
 
+interface MetadataCache {
+  active: boolean;
+  readonly clients: Map<SqlClient, Map<string, (typeof PgMetadata.Type)[number]>>;
+}
+
+const CurrentMetadata = Context.Reference<MetadataCache | undefined>(
+  "@yielded/auth-persistence/StorageMetadata",
+  { defaultValue: () => undefined },
+);
+
+/** Share metadata only while constructing one service graph. Captured contexts
+ * cannot reuse it after acquisition succeeds, fails, or is interrupted. */
+export const withStorageValidation = Effect.fnUntraced(function* <A, E, R>(
+  effect: Effect.Effect<A, E, R>,
+): Effect.fn.Return<A, E, R> {
+  const parent = yield* CurrentMetadata;
+
+  if (parent?.active) return yield* effect;
+  const cache: MetadataCache = { active: true, clients: new Map() };
+
+  return yield* effect.pipe(
+    Effect.provideService(CurrentMetadata, cache),
+    Effect.ensuring(
+      Effect.sync(() => {
+        cache.active = false;
+        cache.clients.clear();
+      }),
+    ),
+  );
+});
+
 /** Requirements checked against one physical catalog snapshot. */
 export interface StorageValidation {
   readonly table: PhysicalStorageTable;
   readonly required: ReadonlyArray<ReadonlyArray<string>>;
 }
 
-/** Batch PostgreSQL metadata reads within acquisition. No metadata survives this
- * call: later acquisitions must detect migrations and newly required keys. */
+/** Batch PostgreSQL metadata reads, reusing the current acquisition snapshot.
+ * Every requirement is still checked; later acquisitions read fresh metadata. */
 export const validateStorageBatch = Effect.fnUntraced(
   function* (dialect: "pg" | "mysql" | "sqlite", requirements: ReadonlyArray<StorageValidation>) {
     if (requirements.length === 0) return;
@@ -187,14 +218,25 @@ export const validateStorageBatch = Effect.fnUntraced(
       return;
     }
     const client = yield* SqlClient;
-    const relations = [...new Set(requirements.map(({ table }) => qualifiedTableName(table)))];
+    const cache = yield* CurrentMetadata;
 
-    const requested = client.join(
-      ", ",
-      false,
-    )(relations.map((relation) => client`(${relation}::text)`));
+    const byRelation = cache?.active
+      ? (cache.clients.get(client) ?? new Map<string, (typeof PgMetadata.Type)[number]>())
+      : new Map<string, (typeof PgMetadata.Type)[number]>();
 
-    const metadata = yield* client`
+    if (cache?.active) cache.clients.set(client, byRelation);
+
+    const relations = [
+      ...new Set(requirements.map(({ table }) => qualifiedTableName(table))),
+    ].filter((relation) => !byRelation.has(relation));
+
+    if (relations.length > 0) {
+      const requested = client.join(
+        ", ",
+        false,
+      )(relations.map((relation) => client`(${relation}::text)`));
+
+      const metadata = yield* client`
       select requested.relation,
         array(select a.attname::text from pg_attribute a
           where a.attrelid = to_regclass(requested.relation)
@@ -213,7 +255,8 @@ export const validateStorageBatch = Effect.fnUntraced(
       from (values ${requested}) requested(relation)
     `.pipe(Effect.flatMap(Schema.decodeUnknownEffect(PgMetadata)));
 
-    const byRelation = new Map(metadata.map((row) => [row.relation, row]));
+      for (const row of metadata) byRelation.set(row.relation, row);
+    }
 
     for (const { table, required } of requirements) {
       const relation = qualifiedTableName(table);
