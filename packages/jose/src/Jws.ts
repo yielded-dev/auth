@@ -9,7 +9,7 @@ import {
   InvalidToken,
   SignatureVerificationFailed,
 } from "./Errors";
-import { signatureAlgorithm } from "./internal/algorithms";
+import { algorithms } from "./internal/algorithms";
 import {
   decode,
   json,
@@ -97,7 +97,7 @@ const verifyAsymmetric = Effect.fnUntraced(function* (
   const signatures = yield* Signature;
 
   const valid = yield* signatures.verify({
-    algorithm: signatureAlgorithm(algorithm),
+    algorithm: algorithms[algorithm],
     publicKey: key.material,
     data: parsed.signingInput,
     signature: parsed.signature,
@@ -149,7 +149,7 @@ export const sign = Effect.fnUntraced(function* (
     const signatures = yield* Signature;
 
     signature = yield* signatures.sign({
-      algorithm: signatureAlgorithm(header.alg),
+      algorithm: algorithms[header.alg],
       privateKey: key.material,
       data: utf8(signingInput),
     });

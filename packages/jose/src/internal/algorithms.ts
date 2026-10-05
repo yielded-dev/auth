@@ -8,6 +8,3 @@ export const algorithms = {
   PS256: "RSA-PSS-SHA256",
   EdDSA: "Ed25519",
 } satisfies Record<AsymmetricAlgorithm, Algorithm>;
-
-export const signatureAlgorithm = (algorithm: AsymmetricAlgorithm): Algorithm =>
-  algorithms[algorithm];

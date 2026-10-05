@@ -200,7 +200,7 @@ type TransactionOf<D> = D extends { readonly transaction: (...args: any[]) => an
   ? Parameters<Parameters<D["transaction"]>[0]>[0]
   : never;
 
-/** Concrete driver wrappers select transaction mode; cryptography always precedes these owners. */
+/** Concrete driver wrappers select transaction mode. */
 export const makeTotpTarget = <
   DatabaseId,
   D extends { readonly transaction: any },

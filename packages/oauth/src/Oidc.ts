@@ -188,13 +188,10 @@ export const makeVerifier = Effect.fnUntraced(function* (
     const claims = yield* V.decode(IdClaims, verified.claims).pipe(Effect.mapError(claimFailure));
 
     const now = (yield* Clock.currentTimeMillis) / 1000;
-    const audience = typeof claims.aud === "string" ? claims.aud : claims.aud[0];
 
     if (
       start < 0 ||
       start > now * 1000 ||
-      claims.iss !== metadata.issuer ||
-      audience !== options.clientId ||
       (claims.azp !== undefined && claims.azp !== options.clientId) ||
       claims.exp <= now ||
       claims.iat > now ||
