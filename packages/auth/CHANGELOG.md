@@ -1,5 +1,18 @@
 # @yielded/auth
 
+## 0.1.0-beta.21
+
+### Minor Changes
+
+- [#122](https://github.com/yielded-dev/auth/pull/122) [`412c808`](https://github.com/yielded-dev/auth/commit/412c808796a1a52ee0dd568f9a88433d6a9ef2d4) Thanks [@danieljvdm](https://github.com/danieljvdm)! - Support MCP client metadata discovery, private-key JWT and shared-secret client authentication, and OAuth 2.1 callback handling. BEHAVIOR CHANGE: supply HttpClient and Signature services to OAuthServer Layers, apply OAuthServerPersistence.migrations for grants and assertion receipts, and implement consumeAssertion in custom persistence adapters; configure trusted metadata origins and network egress for remote discovery.
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @yielded/crypto@0.1.0-beta.21
+  - @yielded/jose@0.1.0-beta.21
+  - @yielded/oauth@0.1.0-beta.21
+
 ## 0.1.0-beta.20
 
 ### Minor Changes

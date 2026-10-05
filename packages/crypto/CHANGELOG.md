@@ -1,5 +1,9 @@
 # @yielded/crypto
 
+## 0.1.0-beta.21
+
+No changes in this release.
+
 ## 0.1.0-beta.20
 
 ## 0.1.0-beta.19
