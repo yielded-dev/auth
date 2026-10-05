@@ -406,6 +406,11 @@ committing its result. Enrollment inserts the credential and shared factor atomi
 while preserving the subject security revision and existing sessions. Removal bumps
 the revision and applies the configured session invalidation in the same transaction.
 
+Standalone credential lookup uses one SELECT when mapped references share compatible
+SQL types and ID encodings. It opens no transaction. Custom codecs that transform IDs
+outside SQL require additional mapped reads. Lookup is advisory; authentication
+mutations recheck live ownership and authority before committing.
+
 ## Phone
 
 For sign-in with managed or mapped storage, the composed Layer above supplies
@@ -485,7 +490,8 @@ No synchronous crypto implementation or `Effect.runSync` bridge is required.
 
 Cleanup groups respect the driver's bind limits and retain atomic commit checks.
 Durable Object SQLite needs smaller groups than PostgreSQL; a large cleanup page
-can still issue hundreds of local statements. Direct Effect SQL uses portable
+can still issue hundreds of statements. Budget each statement as a database roundtrip.
+Direct Effect SQL uses portable
 SQLite batch limits that also fit Durable Objects.
 
 </details>

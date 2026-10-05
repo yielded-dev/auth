@@ -25,12 +25,20 @@ export interface SqlExpression {
 }
 
 export interface SqlFragment extends SqlExpression {
-  readonly mapWith: (decode: (value: unknown) => unknown) => SqlFragment;
+  readonly mapWith: (
+    decode:
+      | ((value: unknown) => unknown)
+      | { readonly mapFromDriverValue: (value: unknown) => unknown },
+  ) => SqlFragment;
   readonly as: (name: string) => SqlExpression;
 }
 
 export interface SqlColumn extends SqlExpression {
   readonly mapToDriverValue: (value: unknown) => unknown;
+  /** Optional native projection metadata for joined snapshot reads. */
+  readonly mapFromDriverValue?: (value: unknown) => unknown;
+  readonly getSQLType?: () => string;
+  readonly dimensions?: number | undefined;
 }
 
 /** Native query failures stay in E until the owning kernel reports and redacts

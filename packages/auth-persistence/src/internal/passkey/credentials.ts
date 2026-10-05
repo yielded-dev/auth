@@ -1,7 +1,7 @@
 /* oxlint-disable no-explicit-any -- existing mapped-row bridge; public adapters preserve table, ID, and Effect types. */
 
 import {
-  PasskeyCredential,
+  type PasskeyCredential,
   PasskeyDescriptor,
   PasskeyRevision,
   PasskeyUserHandle,
@@ -12,7 +12,9 @@ import type { SubjectId } from "@yielded/auth/Schema";
 import { Effect, Schema } from "effect";
 
 import type { QueryOperations } from "../query-operations";
-import type { makeTransactionKernel } from "../transaction-kernel";
+import type { TransactionTargetConfiguration } from "../transaction-execution-kernel";
+import type { makeTransactionKernel, TransactionNativeDatabase } from "../transaction-kernel";
+import { makePasskeyLookup } from "./lookup";
 import { CurrentPasskeyTransaction } from "./state";
 import type { makePasskeyStateKernel } from "./state";
 
@@ -34,6 +36,7 @@ export const makePasskeyCredentialsKernel = (
     | "col"
     | "copiedRow"
     | "credentialKey"
+    | "credentialSnapshot"
     | "equal"
     | "handleKey"
     | "invariant"
@@ -43,7 +46,10 @@ export const makePasskeyCredentialsKernel = (
     | "semanticCredentialColumns"
     | "unavailable"
   >,
-  transactions: Pick<ReturnType<typeof makeTransactionKernel>, "both">,
+  transactions: Pick<
+    ReturnType<typeof makeTransactionKernel>,
+    "both" | "makeTransactionRows" | "makeTransactionOwner" | "reportTransactionFailure"
+  >,
 ) => {
   const { asc, inArray, sql } = operations;
 
@@ -51,6 +57,7 @@ export const makePasskeyCredentialsKernel = (
     col,
     copiedRow,
     credentialKey,
+    credentialSnapshot,
     equal,
     handleKey,
     mappedColumns,
@@ -374,39 +381,17 @@ export const makePasskeyCredentialsKernel = (
 
     if (revision === undefined) return undefined;
 
-    const credential = snapshotPasskeySync(PasskeyCredential, {
-      ...decoded,
+    const credential = credentialSnapshot(
+      mapping,
+      row,
+      tuple,
+      decoded,
       revision,
-      active: true,
-    });
+      rpId,
+      protocolCredentialId,
+    );
 
-    invariant(credential.rpId === rpId && credential.protocolCredentialId === protocolCredentialId);
-    invariant(
-      credential.credentialId === row[descriptor.credentialId] &&
-        credential.credentialId === tuple[ownership.credentialId],
-    );
-    invariant(
-      credential.profile.rpId === rpId &&
-        credential.profile.algorithms.includes(credential.algorithm),
-    );
-    invariant(
-      credential.counter === Number(row[descriptor.counter]) &&
-        credential.maximumCounter === Number(row[descriptor.maximumCounter]),
-    );
-    invariant(
-      credential.maximumCounter >= credential.counter &&
-        (!credential.backupState || credential.backupEligible),
-    );
-    if (
-      !revision.credentials.some(
-        (item) =>
-          item.credentialId === credential.credentialId &&
-          item.revision === row[descriptor.credentialRevision],
-      )
-    )
-      return undefined;
-
-    return { credential, row };
+    return credential === undefined ? undefined : { credential, row };
   });
 
   const lookupCredential = Effect.fn("passkey.lookupCredential")(function* (
@@ -423,6 +408,59 @@ export const makePasskeyCredentialsKernel = (
 
     return (yield* readCredential(mapping, subject, rpId, protocolCredentialId))?.credential;
   });
+
+  const lookupMappedSnapshot = Effect.fn("passkey.lookupMappedSnapshot")(
+    function* (
+      database: TransactionNativeDatabase,
+      mapping: any,
+      rpId: string,
+      protocolCredentialId: string,
+      configuration: Pick<
+        TransactionTargetConfiguration<never>,
+        "mode" | "dialect" | "maxParameters"
+      >,
+    ) {
+      const unsupported = () => {
+        throw unavailable();
+      };
+
+      // Opaque ID codecs can require mapped point reads. Recheck their captured
+      // values without opening a transaction or acquiring mutation locks.
+      const owner = transactions.makeTransactionOwner(
+        database,
+        { prepare: unsupported, stage: unsupported, defer: unsupported },
+        "snapshot",
+        unavailable,
+        {
+          ...configuration,
+          client: database.$client,
+          batch: false,
+          locking: false,
+          mysql: configuration.dialect === "mysql",
+          ...(configuration.mode === "batch"
+            ? {
+                maxParameters: configuration.maxParameters ?? 96,
+                compactGeneratedStatements: true,
+              }
+            : {}),
+        },
+      );
+
+      const result = yield* lookupCredential(mapping, rpId, protocolCredentialId).pipe(
+        Effect.provideService(CurrentPasskeyTransaction, owner),
+      );
+
+      yield* owner.finish();
+
+      return result;
+    },
+    (effect) =>
+      effect.pipe(
+        (operation) => transactions.reportTransactionFailure(operation, unavailable),
+        Effect.mapError(unavailable),
+        Effect.catchDefect(() => Effect.fail(unavailable())),
+      ),
+  );
 
   const captureEnrollmentContext = Effect.fn("passkey.captureEnrollmentContext")(function* (
     mapping: any,
@@ -522,6 +560,8 @@ export const makePasskeyCredentialsKernel = (
     readRevision,
     readCredential,
     lookupCredential,
+    lookupMappedSnapshot,
+    lookupSnapshot: makePasskeyLookup(operations, state, transactions),
     captureEnrollmentContext,
   };
 };

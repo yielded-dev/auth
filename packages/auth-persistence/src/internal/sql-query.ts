@@ -105,6 +105,7 @@ interface QueryState {
   readonly joins?: ReadonlyArray<{
     readonly table: Table | Fragment;
     readonly on: Fragment;
+    readonly kind: "INNER" | "LEFT";
   }>;
   readonly selection?: Selection;
   readonly where?: Fragment | undefined;
@@ -182,7 +183,7 @@ const compile = (state: QueryState, compiler: Compiler): string => {
   if (state.operation === "select") {
     query = `SELECT ${projection(selectionFor(state), compiler)} FROM ${table.render(compiler)}`;
     for (const join of state.joins ?? [])
-      query += ` INNER JOIN ${join.table.render(compiler)} ON ${join.on.render(compiler)}`;
+      query += ` ${join.kind} JOIN ${join.table.render(compiler)} ON ${join.on.render(compiler)}`;
   } else {
     if (!(table instanceof Table))
       throw PersistenceMappingError.make({
@@ -245,9 +246,33 @@ export const makeSqlDatabase = Effect.fnUntraced(function* (dialect: Dialect) {
         return { sql: compile(state, compiler), params: compiler.parameters };
       },
       getSQL: () => new Fragment((compiler) => compile(state, compiler)),
+      as: (alias: string) => {
+        const fields = selectionFields(selectionFor(state));
+
+        if (fields.some((field) => field.name !== undefined))
+          throw PersistenceMappingError.make({
+            operation: "query",
+            cause: "Derived queries require a flat projection",
+          });
+
+        return Object.assign(
+          new Fragment((compiler) => `(${compile(state, compiler)}) AS ${identifier(alias)}`),
+          Object.fromEntries(
+            fields.map((field) => [
+              field.key,
+              new Fragment(
+                () => `${identifier(alias)}.${identifier(field.alias)}`,
+                field.column.decode,
+              ),
+            ]),
+          ),
+        );
+      },
       from: (table: Table | Fragment) => query({ ...state, table }),
       innerJoin: (table: Table | Fragment, on: Fragment) =>
-        query({ ...state, joins: [...(state.joins ?? []), { table, on }] }),
+        query({ ...state, joins: [...(state.joins ?? []), { table, on, kind: "INNER" }] }),
+      leftJoin: (table: Table | Fragment, on: Fragment) =>
+        query({ ...state, joins: [...(state.joins ?? []), { table, on, kind: "LEFT" }] }),
       where: (where: Fragment | undefined) => query({ ...state, where }),
       limit: (limit: number) => query({ ...state, limit }),
       orderBy: (...order: Fragment[]) => query({ ...state, order }),
@@ -283,8 +308,10 @@ export const makeSqlDatabase = Effect.fnUntraced(function* (dialect: Dialect) {
 interface Query extends Effect.Effect<Row[], SqlError> {
   toSQL(): { readonly sql: string; readonly params: ReadonlyArray<unknown> };
   getSQL(): Fragment;
+  as(alias: string): Fragment & Readonly<Record<string, Fragment>>;
   from(table: Table | Fragment): Query;
   innerJoin(table: Table | Fragment, on: Fragment): Query;
+  leftJoin(table: Table | Fragment, on: Fragment): Query;
   where(where: Fragment | undefined): Query;
   limit(limit: number): Query;
   orderBy(...order: Fragment[]): Query;

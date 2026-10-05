@@ -1,4 +1,4 @@
-import { type PreparedCommit, LifecycleHooks } from "@yielded/auth/Hooks";
+import { type PreparedCommit, LifecycleHooks, hasCommitScope } from "@yielded/auth/Hooks";
 /* oxlint-disable no-explicit-any -- existing mapped-row bridge; public adapters preserve table, ID, and Effect types. */
 import {
   PasskeyConfigurationError,
@@ -26,7 +26,7 @@ import {
   snapshotPasskeySync,
 } from "@yielded/auth/Passkey";
 import { SubjectId } from "@yielded/auth/Schema";
-import { type Crypto, Effect, Schema } from "effect";
+import { Crypto, Effect, Schema } from "effect";
 import type { Statement } from "effect/sql/Statement";
 
 import type { PersistenceMappingError } from "../mapping-error";
@@ -44,7 +44,7 @@ import type {
   TransactionTargetConfiguration,
   makeTransactionExecutionKernel,
 } from "../transaction-execution-kernel";
-import type { NativeDatabase } from "../transaction-kernel";
+import { NativeDatabase, type TransactionNativeDatabase } from "../transaction-kernel";
 import type { makePasskeyCredentialsKernel } from "./credentials";
 import type { makePasskeyFlowKernel } from "./flow";
 import type { makePasskeyRegistrationCeremonyKernel } from "./registration-ceremony";
@@ -67,7 +67,7 @@ export type PasskeyExecution = TransactionExecution<
 export const makePasskeyTargetKernel = (
   credentials: Pick<
     ReturnType<typeof makePasskeyCredentialsKernel>,
-    "captureEnrollmentContext" | "lookupCredential"
+    "captureEnrollmentContext" | "lookupMappedSnapshot" | "lookupSnapshot"
   >,
   flow: Pick<
     ReturnType<typeof makePasskeyFlowKernel>,
@@ -94,7 +94,7 @@ export const makePasskeyTargetKernel = (
   >,
   operations: QueryOperations,
 ) => {
-  const { captureEnrollmentContext, lookupCredential } = credentials;
+  const { captureEnrollmentContext, lookupMappedSnapshot, lookupSnapshot } = credentials;
 
   const {
     assertionPurposes,
@@ -369,11 +369,34 @@ export const makePasskeyTargetKernel = (
   const credentialService = (
     mapping: any,
     execute: PasskeyExecution,
+    database: TransactionNativeDatabase,
+    configuration: PasskeyTargetConfiguration,
+    crypto: Crypto.Crypto,
   ): PasskeyCredentials["Service"] =>
     capturedService<PasskeyCredentials["Service"]>(
       {
         lookup: (input) =>
-          execute.run(lookupCredential(mapping, input.rpId, input.protocolCredentialId), false),
+          Effect.gen(function* () {
+            if (yield* hasCommitScope) return yield* Effect.fail(unavailable());
+            yield* configuration.standaloneGuard(database.$client.transactionService);
+
+            const result = yield* lookupSnapshot(
+              database,
+              mapping,
+              input.rpId,
+              input.protocolCredentialId,
+            );
+
+            return result._tag === "Snapshot"
+              ? result.credential
+              : yield* lookupMappedSnapshot(
+                  database,
+                  mapping,
+                  input.rpId,
+                  input.protocolCredentialId,
+                  configuration,
+                );
+          }).pipe(Effect.provideService(Crypto.Crypto, crypto)),
       },
       { lookup: lookupInput },
       execute,
@@ -441,12 +464,16 @@ export const makePasskeyTargetKernel = (
   > =>
     Effect.gen(function* () {
       const mapping = yield* capturedMapping(source, "read", configuration);
+      const database = yield* NativeDatabase;
+      const crypto = yield* Crypto.Crypto;
 
       const execution = yield* makePasskeyExecution(configuration, mapping).pipe(
         Effect.provideService(LifecycleHooks, emptyHooks),
       );
 
-      return { passkeyCredentials: credentialService(mapping, execution) };
+      return {
+        passkeyCredentials: credentialService(mapping, execution, database, configuration, crypto),
+      };
     });
 
   const makeTargetPasskeyEnrollmentContext = <M, RSetup>(

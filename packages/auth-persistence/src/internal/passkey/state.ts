@@ -183,6 +183,53 @@ export const makePasskeyStateKernel = (
       "backupEligible",
     ].map((name) => mapping[name]);
 
+  const credentialSnapshot = (
+    mapping: any,
+    row: any,
+    tuple: any,
+    decoded: Omit<PasskeyCredential, "revision" | "active">,
+    revision: typeof PasskeyRevision.Type,
+    rpId: string,
+    protocolCredentialId: string,
+  ) => {
+    const descriptor = mapping.credential;
+    const ownership = mapping.credentialOwnership;
+
+    const credential = snapshotPasskeySync(PasskeyCredential, {
+      ...decoded,
+      revision,
+      active: true,
+    });
+
+    invariant(credential.rpId === rpId && credential.protocolCredentialId === protocolCredentialId);
+    invariant(
+      credential.credentialId === row[descriptor.credentialId] &&
+        credential.credentialId === tuple[ownership.credentialId],
+    );
+    invariant(
+      credential.profile.rpId === rpId &&
+        credential.profile.algorithms.includes(credential.algorithm),
+    );
+    invariant(
+      credential.counter === Number(row[descriptor.counter]) &&
+        credential.maximumCounter === Number(row[descriptor.maximumCounter]),
+    );
+    invariant(
+      credential.maximumCounter >= credential.counter &&
+        (!credential.backupState || credential.backupEligible),
+    );
+    if (
+      !revision.credentials.some(
+        (item) =>
+          item.credentialId === credential.credentialId &&
+          item.revision === row[descriptor.credentialRevision],
+      )
+    )
+      return undefined;
+
+    return credential;
+  };
+
   const mappedColumns = (mapping: any): string[] =>
     Object.entries(mapping)
       .filter(
@@ -341,6 +388,7 @@ export const makePasskeyStateKernel = (
     sameCredential,
     sameRevision,
     semanticCredentialColumns,
+    credentialSnapshot,
     mappedColumns,
     observeSemantic,
     captureMapping,

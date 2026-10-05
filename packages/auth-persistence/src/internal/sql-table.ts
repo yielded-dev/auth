@@ -31,8 +31,17 @@ export class Fragment {
     readonly decode: (value: unknown) => unknown = (value) => value,
   ) {}
 
-  mapWith(decode: (value: unknown) => unknown): Fragment {
-    return new Fragment(this.render, decode);
+  mapWith(
+    decode:
+      | ((value: unknown) => unknown)
+      | { readonly mapFromDriverValue: (value: unknown) => unknown },
+  ): Fragment {
+    return new Fragment(
+      this.render,
+      typeof decode === "function"
+        ? decode
+        : (value) => (value === null ? null : decode.mapFromDriverValue(value)),
+    );
   }
 
   as(_name: string): Fragment {
@@ -83,6 +92,14 @@ export class Column extends Fragment {
 
   mapToDriverValue(value: unknown): unknown {
     return value;
+  }
+
+  mapFromDriverValue(value: unknown): unknown {
+    return this.decode(value);
+  }
+
+  getSQLType(): string {
+    return this.options.type;
   }
 }
 

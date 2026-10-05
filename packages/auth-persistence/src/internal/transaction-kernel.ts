@@ -248,7 +248,9 @@ export const makeTransactionKernel = <
         );
       });
 
-    return { col, equal, copiedRow, matchesNativeRow };
+    const sameDriverValue = (left: unknown, right: unknown) => nativeKey(left) === nativeKey(right);
+
+    return { col, equal, copiedRow, matchesNativeRow, sameDriverValue };
   };
 
   const makeTransactionOwner = <Failure>(
@@ -263,6 +265,7 @@ export const makeTransactionKernel = <
       readonly mysql: boolean;
       readonly dialect: "pg" | "mysql" | "sqlite";
       readonly maxParameters?: number;
+      readonly compactGeneratedStatements?: boolean;
     },
   ): TransactionOwner<Failure> => {
     const invariant: (value: unknown) => asserts value = (value) => {
@@ -445,7 +448,8 @@ export const makeTransactionKernel = <
       Effect.gen(function* () {
         const query = queryCondition(condition);
 
-        const rows: ReadonlyArray<Row> = yield* configuration.batch
+        const rows: ReadonlyArray<Row> = yield* configuration.batch ||
+        configuration.compactGeneratedStatements
           ? toStatement(query)
           : (query as NativeQuery<Row[]>);
 

@@ -4,4 +4,4 @@
 "@yielded/auth-persistence-drizzle": patch
 ---
 
-Reduce SQL queries for authentication, credential management, and cleanup across SQL adapters. Keep SQLite cleanup batches within Durable Object statement limits.
+Reduce database roundtrips for authentication, credential management, and cleanup, including single-query passkey lookup with compatible mapped references. Keep SQLite cleanup batches within Durable Object statement limits.
