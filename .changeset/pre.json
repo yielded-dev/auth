@@ -15,7 +15,10 @@
     "@yielded/auth-react-native": "0.0.0",
     "@yielded/drizzle-effect-v4-patch": "0.1.0-beta.0",
     "@yielded/example-browser-login-electron": "0.0.0",
-    "@yielded/auth-electron": "0.1.0-beta.14"
+    "@yielded/auth-electron": "0.1.0-beta.14",
+    "@yielded/crypto": "0.1.0-beta.18",
+    "@yielded/jose": "0.1.0-beta.18",
+    "@yielded/oauth": "0.1.0-beta.18"
   },
   "changesets": [
     "aligned-package-versions",
@@ -36,6 +39,7 @@
     "drizzle-effect-patch-cli",
     "effect-only-core",
     "exact-optional-properties",
+    "explicit-crypto-requirements",
     "fair-password-waiting",
     "fence-authentication-admission",
     "github-response-issuer",
@@ -49,6 +53,7 @@
     "managed-passkey-storage",
     "mcp-authorization",
     "modular-auth-persistence",
+    "native-auth-protocols",
     "native-browser-login",
     "native-proof-admission-import",
     "oauth-consent-cookie",
@@ -67,6 +72,7 @@
     "raw-sql-account-example",
     "reclaim-unverified-mailbox",
     "rendered-email-delivery",
+    "scoped-provider-and-kdf-cleanup",
     "screening-timeout",
     "separate-drizzle-persistence",
     "short-public-modules",
@@ -75,6 +81,7 @@
     "stable-effect",
     "stateless-lifetime",
     "strava-responses",
+    "swift-storage-catalogs",
     "tidy-oauth-engine",
     "totp-reset-attempts",
     "visible-client-dependencies",
