@@ -115,7 +115,9 @@ group and one beta version. Add a changeset naming the affected packages for
 consumer-visible changes; the whole group is versioned and published together.
 Keep `.changeset/config.json` aligned with new public workspaces. Private examples
 and documentation are not versioned or published. Do not leave prerelease mode
-without an explicit release decision.
+without an explicit release decision. Run `vp run changeset status` to inspect the
+pending release plan. Consumed beta notes live in `.changeset/pre/`; `pre.json`
+keeps only the prerelease mode and tag. Retain those notes for the stable release.
 
 `release:publish` builds and temporarily converts source manifests to
 npm-ready exports and resolves catalog/workspace ranges, then restores the original
@@ -136,9 +138,11 @@ Before enabling automated releases:
    does not use staged publishing.
 4. Set the repository variable `RELEASE_ENABLED=true`.
 
-The release workflow maintains a version PR using the App token so updates trigger
-ordinary CI. After merge, it validates unpublished versions with the full ready gate
-and publishes to npm with provenance. Initialization alone does not enable publication.
+The release workflow uses Changesets' `select-mode`, `version`, and `publish`
+actions. The App token is passed through `github-token`, so version PR updates
+trigger ordinary CI. Only the publish job receives npm OIDC permission. After
+merge, it validates unpublished versions with the full ready gate and publishes
+to npm with provenance. Initialization alone does not enable publication.
 
 For a manual release, run the handoff gate, `vp run changeset:version`, and
 `vp run release:publish --dry-run`. Once authorized, run `vp run release:publish`
