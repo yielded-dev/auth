@@ -1,4 +1,4 @@
-import { NativeDatabase } from "@yielded/auth-persistence/Adapter";
+import { withStorageValidation, NativeDatabase } from "@yielded/auth-persistence/Adapter";
 import {
   ExternalIdentityMutation,
   type ExternalIdentity,
@@ -331,4 +331,4 @@ export const makeMysqlIdentityServices = Effect.fnUntraced(function* <
     ...(yield* makeMysqlSubjectProvisioningServices(mapping)),
     ...(yield* makeMysqlExternalIdentityServices(mapping)),
   };
-});
+}, withStorageValidation);

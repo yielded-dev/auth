@@ -54,6 +54,13 @@ const ModuleRow = Schema.Struct({
   policyRevision: Schema.String,
 });
 
+const ConfiguredModuleRow = Schema.Struct({
+  moduleId: Schema.String,
+  active: Schema.Boolean,
+  policyRevision: Schema.String,
+  admitted: Schema.Literals(["present", "missing"]),
+});
+
 const credentialData = PasskeyCredential.mapFields(
   ({ revision: _revision, active: _active, ...fields }) => fields,
 );
@@ -390,7 +397,21 @@ export const makeComposedPasskeys = (
       const client = yield* SqlClient.SqlClient;
 
       const policies = yield* Effect.forEach(features, (feature) =>
-        Effect.map(feature.policy, (policy) => ({ feature, policy })),
+        Effect.gen(function* () {
+          const policy = yield* feature.policy;
+          const encoded = yield* Schema.encodeEffect(policyJson)(policy);
+
+          const policyRevision = yield* digest(
+            yield* Schema.encodeEffect(seedJson)({
+              policy,
+              ...(feature.managementPolicy === undefined
+                ? {}
+                : { management: feature.managementPolicy }),
+            }),
+          );
+
+          return { feature, policy, encoded, policyRevision };
+        }),
       );
 
       const m = yield* Effect.try({
@@ -413,82 +434,112 @@ export const makeComposedPasskeys = (
       };
 
       const native = yield* CurrentProofSql;
+      const module = m.table("passkeyModules");
+      const columns = getTableColumns(module);
+      const admission = m.table("passkeyAdmissions");
+      const ac = getTableColumns(admission);
 
-      yield* client.withTransaction(
-        Effect.gen(function* () {
-          if (dialect === "pg")
-            yield* client`select pg_advisory_xact_lock(hashtext(${`${namespace}/passkeys`}))`;
-          for (const { feature, policy } of policies) {
-            const encoded = yield* Schema.encodeEffect(policyJson)(policy);
+      // Read live configuration on every acquisition. Matching modules and
+      // admission ownership need no initialization writes or advisory lock.
+      const configured = yield* native
+        .select({
+          moduleId: columns.moduleId,
+          active: columns.active,
+          policyRevision: columns.policyRevision,
+          // Predicate SQL preserves qualifiers through single-table projections.
+          admitted: sql`case when exists(select 1 from ${admission}
+            where ${and(eq(ac.authorityScope, namespace), eq(ac.moduleId, columns.moduleId))})
+              then 'present' else 'missing' end`,
+        })
+        .from(module)
+        .where(
+          inArray(
+            columns.moduleId,
+            policies.map(({ feature }) => feature.moduleId),
+          ),
+        )
+        .pipe(
+          Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(ConfiguredModuleRow))),
+          Effect.map((rows) =>
+            policies.every(({ feature, policyRevision }) =>
+              rows.some(
+                (row) =>
+                  row.moduleId === feature.moduleId &&
+                  row.active &&
+                  row.admitted === "present" &&
+                  row.policyRevision === policyRevision,
+              ),
+            ),
+          ),
+        );
 
-            const policyRevision = yield* digest(
-              yield* Schema.encodeEffect(seedJson)({
-                policy,
-                ...(feature.managementPolicy === undefined
-                  ? {}
-                  : { management: feature.managementPolicy }),
-              }),
-            );
-
-            const module = m.table("passkeyModules");
-            const columns = getTableColumns(module);
-
-            yield* native
-              .insert(module)
-              .values({ moduleId: feature.moduleId, active: true, policy: encoded, policyRevision })
-              .onConflictDoNothing();
-
-            const rows = yield* native
-              .select()
-              .from(module)
-              .where(eq(columns.moduleId, feature.moduleId));
-
-            const row = yield* Schema.decodeUnknownEffect(ModuleRow)(rows[0]);
-
-            if (!row.active)
-              return yield* configurationError(`Passkey module ${feature.moduleId} is disabled`);
-            if (row.policyRevision !== policyRevision) {
-              const previous = yield* Schema.decodeEffect(policyJson)(row.policy);
-
-              if (policy.generation <= previous.generation)
-                return yield* configurationError(
-                  `Increase the passkey policy generation to change ${feature.moduleId}`,
-                );
+      if (!configured)
+        yield* client.withTransaction(
+          Effect.gen(function* () {
+            if (dialect === "pg")
+              yield* client`select pg_advisory_xact_lock(hashtext(${`${namespace}/passkeys`}))`;
+            for (const { feature, policy, encoded, policyRevision } of policies) {
               yield* native
-                .update(module)
-                .set({ policy: encoded, policyRevision })
-                .where(
-                  and(
-                    eq(columns.moduleId, feature.moduleId),
-                    eq(columns.policyRevision, row.policyRevision),
-                    eq(columns.active, true),
-                  ),
-                );
+                .insert(module)
+                .values({
+                  moduleId: feature.moduleId,
+                  active: true,
+                  policy: encoded,
+                  policyRevision,
+                })
+                .onConflictDoNothing();
 
-              const updated = yield* native
+              const rows = yield* native
                 .select()
                 .from(module)
                 .where(eq(columns.moduleId, feature.moduleId));
 
-              const applied = yield* Schema.decodeUnknownEffect(ModuleRow)(updated[0]);
+              const row = yield* Schema.decodeUnknownEffect(ModuleRow)(rows[0]);
 
-              if (!applied.active || applied.policyRevision !== policyRevision)
-                return yield* configurationError(
-                  `Passkey policy changed while configuring ${feature.moduleId}`,
-                );
+              if (!row.active)
+                return yield* configurationError(`Passkey module ${feature.moduleId} is disabled`);
+              if (row.policyRevision !== policyRevision) {
+                const previous = yield* Schema.decodeEffect(policyJson)(row.policy);
+
+                if (policy.generation <= previous.generation)
+                  return yield* configurationError(
+                    `Increase the passkey policy generation to change ${feature.moduleId}`,
+                  );
+                yield* native
+                  .update(module)
+                  .set({ policy: encoded, policyRevision })
+                  .where(
+                    and(
+                      eq(columns.moduleId, feature.moduleId),
+                      eq(columns.policyRevision, row.policyRevision),
+                      eq(columns.active, true),
+                    ),
+                  );
+
+                const updated = yield* native
+                  .select()
+                  .from(module)
+                  .where(eq(columns.moduleId, feature.moduleId));
+
+                const applied = yield* Schema.decodeUnknownEffect(ModuleRow)(updated[0]);
+
+                if (!applied.active || applied.policyRevision !== policyRevision)
+                  return yield* configurationError(
+                    `Passkey policy changed while configuring ${feature.moduleId}`,
+                  );
+              }
+              yield* native
+                .insert(m.table("passkeyAdmissions"))
+                .values({
+                  authorityScope: namespace,
+                  moduleId: feature.moduleId,
+                  version: policyRevision,
+                  ownerMarker: policyRevision,
+                })
+                .onConflictDoNothing();
             }
-            yield* native
-              .insert(m.table("passkeyAdmissions"))
-              .values({
-                authorityScope: namespace,
-                moduleId: feature.moduleId,
-                version: policyRevision,
-                ownerMarker: policyRevision,
-              })
-              .onConflictDoNothing();
-          }
-        }),
-      );
+          }),
+        );
 
       const credential = yield* makeTargetPasskeyCredentials<ReadMapping, never>(
         m.read,

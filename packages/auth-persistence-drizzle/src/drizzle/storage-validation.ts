@@ -1,7 +1,8 @@
 import {
   NativeDatabase,
   PersistenceMappingError,
-  validateStorage,
+  validateStorageBatch,
+  type StorageValidation,
 } from "@yielded/auth-persistence/Adapter";
 import { getTableColumns, getTableName, is, Table } from "drizzle-orm";
 import { getTableConfig as getMysqlTableConfig, MySqlTable } from "drizzle-orm/mysql-core";
@@ -243,6 +244,8 @@ export const validateDrizzleStorage = Effect.fnUntraced(
 
     const { $client: client } = yield* NativeDatabase;
 
+    const batches = new Map<"pg" | "mysql" | "sqlite", StorageValidation[]>();
+
     for (const plan of physical) {
       const pg = is(plan.table, PgTable);
       const mysql = is(plan.table, MySqlTable);
@@ -255,15 +258,21 @@ export const validateDrizzleStorage = Effect.fnUntraced(
 
       const columns = getTableColumns(plan.table);
 
-      yield* validateStorage(
-        pg ? "pg" : mysql ? "mysql" : "sqlite",
-        {
+      const dialect = pg ? "pg" : mysql ? "mysql" : "sqlite";
+      const batch = batches.get(dialect) ?? [];
+
+      batch.push({
+        table: {
           name: getTableName(plan.table),
           ...(schema === undefined ? {} : { schema }),
           columns: Object.fromEntries(plan.keys.map((key) => [key, { name: columns[key]!.name }])),
         },
-        [plan.keys],
-      ).pipe(
+        required: [plan.keys],
+      });
+      batches.set(dialect, batch);
+    }
+    for (const [dialect, requirements] of batches) {
+      yield* validateStorageBatch(dialect, requirements).pipe(
         Effect.provideService(SqlClient, client),
         Effect.mapError(() =>
           PersistenceMappingError.make({

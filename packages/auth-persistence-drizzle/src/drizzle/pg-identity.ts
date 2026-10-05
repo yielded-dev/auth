@@ -1,4 +1,4 @@
-import { NativeDatabase } from "@yielded/auth-persistence/Adapter";
+import { withStorageValidation, NativeDatabase } from "@yielded/auth-persistence/Adapter";
 import {
   ExternalIdentityMutation,
   IdentityConflict,
@@ -307,4 +307,4 @@ export const makePgIdentityServices = Effect.fnUntraced(function* <
     ...(yield* makePgSubjectProvisioningServices(mapping)),
     ...(yield* makePgExternalIdentityServices(mapping)),
   };
-});
+}, withStorageValidation);

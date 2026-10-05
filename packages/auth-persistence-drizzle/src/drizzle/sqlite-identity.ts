@@ -1,4 +1,4 @@
-import { NativeDatabase } from "@yielded/auth-persistence/Adapter";
+import { withStorageValidation, NativeDatabase } from "@yielded/auth-persistence/Adapter";
 import {
   ExternalIdentityMutation,
   type ExternalIdentity,
@@ -326,4 +326,4 @@ export const makeSqliteIdentityServices = Effect.fnUntraced(function* <
     ...(yield* makeSqliteSubjectProvisioningServices(mapping, mode)),
     ...(yield* makeSqliteExternalIdentityServices(mapping)),
   };
-});
+}, withStorageValidation);

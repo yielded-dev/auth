@@ -1,5 +1,5 @@
 import type { D1Client } from "@effect/sql-d1/D1Client";
-import { NativeDatabase } from "@yielded/auth-persistence/Adapter";
+import { withStorageValidation, NativeDatabase } from "@yielded/auth-persistence/Adapter";
 import {
   ExternalIdentityMutation,
   type ExternalIdentity,
@@ -382,4 +382,4 @@ export const makeD1IdentityServices = Effect.fnUntraced(function* <
     ...(yield* makeD1SubjectProvisioningServices(mapping)),
     ...(yield* makeD1ExternalIdentityServices(mapping)),
   };
-});
+}, withStorageValidation);

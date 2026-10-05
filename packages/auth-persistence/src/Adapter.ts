@@ -297,4 +297,10 @@ export type {
   PersistenceApi,
 } from "./internal/configuration";
 
-export { validateStorage, type PhysicalStorageTable } from "./internal/storage-validation";
+export {
+  validateStorage,
+  validateStorageBatch,
+  withStorageValidation,
+  type PhysicalStorageTable,
+  type StorageValidation,
+} from "./internal/storage-validation";
