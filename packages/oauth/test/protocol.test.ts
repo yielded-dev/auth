@@ -448,7 +448,7 @@ for (const termination of ["interruption", "timeout"] as const) {
 
       const fetch: typeof globalThis.fetch = async (_request, init) => {
         calls++;
-        expect(init?.redirect).toBe("error");
+        expect(init?.redirect).toBe("manual");
         expect(init?.credentials).toBe("omit");
 
         return new Response(

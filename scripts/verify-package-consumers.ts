@@ -189,7 +189,7 @@ let requests = 0;
 const fetchReceipt = async (url, init) => {
   requests++;
   assert.equal(String(url), "https://issuer.example/token");
-  assert.equal(init.redirect, "error");
+  assert.equal(init.redirect, "manual");
   assert.equal(init.credentials, "omit");
   const form = new URLSearchParams(text(init.body));
   assert.equal(form.get("grant_type"), "authorization_code");
