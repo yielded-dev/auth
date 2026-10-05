@@ -52,7 +52,7 @@ import {
   type StorageRole,
   type StorageTable,
 } from "./storage-tables";
-import { validateStorage } from "./storage-validation";
+import { validateStorageBatch, type StorageValidation } from "./storage-validation";
 import { makeTransactionExecutionKernel } from "./transaction-execution-kernel";
 import {
   makeTransactionKernel,
@@ -310,6 +310,8 @@ export const createPersistence = <T extends object, R>(
           return yield* configError(
             "Persistence configuration belongs to a different Auth definition",
           );
+        const validations: StorageValidation[] = [];
+
         for (const role of roles) {
           const table = (storage.schema as Partial<Record<StorageRole, T>>)[role];
 
@@ -321,11 +323,13 @@ export const createPersistence = <T extends object, R>(
             if (columns[name] === undefined)
               return yield* configError(`Missing ${role}.${name} column`);
           }
-          yield* validateStorage(dialect, description, storageTables[role].unique);
+          validations.push({ table: description, required: storageTables[role].unique });
         }
-        yield* validateStorage(dialect, backend.describe(storage.subjects.table as T), [
-          [storage.subjects.id],
-        ]);
+        validations.push({
+          table: backend.describe(storage.subjects.table as T),
+          required: [[storage.subjects.id]],
+        });
+        yield* validateStorageBatch(dialect, validations);
         const mappings = makeMappings(storage);
 
         const standalone = <E>(error: () => E) =>
