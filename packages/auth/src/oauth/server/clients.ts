@@ -187,7 +187,7 @@ export const makeClients = Effect.fnUntraced(function* (
   tokenEndpoint: string,
 ) {
   // The network dependency is explicit in the server Layer, including when disabled.
-  const http = yield* HttpClient.HttpClient;
+  const http = HttpClient.withScope(yield* HttpClient.HttpClient);
   const hmac = yield* Hmac;
   const signatures = yield* Signature;
   const store = yield* Persistence;

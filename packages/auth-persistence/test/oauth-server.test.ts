@@ -661,6 +661,62 @@ it.effect(
   },
 );
 
+// Regression in 2aa9a55: unread discovery responses were left to GC cleanup.
+// Keep bodies open and use FetchHttpClient itself to observe transport cancellation.
+it.effect("discovery cancels rejected responses before releasing the request", () => {
+  const responses: Response[] = [];
+  const signals: Array<AbortSignal | null | undefined> = [];
+  let status = 503;
+  let contentType = "application/json";
+
+  const fetch: typeof globalThis.fetch = (_input, init) => {
+    const response = new Response(
+      new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new Uint8Array(5121));
+        },
+      }),
+      { status, headers: { "content-type": contentType } },
+    );
+
+    responses.push(response);
+    signals.push(init?.signal);
+
+    return Promise.resolve(response);
+  };
+
+  return Effect.gen(function* () {
+    const service = yield* server.Service;
+
+    yield* Effect.addFinalizer(() =>
+      Effect.promise(async () => {
+        for (const response of responses) if (!response.body?.locked) await response.body?.cancel();
+      }),
+    );
+    const cancellations: boolean[] = [];
+
+    for (const response of [
+      { status: 503, type: "application/json" },
+      { status: 200, type: "text/plain" },
+      { status: 200, type: "application/json" },
+    ]) {
+      status = response.status;
+      contentType = response.type;
+      expect((yield* service.handle(begin())).status).toBe(400);
+      cancellations.push(signals.at(-1)?.aborted ?? false);
+    }
+    expect(cancellations).toEqual([true, true, true]);
+  }).pipe(
+    Effect.provide(
+      harness(
+        undefined,
+        metadataConfig,
+        FetchHttpClient.layer.pipe(Layer.provide(Layer.succeed(FetchHttpClient.Fetch, fetch))),
+      ),
+    ),
+  );
+});
+
 it.effect("CIMD cancels a stalled metadata request at its deadline", () =>
   Effect.gen(function* () {
     const service = yield* server.Service;
