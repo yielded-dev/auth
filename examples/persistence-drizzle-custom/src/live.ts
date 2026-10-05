@@ -1,6 +1,6 @@
 import { Passkey, Password, Schema as AuthSchema, Sessions } from "@yielded/auth";
 import { layer as layerSimpleWebAuthnPasskeyProtocol } from "@yielded/auth-simplewebauthn/Server";
-import { eq } from "drizzle-orm";
+import { and, eq, getTableColumns } from "drizzle-orm";
 import * as Drizzle from "drizzle-orm/effect-sqlite-bun";
 import { Crypto, Effect, Layer, Option, Schema } from "effect";
 
@@ -10,7 +10,7 @@ import { HashingLive } from "../../shared/account/hashing";
 import { CryptoLive } from "../../shared/crypto";
 import { MigrationsLive } from "./migrations";
 import { ActionPoliciesLive } from "./policy";
-import { customers, Persistence, storage } from "./schema";
+import { authSchema, customers, Persistence, storage } from "./schema";
 
 // The application's versioned migrations own every table. Auth starts afterward.
 export const DatabaseReady = MigrationsLive.pipe(
@@ -106,8 +106,12 @@ const SessionClaimsLive = Layer.effect(
   AppAuth.sessions.StatefulSessionPersistence,
   Effect.gen(function* () {
     const sessions = yield* AppAuth.sessions.StatefulSessionPersistence;
-    const passwords = yield* Password.PasswordPersistence;
-    const claims = yield* AppAuth.strategies.password.SessionClaims;
+    const database = yield* Drizzle.makeWithDefaults({});
+    const identifiers = authSchema.identifiers;
+    const passwords = authSchema.passwords;
+
+    const i = getTableColumns(identifiers),
+      p = getTableColumns(passwords);
 
     return {
       ...sessions,
@@ -115,23 +119,39 @@ const SessionClaimsLive = Layer.effect(
         function* (input) {
           const session = yield* sessions.verify(input);
 
-          const current = yield* passwords.readForSubject({
-            moduleId: AppAuth.strategies.password.persistence.moduleId,
-            subjectId: session.subjectId,
-          });
+          // Claims need the current account and identifier in one snapshot.
+          const rows = yield* database
+            .select({
+              displayName: customers.displayName,
+              email: i.value,
+              verifiedAt: i.verifiedAt,
+            })
+            .from(customers)
+            .innerJoin(identifiers, and(eq(i.subjectId, customers.id), eq(i.active, true)))
+            .innerJoin(
+              passwords,
+              and(
+                eq(p.subjectId, customers.id),
+                eq(p.moduleId, AppAuth.strategies.password.persistence.moduleId),
+              ),
+            )
+            .where(
+              and(
+                eq(customers.id, session.subjectId),
+                eq(customers.enabled, true),
+                eq(customers.securityRevision, session.securityRevision),
+              ),
+            )
+            .limit(1);
 
-          if (
-            Option.isNone(current) ||
-            current.value.revision.subjectId !== session.subjectId ||
-            current.value.revision.securityRevision !== session.securityRevision
-          )
-            return yield* Sessions.SessionInvalid.make({});
+          if (rows.length !== 1) return yield* Sessions.SessionInvalid.make({});
 
           return {
             ...session,
-            claims: yield* claims.resolve({
-              subjectId: current.value.revision.subjectId,
-              credential: current.value,
+            claims: yield* Schema.decodeUnknownEffect(Claims)({
+              displayName: rows[0].displayName,
+              email: rows[0].email,
+              emailVerified: rows[0].verifiedAt !== null,
             }),
           };
         },
@@ -141,10 +161,7 @@ const SessionClaimsLive = Layer.effect(
       ),
     };
   }),
-).pipe(
-  Layer.provide(ClaimsLive),
-  Layer.provideMerge(Persistence.layer.pipe(Layer.provide(ProvisioningLive))),
-);
+).pipe(Layer.provideMerge(Persistence.layer.pipe(Layer.provide(ProvisioningLive))));
 
 const ServicesLive = Layer.mergeAll(ClaimsLive, PasskeyClaimsLive, ActionPoliciesLive).pipe(
   Layer.provideMerge(SessionClaimsLive),

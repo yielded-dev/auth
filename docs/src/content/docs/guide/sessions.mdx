@@ -132,5 +132,12 @@ Configure `completionLayer({ pendingLifetimeMillis, attemptLimit })` with
 is not an authenticated session. [TOTP](./totp) shows the complete Layer setup.
 
 `SessionStrategy.inspect` returns private provenance for authorization decisions;
-ordinary verification results omit it. Step-up binds its challenge to the source
-session and credential revision and rechecks both before replacing the session.
+ordinary verification results omit it. An action policy can call
+`AppAuth.sessions.inspectInvocation(invocation, credential)` to use the verification
+that admitted that exact action, preserving its original proof times and factors.
+It checks expiry again and performs a fresh inspection outside that invocation.
+Explicit `inspect` and `verify` calls always run the selected strategy again.
+Mutation persistence still checks its current authority before commit.
+
+Step-up binds its challenge to the source session and credential revision and
+rechecks both before replacing the session.

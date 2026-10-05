@@ -90,22 +90,31 @@ export const makePasskeyLookup = (
         {
           descriptor: ownership,
           names: mappedColumns(ownership),
+          identities: [ownership.subjectId, ownership.credentialId],
           condition: ownership.ownedCondition,
         },
         {
           descriptor: subject,
           names: subjectColumns,
+          identities: [subject.id],
           condition: subject.activeCondition,
         },
         {
           descriptor: credential,
           names: mappedColumns(credential),
+          identities: [credential.credentialId, credential.handleKey],
           condition: credential.activeCondition,
         },
-        { descriptor: handle, names: mappedColumns(handle), condition: handle.ownedCondition },
+        {
+          descriptor: handle,
+          names: mappedColumns(handle),
+          identities: [handle.handleKey],
+          condition: handle.ownedCondition,
+        },
         {
           descriptor: authority,
           names: mappedColumns(authority),
+          identities: [authority.subjectId],
           condition: authority.activeCondition,
         },
       ];
@@ -120,9 +129,17 @@ export const makePasskeyLookup = (
         [col(authority.table, authority.subjectId), col(subject.table, subject.id)],
       ] as const;
 
+      const identityType = database.$client.onDialectOrElse({
+        pg: () => sql`text`,
+        sqlite: () => sql`text`,
+        mysql: () => sql`char`,
+        orElse: () => undefined,
+      });
+
       // An opaque custom ID mapping need not have join-compatible SQL types or
       // codecs. Its existing point reads remain the authority in that case.
       if (
+        identityType === undefined ||
         joins.some(
           ([left, right]) =>
             left.getSQLType === undefined ||
@@ -138,7 +155,7 @@ export const makePasskeyLookup = (
 
       const tupleKey = yield* credentialKey(rpId, protocolCredentialId);
 
-      const sources = roles.map(({ descriptor, names, condition }, index) => {
+      const sources = roles.map(({ descriptor, names, identities, condition }, index) => {
         const fields = Object.fromEntries(
           names.map((name, field) => {
             const column = col(descriptor.table, name);
@@ -155,6 +172,18 @@ export const makePasskeyLookup = (
         const source = database
           .select({
             ...fields,
+            ...Object.fromEntries(
+              identities.map((name, field) => {
+                const alias = `k${field}`;
+
+                return [
+                  alias,
+                  sql`cast(${col(descriptor.table, name)} as ${identityType})`
+                    .mapWith(String)
+                    .as(alias),
+                ];
+              }),
+            ),
             present: sql`1`.mapWith(Number).as("present"),
             active: sql`case when ${condition} then 1 else 0 end`.mapWith(Number).as("active"),
           })
@@ -170,16 +199,17 @@ export const makePasskeyLookup = (
 
         const columns = Object.fromEntries(names.map((name, field) => [name, source[`c${field}`]]));
 
-        return { source, columns, names };
+        return { source, columns, names, identities };
       });
 
       const [o, s, c, h, a] = sources;
 
       const selection = Object.fromEntries(
-        sources.flatMap(({ source, names }, index) => [
+        sources.flatMap(({ source, names, identities }, index) => [
           [`r${index}present`, source.present],
           [`r${index}active`, source.active],
           ...names.map((_name, field) => [`r${index}c${field}`, source[`c${field}`]]),
+          ...identities.map((_name, field) => [`r${index}k${field}`, source[`k${field}`]]),
         ]),
       );
 
@@ -218,11 +248,15 @@ export const makePasskeyLookup = (
       const present = (index: number, selected = first) => selected[`r${index}present`] === 1;
       const active = (index: number) => first[`r${index}active`] === 1;
 
+      const identity = (index: number, name: string, selected = first) =>
+        selected[`r${index}k${sources[index]!.identities.indexOf(name)}`];
+
       const bindsLikeJoin = (
         target: SqlColumn,
         value: unknown,
         source: SqlColumn,
         stored: unknown,
+        identities: ReadonlyArray<unknown>,
       ) => {
         const binding = (column: SqlColumn, input: unknown) =>
           database
@@ -230,9 +264,30 @@ export const makePasskeyLookup = (
             .from(sql`(select 1) as passkey_binding`)
             .toSQL();
 
-        // Rendering applies the compiler's parameter normalization and casts.
-        // This does not execute another query.
-        return sameDriverValue(binding(target, value), binding(source, stored));
+        const expected = binding(target, value);
+        const native = expected.params[0];
+
+        const scalar =
+          typeof native === "string" ||
+          typeof native === "boolean" ||
+          typeof native === "bigint" ||
+          (typeof native === "number" && Number.isFinite(native));
+
+        if (expected.params.length !== 1 || !scalar) return false;
+
+        const bare = database
+          .select({ value: sql`${native}` })
+          .from(sql`(select 1) as passkey_binding`)
+          .toSQL();
+
+        // Render without executing, retaining compiler normalization and casts.
+        // Both decoders can hide a different stored key; witness the raw values
+        // on both sides of the join, even when the target row is absent.
+        return (
+          expected.sql === bare.sql &&
+          identities.every((identity) => identity === String(native)) &&
+          sameDriverValue(expected, binding(source, stored))
+        );
       };
 
       const tuple = row(0);
@@ -248,7 +303,12 @@ export const makePasskeyLookup = (
 
       invariant(mapping.subjectIds.equals(nativeId, native));
       invariant(mapping.subjectIds.toSubject(nativeId) === subjectId);
-      if (!bindsLikeJoin(joins[0][0], nativeId, joins[0][1], tuple[ownership.subjectId]))
+      if (
+        !bindsLikeJoin(joins[0][0], nativeId, joins[0][1], tuple[ownership.subjectId], [
+          identity(0, ownership.subjectId),
+          ...(present(1) ? [identity(1, subject.id)] : []),
+        ])
+      )
         return mappedReads;
       if (!present(1)) return snapshot();
       const subjectRow = row(1);
@@ -268,6 +328,10 @@ export const makePasskeyLookup = (
           tuple[ownership.credentialId],
           joins[1][1],
           tuple[ownership.credentialId],
+          [
+            identity(0, ownership.credentialId),
+            ...(present(2) ? [identity(2, credential.credentialId)] : []),
+          ],
         )
       )
         return mappedReads;
@@ -292,6 +356,10 @@ export const makePasskeyLookup = (
           expectedHandleKey,
           joins[2][1],
           credentialRow[credential.handleKey],
+          [
+            identity(2, credential.handleKey),
+            ...(present(3) ? [identity(3, handle.handleKey)] : []),
+          ],
         )
       )
         return mappedReads;
@@ -305,7 +373,14 @@ export const makePasskeyLookup = (
       if (!mapping.subjectIds.equals(handle.decodeSubjectId(copiedRow(handleRow)), nativeId))
         return snapshot();
       invariant(active(3) && active(2));
-      if (!bindsLikeJoin(joins[3][0], nativeId, joins[3][1], subjectRow[subject.id]))
+      if (
+        !bindsLikeJoin(joins[3][0], nativeId, joins[3][1], subjectRow[subject.id], [
+          identity(1, subject.id),
+          ...rows
+            .filter((selected) => present(4, selected))
+            .map((selected) => identity(4, authority.subjectId, selected)),
+        ])
+      )
         return mappedReads;
       invariant(rows.length <= 64);
 

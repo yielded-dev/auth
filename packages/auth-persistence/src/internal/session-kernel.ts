@@ -62,7 +62,7 @@ import {
   validateStepUpPlan,
   stepUpRotationMatches,
 } from "./step-up-state";
-import { NativeDatabase } from "./transaction-kernel";
+import { makeTransactionKernel, NativeDatabase } from "./transaction-kernel";
 
 type CommitMode = "interactive" | "synchronous";
 
@@ -89,6 +89,8 @@ interface SessionSqlQuery<A = ReadonlyArray<any>> extends Effect.Effect<
   readonly for: (...args: ReadonlyArray<any>) => SessionSqlQuery<A>;
   readonly set: (...args: ReadonlyArray<any>) => SessionSqlQuery<A>;
   readonly values: (...args: ReadonlyArray<any>) => SessionSqlQuery<A>;
+  readonly getSQL: () => ReturnType<QueryOperations["sql"]>;
+  readonly toSQL: () => { readonly sql: string; readonly params: ReadonlyArray<unknown> };
 }
 
 export interface SessionSqlDatabase {
@@ -145,6 +147,7 @@ export const makeSessionKernel = (operations: QueryOperations) => {
   const { and, eq, gt, lte, inArray, or, sql, column, updateValues } = operations;
   const unavailable = () => SessionUnavailable.make({});
   const readSnapshot = makeSnapshotReader(operations);
+  const { sameDriverValue } = makeTransactionKernel(operations).makeTransactionRows(unavailable);
 
   const stale = () => StaleAuthentication.make({});
 
@@ -348,8 +351,13 @@ export const makeSessionKernel = (operations: QueryOperations) => {
     locking: boolean,
     dialect?: "pg" | "sqlite",
     advisory = false,
+    flow?: { readonly mapping: AnyFlowMapping; readonly id: string },
   ): Effect.fn.Return<
-    { readonly subject: Record<string, any>; readonly revision: AuthenticationRevision },
+    {
+      readonly subject: Record<string, any>;
+      readonly revision: AuthenticationRevision;
+      readonly flowRows?: ReadonlyArray<any>;
+    },
     AdapterFailure | StaleAuthentication,
     CurrentSessionSql
   > {
@@ -366,6 +374,7 @@ export const makeSessionKernel = (operations: QueryOperations) => {
     );
 
     let subjectRows: ReadonlyArray<any>, credentialRows: ReadonlyArray<any>;
+    let flowRows: ReadonlyArray<any> | undefined;
 
     if (!locking || dialect === "pg" || dialect === "sqlite") {
       const snapshot = readSnapshot(
@@ -375,6 +384,15 @@ export const makeSessionKernel = (operations: QueryOperations) => {
           ...(requested.length === 0
             ? []
             : [{ table: mapping.credential.table, where, orderBy: [columns.credentialId] }]),
+          ...(flow === undefined
+            ? []
+            : [
+                {
+                  table: flow.mapping.flow.table,
+                  where: eq(flowColumns(flow.mapping).flowId, flow.id),
+                  limit: 1,
+                },
+              ]),
         ],
         database.maxParameters ?? 96,
         locking && dialect === "pg",
@@ -385,12 +403,13 @@ export const makeSessionKernel = (operations: QueryOperations) => {
       if (advisory && !snapshot.singleStatement)
         return yield* inTransaction(
           database,
-          captureDetailsIn(mapping, subjectId, credentialIds, true, dialect),
+          captureDetailsIn(mapping, subjectId, credentialIds, true, dialect, false, flow),
         );
       const rows = yield* snapshot.rows;
 
       subjectRows = rows[0]!;
-      credentialRows = rows[1] ?? [];
+      credentialRows = requested.length === 0 ? [] : (rows[1] ?? []);
+      if (flow !== undefined) flowRows = rows[requested.length === 0 ? 1 : 2];
     } else {
       subjectRows = yield* readSubject(mapping, nativeSubjectId, locking);
       credentialRows =
@@ -426,6 +445,7 @@ export const makeSessionKernel = (operations: QueryOperations) => {
 
     return {
       subject,
+      ...(flowRows === undefined ? {} : { flowRows }),
       revision: {
         subjectId,
         securityRevision: subject[mapping.subject.securityRevision] as SecurityRevision,
@@ -455,6 +475,7 @@ export const makeSessionKernel = (operations: QueryOperations) => {
     locking: boolean,
     dialect?: "pg" | "sqlite",
     advisory = false,
+    flow?: { readonly mapping: AnyFlowMapping; readonly id: string },
   ) {
     const captured = yield* captureDetailsIn(
       mapping,
@@ -463,6 +484,7 @@ export const makeSessionKernel = (operations: QueryOperations) => {
       locking,
       dialect,
       advisory,
+      flow,
     );
 
     if (
@@ -486,7 +508,7 @@ export const makeSessionKernel = (operations: QueryOperations) => {
     const nativeSubjectId = yield* mapping.subjectId.toNative(evidence.revision.subjectId);
     const requirement = yield* mapping.subject.decodeRequirement(captured.subject);
 
-    return { nativeSubjectId, requirement };
+    return { nativeSubjectId, requirement, flowRows: captured.flowRows };
   });
 
   const flowColumns = (mapping: any) => ({
@@ -519,9 +541,10 @@ export const makeSessionKernel = (operations: QueryOperations) => {
     evidence: AuthenticationEvidence,
     nativeSubjectId: unknown,
     dedupUntil: DateTime.Utc,
+    capturedRows?: ReadonlyArray<any>,
   ) {
     const database = yield* CurrentSessionSql;
-    const rows = yield* readFlow(mapping, evidence.flowId, true);
+    const rows = capturedRows ?? (yield* readFlow(mapping, evidence.flowId, true));
     const existing = rows[0];
 
     if (existing !== undefined) {
@@ -1090,11 +1113,13 @@ export const makeSessionKernel = (operations: QueryOperations) => {
             const transaction = yield* CurrentSessionSql;
             const journal = yield* CurrentCommitJournal;
 
-            const { nativeSubjectId, requirement } = yield* validateEvidenceIn(
+            const { nativeSubjectId, requirement, flowRows } = yield* validateEvidenceIn(
               mapping,
               input.evidence,
               options.locking,
               dialect,
+              false,
+              input.pending === undefined ? { mapping, id: input.evidence.flowId } : undefined,
             );
 
             let flowInsert: unknown | undefined;
@@ -1106,6 +1131,7 @@ export const makeSessionKernel = (operations: QueryOperations) => {
                 input.evidence,
                 nativeSubjectId,
                 input.session.absoluteExpiresAt,
+                flowRows,
               );
             else {
               if (mapping.pending === undefined) return yield* invalidPending();
@@ -1194,38 +1220,139 @@ export const makeSessionKernel = (operations: QueryOperations) => {
         ),
       verify: (input: any) =>
         safeTransaction(
-          inTransaction(
-            database,
-            Effect.gen(function* () {
-              const read = yield* CurrentSessionSql;
+          Effect.gen(function* () {
+            const pointRead = inTransaction(
+              database,
+              Effect.gen(function* () {
+                const read = yield* CurrentSessionSql;
 
-              const rows = yield* read
-                .select()
-                .from(mapping.session.table)
-                .where(eq(c.digest, input.digest))
-                .limit(1);
+                const rows = yield* read
+                  .select()
+                  .from(mapping.session.table)
+                  .where(eq(c.digest, input.digest))
+                  .limit(1);
 
-              const row = rows[0];
+                const row = rows[0];
+
+                if (row === undefined) return yield* invalidSession();
+                const record = yield* mapping.session.decode(row);
+                const nativeSubjectId = yield* mapping.subjectId.toNative(record.subjectId);
+                const subjects = yield* readSubject(mapping, nativeSubjectId, false);
+                const subject = subjects[0];
+
+                return { record, subject };
+              }),
+            );
+
+            const subjectId = subjectColumns(mapping).subjectId;
+
+            const compatible =
+              dialect !== undefined &&
+              !Object.hasOwn(
+                operations.getTableColumns(mapping.subject.table),
+                "__auth_subject_id",
+              ) &&
+              !Object.hasOwn(
+                operations.getTableColumns(mapping.session.table),
+                "__auth_session_subject",
+              ) &&
+              subjectId.getSQLType !== undefined &&
+              c.subjectId.getSQLType !== undefined &&
+              subjectId.getSQLType() === c.subjectId.getSQLType() &&
+              (subjectId.dimensions ?? 0) === (c.subjectId.dimensions ?? 0);
+
+            const snapshot = compatible
+              ? readSnapshot(
+                  database,
+                  [
+                    {
+                      table: mapping.session.table,
+                      where: eq(c.digest, input.digest),
+                      limit: 1,
+                      identities: { __auth_session_subject: c.subjectId },
+                    },
+                    {
+                      table: mapping.subject.table,
+                      identities: { __auth_subject_id: subjectId },
+                      where: eq(
+                        subjectId,
+                        sql`(${database
+                          .select({ id: c.subjectId })
+                          .from(mapping.session.table)
+                          .where(eq(c.digest, input.digest))
+                          .limit(1)
+                          .getSQL()})`,
+                      ),
+                      limit: 1,
+                    },
+                  ],
+                  database.maxParameters,
+                )
+              : undefined;
+
+            const selected = yield* Effect.gen(function* () {
+              if (snapshot === undefined || !snapshot.singleStatement) return yield* pointRead;
+              const [sessions, subjects] = yield* snapshot.rows;
+              const row = sessions![0];
 
               if (row === undefined) return yield* invalidSession();
-              const record = yield* mapping.session.decode(row);
+              const { __auth_session_subject: rawOwner, ...sessionRow } = row;
+              const record = yield* mapping.session.decode(sessionRow);
               const nativeSubjectId = yield* mapping.subjectId.toNative(record.subjectId);
-              const subjects = yield* readSubject(mapping, nativeSubjectId, false);
-              const subject = subjects[0];
-              const now = yield* freshNow;
 
+              const binding = (target: typeof subjectId, value: unknown) =>
+                database
+                  .select({ value: sql`${sql.param(value, target)}` })
+                  .from(sql`(select 1) as session_binding`)
+                  .toSQL();
+
+              const expected = binding(subjectId, nativeSubjectId);
+              const native = expected.params[0];
+
+              const scalar =
+                typeof native === "string" ||
+                typeof native === "boolean" ||
+                typeof native === "bigint" ||
+                (typeof native === "number" && Number.isFinite(native));
+
+              const bare = scalar
+                ? database
+                    .select({ value: sql`${native}` })
+                    .from(sql`(select 1) as session_binding`)
+                    .toSQL()
+                : undefined;
+
+              // The decoded owner must bind exactly like the SQL relationship.
+              // A custom decoder may derive it from another field or expression.
+              // Compare the raw stored key too: decoding and then re-encoding a
+              // noncanonical stored value need not recover the original owner.
               if (
-                subject === undefined ||
-                !mapping.subject.isActiveStatus(subject[mapping.subject.status]) ||
-                subject[mapping.subject.securityRevision] !== record.securityRevision ||
-                DateTime.toEpochMillis(now) >= DateTime.toEpochMillis(record.expiresAt) ||
-                DateTime.toEpochMillis(now) >= DateTime.toEpochMillis(record.absoluteExpiresAt)
+                expected.params.length !== 1 ||
+                bare === undefined ||
+                expected.sql !== bare.sql ||
+                rawOwner !== String(native) ||
+                (subjects![0] !== undefined && subjects![0].__auth_subject_id !== String(native)) ||
+                !sameDriverValue(expected, binding(c.subjectId, row[mapping.session.subjectId]))
               )
-                return yield* invalidSession();
+                return yield* pointRead;
 
-              return record;
-            }),
-          ),
+              return { record, subject: subjects![0] };
+            });
+
+            const { record, subject } = selected;
+            const now = yield* freshNow;
+
+            if (
+              subject === undefined ||
+              !mapping.subject.isActiveStatus(subject[mapping.subject.status]) ||
+              subject[mapping.subject.securityRevision] !== record.securityRevision ||
+              DateTime.toEpochMillis(now) >= DateTime.toEpochMillis(record.expiresAt) ||
+              DateTime.toEpochMillis(now) >= DateTime.toEpochMillis(record.absoluteExpiresAt)
+            )
+              return yield* invalidSession();
+
+            return record;
+          }),
         ),
       rotate: <A>(
         input: Parameters<StatefulSessionPersistence<Claims>["rotate"]>[0],

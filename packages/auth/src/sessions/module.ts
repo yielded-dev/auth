@@ -23,6 +23,7 @@ import { LifecycleEventId, lifecycleEvent, lifecycleSnapshot } from "../hooks/mo
 import { reportAuthFailure } from "../internal/diagnostics";
 import {
   AuthenticationAssurance,
+  type AuthInvocation,
   type AssuranceRequirement,
   requireAssurance,
   requireAuthenticated,
@@ -49,6 +50,7 @@ import {
   SessionStepUpInvalid,
 } from "./errors";
 import { sessionInvalidationWindow } from "./invalidation";
+import { CurrentSessionInvocation, SessionVerificationCapture } from "./invocation";
 import {
   type AuthenticationEvidence,
   type PendingConsumption,
@@ -509,9 +511,9 @@ export const makeSessionModule = <
         const repository = yield* SessionRepository;
         const secrets = yield* makeSessionSecrets(moduleId);
 
-        const services = yield* Effect.context<
+        const services = (yield* Effect.context<
           Claims["EncodingServices"] | Claims["DecodingServices"] | LifecycleHooks | Crypto.Crypto
-        >();
+        >()).pipe(Context.omit(CurrentSessionInvocation, SessionVerificationCapture));
 
         const validate = (session: Session) =>
           projectSession(session).pipe(
@@ -546,7 +548,10 @@ export const makeSessionModule = <
 
         const verify = Effect.fn("StatefulSession.verify")(
           (credential: Redacted.Redacted<string>) =>
-            inspect(credential).pipe(Effect.map((value) => value.session)),
+            inspect(credential).pipe(
+              Effect.tap((value) => captureVerification(credential, value)),
+              Effect.map((value) => value.session),
+            ),
         );
 
         const prepareEstablish = Effect.fn("StatefulSession.prepareEstablish")(function* (
@@ -788,9 +793,9 @@ export const makeSessionModule = <
         const hooks = yield* LifecycleHooks;
         const secrets = yield* makeSessionSecrets(moduleId);
 
-        const services = yield* Effect.context<
+        const services = (yield* Effect.context<
           Claims["EncodingServices"] | Claims["DecodingServices"] | LifecycleHooks | Crypto.Crypto
-        >();
+        >()).pipe(Context.omit(CurrentSessionInvocation, SessionVerificationCapture));
 
         const Envelope = Schema.Struct({
           version: Schema.Literal(2),
@@ -851,7 +856,10 @@ export const makeSessionModule = <
         });
 
         const verify = Effect.fn("SignedSession.verify")((credential: Redacted.Redacted<string>) =>
-          inspect(credential).pipe(Effect.map((value) => value.session)),
+          inspect(credential).pipe(
+            Effect.tap((value) => captureVerification(credential, value)),
+            Effect.map((value) => value.session),
+          ),
         );
 
         const prepareEstablish = Effect.fn("SignedSession.prepareEstablish")(function* (
@@ -1193,9 +1201,9 @@ export const makeSessionModule = <
         const authority = yield* AuthenticationAuthority;
         const secrets = yield* makeSessionSecrets(moduleId);
 
-        const claimServices = yield* Effect.context<
+        const claimServices = (yield* Effect.context<
           Claims["DecodingServices"] | Claims["EncodingServices"]
-        >();
+        >()).pipe(Context.omit(CurrentSessionInvocation, SessionVerificationCapture));
 
         const codec = Schema.toCodecIso(ClaimsCodec);
 
@@ -1500,6 +1508,64 @@ export const makeSessionModule = <
     ),
   );
 
+  const invocationCodec = Schema.fromJsonString(inspectionCodec);
+
+  const captureVerification = Effect.fnUntraced(function* (
+    credential: Redacted.Redacted<string>,
+    value: Inspection,
+  ) {
+    const capture = yield* Effect.serviceOption(SessionVerificationCapture);
+
+    if (Option.isNone(capture)) return;
+
+    const inspection = yield* Schema.encodeEffect(invocationCodec)(value).pipe(
+      Effect.mapError(() => SessionInvalid.make({})),
+    );
+
+    capture.value.capture({
+      moduleId,
+      credential,
+      subjectId: value.session.subjectId,
+      sessionId: value.session.sessionId,
+      inspection,
+    });
+  });
+
+  /** Private source evidence from the verification that admitted this exact action.
+   * Outside that action, inspect the credential afresh. Explicit inspect/verify
+   * calls always remain fresh; persistence rechecks mutation authority at commit. */
+  const inspectInvocation = Effect.fn("Session.inspectInvocation")(function* (
+    invocation: AuthInvocation,
+    credential: Redacted.Redacted<string>,
+  ) {
+    const strategy = yield* SessionStrategy;
+    const current = yield* Effect.serviceOption(CurrentSessionInvocation);
+
+    const source =
+      Option.isSome(current) &&
+      current.value.isActive() &&
+      current.value.invocation === invocation &&
+      invocation._tag === "Authenticated"
+        ? current.value.sessions.find(
+            (session) =>
+              session.moduleId === moduleId &&
+              session.subjectId === invocation.subjectId &&
+              session.sessionId === invocation.sessionId &&
+              Redacted.value(session.credential) === Redacted.value(credential),
+          )
+        : undefined;
+
+    if (source === undefined) return yield* strategy.inspect(credential);
+
+    const inspection = yield* Schema.decodeEffect(invocationCodec)(source.inspection).pipe(
+      Effect.mapError(() => SessionInvalid.make({})),
+    );
+
+    yield* validateSessionTimeline(inspection.session, strategy.policy);
+
+    return inspection;
+  });
+
   // Only detached schema Type values reach this helper. DateTime caches must be
   // materialized before freezing; consumer collections are detached by the codec.
   const freezeGraph = <A>(value: A): A => {
@@ -1579,7 +1645,10 @@ export const makeSessionModule = <
         const authority = yield* AuthenticationAuthority;
         const crypto = yield* Crypto.Crypto;
         const secrets = yield* makeSessionSecrets(moduleId);
-        const hooks = yield* Effect.context<LifecycleHooks | Crypto.Crypto>();
+
+        const hooks = (yield* Effect.context<LifecycleHooks | Crypto.Crypto>()).pipe(
+          Context.omit(CurrentSessionInvocation, SessionVerificationCapture),
+        );
 
         const registry = new Map<
           SessionStepUpProfileId,
@@ -2055,6 +2124,7 @@ export const makeSessionModule = <
     Session,
     CompletionResult,
     SessionStrategy,
+    inspectInvocation,
     SessionStepUp,
     SessionStepUpPersistence,
     stepUpLayer,

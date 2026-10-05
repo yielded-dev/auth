@@ -46,7 +46,8 @@ import {
 /* oxlint-disable no-explicit-any -- the shared dialect kernel erases consumer Drizzle table types internally. */
 import type { QueryFailure } from "./query-operations";
 import type { QueryOperations, SqlFragment, SqlColumn } from "./query-operations";
-import type { NativeDatabase } from "./transaction-kernel";
+import { makeSnapshotReader, type SnapshotRead } from "./sql-snapshot";
+import { NativeDatabase } from "./transaction-kernel";
 
 type AdapterFailure = QueryFailure | PersistenceMappingError | SqlError.SqlError;
 type SignInMapping = AnyEmailSignInMapping;
@@ -84,6 +85,8 @@ export class CurrentEmailSql extends Context.Service<CurrentEmailSql, EmailSqlDa
 export interface EmailSqlConfiguration {
   readonly mode: "interactive" | "synchronous";
   readonly locking: boolean;
+  readonly maxParameters?: number;
+  readonly pgOrderedLocks?: boolean;
   readonly standaloneGuard: Effect.Effect<void, EmailUnavailable>;
   readonly coordinated?: boolean;
   readonly proof?: {
@@ -121,6 +124,7 @@ export const makeEmailKernel = <
 
   const { and, eq, inArray, lte, column, updateValues, sql } = operations;
   const { completeProofPlanIn, checkProofCompletionIn } = proofs;
+  const readSnapshots = makeSnapshotReader(operations);
   const unavailable = () => EmailUnavailable.make({});
 
   const translateFailure = <A, E, R>(
@@ -245,6 +249,7 @@ export const makeEmailKernel = <
     database: EmailSqlDatabase,
     configuration: EmailSqlConfiguration,
     body: Effect.Effect<A, E, R>,
+    advisorySnapshot = false,
   ) =>
     Effect.gen(function* () {
       if (configuration.coordinated !== true) {
@@ -252,12 +257,13 @@ export const makeEmailKernel = <
         yield* configuration.standaloneGuard;
       }
 
-      return yield* database.transaction((transaction) =>
+      const run = (transaction: EmailSqlDatabase) =>
         body.pipe(
           Effect.provideService(CurrentEmailSql, transaction),
           Effect.provideService(CurrentProofSql, transaction as unknown as ProofSqlDatabase),
-        ),
-      );
+        );
+
+      return yield* advisorySnapshot ? run(database) : database.transaction(run);
     });
 
   const owned = <A, E, R>(
@@ -441,25 +447,6 @@ export const makeEmailKernel = <
     return { nativeSubjectId, subject };
   });
 
-  const identifierRow = Effect.fn("Drizzle.identifierRow")(function* (
-    mapping: SignInMapping,
-    identifier: LoginIdentifier,
-    locking: boolean,
-  ) {
-    const database = yield* CurrentEmailSql;
-
-    const i = identifierColumns(mapping);
-
-    return yield* selectRows(
-      database
-        .select()
-        .from(mapping.identifier.table)
-        .where(and(eq(i.namespace, identifier.namespace), eq(i.value, identifier.value)))
-        .limit(1),
-      locking,
-    );
-  });
-
   const credentialById = Effect.fn("Drizzle.credentialById")(function* (
     mapping: SignInMapping,
     moduleId: string,
@@ -480,33 +467,84 @@ export const makeEmailKernel = <
     );
   });
 
-  const credentialByIdentifier = Effect.fn("Drizzle.credentialByIdentifier")(function* (
-    mapping: SignInMapping,
-    moduleId: string,
-    identifier: LoginIdentifier,
+  const readRows = Effect.fnUntraced(function* (
+    database: EmailSqlDatabase,
+    reads: ReadonlyArray<SnapshotRead>,
     locking: boolean,
+    configuration: Pick<EmailSqlConfiguration, "maxParameters" | "pgOrderedLocks">,
+    advisorySnapshot = false,
   ) {
-    const database = yield* CurrentEmailSql;
+    if (!locking || configuration.pgOrderedLocks) {
+      const snapshot = readSnapshots(
+        database,
+        reads,
+        configuration.maxParameters,
+        locking && configuration.pgOrderedLocks,
+      );
 
-    const c = credentialColumns(mapping);
+      return yield* advisorySnapshot && !snapshot.singleStatement
+        ? database.transaction(
+            (transaction) => readSnapshots(transaction, reads, configuration.maxParameters).rows,
+          )
+        : snapshot.rows;
+    }
 
-    return yield* selectRows(
-      database
-        .select()
-        .from(mapping.credential.table)
-        .where(
-          and(
-            eq(c.moduleId, moduleId),
-            eq(c.identifierNamespace, identifier.namespace),
-            eq(c.identifierValue, identifier.value),
-          ),
-        )
-        .limit(1),
-      locking,
-    );
+    return yield* Effect.forEach(reads, (read) => {
+      let query = database.select().from(read.table).where(read.where);
+
+      if (read.limit !== undefined) query = query.limit(read.limit);
+      if (read.orderBy !== undefined) query = query.orderBy(...read.orderBy);
+
+      return selectRows(query, locking);
+    });
   });
 
-  const currentAddress = Effect.fn("DrizzleEmail.currentAddress")(function* (
+  const authorityReads = (
+    mapping: AddressMapping,
+    nativeSubjectId: unknown,
+  ): readonly [SnapshotRead, SnapshotRead] => {
+    const s = subjectColumns(mapping);
+    const a = authorityColumns(mapping);
+
+    return [
+      { table: mapping.subject.table, where: eq(s.id, nativeSubjectId), limit: 1 },
+      {
+        table: mapping.authorityCredential.table,
+        where: eq(a.subjectId, nativeSubjectId),
+        orderBy: [a.credentialId],
+      },
+    ];
+  };
+
+  const addressRevision = Effect.fnUntraced(function* (
+    mapping: AddressMapping,
+    nativeSubjectId: unknown,
+    subject: any,
+    authority: ReadonlyArray<Record<string, any>>,
+  ) {
+    if (subject === undefined || !mapping.subject.isActiveStatus(subject[mapping.subject.status]))
+      return undefined;
+    const subjectId = yield* mapping.subjectId.toSubject(nativeSubjectId);
+
+    return Object.freeze({
+      subjectId,
+      securityRevision: subject[mapping.subject.securityRevision],
+      credentials: Object.freeze(
+        authority
+          .filter((row) =>
+            mapping.authorityCredential.isActiveStatus(row[mapping.authorityCredential.status]),
+          )
+          .map((row) =>
+            Object.freeze({
+              credentialId: row[mapping.authorityCredential.credentialId],
+              revision: row[mapping.authorityCredential.revision],
+            }),
+          ),
+      ),
+    });
+  });
+
+  const addressRead = Effect.fnUntraced(function* (
     mapping: AddressMapping,
     input: {
       readonly moduleId: string;
@@ -514,30 +552,24 @@ export const makeEmailKernel = <
       readonly target: LoginIdentifier;
       readonly sourceCredentialId?: string;
     },
-    locking: boolean,
+    discovery?: {
+      readonly nativeSubjectId: unknown;
+      readonly subject: any;
+      readonly identifier: LoginIdentifier | undefined;
+    },
   ) {
-    const database = yield* CurrentEmailSql;
+    const nativeSubjectId =
+      discovery === undefined
+        ? yield* mapping.subjectId.toNative(input.subjectId as any)
+        : discovery.nativeSubjectId;
 
-    const locked = yield* readSubject(mapping, input.subjectId, locking);
-
-    if (
-      locked.subject === undefined ||
-      !mapping.subject.isActiveStatus(locked.subject[mapping.subject.status])
-    )
-      return undefined;
-
-    const discoveredSource =
-      input.sourceCredentialId === undefined
-        ? undefined
-        : (yield* credentialById(mapping, input.moduleId, input.sourceCredentialId, false))[0];
-
-    const sourceIdentifier: LoginIdentifier | undefined =
-      discoveredSource === undefined
-        ? undefined
-        : {
-            namespace: discoveredSource[mapping.credential.identifierNamespace],
-            value: discoveredSource[mapping.credential.identifierValue],
-          };
+    const [subjectRead, authorityRead] = authorityReads(mapping, nativeSubjectId);
+    const sourceIdentifier = discovery?.identifier;
+    const i = identifierColumns(mapping);
+    const c = credentialColumns(mapping);
+    const reads: SnapshotRead[] = [];
+    const add = (read: SnapshotRead) => reads.push(read) - 1;
+    const subjectIndex = discovery === undefined ? add(subjectRead) : undefined;
 
     const identifiers = [
       input.target,
@@ -553,151 +585,204 @@ export const makeEmailKernel = <
         ),
       );
 
-    const lockedIdentifiers = new Map<string, any>();
+    const identifierIndexes = identifiers.map((identifier) =>
+      add({
+        table: mapping.identifier.table,
+        where: and(eq(i.namespace, identifier.namespace), eq(i.value, identifier.value)),
+        limit: 1,
+      }),
+    );
 
-    for (const identifier of identifiers) {
-      const row = (yield* identifierRow(mapping, identifier, locking))[0];
-
-      if (row !== undefined)
-        lockedIdentifiers.set(`${identifier.namespace}\u0000${identifier.value}`, row);
-    }
-
-    const sourceCredential =
+    const sourceIndex =
       input.sourceCredentialId === undefined
         ? undefined
-        : (yield* credentialById(mapping, input.moduleId, input.sourceCredentialId, locking))[0];
+        : add({
+            table: mapping.credential.table,
+            where: and(
+              eq(c.moduleId, input.moduleId),
+              eq(c.credentialId, input.sourceCredentialId),
+            ),
+            limit: 1,
+          });
 
-    const targetCredential = (yield* credentialByIdentifier(
-      mapping,
-      input.moduleId,
-      input.target,
-      locking,
-    ))[0];
-
-    const a = authorityColumns(mapping);
-
-    const authority = yield* selectRows(
-      database
-        .select()
-        .from(mapping.authorityCredential.table)
-        .where(eq(a.subjectId, locked.nativeSubjectId))
-        .orderBy(a.credentialId),
-      locking,
-    );
-
-    const activeAuthority = authority.filter((row: any) =>
-      mapping.authorityCredential.isActiveStatus(row[mapping.authorityCredential.status]),
-    );
-
-    const subjectId = yield* mapping.subjectId.toSubject(locked.nativeSubjectId);
-
-    const revision: AuthenticationRevision = Object.freeze({
-      subjectId,
-      securityRevision: locked.subject[mapping.subject.securityRevision],
-      credentials: Object.freeze(
-        activeAuthority.map((row: any) =>
-          Object.freeze({
-            credentialId: row[mapping.authorityCredential.credentialId],
-            revision: row[mapping.authorityCredential.revision],
-          }),
-        ),
+    const targetIndex = add({
+      table: mapping.credential.table,
+      where: and(
+        eq(c.moduleId, input.moduleId),
+        eq(c.identifierNamespace, input.target.namespace),
+        eq(c.identifierValue, input.target.value),
       ),
+      limit: 1,
     });
 
-    const targetIdentifier = lockedIdentifiers.get(
-      `${input.target.namespace}\u0000${input.target.value}`,
-    );
+    const authorityIndex = add(authorityRead);
 
-    const targetOwned =
-      targetIdentifier !== undefined &&
-      mapping.subjectId.equals(
-        targetIdentifier[mapping.identifier.subjectId],
-        locked.nativeSubjectId,
-      );
-
-    const targetMutable =
-      targetOwned &&
-      mapping.identifier.isMutableTarget(targetIdentifier) &&
-      (targetCredential === undefined ||
-        (!mapping.credential.isActiveStatus(targetCredential[mapping.credential.status]) &&
-          mapping.subjectId.equals(
-            targetCredential[mapping.credential.subjectId],
-            locked.nativeSubjectId,
-          )));
-
-    let source: CurrentAddress["source"];
-
-    if (input.sourceCredentialId !== undefined) {
-      if (
-        sourceCredential === undefined ||
-        sourceIdentifier === undefined ||
-        !mapping.subjectId.equals(
-          sourceCredential[mapping.credential.subjectId],
-          locked.nativeSubjectId,
-        ) ||
-        !mapping.credential.isActiveStatus(sourceCredential[mapping.credential.status])
-      )
-        return undefined;
-
-      const sourceIdentifierRow = lockedIdentifiers.get(
-        `${sourceIdentifier.namespace}\u0000${sourceIdentifier.value}`,
-      );
-
-      if (
-        sourceIdentifierRow === undefined ||
-        !mapping.identifier.isCurrent(sourceIdentifierRow) ||
-        !mapping.subjectId.equals(
-          sourceIdentifierRow[mapping.identifier.subjectId],
-          locked.nativeSubjectId,
-        )
-      )
-        return undefined;
-
-      const snapshot = yield* mapping.credential
-        .decode({
-          moduleId: input.moduleId,
-          subject: locked.subject,
-          identifier: sourceIdentifierRow,
-          credential: sourceCredential,
-        })
-        .pipe(Effect.flatMap(snapshotEmailCredential));
-
-      source = { credential: sourceCredential, identifier: sourceIdentifierRow, snapshot };
-    }
-    let eligible = targetIdentifier === undefined ? targetCredential === undefined : targetMutable;
-
-    if (input.sourceCredentialId !== undefined && source === undefined) eligible = false;
-    if (source !== undefined && sameIdentifier(source.snapshot.identifier, input.target))
-      eligible = false;
-    if (mapping.addressCardinality === "single" && input.sourceCredentialId === undefined) {
-      const c = credentialColumns(mapping);
-
-      const rows = yield* selectRows(
-        database
-          .select()
-          .from(mapping.credential.table)
-          .where(and(eq(c.moduleId, input.moduleId), eq(c.subjectId, locked.nativeSubjectId))),
-        locking,
-      );
-
-      if (
-        rows.some((row: any) => mapping.credential.isActiveStatus(row[mapping.credential.status]))
-      )
-        eligible = false;
-    }
+    const cardinalityIndex =
+      mapping.addressCardinality === "single" && input.sourceCredentialId === undefined
+        ? add({
+            table: mapping.credential.table,
+            where: and(eq(c.moduleId, input.moduleId), eq(c.subjectId, nativeSubjectId)),
+          })
+        : undefined;
 
     return {
-      nativeSubjectId: locked.nativeSubjectId,
-      subject: locked.subject,
-      revision,
-      ...(source === undefined ? {} : { source }),
-      ...(targetIdentifier === undefined ? {} : { targetIdentifier }),
-      ...(targetCredential === undefined ? {} : { targetCredential }),
-      ...(targetMutable
-        ? { targetIdentifierRevision: targetIdentifier[mapping.identifier.bindingRevision] }
-        : {}),
-      eligible,
+      reads,
+      current: Effect.fnUntraced(function* (
+        rows: ReadonlyArray<ReadonlyArray<Record<string, any>>>,
+      ) {
+        const subject = discovery === undefined ? rows[subjectIndex!]![0] : discovery.subject;
+
+        const revision = yield* addressRevision(
+          mapping,
+          nativeSubjectId,
+          subject,
+          rows[authorityIndex]!,
+        );
+
+        if (revision === undefined) return undefined;
+        const lockedIdentifiers = new Map<string, any>();
+
+        for (const [index, identifier] of identifiers.entries()) {
+          const row = rows[identifierIndexes[index]!]![0];
+
+          if (row !== undefined)
+            lockedIdentifiers.set(`${identifier.namespace}\u0000${identifier.value}`, row);
+        }
+        const sourceCredential = sourceIndex === undefined ? undefined : rows[sourceIndex]![0];
+        const targetCredential = rows[targetIndex]![0];
+
+        const targetIdentifier = lockedIdentifiers.get(
+          `${input.target.namespace}\u0000${input.target.value}`,
+        );
+
+        const targetOwned =
+          targetIdentifier !== undefined &&
+          mapping.subjectId.equals(targetIdentifier[mapping.identifier.subjectId], nativeSubjectId);
+
+        const targetMutable =
+          targetOwned &&
+          mapping.identifier.isMutableTarget(targetIdentifier) &&
+          (targetCredential === undefined ||
+            (!mapping.credential.isActiveStatus(targetCredential[mapping.credential.status]) &&
+              mapping.subjectId.equals(
+                targetCredential[mapping.credential.subjectId],
+                nativeSubjectId,
+              )));
+
+        let source: CurrentAddress["source"];
+
+        if (input.sourceCredentialId !== undefined) {
+          if (
+            sourceCredential === undefined ||
+            sourceIdentifier === undefined ||
+            !mapping.subjectId.equals(
+              sourceCredential[mapping.credential.subjectId],
+              nativeSubjectId,
+            ) ||
+            !mapping.credential.isActiveStatus(sourceCredential[mapping.credential.status])
+          )
+            return undefined;
+
+          const sourceIdentifierRow = lockedIdentifiers.get(
+            `${sourceIdentifier.namespace}\u0000${sourceIdentifier.value}`,
+          );
+
+          if (
+            sourceIdentifierRow === undefined ||
+            !mapping.identifier.isCurrent(sourceIdentifierRow) ||
+            !mapping.subjectId.equals(
+              sourceIdentifierRow[mapping.identifier.subjectId],
+              nativeSubjectId,
+            )
+          )
+            return undefined;
+
+          const snapshot = yield* mapping.credential
+            .decode({
+              moduleId: input.moduleId,
+              subject,
+              identifier: sourceIdentifierRow,
+              credential: sourceCredential,
+            })
+            .pipe(Effect.flatMap(snapshotEmailCredential));
+
+          source = { credential: sourceCredential, identifier: sourceIdentifierRow, snapshot };
+        }
+
+        let eligible =
+          targetIdentifier === undefined ? targetCredential === undefined : targetMutable;
+
+        if (input.sourceCredentialId !== undefined && source === undefined) eligible = false;
+        if (source !== undefined && sameIdentifier(source.snapshot.identifier, input.target))
+          eligible = false;
+        if (
+          cardinalityIndex !== undefined &&
+          rows[cardinalityIndex]!.some((row) =>
+            mapping.credential.isActiveStatus(row[mapping.credential.status]),
+          )
+        )
+          eligible = false;
+
+        return {
+          nativeSubjectId,
+          subject,
+          revision,
+          ...(source === undefined ? {} : { source }),
+          ...(targetIdentifier === undefined ? {} : { targetIdentifier }),
+          ...(targetCredential === undefined ? {} : { targetCredential }),
+          ...(targetMutable
+            ? { targetIdentifierRevision: targetIdentifier[mapping.identifier.bindingRevision] }
+            : {}),
+          eligible,
+        };
+      }),
     };
+  });
+
+  const currentAddress = Effect.fn("DrizzleEmail.currentAddress")(function* (
+    mapping: AddressMapping,
+    input: Parameters<typeof addressRead>[1],
+    locking: boolean,
+    configuration: Pick<EmailSqlConfiguration, "maxParameters" | "pgOrderedLocks"> = {},
+    advisorySnapshot = false,
+  ) {
+    const database = yield* CurrentEmailSql;
+    let discovery: Parameters<typeof addressRead>[2];
+
+    if (input.sourceCredentialId !== undefined) {
+      const locked = yield* readSubject(mapping, input.subjectId, locking);
+
+      if (
+        locked.subject === undefined ||
+        !mapping.subject.isActiveStatus(locked.subject[mapping.subject.status])
+      )
+        return undefined;
+
+      const source = (yield* credentialById(
+        mapping,
+        input.moduleId,
+        input.sourceCredentialId,
+        false,
+      ))[0];
+
+      // Decode the source before binding its identifier through the destination
+      // columns. A raw SQL join would bypass custom decoder/encoder semantics.
+      discovery = {
+        ...locked,
+        identifier:
+          source === undefined
+            ? undefined
+            : {
+                namespace: source[mapping.credential.identifierNamespace],
+                value: source[mapping.credential.identifierValue],
+              },
+      };
+    }
+    const read = yield* addressRead(mapping, input, discovery);
+
+    return yield* read.current(
+      yield* readRows(database, read.reads, locking, configuration, advisorySnapshot),
+    );
   });
 
   const sameEmailRevision = (left: AuthenticationRevision, right: AuthenticationRevision) => {
@@ -824,6 +909,7 @@ export const makeEmailKernel = <
           : { sourceCredentialId: input.captured.source.credentialId }),
       },
       configuration.locking,
+      configuration,
     );
 
     if (
@@ -1183,13 +1269,39 @@ export const makeEmailKernel = <
 
   const makeSqlEmailAddressPersistence = Effect.fn("makeSqlEmailAddressPersistence")(function* (
     mapping: AddressMapping,
-    configuration: EmailSqlConfiguration,
+    configured: EmailSqlConfiguration,
   ): Effect.fn.Return<
     EmailAddressPersistence["Service"],
     EmailUnavailable,
     LifecycleHooks | CurrentEmailSql | NativeDatabase
   > {
     const database = yield* CurrentEmailSql;
+    const native = yield* NativeDatabase;
+    const maxParameters = configured.maxParameters ?? native.maxParameters ?? 96;
+
+    const configuration: EmailSqlConfiguration = {
+      ...configured,
+      maxParameters,
+      pgOrderedLocks: native.$client.onDialectOrElse({
+        pg: () => configured.locking,
+        orElse: () => false,
+      }),
+      ...(configured.proof === undefined
+        ? {}
+        : {
+            proof: {
+              ...configured.proof,
+              configuration: {
+                ...configured.proof.configuration,
+                maxParameters: configured.proof.configuration.maxParameters ?? maxParameters,
+                pgOrderedLocks: native.$client.onDialectOrElse({
+                  pg: () => configured.proof!.configuration.locking,
+                  orElse: () => false,
+                }),
+              },
+            },
+          }),
+    };
 
     if (!configuration.coordinated)
       yield* (
@@ -1201,34 +1313,45 @@ export const makeEmailKernel = <
     const hooks = yield* LifecycleHooks;
 
     return EmailAddressPersistence.of({
-      target: (input) =>
-        (validAddressConstraints(mapping)
-          ? safeRead(
-              database,
-              configuration,
-              Effect.gen(function* () {
-                const current = yield* currentAddress(mapping, input, configuration.locking);
+      target: (input) => {
+        const advisory = input.sourceCredentialId === undefined && !configuration.coordinated;
 
-                if (current === undefined) return yield* unavailable();
+        return (
+          validAddressConstraints(mapping)
+            ? safeRead(
+                database,
+                configuration,
+                Effect.gen(function* () {
+                  const current = yield* currentAddress(
+                    mapping,
+                    input,
+                    !advisory && configuration.locking,
+                    configuration,
+                    advisory,
+                  );
 
-                return Object.freeze({
-                  revision: snapshotEmailRevision(current.revision),
-                  eligible: current.eligible,
-                  ...(current.targetIdentifierRevision === undefined
-                    ? {}
-                    : { targetIdentifierRevision: current.targetIdentifierRevision }),
-                  ...(current.source === undefined
-                    ? {}
-                    : { source: yield* snapshotEmailCredential(current.source.snapshot) }),
-                });
-              }),
-            )
-          : Effect.fail(unavailable())
+                  if (current === undefined) return yield* unavailable();
+
+                  return Object.freeze({
+                    revision: snapshotEmailRevision(current.revision),
+                    eligible: current.eligible,
+                    ...(current.targetIdentifierRevision === undefined
+                      ? {}
+                      : { targetIdentifierRevision: current.targetIdentifierRevision }),
+                    ...(current.source === undefined
+                      ? {}
+                      : { source: yield* snapshotEmailCredential(current.source.snapshot) }),
+                  });
+                }),
+                advisory,
+              )
+            : Effect.fail(unavailable())
         ).pipe(
           Effect.provideService(CurrentEmailSql, database),
           Effect.provideService(LifecycleHooks, hooks),
           translateFailure,
-        ),
+        );
+      },
       checkCompletion: (input) => {
         if (configuration.proof === undefined || input.binding._tag !== "IdentifierChange")
           return Effect.succeed(false).pipe(
@@ -1238,42 +1361,69 @@ export const makeEmailKernel = <
           );
         const binding = input.binding;
 
-        return safeRead(
-          database,
-          configuration,
-          Effect.gen(function* () {
-            const action: EmailAction | undefined =
-              input.moduleId.endsWith("/verify-address") &&
-              input.purpose === "email-address-verification"
-                ? "verify-address"
-                : input.moduleId.endsWith("/change-address") &&
-                    input.purpose === "email-address-change"
-                  ? "change-address"
-                  : undefined;
+        return Effect.gen(function* () {
+          const action: EmailAction | undefined =
+            input.moduleId.endsWith("/verify-address") &&
+            input.purpose === "email-address-verification"
+              ? "verify-address"
+              : input.moduleId.endsWith("/change-address") &&
+                  input.purpose === "email-address-change"
+                ? "change-address"
+                : undefined;
 
-            if (action === undefined) return false;
-            const moduleId = input.moduleId.slice(0, -`/${action}`.length);
+          if (action === undefined) return false;
+          const nativeSubjectId = yield* mapping.subjectId.toNative(binding.revision.subjectId);
+          // This preflight uses only the current revision. Target acquisition
+          // is checked by target() and again under the mutation's locks.
+          const reads = authorityReads(mapping, nativeSubjectId);
 
-            const current = yield* currentAddress(
+          const current = Effect.fnUntraced(function* (
+            rows: ReadonlyArray<ReadonlyArray<Record<string, any>>>,
+          ) {
+            const revision = yield* addressRevision(
               mapping,
-              {
-                moduleId,
-                subjectId: binding.revision.subjectId,
-                target: binding.identifier,
-              },
-              false,
+              nativeSubjectId,
+              rows[0]![0],
+              rows[1]!,
             );
 
-            if (current === undefined || !sameEmailRevision(current.revision, binding.revision))
-              return false;
+            return revision !== undefined && sameEmailRevision(revision, binding.revision);
+          });
 
-            return yield* checkProofCompletionIn(
+          return yield* safeRead(
+            database,
+            configuration,
+            checkProofCompletionIn(
               configuration.proof!.mapping,
               configuration.proof!.configuration,
               input,
-            );
-          }),
-        ).pipe(
+              {
+                reads,
+                current,
+                fallback: database.transaction((transaction) =>
+                  Effect.gen(function* () {
+                    if (
+                      !(yield* current(yield* readRows(transaction, reads, false, configuration)))
+                    )
+                      return false;
+
+                    return yield* checkProofCompletionIn(
+                      configuration.proof!.mapping,
+                      configuration.proof!.configuration,
+                      input,
+                    );
+                  }).pipe(
+                    Effect.provideService(
+                      CurrentProofSql,
+                      transaction as unknown as ProofSqlDatabase,
+                    ),
+                  ),
+                ),
+              },
+            ),
+            true,
+          );
+        }).pipe(
           Effect.provideService(CurrentEmailSql, database),
           Effect.provideService(LifecycleHooks, hooks),
           translateFailure,

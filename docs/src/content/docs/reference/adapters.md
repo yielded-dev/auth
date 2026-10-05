@@ -238,6 +238,11 @@ account and credential revisions and decides which factors are required.
 and `AppAuth.sessions.SessionRepository`. Both Layers use your account model;
 neither has an automatic default.
 
+Stateful session verification reads the session and subject in one SQL snapshot
+when their mapped IDs have compatible SQL types and encodings. Application claims
+may require their own query; join the required account fields in that query.
+Explicit session reads always check current storage.
+
 Add the method's Layers, such as `PasswordLive` from the [password guide](../guide/passwords#supply-the-services):
 
 ```ts title="apps/server/auth-routes.ts"
@@ -488,10 +493,13 @@ crypto Effects may suspend inside that owned transaction. An arbitrary raw Drizz
 outer transaction, including its `transactionSync` callbacks, is unsupported.
 No synchronous crypto implementation or `Effect.runSync` bridge is required.
 
-Compatible scalar mappings use grouped cleanup reads and writes, with atomic checks
-after application work and database triggers. Groups split at the driver's statement
-and bound-data limits. Custom SQL encoders, collation aliases, and staged D1 writes
-can require additional statements; a page size alone does not determine its cost.
+Compatible scalar mappings, including application-owned tables and renamed columns,
+use grouped cleanup reads and writes, with atomic checks after application work and
+database triggers. Groups split at the driver's statement and bound-data limits.
+An arbitrary SQL-producing encoder or binary/array representation may require its
+original mapped statements because it cannot be encoded as a scalar rowset.
+Collation aliases and staged D1 writes can also require additional statements;
+a page size alone does not determine its cost.
 Budget every statement and transaction-control call as a database roundtrip.
 Direct Effect SQL uses SQLite limits that also fit Durable Objects.
 

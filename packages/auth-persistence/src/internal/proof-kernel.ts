@@ -290,20 +290,42 @@ export const makeProofKernel = <
 
   const nowMillis = DateTime.now.pipe(Effect.map(DateTime.toEpochMillis));
 
-  const lockAuthority = Effect.fn("DrizzleProof.lockAuthority")(function* (
+  type SnapshotRead = Parameters<typeof readSnapshots>[1][number];
+  type SnapshotRows = ReadonlyArray<ReadonlyArray<Record<string, any>>>;
+
+  const readRows = Effect.fnUntraced(function* (
+    database: Database,
+    reads: ReadonlyArray<SnapshotRead>,
+    configuration: ProofSqlConfiguration,
+  ) {
+    if (!configuration.locking || configuration.pgOrderedLocks)
+      return yield* readSnapshots(
+        database,
+        reads,
+        configuration.maxParameters,
+        configuration.pgOrderedLocks,
+      ).rows;
+
+    return yield* Effect.forEach(reads, (read) => {
+      let query = database.select().from(read.table).where(read.where);
+
+      if (read.limit !== undefined) query = query.limit(read.limit);
+      if (read.orderBy !== undefined) query = query.orderBy(...read.orderBy);
+
+      return selectRows(query, configuration.locking);
+    });
+  });
+
+  const authorityRead = Effect.fnUntraced(function* (
     mapping: Mapping,
     moduleId: string,
     purpose: any,
     binding: ProofBinding,
-    configuration: ProofSqlConfiguration,
   ) {
-    const database = yield* CurrentProofSql;
-
     const authority = mapping.authority;
-    let nativeSubjectId: unknown | undefined;
-    let captured: ReadonlyArray<ReadonlyArray<Record<string, any>>> | undefined;
+    const reads: SnapshotRead[] = [];
+    let nativeSubjectId: unknown;
 
-    // Canonical order: subject, identifier rows, credentials sorted by ID.
     if (binding._tag !== "Identifier") {
       if (
         authority.subject === undefined ||
@@ -313,141 +335,112 @@ export const makeProofKernel = <
         return yield* unavailable();
       nativeSubjectId = yield* authority.subjectId.toNative(binding.revision.subjectId);
       const subject = authority.subject;
-      const identifier = authority.identifier;
-      const credential = authority.credential;
 
-      if (!configuration.locking || configuration.pgOrderedLocks) {
-        captured = yield* readSnapshots(
-          database,
-          [
-            {
-              table: subject.table,
-              where: eq(column(subject.table, subject.id), nativeSubjectId),
-              limit: 1,
-            },
-            {
-              table: identifier.table,
-              where: and(
-                eq(column(identifier.table, identifier.namespace), binding.identifier.namespace),
-                eq(column(identifier.table, identifier.value), binding.identifier.value),
-              ),
-            },
-            ...(binding.revision.credentials.length === 0
-              ? []
-              : [
-                  {
-                    table: credential.table,
-                    where: and(
-                      eq(column(credential.table, credential.subjectId), nativeSubjectId),
-                      inArray(
-                        column(credential.table, credential.credentialId),
-                        binding.revision.credentials.map((item) => item.credentialId),
-                      ),
-                    ),
-                    orderBy: [column(credential.table, credential.credentialId)],
-                  },
-                ]),
-          ],
-          configuration.maxParameters,
-          configuration.pgOrderedLocks,
-        ).rows;
-      }
-
-      const rows =
-        captured?.[0] ??
-        (yield* selectRows(
-          database
-            .select()
-            .from(subject.table)
-            .where(eq(column(subject.table, subject.id), nativeSubjectId))
-            .limit(1),
-          configuration.locking,
-        ));
-
-      const row = rows[0];
-
-      if (
-        row === undefined ||
-        !subject.isActiveStatus(row[subject.status]) ||
-        row[subject.securityRevision] !== binding.revision.securityRevision
-      )
-        return false;
+      reads.push({
+        table: subject.table,
+        where: eq(column(subject.table, subject.id), nativeSubjectId),
+        limit: 1,
+      });
     }
     const identifier = authority.identifier;
+    const identifierIndex = reads.length;
 
-    const identifierRows =
-      captured?.[1] ??
-      (yield* selectRows(
-        database
-          .select()
-          .from(identifier.table)
-          .where(
-            and(
-              eq(column(identifier.table, identifier.namespace), binding.identifier.namespace),
-              eq(column(identifier.table, identifier.value), binding.identifier.value),
-            ),
-          ),
-        configuration.locking,
-      ));
+    reads.push({
+      table: identifier.table,
+      where: and(
+        eq(column(identifier.table, identifier.namespace), binding.identifier.namespace),
+        eq(column(identifier.table, identifier.value), binding.identifier.value),
+      ),
+    });
 
-    if (
-      !identifier.isCurrent(
-        {
-          moduleId,
-          purpose,
-          binding,
-          ...(nativeSubjectId === undefined ? {} : { nativeSubjectId }),
-        },
-        identifierRows,
-      )
-    )
-      return false;
-    if (binding._tag === "Identifier") return true;
-    const credential = authority.credential!;
-
-    const expected = [...binding.revision.credentials].sort((a, b) =>
-      a.credentialId.localeCompare(b.credentialId),
-    );
-
-    const rows =
-      expected.length === 0
+    const expected =
+      binding._tag === "Identifier"
         ? []
-        : (captured?.[2] ??
-          (yield* selectRows(
-            database
-              .select()
-              .from(credential.table)
-              .where(
-                and(
-                  eq(column(credential.table, credential.subjectId), nativeSubjectId),
-                  inArray(
-                    column(credential.table, credential.credentialId),
-                    expected.map((item) => item.credentialId),
-                  ),
-                ),
-              )
-              .orderBy(column(credential.table, credential.credentialId)),
-            configuration.locking,
-          )));
+        : [...binding.revision.credentials].sort((a, b) =>
+            a.credentialId.localeCompare(b.credentialId),
+          );
 
-    if (rows.length !== expected.length) return false;
+    const credentialIndex = reads.length;
 
-    const actual = rows
-      .map((row: any) => ({
-        credentialId: row[credential.credentialId] as string,
-        revision: row[credential.revision],
-        active:
-          credential.status === undefined ||
-          credential.isActiveStatus?.(row[credential.status]) === true,
-      }))
-      .sort((a: any, b: any) => a.credentialId.localeCompare(b.credentialId));
+    if (expected.length !== 0) {
+      const credential = authority.credential!;
 
-    return actual.every(
-      (item: any, index: number) =>
-        item.active &&
-        item.credentialId === expected[index]?.credentialId &&
-        item.revision === expected[index]?.revision,
-    );
+      reads.push({
+        table: credential.table,
+        where: and(
+          eq(column(credential.table, credential.subjectId), nativeSubjectId),
+          inArray(
+            column(credential.table, credential.credentialId),
+            expected.map((item) => item.credentialId),
+          ),
+        ),
+        orderBy: [column(credential.table, credential.credentialId)],
+      });
+    }
+
+    return {
+      reads,
+      current: (rows: SnapshotRows): boolean => {
+        if (binding._tag !== "Identifier") {
+          const subject = authority.subject!;
+          const row = rows[0]?.[0];
+
+          if (
+            row === undefined ||
+            !subject.isActiveStatus(row[subject.status]) ||
+            row[subject.securityRevision] !== binding.revision.securityRevision
+          )
+            return false;
+        }
+        if (
+          !identifier.isCurrent(
+            {
+              moduleId,
+              purpose,
+              binding,
+              ...(nativeSubjectId === undefined ? {} : { nativeSubjectId }),
+            },
+            rows[identifierIndex]!,
+          )
+        )
+          return false;
+        if (binding._tag === "Identifier") return true;
+        const credential = authority.credential!;
+        const credentials = expected.length === 0 ? [] : rows[credentialIndex]!;
+
+        if (credentials.length !== expected.length) return false;
+
+        const actual = credentials
+          .map((row) => ({
+            credentialId: row[credential.credentialId] as string,
+            revision: row[credential.revision],
+            active:
+              credential.status === undefined ||
+              credential.isActiveStatus?.(row[credential.status]) === true,
+          }))
+          .sort((a, b) => a.credentialId.localeCompare(b.credentialId));
+
+        return actual.every(
+          (item, index) =>
+            item.active &&
+            item.credentialId === expected[index]?.credentialId &&
+            item.revision === expected[index]?.revision,
+        );
+      },
+    };
+  });
+
+  const lockAuthority = Effect.fn("DrizzleProof.lockAuthority")(function* (
+    mapping: Mapping,
+    moduleId: string,
+    purpose: any,
+    binding: ProofBinding,
+    configuration: ProofSqlConfiguration,
+  ) {
+    const database = yield* CurrentProofSql;
+    const read = yield* authorityRead(mapping, moduleId, purpose, binding);
+
+    return read.current(yield* readRows(database, read.reads, configuration));
   });
 
   const scopeEntries = (
@@ -1928,14 +1921,53 @@ export const makeProofKernel = <
     ensure: boolean,
   ) {
     const database = yield* CurrentProofSql;
+    const read = yield* completionRead(mapping, input, ensure);
 
-    const authorityCurrent = yield* lockAuthority(
-      mapping,
-      input.moduleId,
-      input.purpose,
-      input.binding,
-      configuration,
+    return yield* read.inspect(yield* readRows(database, read.reads, configuration));
+  });
+
+  /** Nonconsuming preflight. An advisory extension must decide entirely from the
+   * supplied rows; an unsupported combined statement uses its transaction path. */
+  const checkProofCompletionIn = Effect.fn("Drizzle.checkProofCompletionIn")(function* <
+    E = never,
+    R = never,
+  >(
+    mapping: Mapping,
+    configuration: ProofSqlConfiguration,
+    input: ProofCompletionPlan["input"],
+    advisory?: {
+      readonly reads: ReadonlyArray<SnapshotRead>;
+      readonly current: (rows: SnapshotRows) => Effect.Effect<boolean, E, R>;
+      readonly fallback: Effect.Effect<boolean, E, R>;
+    },
+  ) {
+    if (advisory === undefined)
+      return yield* inspectCompletionIn(mapping, configuration, input, false).pipe(
+        Effect.map((value) => value !== undefined),
+      );
+    const database = yield* CurrentProofSql;
+    const read = yield* completionRead(mapping, input, false);
+
+    const snapshot = readSnapshots(
+      database,
+      [...advisory.reads, ...read.reads],
+      configuration.maxParameters,
     );
+
+    if (!snapshot.singleStatement) return yield* advisory.fallback;
+    const rows = yield* snapshot.rows;
+
+    if (!(yield* advisory.current(rows.slice(0, advisory.reads.length)))) return false;
+
+    return (yield* read.inspect(rows.slice(advisory.reads.length))) !== undefined;
+  });
+
+  const completionRead = Effect.fnUntraced(function* (
+    mapping: Mapping,
+    input: ProofCompletionPlan["input"],
+    ensure: boolean,
+  ) {
+    const authority = yield* authorityRead(mapping, input.moduleId, input.purpose, input.binding);
 
     const keys = mapping.scopeKeys({
       moduleId: input.moduleId,
@@ -1943,54 +1975,59 @@ export const makeProofKernel = <
       binding: input.binding,
     });
 
-    // Issuance owns anchor creation. A live continuation already has its series;
-    // completion only locks it and never creates one for an invalid request.
-    if (
-      ensure &&
-      (yield* readSeries(mapping, configuration, input.moduleId, input.purpose, keys.series)) ===
-        undefined
-    )
-      return undefined;
+    const reads = [...authority.reads];
+    const seriesIndex = reads.length;
+
+    if (ensure) {
+      const series = seriesColumns(mapping);
+
+      reads.push({
+        table: mapping.series.table,
+        where: and(
+          eq(series.moduleId, input.moduleId),
+          eq(series.purpose, input.purpose),
+          eq(series.scopeKey, keys.series),
+        ),
+        limit: 1,
+      });
+    }
     const c = continuationColumns(mapping);
+    const continuationIndex = reads.length;
 
-    const rows = yield* selectRows(
-      database
-        .select()
-        .from(mapping.continuation.table)
-        .where(and(eq(c.moduleId, input.moduleId), eq(c.continuationId, input.continuationId)))
-        .limit(1),
-      configuration.locking,
-    );
+    reads.push({
+      table: mapping.continuation.table,
+      where: and(eq(c.moduleId, input.moduleId), eq(c.continuationId, input.continuationId)),
+      limit: 1,
+    });
 
-    const row = rows[0];
-    const now = yield* nowMillis;
-    const record = row === undefined ? undefined : yield* mapping.continuation.decode(row);
+    return {
+      reads,
+      inspect: Effect.fnUntraced(function* (rows: SnapshotRows) {
+        const authorityCurrent = authority.current(rows);
 
-    const completed =
-      authorityCurrent &&
-      row !== undefined &&
-      record !== undefined &&
-      record.moduleId === input.moduleId &&
-      record.continuationId === input.continuationId &&
-      record.purpose === input.purpose &&
-      record.digest === input.continuationDigest &&
-      record.seriesKey === keys.series &&
-      sameBinding(record.binding, input.binding) &&
-      row[mapping.continuation.consumed] === false &&
-      record.expiresAtMillis > now;
+        // Issuance creates the series; completion only locks an existing one.
+        if (ensure && rows[seriesIndex]?.[0] === undefined) return undefined;
+        const row = rows[continuationIndex]?.[0];
+        // Every authority, series and continuation lock has completed before time is sampled.
+        const now = yield* nowMillis;
+        const record = row === undefined ? undefined : yield* mapping.continuation.decode(row);
 
-    return completed ? { record: record!, row, columns: c } : undefined;
-  });
+        const completed =
+          authorityCurrent &&
+          row !== undefined &&
+          record !== undefined &&
+          record.moduleId === input.moduleId &&
+          record.continuationId === input.continuationId &&
+          record.purpose === input.purpose &&
+          record.digest === input.continuationDigest &&
+          record.seriesKey === keys.series &&
+          sameBinding(record.binding, input.binding) &&
+          row[mapping.continuation.consumed] === false &&
+          record.expiresAtMillis > now;
 
-  /** Nonconsuming same-owner preflight; it never inserts a series or changes expiry. */
-  const checkProofCompletionIn = Effect.fn("Drizzle.checkProofCompletionIn")(function* (
-    mapping: Mapping,
-    configuration: ProofSqlConfiguration,
-    input: ProofCompletionPlan["input"],
-  ) {
-    return yield* inspectCompletionIn(mapping, configuration, input, false).pipe(
-      Effect.map((value) => value !== undefined),
-    );
+        return completed ? { record: record!, row, columns: c } : undefined;
+      }),
+    };
   });
 
   const completeIn = Effect.fn("DrizzleProof.completeIn")(function* <A, E = never, R = never>(

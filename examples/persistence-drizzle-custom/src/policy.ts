@@ -29,7 +29,11 @@ const EmailActions = Layer.effect(
 
           if (invocation._tag !== "Authenticated" || token === undefined)
             return yield* Email.EmailActionRequired.make({});
-          const source = yield* sessions.inspect(token);
+
+          const source = yield* AppAuth.sessions
+            .inspectInvocation(invocation, token)
+            .pipe(Effect.provideService(AppAuth.sessions.SessionStrategy, sessions));
+
           const original = source.provenance.evidence;
 
           const confirmsRegisteredAddress =
@@ -177,7 +181,11 @@ const PasskeyActions = Layer.effect(
 
           if (invocation._tag !== "Authenticated" || token === undefined)
             return yield* Passkey.PasskeyActionRequired.make({});
-          const source = yield* sessions.inspect(token);
+
+          const source = yield* AppAuth.sessions
+            .inspectInvocation(invocation, token)
+            .pipe(Effect.provideService(AppAuth.sessions.SessionStrategy, sessions));
+
           const original = source.provenance.evidence;
 
           if (

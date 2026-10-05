@@ -200,6 +200,12 @@ export const collect = Effect.fn("oauthConnected.collect")(function* (
 
       if (row[j.state] !== "Confirmed" || now < until) continue;
       if (grant?.row[g.revocationJobId] === job.context.jobId) {
+        invariant(
+          matchesNativeRow(g.table, grant.row, {
+            [g.moduleId]: token.moduleId,
+            [g.grantId]: token.grantId,
+          }),
+        );
         const summary = S.summaryStorage.decode(grant.row[g.summary]);
 
         yield* owner.update(

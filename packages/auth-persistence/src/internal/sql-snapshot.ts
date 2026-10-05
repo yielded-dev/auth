@@ -13,11 +13,13 @@ import type {
 type Row = Record<string, any>;
 type Query = Effect.Effect<ReadonlyArray<Row>, QueryFailure | SqlError>;
 
-interface SnapshotRead {
+export interface SnapshotRead {
   readonly table: object;
   readonly where: SqlExpression | undefined;
   readonly limit?: number;
   readonly orderBy?: ReadonlyArray<SqlExpression>;
+  /** Native key text bypasses application column decoders for relationship checks. */
+  readonly identities?: Readonly<Record<string, SqlColumn>>;
 }
 
 /** Direct SQL transactions have no observation journal. Batch their
@@ -26,7 +28,14 @@ export const makeSnapshotReader = <Fragment extends SqlFragment, Column extends 
   operations: QueryOperations<Fragment, Column>,
 ) => {
   const { and, getTableColumns, sql } = operations;
-  const lockNames = [sql`auth_snapshot_0`, sql`auth_snapshot_1`, sql`auth_snapshot_2`];
+
+  const lockNames = [
+    sql`auth_snapshot_0`,
+    sql`auth_snapshot_1`,
+    sql`auth_snapshot_2`,
+    sql`auth_snapshot_3`,
+    sql`auth_snapshot_4`,
+  ];
 
   return (
     database: { readonly select: (...args: ReadonlyArray<any>) => any },
@@ -34,9 +43,24 @@ export const makeSnapshotReader = <Fragment extends SqlFragment, Column extends 
     maxParameters = 96,
     pgOrderedLocks = false,
   ) => {
-    const select = ({ table, where, limit, orderBy }: SnapshotRead, previous?: SqlExpression) => {
+    const select = (
+      { table, where, limit, orderBy, identities }: SnapshotRead,
+      previous?: SqlExpression,
+    ) => {
       let query = database
-        .select()
+        .select(
+          identities === undefined
+            ? undefined
+            : {
+                ...getTableColumns(table),
+                ...Object.fromEntries(
+                  Object.entries(identities).map(([name, column]) => [
+                    name,
+                    sql`cast(${column} as text)`.mapWith(String).as(name),
+                  ]),
+                ),
+              },
+        )
         .from(table)
         .where(
           and(
@@ -58,25 +82,33 @@ export const makeSnapshotReader = <Fragment extends SqlFragment, Column extends 
       rows: Effect.forEach(queries, (query) => query as Query),
     });
 
-    const fields = reads.flatMap((read, index) =>
-      Object.entries(getTableColumns(read.table)).map(([name, column]) => ({
+    const fields = reads.flatMap((read, index) => [
+      ...Object.entries(getTableColumns(read.table)).map(([name, column]) => ({
         table: read.table,
         index,
         name,
         column,
+        identity: false,
       })),
-    );
+      ...Object.entries(read.identities ?? {}).map(([name, column]) => ({
+        table: read.table,
+        index,
+        name,
+        column,
+        identity: true,
+      })),
+    ]);
 
     const hasDecoder = (
-      column: Column,
-    ): column is Column & Required<Pick<SqlColumn, "mapFromDriverValue">> =>
+      column: SqlColumn,
+    ): column is SqlColumn & Required<Pick<SqlColumn, "mapFromDriverValue">> =>
       typeof column.mapFromDriverValue === "function";
 
     if (
       queries.length <= 1 ||
       (pgOrderedLocks && reads.length > lockNames.length) ||
       fields.length + 1 > (maxParameters <= 100 ? 100 : 512) ||
-      fields.some(({ column }) => !hasDecoder(column))
+      fields.some(({ column, identity }) => !identity && !hasDecoder(column))
     )
       return separate();
 
@@ -98,33 +130,63 @@ export const makeSnapshotReader = <Fragment extends SqlFragment, Column extends 
         const value =
           field.index === index
             ? sql`${source[field.name]}`
-            : sql`(select ${field.column} from ${field.table} where 1 = 0)`;
+            : field.identity
+              ? sql`(select cast(${field.column} as text) from ${field.table} where 1 = 0)`
+              : sql`(select ${field.column} from ${field.table} where 1 = 0)`;
 
-        if (hasDecoder(field.column))
+        if (field.identity)
+          selection[`c${fieldIndex}`] = value.mapWith(String).as(`c${fieldIndex}`);
+        else if (hasDecoder(field.column))
           selection[`c${fieldIndex}`] = value.mapWith(field.column).as(`c${fieldIndex}`);
       }
 
       return database.select(selection).from(pgOrderedLocks ? lockNames[index] : source);
     });
 
-    let query = branches.slice(1).reduce((joined, branch) => joined.unionAll(branch), branches[0]);
-
-    if (pgOrderedLocks) {
-      const source = query.as("auth_snapshot_complete");
-
+    const projection = (source: any) => {
       const selection: Row = {
         __auth_snapshot: sql`${source.__auth_snapshot}`.mapWith(Number),
       };
 
       for (const [fieldIndex, field] of fields.entries())
-        if (hasDecoder(field.column))
+        if (field.identity)
+          selection[`c${fieldIndex}`] = sql`${source[`c${fieldIndex}`]}`.mapWith(String);
+        else if (hasDecoder(field.column))
           selection[`c${fieldIndex}`] = sql`${source[`c${fieldIndex}`]}`.mapWith(field.column);
+
+      return selection;
+    };
+
+    const union = (parts: ReadonlyArray<any>) =>
+      parts.slice(1).reduce((joined, part) => joined.unionAll(part), parts[0]);
+
+    // SQLite on Durable Objects permits five terms in each compound SELECT.
+    // Nest bounded groups so a wider snapshot still uses one database call.
+    let grouped = branches;
+    let level = 0;
+
+    while (maxParameters <= 100 && grouped.length > 5) {
+      const next: any[] = [];
+
+      for (let offset = 0; offset < grouped.length; offset += 5) {
+        const source = union(grouped.slice(offset, offset + 5)).as(`auth_group_${level}_${offset}`);
+
+        next.push(database.select(projection(source)).from(source));
+      }
+      grouped = next;
+      level++;
+    }
+
+    let query = union(grouped);
+
+    if (pgOrderedLocks) {
+      const source = query.as("auth_snapshot_complete");
 
       const definitions = selectedQueries.map(
         (selected, index) => sql`${lockNames[index]} as materialized (${selected.getSQL()})`,
       );
 
-      query = database.select(selection).from(sql`(with ${sql.join(definitions, sql`, `)}
+      query = database.select(projection(source)).from(sql`(with ${sql.join(definitions, sql`, `)}
         ${query.getSQL()}) as auth_snapshot_complete`);
     }
     const rendered = query.toSQL();
