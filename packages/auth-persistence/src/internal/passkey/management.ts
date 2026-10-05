@@ -335,7 +335,7 @@ export const makePasskeyManagementKernel = (
           action: "remove",
           commandId: input.commandId,
           flowId: input.commandId,
-          bindingDigest: removeDigest(mapping.moduleId, input.commandId, input.credential),
+          bindingDigest: yield* removeDigest(mapping.moduleId, input.commandId, input.credential),
           revision: input.credential.revision,
         },
         {
@@ -384,7 +384,12 @@ export const makePasskeyManagementKernel = (
 
     yield* owner.update(
       tuple.table,
-      { [tuple.credentialKey]: credentialKey(credential.rpId, credential.protocolCredentialId) },
+      {
+        [tuple.credentialKey]: yield* credentialKey(
+          credential.rpId,
+          credential.protocolCredentialId,
+        ),
+      },
       {
         [tuple.state]: mapping.write.credentialOwnership.removedState,
         [tuple.version]: owner.marker,

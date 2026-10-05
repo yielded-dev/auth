@@ -195,7 +195,9 @@ export const phoneConsumer = Effect.gen(function* () {
     })),
   ).pipe(Layer.provide(strategy));
 
-  const dependencies = Layer.mergeAll(ports, strategy, completion, actionEvidence, base);
+  const dependencies = Layer.mergeAll(ports, strategy, completion, actionEvidence).pipe(
+    Layer.provideMerge(base),
+  );
 
   return yield* Effect.gen(function* () {
     const auth = yield* shopAuth.make,

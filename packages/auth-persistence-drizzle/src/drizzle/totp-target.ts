@@ -1,4 +1,3 @@
-import { randomId } from "@yielded/auth-crypto";
 import { NativeDatabase } from "@yielded/auth-persistence/Adapter";
 import { LifecycleHooks } from "@yielded/auth/Hooks";
 import {
@@ -10,9 +9,10 @@ import {
 } from "@yielded/auth/Totp";
 import type { Table } from "drizzle-orm";
 /* oxlint-disable no-explicit-any -- shared native implementation; driver entrypoints retain exact database and table types. */
-import { Context, Effect, Schema } from "effect";
+import { type Crypto, Context, Effect, Schema } from "effect";
 import type { Statement } from "effect/sql/Statement";
 
+import { randomId } from "./crypto";
 import type { PersistenceMappingError } from "./model";
 import { nativeDatabase } from "./native-database";
 import { validateDrizzleStorage } from "./storage-validation";
@@ -164,7 +164,11 @@ export const coordinateTargetTotp = <M, A, E, R, RSetup = never>(
     services: TotpPersistenceServices,
     append: (statement: Statement<any>) => void,
   ) => Effect.Effect<A, E, R>,
-): Effect.Effect<A, TotpCoordinatorError<E>, R | RSetup | LifecycleHooks | NativeDatabase> =>
+): Effect.Effect<
+  A,
+  TotpCoordinatorError<E>,
+  R | RSetup | Crypto.Crypto | LifecycleHooks | NativeDatabase
+> =>
   Effect.gen(function* () {
     const original = yield* Effect.isEffect(source) ? source : Effect.succeed(source);
 
@@ -196,7 +200,7 @@ type TransactionOf<D> = D extends { readonly transaction: (...args: any[]) => an
   ? Parameters<Parameters<D["transaction"]>[0]>[0]
   : never;
 
-/** Concrete driver wrappers select transaction mode; cryptography always precedes these owners. */
+/** Concrete driver wrappers select transaction mode. */
 export const makeTotpTarget = <
   DatabaseId,
   D extends { readonly transaction: any },
@@ -230,6 +234,7 @@ export const makeTotpTarget = <
     A,
     TotpCoordinatorError<E> | DatabaseError,
     | (Synchronous extends true ? never : Exclude<R, TotpPersistence>)
+    | Crypto.Crypto
     | LifecycleHooks
     | RSetup
     | DatabaseRequirements
@@ -259,6 +264,7 @@ export const makeTotpTarget = <
     A,
     TotpCoordinatorError<E> | DatabaseError,
     | (Synchronous extends true ? never : Exclude<R, TotpPersistence | TxId>)
+    | Crypto.Crypto
     | LifecycleHooks
     | RSetup
     | DatabaseRequirements
@@ -287,7 +293,7 @@ export const makeTotpTarget = <
   ): Effect.Effect<
     A,
     TotpCoordinatorError<E> | DatabaseError,
-    Exclude<R, TotpPersistence> | LifecycleHooks | RSetup | DatabaseRequirements
+    Exclude<R, TotpPersistence> | Crypto.Crypto | LifecycleHooks | RSetup | DatabaseRequirements
   > {
     return Effect.flatMap(nativeDatabase(acquire), (database) =>
       coordinateTargetTotp(

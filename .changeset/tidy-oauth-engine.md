@@ -2,7 +2,6 @@
 "@yielded/auth": minor
 "@yielded/auth-persistence": minor
 "@yielded/auth-persistence-drizzle": minor
-"@yielded/auth-openid-client": minor
 ---
 
 Retain provider access through `OAuth.make({ access: profile })` with shared Auth sessions, grant storage, refresh, and disconnect; remove OAuthApp and its separate persistence adapter.

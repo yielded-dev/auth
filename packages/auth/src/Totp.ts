@@ -29,3 +29,5 @@ export {
 
 export { base32 } from "./totp/encoding";
 export { TotpCryptography } from "./totp/TotpCryptography";
+
+export { codeAt } from "./totp/cryptography";

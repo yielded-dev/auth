@@ -1,4 +1,3 @@
-import { digest, randomId } from "@yielded/auth-crypto";
 import {
   PhoneCustody,
   PhoneCommandId,
@@ -14,6 +13,7 @@ import type { SubjectId } from "@yielded/auth/Schema";
 import { AuthenticationRequirement, SecurityRevision } from "@yielded/auth/Sessions";
 import { Context, Effect, Option, Schema } from "effect";
 
+import { digest, randomId } from "./crypto";
 /* oxlint-disable no-explicit-any -- existing storage kernels erase foreign table shapes; domain errors remain typed. */
 import type { SqlExpression as SQL } from "./query-operations";
 import type { QueryOperations, SqlFragment, SqlColumn } from "./query-operations";
@@ -100,7 +100,7 @@ export const makePhoneKernel = <
         moduleId: mapping.moduleId,
         record: value,
       }),
-      [mapping.state.version]: randomId(),
+      [mapping.state.version]: yield* randomId,
     };
 
     if (observed.rows.length === 0) {
@@ -128,7 +128,7 @@ export const makePhoneKernel = <
     mapping: any,
     phoneNumber: string,
   ) {
-    const key = scope(mapping.moduleId, "custody", phoneNumber),
+    const key = yield* scope(mapping.moduleId, "custody", phoneNumber),
       observation = yield* stateRead(mapping, key);
 
     const custody =
@@ -327,7 +327,7 @@ export const makePhoneKernel = <
       now = yield* owner.now(mapping),
       policy = mapping.admission;
 
-    const key = scope(mapping.moduleId, "admission", input.action + "/" + input.requestId),
+    const key = yield* scope(mapping.moduleId, "admission", input.action + "/" + input.requestId),
       receipt = yield* stateRead(mapping, key);
 
     if (receipt.rows.length !== 0) {
@@ -338,7 +338,7 @@ export const makePhoneKernel = <
 
       return (
         saved.fingerprint === input.fingerprint &&
-        saved.network === digest(input.networkKey) &&
+        saved.network === (yield* digest(input.networkKey)) &&
         saved.accepted === true &&
         saved.expiresAtMillis > now
       );
@@ -347,11 +347,20 @@ export const makePhoneKernel = <
     const window = Math.floor(now / policy.windowMillis),
       entries = [
         {
-          key: scope(mapping.moduleId, "network", input.action + "/" + digest(input.networkKey)),
+          key: yield* scope(
+            mapping.moduleId,
+            "network",
+            input.action + "/" + (yield* digest(input.networkKey)),
+          ),
           limit: input.action === "request" ? policy.networkRequests : policy.networkAttempts,
         },
         ...(input.action === "request"
-          ? [{ key: scope(mapping.moduleId, "messages", "global"), limit: policy.maximumMessages }]
+          ? [
+              {
+                key: yield* scope(mapping.moduleId, "messages", "global"),
+                limit: policy.maximumMessages,
+              },
+            ]
           : []),
       ].sort((a, b) => a.key.localeCompare(b.key));
 
@@ -383,7 +392,7 @@ export const makePhoneKernel = <
       key,
       {
         fingerprint: input.fingerprint,
-        network: digest(input.networkKey),
+        network: yield* digest(input.networkKey),
         accepted,
         expiresAtMillis: now + Math.min(policy.requestRetentionMillis, input.replayLifetimeMillis),
       },
@@ -446,7 +455,7 @@ export const makePhoneKernel = <
     )
       return { decision: rejected };
 
-    const commandKey = scope(mapping.moduleId, "command", input.commandId),
+    const commandKey = yield* scope(mapping.moduleId, "command", input.commandId),
       command = yield* stateRead(mapping, commandKey);
 
     if (command.rows.length !== 0) return { decision: rejected };
@@ -564,10 +573,10 @@ export const makePhoneKernel = <
           ? mapping.subjectIds.toSubject(mapping.subjectIds.allocate())
           : captured.target.revision!.subjectId,
       nativeId = mapping.subjectIds.toNative(subjectId),
-      securityRevision = SecurityRevision.make(randomId()),
-      credentialRevision = SecurityRevision.make(randomId()),
-      custodyRevision = SecurityRevision.make(randomId()),
-      credentialId = captured.target.custody?.credentialId ?? randomId();
+      securityRevision = SecurityRevision.make(yield* randomId),
+      credentialRevision = SecurityRevision.make(yield* randomId),
+      custodyRevision = SecurityRevision.make(yield* randomId),
+      credentialId = captured.target.custody?.credentialId ?? (yield* randomId);
 
     invariant(mapping.subjectIds.toSubject(nativeId) === subjectId);
 
@@ -647,12 +656,12 @@ export const makePhoneKernel = <
         yield* owner.update(
           i.table,
           { [i.namespace]: "phone", [i.value]: old.phoneNumber },
-          { [i.status]: i.encodeStatus(false), [i.revision]: randomId() },
+          { [i.status]: i.encodeStatus(false), [i.revision]: yield* randomId },
         );
         yield* owner.update(
           c.table,
           { [c.id]: old.credentialId, [c.subjectId]: nativeId },
-          { [c.status]: c.encodeStatus(false), [c.revision]: randomId() },
+          { [c.status]: c.encodeStatus(false), [c.revision]: yield* randomId },
         );
         yield* stateWrite(
           mapping,
@@ -660,8 +669,8 @@ export const makePhoneKernel = <
           {
             ...old,
             state: "retired",
-            custodyRevision: SecurityRevision.make(randomId()),
-            credentialRevision: SecurityRevision.make(randomId()),
+            custodyRevision: SecurityRevision.make(yield* randomId),
+            credentialRevision: SecurityRevision.make(yield* randomId),
           },
           captured.source.observation,
         );

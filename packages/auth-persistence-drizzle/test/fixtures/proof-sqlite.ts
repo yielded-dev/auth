@@ -1,3 +1,4 @@
+import { NodeCrypto } from "@effect/platform-node";
 import { D1Client } from "@effect/sql-d1/D1Client";
 import type { D1Client as D1ClientService } from "@effect/sql-d1/D1Client";
 import * as SqliteClient from "@effect/sql-sqlite-node/SqliteClient";
@@ -68,48 +69,55 @@ export const storage = persistence.managed({
 });
 
 // Use production codecs and table mapping, rather than a test proof-store implementation.
-export const proofMapping = makeStorageMappings(storage).proofs();
+export const proofMapping = Effect.map(makeStorageMappings(storage), (mappings) =>
+  mappings.proofs(),
+);
+
 const identifiers = getTableColumns(storage.schema.identifiers);
 const clock = sql`(select now from proof_clock)`;
 
-export const d1Mapping = {
-  ...proofMapping,
-  d1: {
-    engineNow: clock,
-    engineNowMillis: clock,
-    engineInstantMinus: (millis: number) => sql`${clock} - ${millis}`,
-    engineInstantPlus: (millis: number) => sql`${clock} + ${millis}`,
-  },
-  authority: {
-    ...proofMapping.authority,
-    identifier: {
-      ...proofMapping.authority.identifier,
-      d1CurrentCondition: ({
-        binding,
-      }: Parameters<typeof proofMapping.authority.identifier.isCurrent>[0]) =>
-        binding._tag === "Identifier"
-          ? sql`not exists(select 1 from ${storage.schema.identifiers}
+export const d1Mapping = Effect.map(
+  proofMapping,
+  (proofMapping) =>
+    ({
+      ...proofMapping,
+      d1: {
+        engineNow: clock,
+        engineNowMillis: clock,
+        engineInstantMinus: (millis: number) => sql`${clock} - ${millis}`,
+        engineInstantPlus: (millis: number) => sql`${clock} + ${millis}`,
+      },
+      authority: {
+        ...proofMapping.authority,
+        identifier: {
+          ...proofMapping.authority.identifier,
+          d1CurrentCondition: ({
+            binding,
+          }: Parameters<typeof proofMapping.authority.identifier.isCurrent>[0]) =>
+            binding._tag === "Identifier"
+              ? sql`not exists(select 1 from ${storage.schema.identifiers}
               where ${identifiers.namespace} = ${binding.identifier.namespace}
                 and ${identifiers.value} = ${binding.identifier.value})`
-          : sql`0 = 1`,
-    },
-  },
-  // The shared factory erases foreign table shapes; these are the actual Drizzle
-  // tables supplied above. This adapter cast crosses no value/schema boundary.
-} as unknown as D1ProofPersistenceMapping<
-  SQLiteTable,
-  SQLiteTable,
-  SQLiteTable,
-  SQLiteTable,
-  SQLiteTable,
-  SQLiteTable,
-  SQLiteTable,
-  SQLiteTable,
-  SQLiteTable,
-  SQLiteTable,
-  SQLiteTable,
-  string
->;
+              : sql`0 = 1`,
+        },
+      },
+      // The shared factory erases foreign table shapes; these are the actual Drizzle
+      // tables supplied above. This adapter cast crosses no value/schema boundary.
+    }) as unknown as D1ProofPersistenceMapping<
+      SQLiteTable,
+      SQLiteTable,
+      SQLiteTable,
+      SQLiteTable,
+      SQLiteTable,
+      SQLiteTable,
+      SQLiteTable,
+      SQLiteTable,
+      SQLiteTable,
+      SQLiteTable,
+      SQLiteTable,
+      string
+    >,
+);
 
 const quote = (name: string) => '"' + name.replaceAll('"', '""') + '"';
 
@@ -142,7 +150,10 @@ export const database = Layer.effectDiscard(
     yield* client`create table proof_clock (now integer not null)`;
     yield* client`insert into proof_clock values (0)`;
   }),
-).pipe(Layer.provideMerge(SqliteClient.layer({ filename: ":memory:" })));
+).pipe(
+  Layer.provideMerge(SqliteClient.layer({ filename: ":memory:" })),
+  Layer.provideMerge(NodeCrypto.layer),
+);
 
 /** Only the SQL transport differs: production D1 planning and generated batch SQL
  * run unchanged, in a real atomic SQLite transaction. The callback introduces a

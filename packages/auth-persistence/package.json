@@ -31,9 +31,7 @@
     "test": "vp test --passWithNoTests"
   },
   "dependencies": {
-    "@noble/hashes": "catalog:",
-    "@yielded/auth": "workspace:*",
-    "@yielded/auth-crypto": "workspace:*"
+    "@yielded/auth": "workspace:*"
   },
   "devDependencies": {
     "@effect/platform-node": "catalog:",

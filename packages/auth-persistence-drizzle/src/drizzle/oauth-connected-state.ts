@@ -107,11 +107,11 @@ export const nativeOrder = (mapping: Authority, value: unknown) =>
 const encoder = new TextEncoder();
 const decoder = new TextDecoder("utf-8", { fatal: true });
 
-const key = (domain: string, fields: ReadonlyArray<string>) => {
+const key = Effect.fnUntraced(function* (domain: string, fields: ReadonlyArray<string>) {
   for (const value of fields) invariant(decoder.decode(encoder.encode(value)) === value);
 
-  return "v1:" + digest(strings.encode([domain, ...fields]));
-};
+  return "v1:" + (yield* digest(strings.encode([domain, ...fields])));
+});
 
 export const clientKey = (configuration: M.OAuthConnectedConfiguration) =>
   key("effect-auth/oauth-connected-client/v1", [
@@ -124,7 +124,9 @@ export const cohortKey = (client: string, identity: string) =>
   key("effect-auth/oauth-connected-cohort/v1", [client, identity]);
 
 export const initialGeneration = (cohort: string) =>
-  M.OAuthConnectedTarget.fields.cohortGeneration.make("initial:" + digest(cohort));
+  digest(cohort).pipe(
+    Effect.map((value) => M.OAuthConnectedTarget.fields.cohortGeneration.make("initial:" + value)),
+  );
 
 export const configuration = (flow: M.OAuthConnectedPendingFlow): M.OAuthConnectedConfiguration =>
   snapshotOAuthSync(M.OAuthConnectedConfiguration, flow.context);
@@ -254,9 +256,9 @@ export const action = Effect.fn("oauthConnected.action")(function* (
         ? "connected-disconnect"
         : "connected-complete";
 
-  const intentDigest = digest(expected.intent);
+  const intentDigest = yield* digest(expected.intent);
 
-  const binding = digest(
+  const binding = yield* digest(
     strings.encode([
       "effect-auth/oauth-connected-action/v1",
       expected.moduleId,
@@ -364,7 +366,9 @@ export const useAuthority = Effect.fn("oauthConnected.useAuthority")(function* (
 });
 
 export const scopeKey = (provider: string, issuer: string) =>
-  "scope:" + key("effect-auth/oauth-connected-provider-issuer/v1", [provider, issuer]);
+  key("effect-auth/oauth-connected-provider-issuer/v1", [provider, issuer]).pipe(
+    Effect.map((value) => "scope:" + value),
+  );
 
 export interface ScopeAnchor {
   readonly id: string;
@@ -412,7 +416,7 @@ export const scope = Effect.fn("oauthConnected.scope")(function* (
   const owner = yield* CurrentOAuthTransaction;
 
   const c = mapping.client,
-    id = scopeKey(config.provider, config.issuer),
+    id = yield* scopeKey(config.provider, config.issuer),
     cache = yield* anchors(scopeCache, c.table);
 
   const existing = cache.get(id);
@@ -497,7 +501,7 @@ export const readScope = Effect.fn("oauthConnected.readScope")(function* (
   const owner = yield* CurrentOAuthTransaction;
 
   const c = mapping.client,
-    id = scopeKey(provider, issuer),
+    id = yield* scopeKey(provider, issuer),
     cache = yield* anchors(scopeCache, c.table),
     cached = cache.get(id);
 
@@ -549,12 +553,12 @@ export const lockClientById = Effect.fn("oauthConnected.lockClientById")(functio
     row !== undefined &&
       row[c.clientRegistrationId] !== "" &&
       id ===
-        key("effect-auth/oauth-connected-client/v1", [
+        (yield* key("effect-auth/oauth-connected-client/v1", [
           row[c.provider],
           row[c.issuer],
           row[c.clientRegistrationId],
-        ]) &&
-      scope.id === scopeKey(row[c.provider], row[c.issuer]),
+        ])) &&
+      scope.id === (yield* scopeKey(row[c.provider], row[c.issuer])),
   );
   const found = { id, row, counter: nativeOrder(mapping, row[c.counter]), scope };
 
@@ -563,10 +567,15 @@ export const lockClientById = Effect.fn("oauthConnected.lockClientById")(functio
   return found;
 });
 
-export const heldScope = (mapping: Authority, provider: string, issuer: string) =>
-  Effect.map(anchors(scopeCache, mapping.client.table), (cache) =>
-    cache.get(scopeKey(provider, issuer)),
-  );
+export const heldScope = Effect.fnUntraced(function* (
+  mapping: Authority,
+  provider: string,
+  issuer: string,
+) {
+  const cache = yield* anchors(scopeCache, mapping.client.table);
+
+  return cache.get(yield* scopeKey(provider, issuer));
+});
 
 /** Cleanup obtains every scope then every client before entering any tuple. */
 export const prelockClients = Effect.fn("oauthConnected.prelockClients")(function* (
@@ -583,7 +592,7 @@ export const prelockClients = Effect.fn("oauthConnected.prelockClients")(functio
   const scopes = new Map<string, { provider: string; issuer: string; required: boolean }>();
 
   for (const value of releaseScopes)
-    scopes.set(scopeKey(value.provider, value.issuer), { ...value, required: false });
+    scopes.set(yield* scopeKey(value.provider, value.issuer), { ...value, required: false });
   for (const id of unique) {
     const read = yield* owner.read(c.table, equal(c.table, { [c.clientKey]: id }), {
         limit: 1,
@@ -593,7 +602,7 @@ export const prelockClients = Effect.fn("oauthConnected.prelockClients")(functio
       row = read.rows[0];
 
     invariant(row !== undefined);
-    scopes.set(scopeKey(row[c.provider], row[c.issuer]), {
+    scopes.set(yield* scopeKey(row[c.provider], row[c.issuer]), {
       provider: row[c.provider],
       issuer: row[c.issuer],
       required: true,
@@ -629,7 +638,7 @@ export const client = Effect.fn("oauthConnected.client")(function* (
   const owner = yield* CurrentOAuthTransaction;
 
   const c = mapping.client,
-    id = clientKey(config),
+    id = yield* clientKey(config),
     where = { [c.clientKey]: id };
 
   const heldScope = yield* scope(mapping, config, create);
@@ -723,7 +732,7 @@ export const cohort = Effect.fn("oauthConnected.cohort")(function* (
   const owner = yield* CurrentOAuthTransaction;
 
   const c = mapping.cohort,
-    id = cohortKey(clientId, identityId),
+    id = yield* cohortKey(clientId, identityId),
     where = { [c.cohortKey]: id };
 
   let read = yield* owner.read(c.table, equal(c.table, where), { limit: 1 });
@@ -755,7 +764,7 @@ export const cohort = Effect.fn("oauthConnected.cohort")(function* (
         ...where,
         [c.clientKey]: clientId,
         [c.identityKey]: identityId,
-        [c.generation]: initialGeneration(id),
+        [c.generation]: yield* initialGeneration(id),
         [c.cutoff]: mapping.order.encode(0),
         [c.state]: "Open",
         [c.version]: owner.marker,
@@ -769,7 +778,13 @@ export const cohort = Effect.fn("oauthConnected.cohort")(function* (
   const row = read.rows[0];
 
   if (row === undefined)
-    return { id, row: undefined, generation: initialGeneration(id), cutoff: 0, blocked: false };
+    return {
+      id,
+      row: undefined,
+      generation: yield* initialGeneration(id),
+      cutoff: 0,
+      blocked: false,
+    };
   invariant(
     row[c.clientKey] === clientId &&
       row[c.identityKey] === identityId &&
@@ -816,9 +831,9 @@ export const readGrant = Effect.fn("oauthConnected.readGrant")(function* (
     context.moduleId === moduleId &&
       context.grantId === grantId &&
       mapping.subjectId.equals(native, row[g.subjectId]) &&
-      row[g.identityKey] === oauthIdentityKey(context.identity) &&
-      row[g.clientKey] === clientKey(context.configuration) &&
-      row[g.cohortKey] === cohortKey(row[g.clientKey], row[g.identityKey]) &&
+      row[g.identityKey] === (yield* oauthIdentityKey(context.identity)) &&
+      row[g.clientKey] === (yield* clientKey(context.configuration)) &&
+      row[g.cohortKey] === (yield* cohortKey(row[g.clientKey], row[g.identityKey])) &&
       row[g.profileKey] === context.configuration.profile.key &&
       row[g.grantVersion] === context.grantVersion &&
       row[g.tokenVersion] === context.tokenVersion &&

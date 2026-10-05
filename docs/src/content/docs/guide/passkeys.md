@@ -65,7 +65,6 @@ Supply the relying-party configuration once through `PasskeyConfig`, below.
 Inside an existing Effect handler, with `AppAuth` provided and the HTTP request
 boundary in place:
 
-<!-- prettier-ignore -->
 ```ts
 const auth = yield* AppAuth;
 const started = yield* auth.signIn({ flowId, commandId, profileId: "default" });
@@ -78,7 +77,6 @@ privately; keep it associated with this flow.
 
 Inside a scoped browser Effect, use the public `started` result:
 
-<!-- prettier-ignore -->
 ```ts
 import * as PasskeyBrowser from "@yielded/auth-simplewebauthn/Browser";
 
@@ -106,7 +104,6 @@ Registration with a nonempty `excludeCredentials` list requires iOS 17.4+, where
 the peer can forward exclusions. Unsupported registration algorithms, Android,
 and conditional mediation return `PasskeyReactNativeUnsupported` before prompting.
 
-<!-- prettier-ignore -->
 ```ts
 import * as ReactNativePasskey from "@yielded/auth-react-native";
 
@@ -164,7 +161,6 @@ application-owned.
 
 ## Complete sign-in on the server
 
-<!-- prettier-ignore -->
 ```ts
 const auth = yield* AppAuth;
 const result = yield* auth.completeSignIn({ flowId, response });
@@ -227,8 +223,8 @@ export const AuthLive = AppAuth.layer.pipe(
 
 The relative imports are your application modules. `PasskeyPersistenceLive`
 provides ceremony and credential storage through [the passkey adapters](../reference/adapters#passkeys).
-`AuthDependencies` provides shared [session, account, and key configuration](../reference/adapters#compose-the-application-layer).
-The method supplies its default policy, Web Crypto, and empty hooks.
+`AuthDependencies` provides shared [crypto, session, account, and key configuration](../reference/adapters#compose-the-application-layer).
+The method supplies its default policy and empty hooks.
 
 ## Registration and management
 

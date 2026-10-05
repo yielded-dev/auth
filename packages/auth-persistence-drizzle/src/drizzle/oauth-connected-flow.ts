@@ -45,7 +45,7 @@ export const pending = Effect.fn("oauthConnected.pending")(function* (
       row[f.flowId] === c.flowId &&
       row[f.commandId] === c.commandId &&
       mapping.subjectId.equals(native, row[f.subjectId]) &&
-      row[f.clientKey] === S.clientKey(S.configuration(flow)) &&
+      row[f.clientKey] === (yield* S.clientKey(S.configuration(flow))) &&
       row[f.stateDigest] === c.stateDigest &&
       mapping.clock.decodeInstant(row[f.expiresAt]) === c.expiresAtMillis &&
       mapping.clock.decodeInstant(row[f.retentionUntil]) === flow.retentionUntilMillis,
@@ -238,7 +238,7 @@ export const inspectPrepared = Effect.fn("oauthConnected.inspectPrepared")(funct
       row[f.flowId] === c.flowId &&
       row[f.commandId] === c.commandId &&
       mapping.subjectId.equals(found.nativeId, row[f.subjectId]) &&
-      row[f.clientKey] === S.clientKey(S.configuration(flow)) &&
+      row[f.clientKey] === (yield* S.clientKey(S.configuration(flow))) &&
       row[f.stateDigest] === c.stateDigest &&
       mapping.clock.decodeInstant(row[f.expiresAt]) === c.expiresAtMillis &&
       mapping.clock.decodeInstant(row[f.retentionUntil]) === flow.retentionUntilMillis,
@@ -356,7 +356,7 @@ export const claim = Effect.fn("oauthConnected.claim")(function* (
     {
       [f.state]: "Claimed",
       [f.claimId]: claimed.claimId,
-      [f.claimDigest]: digest(S.claimStorage.encode(claimed)),
+      [f.claimDigest]: yield* digest(S.claimStorage.encode(claimed)),
       [f.claimOrder]: mapping.order.encode(order),
       [f.claimedAt]: mapping.clock.encodeInstant(now),
       [f.claimExpiresAt]: mapping.clock.encodeInstant(expires),
@@ -392,7 +392,7 @@ export const exact = Effect.fn("oauthConnected.exactClaim")(function* (
     row === undefined ||
     row[f.work] !== "Unresolved" ||
     row[f.claimId] !== claim.claimId ||
-    row[f.claimDigest] !== digest(S.claimStorage.encode(claim))
+    row[f.claimDigest] !== (yield* digest(S.claimStorage.encode(claim)))
   )
     return undefined;
   const native = yield* mapping.subjectId.toNative(c.revision.subjectId);
@@ -403,7 +403,7 @@ export const exact = Effect.fn("oauthConnected.exactClaim")(function* (
       row[f.stateDigest] === c.stateDigest &&
       mapping.clock.decodeInstant(row[f.expiresAt]) === c.expiresAtMillis &&
       mapping.clock.decodeInstant(row[f.retentionUntil]) === claim.flow.retentionUntilMillis &&
-      row[f.clientKey] === S.clientKey(S.configuration(claim.flow)) &&
+      row[f.clientKey] === (yield* S.clientKey(S.configuration(claim.flow))) &&
       S.nativeOrder(mapping, row[f.claimOrder]) === S.orderNumber(claim.order) &&
       mapping.clock.decodeInstant(row[f.claimedAt]) === claim.claimedAtMillis &&
       mapping.clock.decodeInstant(row[f.claimExpiresAt]) === claim.claimExpiresAtMillis,
@@ -448,7 +448,7 @@ export const inspectTuple = Effect.fn("oauthConnected.inspectTuple")(function* (
   const owner = yield* CurrentOAuthTransaction;
 
   const t = mapping.ownership.tuple,
-    key = oauthIdentityKey(identity);
+    key = yield* oauthIdentityKey(identity);
 
   const read = yield* owner.read(t.table, equal(t.table, { [t.identityKey]: key }), { limit: 1 });
   const row = read.rows[0];

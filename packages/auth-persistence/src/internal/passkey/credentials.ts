@@ -172,7 +172,7 @@ export const makePasskeyCredentialsKernel = (
     const found = yield* owner.read(
       descriptor.table,
       equal(descriptor.table, {
-        [descriptor.credentialKey]: credentialKey(rpId, protocolCredentialId),
+        [descriptor.credentialKey]: yield* credentialKey(rpId, protocolCredentialId),
       }),
       { lock: false, observe: false, limit: 1, columns: mappedColumns(descriptor) },
     );
@@ -257,7 +257,7 @@ export const makePasskeyCredentialsKernel = (
   ) {
     const owner = yield* CurrentPasskeyTransaction;
     const ownership = mapping.credentialOwnership;
-    const tupleKey = credentialKey(rpId, protocolCredentialId);
+    const tupleKey = yield* credentialKey(rpId, protocolCredentialId);
 
     const tuple = (yield* owner.read(
       ownership.table,
@@ -298,7 +298,7 @@ export const makePasskeyCredentialsKernel = (
       return undefined;
     let decoded = descriptor.decode(copiedRow(row));
     const handle = mapping.handleOwnership;
-    const expectedHandleKey = handleKey(rpId, decoded.userHandle);
+    const expectedHandleKey = yield* handleKey(rpId, decoded.userHandle);
 
     const handleRow = (yield* owner.read(
       handle.table,
@@ -452,7 +452,7 @@ export const makePasskeyCredentialsKernel = (
       );
       // oxlint-disable-next-line no-restricted-properties -- native SQL column values enter through this untyped driver boundary.
       userHandle = Schema.decodeUnknownSync(PasskeyUserHandle)(handleRow[handle.userHandle]);
-      invariant(handleRow[handle.handleKey] === handleKey(input.rpId, userHandle));
+      invariant(handleRow[handle.handleKey] === (yield* handleKey(input.rpId, userHandle)));
     }
     const credential = mapping.read.credential;
 

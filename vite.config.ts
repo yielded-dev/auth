@@ -100,6 +100,13 @@ export default defineConfig({
   fmt: {
     ...recommendedOxfmtConfig,
     ignorePatterns: generatedPaths,
+    overrides: [
+      {
+        // Preserve documentation fragments taken from inside Effect generators.
+        files: ["README.md", "docs/src/content/docs/**/*.{md,mdx}"],
+        options: { embeddedLanguageFormatting: "off" },
+      },
+    ],
   },
   lint: {
     extends: [recommendedOxlintConfig],

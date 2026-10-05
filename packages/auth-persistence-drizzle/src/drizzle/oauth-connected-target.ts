@@ -8,7 +8,7 @@ import {
   type PrepareOAuthCommit,
 } from "@yielded/auth/OAuth";
 /* oxlint-disable no-explicit-any -- concrete adapters retain the native database, table and ID types. */
-import { Effect, Layer, Schema } from "effect";
+import { type Crypto, Effect, Layer, type PlatformError, Schema } from "effect";
 import type { Statement } from "effect/sql/Statement";
 
 import type { PersistenceMappingError } from "./model";
@@ -94,8 +94,10 @@ const mutation =
       input: Input,
     ) => Effect.Effect<
       Value,
-      import("@yielded/auth/OAuth").OAuthUnavailable | PersistenceMappingError,
-      CurrentOAuthTransaction
+      | import("@yielded/auth/OAuth").OAuthUnavailable
+      | PersistenceMappingError
+      | PlatformError.PlatformError,
+      CurrentOAuthTransaction | Crypto.Crypto
     >,
     schema: Schema.Codec<Value, Encoded, never, never>,
   ) =>
@@ -111,8 +113,10 @@ const read =
       input: Input,
     ) => Effect.Effect<
       Value,
-      import("@yielded/auth/OAuth").OAuthUnavailable | PersistenceMappingError,
-      CurrentOAuthTransaction
+      | import("@yielded/auth/OAuth").OAuthUnavailable
+      | PersistenceMappingError
+      | PlatformError.PlatformError,
+      CurrentOAuthTransaction | Crypto.Crypto
     >,
   ) =>
   (input: Input) =>

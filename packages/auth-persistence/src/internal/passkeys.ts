@@ -1,4 +1,3 @@
-import { digest } from "@yielded/auth-crypto";
 import {
   PasskeyCredentials,
   PasskeyCredential,
@@ -19,6 +18,7 @@ import {
   type MappingInput,
   type PasskeyFeature,
 } from "./configuration";
+import { digest } from "./crypto";
 import { PersistenceMappingError } from "./mapping-error";
 import {
   requiredPasskeyCredentialConstraints,
@@ -401,7 +401,7 @@ export const makeComposedPasskeys = (
           const policy = yield* feature.policy;
           const encoded = yield* Schema.encodeEffect(policyJson)(policy);
 
-          const policyRevision = digest(
+          const policyRevision = yield* digest(
             yield* Schema.encodeEffect(seedJson)({
               policy,
               ...(feature.managementPolicy === undefined

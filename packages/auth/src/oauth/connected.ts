@@ -36,10 +36,10 @@ import {
   connectedUseAuthorization,
   makeOAuthConnectedAccess,
   validateConnectedPolicy,
-  wipeConnectedMaterial,
 } from "./connectedAccess";
 import { makeOAuthConnectedMaintenance } from "./connectedMaintenance";
 import * as M from "./connectedModels";
+import { wipeConnectedMaterial } from "./grantTokens";
 import { OAuthConnectedActionEvidence } from "./OAuthConnectedActionEvidence";
 import { OAuthConnectedPersistence } from "./OAuthConnectedPersistence";
 import { OAuthConnectedProtocol } from "./OAuthConnectedProtocol";

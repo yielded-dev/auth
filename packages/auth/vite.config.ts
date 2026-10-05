@@ -21,6 +21,8 @@ export default defineConfig({
       "src/Hooks.ts",
       "src/Identity.ts",
       "src/OAuth.ts",
+      "src/OpenIdConnect.ts",
+      "src/GitHub.ts",
       "src/OAuthServer.ts",
       "src/Strava.ts",
       "src/Operations.ts",

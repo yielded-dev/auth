@@ -1,4 +1,3 @@
-import { randomId, digest } from "@yielded/auth-crypto";
 import { AuthenticationRequirement, SecurityRevision } from "@yielded/auth/Sessions";
 import {
   TotpUnavailable,
@@ -11,6 +10,7 @@ import {
 import { sql, type SQL } from "drizzle-orm";
 import { Context, Effect, Schema } from "effect";
 
+import { randomId, digest } from "./crypto";
 import { both, makeTransactionRows, type TransactionOwner } from "./transaction-owner";
 export const unavailable = () => TotpUnavailable.make({});
 
@@ -59,7 +59,7 @@ export const captureTotp = Effect.fn("TotpNative.capture")(function* (
   )
     return undefined;
 
-  const scope = scopeFor(mapping.moduleId, subjectId),
+  const scope = yield* scopeFor(mapping.moduleId, subjectId),
     found = yield* owner.read(factor.table, equal(factor.table, { [factor.scope]: scope }), {
       limit: 1,
     }),
@@ -140,7 +140,7 @@ export const mutateTotp = Effect.fn("TotpNative.mutate")(function* (
   const guards: SQL[] = [];
   const credentialGuards: { credentialId: string; condition: SQL }[] = [];
 
-  const commandScope = digest(
+  const commandScope = yield* digest(
     `effect-auth/totp/command/v1/${mapping.moduleId.length}:${mapping.moduleId}/${input.subjectId.length}:${input.subjectId}/${input.commandId}`,
   );
 
@@ -413,7 +413,7 @@ export const mutateTotp = Effect.fn("TotpNative.mutate")(function* (
               secret: null,
               pending: null,
               recoveryDigests: [],
-              revision: randomId(),
+              revision: yield* randomId,
             };
             semantic = true;
           }
@@ -428,7 +428,7 @@ export const mutateTotp = Effect.fn("TotpNative.mutate")(function* (
           secret: null,
           pending: null,
           recoveryDigests: [],
-          revision: randomId(),
+          revision: yield* randomId,
         };
       else {
         if (new Set(action.recoveryDigests).size !== 10) return reject;
@@ -436,7 +436,7 @@ export const mutateTotp = Effect.fn("TotpNative.mutate")(function* (
       }
     }
   }
-  next = { ...next, version: randomId() };
+  next = { ...next, version: yield* randomId };
 
   const subject = mapping.subject,
     factor = mapping.factor,
@@ -445,7 +445,7 @@ export const mutateTotp = Effect.fn("TotpNative.mutate")(function* (
   const subjectKey = { [subject.id]: nativeId };
 
   if (semantic) {
-    const revision = randomId(),
+    const revision = yield* randomId,
       updates = {
         [subject.securityRevision]: revision,
         [subject.factorEnabled]: subject.encodeEnabled(next.secret !== null),
@@ -500,7 +500,7 @@ export const mutateTotp = Effect.fn("TotpNative.mutate")(function* (
     const values = factor.encodeInsert({
       scope: commandScope,
       state: "totp-command/v1",
-      version: randomId(),
+      version: yield* randomId,
     });
 
     invariant(values[factor.scope] === commandScope && values[factor.state] === "totp-command/v1");

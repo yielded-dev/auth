@@ -7,18 +7,32 @@ OAuth, passwords, passkeys, email and phone proofs, and TOTP.
 bun add @yielded/auth@beta effect
 ```
 
-The package owns security-sensitive workflow contracts. Applications own identity,
-persistence, protocol verification, and delivery adapters. Resources live in the
-caller’s Scope; credentials stay outside public results and telemetry.
+The package owns authentication workflows and native OAuth/OIDC verification.
+Applications own identity, persistence, keys, policy, private delivery, and crypto backend selection.
+Resources live in the caller’s Scope; credentials stay outside public results
+and telemetry. Runtime dependencies are Effect and the first-party
+`@yielded/crypto` and `@yielded/oauth` packages.
 
-SQL adapters and managed storage live in the companion `@yielded/auth-persistence`
-package. Both packages release at the same version. SDK integrations live in
-`@yielded/auth-simplewebauthn` and `@yielded/auth-openid-client`. Core does not import
-these packages or declare their SDK peers. Effect is its only runtime peer.
-Email transports implement the application-supplied `EmailDelivery` service; Auth
-renders the private message before handing it to the transport.
-Supply password hashing and OAuth/TOTP secret protection through the maintained
-`@yielded/auth-crypto` Layers or your own implementations of the core services.
+Supply `Password.PasswordHashing.layer()`, `Totp.TotpCryptography.layer`, and the
+OAuth protector services’ `.layer(keyring)` defaults with owned crypto services
+and Effect `Crypto`. Keys remain application-owned. Password hashing requires
+`Kdf` and `PasswordKdfAdmission`; build one `PasswordKdfAdmission.layer()` instance
+and share its two service tags with the crypto backend and all hashers. Its permit
+covers parsing, derivation, comparison, and cleanup. If increasing password work
+limits, configure the supplied KDF backend to permit those same limits.
+
+`OpenIdConnect.provider` and `GitHub.provider` configure native providers for the
+HTTP host; their `layer` and `layerConnected` constructors supply the protocol
+services directly. Construction requires an explicit nonretrying, nonredirecting
+Effect `HttpClient` and Effect `Crypto`; OpenID Connect also requires `Signature`.
+Provider clients and JOSE caches belong to the construction Scope. Keep that Scope
+open throughout use, and retain retired credential generations while issued flows
+or connected grants still reference them. Unknown exchange outcomes never authorize
+repeating an exchange.
+
+SQL adapters live in `@yielded/auth-persistence`. Optional WebAuthn SDK integration
+lives in `@yielded/auth-simplewebauthn`. Email delivery uses the application’s
+`EmailDelivery` service; Auth renders the private message before handing it off.
 
 Start with the [setup guide](https://yielded.dev/auth/guide/getting-started/),
 or read [how authentication fits together](https://yielded.dev/auth/guide/authentication/).

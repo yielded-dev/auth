@@ -1,7 +1,7 @@
 import { Context, DateTime, Effect, Layer, Schema, type Types } from "effect";
 
 import { makeAuthStrategy } from "../auth/AuthStrategy";
-import { cryptoLayer, defaultLayer, hooksLayer } from "../auth/defaults";
+import { defaultLayer, hooksLayer } from "../auth/defaults";
 import type { AuthInvocation } from "../operations/context";
 import type { AuthOperationResult } from "../operations/credentials";
 import { operationGroup } from "../operations/operation";
@@ -237,7 +237,6 @@ export const makePasskeyMethod = <
     Layer.provide(defaultLayer(Passkeys, layer)),
     Layer.provide(defaultLayer(ceremony.binding.RequestBinding, ceremony.binding.layer)),
     Layer.provide(hooksLayer),
-    Layer.provide(cryptoLayer),
   );
 
   const registration = <Registration extends Schema.Codec<unknown, unknown, unknown, unknown>>(
@@ -256,7 +255,6 @@ export const makePasskeyMethod = <
           Layer.provide(defaultLayer(module.Registrations, module.layer)),
           Layer.provide(defaultLayer(module.binding.RequestBinding, module.binding.layer)),
           Layer.provide(hooksLayer),
-          Layer.provide(cryptoLayer),
         ),
       ),
     });
@@ -287,7 +285,6 @@ export const makePasskeyMethod = <
           Layer.provide(defaultLayer(module.Management, module.layer)),
           Layer.provide(defaultLayer(module.binding.RequestBinding, module.binding.layer)),
           Layer.provide(hooksLayer),
-          Layer.provide(cryptoLayer),
         ),
       ),
     });
@@ -308,7 +305,6 @@ export const makePasskeyMethod = <
           defaultLayer(pendingModule.binding.RequestBinding, pendingModule.binding.layer),
         ),
         Layer.provide(hooksLayer),
-        Layer.provide(cryptoLayer),
       ),
       { completion: true },
     ),
@@ -329,7 +325,6 @@ export const makePasskeyMethod = <
           defaultLayer(stepUpModule.binding.RequestBinding, stepUpModule.binding.layer),
         ),
         Layer.provide(hooksLayer),
-        Layer.provide(cryptoLayer),
       ),
     ),
   });

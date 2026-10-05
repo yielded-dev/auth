@@ -15,7 +15,7 @@ import {
 import { Base64Url } from "effect/encoding";
 
 import { makeAuthStrategy } from "../auth/AuthStrategy";
-import { cryptoLayer, defaultLayer, hooksLayer } from "../auth/defaults";
+import { defaultLayer, hooksLayer } from "../auth/defaults";
 import { hasCommitScope, type PreparedCommit } from "../hooks/commit";
 import { HookDenied } from "../hooks/models";
 import { reportAuthFailure } from "../internal/diagnostics";
@@ -30,13 +30,13 @@ import type { makeSessionModule } from "../sessions/module";
 import { makeOAuthAccounts } from "./accounts";
 import type { OAuthAccountsPolicy } from "./accountsModels";
 import { makeOAuthConnected } from "./connected";
-import { wipeConnectedMaterial } from "./connectedAccess";
 import {
   type OAuthConnectedPolicy,
   type OAuthConnectedProfile,
   type OAuthConnectedGrantResponse,
 } from "./connectedModels";
 import { completionResult } from "./contracts";
+import { wipeConnectedMaterial } from "./grantTokens";
 import { OAuthProtocol } from "./OAuthProtocol";
 import { OAuthRegistrationIntents, OAuthRegistrationSettlement } from "./OAuthRegistrationIntents";
 import { OAuthReturnTargets } from "./OAuthReturnTargets";
@@ -858,7 +858,7 @@ export const makeOAuthMethod = <
         capability.handlersLayer.pipe(
           Layer.provide(defaultLayer(capability.Registrations, capability.layer)),
           Layer.provide(defaultLayer(binding.RequestBinding, binding.layer)),
-          Layer.provide([cryptoLayer, hooksLayer]),
+          Layer.provide(hooksLayer),
         ),
       ),
     });
@@ -924,7 +924,7 @@ export const makeOAuthMethod = <
     handlersLayer.pipe(
       Layer.provide(defaultLayer(SignIn, signInLayer(policy))),
       Layer.provide(defaultLayer(binding.RequestBinding, binding.layer)),
-      Layer.provide([cryptoLayer, hooksLayer]),
+      Layer.provide(hooksLayer),
     );
 
   const accounts = (policy: OAuthAccountsPolicy) => {
@@ -941,7 +941,7 @@ export const makeOAuthMethod = <
         module.handlersLayer.pipe(
           Layer.provide(defaultLayer(module.Accounts, module.layer)),
           Layer.provide(defaultLayer(module.binding.RequestBinding, module.binding.layer)),
-          Layer.provide([cryptoLayer, hooksLayer]),
+          Layer.provide(hooksLayer),
         ),
       ),
     });
@@ -962,7 +962,7 @@ export const makeOAuthMethod = <
         module.handlersLayer.pipe(
           Layer.provide(defaultLayer(module.Connected, module.layer)),
           Layer.provide(defaultLayer(module.binding.RequestBinding, module.binding.layer)),
-          Layer.provide([cryptoLayer, hooksLayer]),
+          Layer.provide(hooksLayer),
         ),
       ),
     });

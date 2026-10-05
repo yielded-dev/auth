@@ -10,14 +10,15 @@
   "fixed": [
     [
       "@yielded/auth",
-      "@yielded/auth-crypto",
       "@yielded/auth-electron",
-      "@yielded/auth-openid-client",
       "@yielded/auth-persistence",
       "@yielded/auth-persistence-drizzle",
       "@yielded/auth-react-native",
       "@yielded/auth-simplewebauthn",
-      "@yielded/drizzle-effect-v4-patch"
+      "@yielded/crypto",
+      "@yielded/drizzle-effect-v4-patch",
+      "@yielded/jose",
+      "@yielded/oauth"
     ]
   ],
   "linked": [],

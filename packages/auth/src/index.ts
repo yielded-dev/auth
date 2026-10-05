@@ -31,3 +31,6 @@ export * as WebCrypto from "./WebCrypto.ts";
 
 export * as BrowserLogin from "./BrowserLogin.ts";
 export * as BrowserLoginContract from "./BrowserLoginContract.ts";
+
+export * as OpenIdConnect from "./OpenIdConnect.ts";
+export * as GitHub from "./GitHub.ts";

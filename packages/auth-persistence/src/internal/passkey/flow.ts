@@ -233,8 +233,8 @@ export const makePasskeyFlowKernel = (
     const subject = credential?.revision.subjectId ?? knownSubject(ceremony);
 
     invariant(
-      row[table.subjectScope] === (subject === undefined ? null : subjectScope(subject)) &&
-        row[table.targetScope] === targetScope(ceremony),
+      row[table.subjectScope] === (subject === undefined ? null : yield* subjectScope(subject)) &&
+        row[table.targetScope] === (yield* targetScope(ceremony)),
     );
     if (state === "Pending") {
       invariant(
@@ -378,12 +378,12 @@ export const makePasskeyFlowKernel = (
 
     if (sameCommand.rows.length !== 0 || sameFlow !== undefined)
       return { _tag: "Rejected" } as const;
-    const kinds = chargeScopes(ceremony, subjectId).map((item) => item.kind);
+    const kinds = (yield* chargeScopes(ceremony, subjectId)).map((item) => item.kind);
 
     if (
       !(yield* owner.check(liveCondition(mapping, ceremony))) ||
       !(yield* owner.check(
-        admissionCondition(mapping, [current], ceremony, subjectId, kinds, true, false),
+        yield* admissionCondition(mapping, [current], ceremony, subjectId, kinds, true, false),
       ))
     )
       return { _tag: "Rejected" } as const;
@@ -410,8 +410,8 @@ export const makePasskeyFlowKernel = (
       [table.claimedAt]: null,
       [table.claimExpiresAt]: null,
       [table.credentialSnapshot]: null,
-      [table.subjectScope]: subjectId === undefined ? null : subjectScope(subjectId),
-      [table.targetScope]: targetScope(ceremony),
+      [table.subjectScope]: subjectId === undefined ? null : yield* subjectScope(subjectId),
+      [table.targetScope]: yield* targetScope(ceremony),
     };
 
     // Empty-key observations now expect this exact inserted row as well.
@@ -554,7 +554,7 @@ export const makePasskeyFlowKernel = (
 
     if (
       !(yield* owner.check(
-        admissionCondition(
+        yield* admissionCondition(
           mapping,
           [read.policy, current],
           read.ceremony,
@@ -591,7 +591,7 @@ export const makePasskeyFlowKernel = (
         [table.claimExpiresAt]: mapping.clock.encodeInstant(claim.claimExpiresAtMillis),
         [table.credentialSnapshot]:
           input.credential === undefined ? null : credentialStorage.encode(input.credential),
-        [table.subjectScope]: subjectId === undefined ? null : subjectScope(subjectId),
+        [table.subjectScope]: subjectId === undefined ? null : yield* subjectScope(subjectId),
       },
     );
     if (resolved) yield* insertCharges(mapping, read.ceremony, read.policy, ["subject"], subjectId);

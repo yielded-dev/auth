@@ -28,8 +28,8 @@ HttpClient service and Effect Atom queries and mutations.
 Your application owns its accounts, identifiers, and authorization policy.
 Use managed auth tables, map an existing SQL schema, or implement storage services
 against another backend. The auth API stays the same when you change storage.
-Core has only Effect as a runtime peer; companion packages supply database,
-cryptography, and protocol adapters.
+Auth uses Effect and first-party crypto, JOSE, and OAuth packages. Applications select
+crypto Layers; optional companions supply database, WebAuthn, and platform integrations.
 
 Start with [Auth in an Effect application](docs/src/content/docs/guide/effect.mdx)
 or compare [database and backend choices](docs/src/content/docs/guide/storage.mdx).
@@ -85,12 +85,11 @@ export const AuthRoutes = Http.layer(AppAuth, { origin: "https://app.example.com
 <!-- #endregion auth-server -->
 
 The eight-hour lifetime and thirty-minute idle timeout are application policy.
-Supply your persistence and account Layers to `AuthRoutes`, then merge it with
+Supply your crypto, persistence, and account Layers to `AuthRoutes`, then merge it with
 your router. For application routes that call auth, use the middleware shown in the
 [router composition](docs/src/content/docs/guide/http-and-client.mdx#configure-the-server).
 Inside an existing Effect handler, call the service directly:
 
-<!-- prettier-ignore -->
 ```ts
 const auth = yield* AppAuth;
 const result = yield* auth.signIn({ email, password });
@@ -171,3 +170,6 @@ package exports, dependency purity, tests, and builds use Vite+.
 ## License
 
 [MIT](LICENSE)
+
+See [third-party notices](THIRD_PARTY_NOTICES.md) for open-source credits and
+licenses accompanying the reusable crypto and JOSE packages.

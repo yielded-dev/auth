@@ -1,3 +1,4 @@
+import type { Hmac } from "@yielded/crypto/Hmac";
 import {
   Schema,
   Context,
@@ -507,13 +508,13 @@ export const make = <
       };
     }).pipe(Effect.provide([configuration, requestInvocation]));
 
-    // Binding configuration is acquired only by the configured OAuth branch.
+    // Binding configuration and signing are acquired only by the configured OAuth branch.
     return server as Effect.Effect<
       Effect.Success<typeof server>,
       | Exclude<Effect.Error<typeof server>, RequestBindingConfigurationError>
       | OAuthConfigured<Options, RequestBindingConfigurationError>,
-      | Exclude<Effect.Services<typeof server>, RequestBindingConfig>
-      | OAuthConfigured<Options, RequestBindingConfig>
+      | Exclude<Effect.Services<typeof server>, RequestBindingConfig | Hmac>
+      | OAuthConfigured<Options, RequestBindingConfig | Hmac>
     >;
   };
 

@@ -13,6 +13,13 @@ export interface PreviousGrantTokens {
   readonly context: Pick<OAuthConnectedTokenContext, "metadata">;
 }
 
+export const wipeConnectedMaterial = (material: OAuthConnectedTokenMaterial) => {
+  Redacted.wipeUnsafe(material.accessToken);
+  if (material.refreshToken) Redacted.wipeUnsafe(material.refreshToken);
+  if (material.continuation._tag === "Oidc" && material.continuation.nonce)
+    Redacted.wipeUnsafe(material.continuation.nonce);
+};
+
 /** An omitted refresh token preserves the old credential and its provider expiry.
  * Each workflow separately owns its local retention horizon. */
 export const retainGrantTokens = Effect.fn("OAuth.retainGrantTokens")(function* (

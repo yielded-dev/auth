@@ -1,6 +1,7 @@
-import { Duration, Layer, type Schema, type Scope } from "effect";
+import type { Hmac } from "@yielded/crypto/Hmac";
+import { type Crypto, Duration, Layer, type Schema, type Scope } from "effect";
 
-import { cryptoLayer, hooksLayer } from "../auth/defaults";
+import { hooksLayer } from "../auth/defaults";
 import type { SessionSigningKeyring } from "./crypto";
 import { SessionConfigurationError } from "./errors";
 import type { makeSessionModule, ModuleService } from "./module";
@@ -92,6 +93,8 @@ export const stateAssisted = (
   Object.freeze({ mode: "state-assisted", policy: policy(options, true), keys: options.keys });
 
 export type SessionRequirements<C, Id extends string, Claims extends Schema.Top> =
+  | Crypto.Crypto
+  | (C extends StatefulConfiguration ? never : Hmac)
   | Exclude<Claims["DecodingServices"] | Claims["EncodingServices"], Scope.Scope>
   | (C extends StatefulConfiguration
       ?
@@ -115,8 +118,7 @@ export const configuredLayer = <
 > => {
   const configured = configuration.policy(sessions.moduleId);
 
-  const defaults = <A, E, R>(layer: Layer.Layer<A, E, R>) =>
-    layer.pipe(Layer.provide([cryptoLayer, hooksLayer]));
+  const defaults = <A, E, R>(layer: Layer.Layer<A, E, R>) => layer.pipe(Layer.provide(hooksLayer));
 
   const layer =
     configuration.mode === "stateful"

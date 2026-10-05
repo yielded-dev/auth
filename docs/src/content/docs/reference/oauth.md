@@ -233,7 +233,8 @@ With `AppAuth` from the guide and `AuthRoutes` from a provider page:
 ```ts title="apps/server/oauth-live.ts"
 import { Layer } from "effect";
 import { OAuth } from "@yielded/auth";
-import * as OAuthCrypto from "@yielded/auth-crypto/OAuth";
+import { FetchHttpClient } from "effect/http";
+import { CryptoLive } from "./crypto-live";
 import { AppAuth } from "./auth";
 import { AuthDependencies } from "./auth-dependencies";
 import { resolveOAuthClaims } from "./auth-accounts";
@@ -244,16 +245,32 @@ import { AuthRoutes } from "./github";
 const OAuthLive = Layer.mergeAll(
   OAuthPersistenceLive,
   Layer.succeed(AppAuth.strategies.social.SessionClaims, { resolve: resolveOAuthClaims }),
-  OAuthCrypto.transactionLayer(transactionKeys),
+  OAuth.OAuthTransactionProtector.layer(transactionKeys),
   OAuth.OAuthReturnTargets.exactRoutes(["/account"]),
 );
 
-export const Routes = AuthRoutes.pipe(Layer.provide(OAuthLive), Layer.provide(AuthDependencies));
+export const Routes = AuthRoutes.pipe(
+  Layer.provide(OAuthLive),
+  Layer.provide(AuthDependencies),
+  Layer.provide(Layer.merge(CryptoLive, FetchHttpClient.layer)),
+);
 ```
 
 The application modules supply [OAuth persistence](./adapters#oauth), claims,
 transaction keys, and [shared auth dependencies](./adapters#compose-the-application-layer).
+[`CryptoLive`](./crypto#use-with-auth) supplies Effect `Crypto` and the first-party
+`Aead`, `Hmac`, and `Signature` services. Native `OpenIdConnect` and `GitHub`
+providers require `HttpClient` and `Crypto`; OpenID Connect also requires `Signature`. Protectors need
+`Aead` and `Crypto`. Keep the resulting Layer in the server's application scope:
+provider clients and per-configuration JWKS caches close with that scope. Closure
+cancels and joins active operations, including application identity decoders;
+pending results and later calls fail with `OAuthUnavailable`. Do not
+extract a configured provider from a completed `Effect.provide` and reuse it later.
+
 Flows default to five minutes; the strategy's `policy` overrides this.
+For account linking use `OAuth.OAuthLinkTransactionProtector.layer(transactionKeys)`.
+Retained access also needs `OAuth.OAuthConnectedTransactionProtector.layer(transactionKeys)`
+and `OAuth.OAuthConnectedTokenProtector.layer(tokenKeys)`, with a separate token keyring.
 
 ## Customize callbacks
 
@@ -279,7 +296,7 @@ const AuthRoutes = Http.layer(AppAuth, {
 | Custom completion response  | `oauth.respond`, or a provider callback's `respond`                                       |
 | Multiple completion actions | Select with `oauth.complete`                                                              |
 | Custom HttpApi composition  | `Http.make(AppAuth, options)` exposes `handlers(api)`, `callbackRoutes()`, and middleware |
-| Application-owned callback  | Use `GitHub.layer` or `OpenIdClient.layer` with an explicit `redirectUri`                 |
+| Application-owned callback  | Use `GitHub.layer` or `OpenIdConnect.layer` with an explicit `redirectUri`                |
 
 `respond` receives the schema-encoded public result and `{ flowId, provider, callbackId }`.
 It returns `Effect<Response, OperationHttpError, R>`; cookie delivery remains managed.
@@ -293,8 +310,8 @@ mapping. See the [registration example](https://github.com/yielded-dev/auth/blob
 | GitHub sign-in          | [`GitHub.provider`](../guide/github)                                                                              |
 | GitHub with API access  | `GitHub.accessProfile({ clientId, scopes })` and `GitHub.provider({ clientId, clientSecret, access: [profile] })` |
 | Strava sign-in / access | `Strava.provider({ clientId, clientSecret, access: profile })`; omit `access` for sign-in only                    |
-| OIDC                    | [`OpenIdClient.provider`](../guide/google) with issuer and credentials                                            |
-| Plain OAuth             | `OpenIdClient.provider` with endpoints and an identity decoder                                                    |
+| OIDC                    | [`OpenIdConnect.provider`](../guide/google) with issuer and credentials                                           |
+| Plain OAuth             | `OpenIdConnect.provider` with endpoints and an identity decoder                                                   |
 
 `GitHub.accessProfile` defaults to `read:user`, rotating refresh tokens, cohort
 revocation, and thirty days of local refresh retention. `Strava.accessProfile`
@@ -307,11 +324,14 @@ For generic providers, registration `access` supplies `clientRegistrationId`,
 `refreshParameters`. Those are explicit provider contracts; no refresh or revocation
 behavior is inferred from the sign-in scopes.
 
-For plain OAuth with `OpenIdClient`, provide `authorizationEndpoint`, `tokenEndpoint`,
+For plain OAuth with `OpenIdConnect`, provide `authorizationEndpoint`, `tokenEndpoint`,
 `identitySource.url`, and `identitySource.decodeIdentity`. The decoder returns an
-Effect containing the stable `subject` and optional profile. Set scopes explicitly.
+Effect containing the stable `subject` and optional profile; its service requirements
+remain in the returned Layer type. Set scopes explicitly. Sign-in registrations may
+use `additionalParameters` for provider-specific `resource` or `audience` values.
+Connected profiles use their declared resources and reject these parameter overrides.
 
-### OpenIdClient defaults
+### OpenIdConnect defaults
 
 | Setting                                | Default               |
 | -------------------------------------- | --------------------- |
@@ -326,7 +346,7 @@ S256 PKCE and response issuer validation are required by default. Set
 `responseIssuerMode: "unsupported"` only for providers without issuer responses.
 Public clients use `authentication: { method: "none", publicClient: true }`.
 Load secrets with `Config.Redacted`. Invalid settings fail Layer construction with
-`OpenIdClientConfigurationError`.
+`OpenIdConnectConfigurationError`.
 
 ### Configuration rotation
 

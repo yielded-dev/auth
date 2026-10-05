@@ -10,7 +10,7 @@ import {
 import type { AnyRelations } from "drizzle-orm";
 import type { EffectSQLiteD1Database } from "drizzle-orm/effect-d1";
 import type { AnySQLiteTable } from "drizzle-orm/sqlite-core";
-import { Context, Effect } from "effect";
+import { type Crypto, Context, Effect } from "effect";
 
 import { Database as DatabaseService } from "./d1-database";
 import { makeD1Owner } from "./d1-planning";
@@ -59,6 +59,7 @@ export const coordinatePhonePersistence = <
   A,
   PhoneCoordinatorError<E> | DatabaseError,
   | Exclude<R, PhonePersistence | PhoneAdmission | PhoneSignInTargets | D1BatchStatements>
+  | Crypto.Crypto
   | LifecycleHooks
   | RSetup
   | DatabaseRequirements

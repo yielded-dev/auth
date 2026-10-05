@@ -36,13 +36,14 @@ and CSRF checks.
 ## Supply storage and accounts
 
 The type of `AuthRoutes` lists every service your methods still need. The library
-supplies Web Crypto and empty lifecycle hooks; you supply the rest:
+supplies empty lifecycle hooks; your application selects crypto and the remaining services:
 
 | You supply                                    | With                                                                                  |
 | --------------------------------------------- | ------------------------------------------------------------------------------------- |
+| Crypto capabilities                           | [Your platform's crypto Layers](../reference/crypto#use-with-auth)                    |
 | Storage for credentials, sessions, and proofs | [Managed tables, your schema, or your services](./storage)                            |
 | Account checks and session claims             | Your account Layers; see [passwords](./passwords#supply-the-services)                 |
-| Password hashing                              | `@yielded/auth-crypto/Password`                                                       |
+| Password hashing                              | [`Password.PasswordHashing.layer()`](./passwords#supply-the-services)                 |
 | Proof and request-binding keys                | Your secrets; see [Layer wiring](../reference/adapters#compose-the-application-layer) |
 
 Provide them to `AuthRoutes` and merge it with your router:
@@ -52,7 +53,7 @@ import { Layer } from "effect";
 
 import { ApplicationRoutes } from "./application-routes";
 import { AuthRoutes } from "./auth";
-import { AuthDependencies } from "./auth-live"; // storage, accounts, hashing, keys
+import { AuthDependencies } from "./auth-live"; // crypto, storage, accounts, hashing, keys
 
 export const Routes = Layer.mergeAll(AuthRoutes, ApplicationRoutes).pipe(
   Layer.provide(AuthDependencies),
@@ -68,7 +69,6 @@ accounts and storage, and `server.ts` serves the routes.
 Inside an Effect route covered by the [auth middleware](./http-and-client#application-routes),
 call the service with your validated input:
 
-<!-- prettier-ignore -->
 ```ts
 const auth = yield* AppAuth;
 const result = yield* auth.signIn({ email, password });

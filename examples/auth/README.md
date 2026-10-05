@@ -15,9 +15,12 @@ application routes. `auth-client.ts` declares the client and its atoms;
 the host keeps each Scope alive until its render or mounted application finishes.
 
 Run a declared example through `vp run -F @yielded/example-auth <task>`.
-All consumer files are checked by the root validation command. TOTP adapter
-fixtures that exercise private implementation helpers live under the library’s
-`test/fixtures`, where they remain typechecked.
+All consumer files are checked by the root validation command.
+[CryptoLive](../shared/crypto.ts) chooses the portable first-party crypto backend
+and shares Auth's admission service with password hashing. Password, TOTP, and
+OAuth protectors come directly from Auth. Native `OpenIdConnect` and `GitHub`
+providers receive HTTP and crypto services in the server Layer's application
+scope; their clients and key caches live until that scope closes.
 
 The Studio example's storage and HTTP Layers require `Postgres.Database`; provide
 `Postgres.databaseLayer` with an Effect PostgreSQL client at the application boundary.

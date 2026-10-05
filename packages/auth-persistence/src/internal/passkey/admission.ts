@@ -31,18 +31,19 @@ export const makePasskeyAdmissionKernel = (
 
   const chargeRetentionMillis = 86_400_000;
 
-  const chargeScopes = (ceremony: PasskeyCeremony, subjectId?: string) => {
+  const chargeScopes = Effect.fnUntraced(function* (ceremony: PasskeyCeremony, subjectId?: string) {
     const scopes: { kind: PasskeyChargeKind; scope: string }[] = [
-      { kind: "global", scope: key("global", [ceremony.moduleId]) },
+      { kind: "global", scope: yield* key("global", [ceremony.moduleId]) },
     ];
 
-    if (subjectId !== undefined) scopes.push({ kind: "subject", scope: subjectScope(subjectId) });
-    const target = targetScope(ceremony);
+    if (subjectId !== undefined)
+      scopes.push({ kind: "subject", scope: yield* subjectScope(subjectId) });
+    const target = yield* targetScope(ceremony);
 
     if (target !== null) scopes.push({ kind: "target", scope: target });
 
     return scopes;
-  };
+  });
 
   const lockAdmission = Effect.fn("passkey.lockAdmission")(function* (mapping: any) {
     const owner = yield* CurrentPasskeyTransaction;
@@ -107,7 +108,7 @@ export const makePasskeyAdmissionKernel = (
     )})`;
   };
 
-  const admissionCondition = (
+  const admissionCondition = Effect.fnUntraced(function* (
     mapping: any,
     policies: ReadonlyArray<PasskeyMethodPolicy>,
     ceremony: PasskeyCeremony,
@@ -115,19 +116,23 @@ export const makePasskeyAdmissionKernel = (
     added: ReadonlyArray<PasskeyChargeKind>,
     newFlow: boolean,
     resolvedSubject: boolean,
-  ) =>
-    both(
+  ) {
+    const subject = subjectId === undefined ? undefined : yield* subjectScope(subjectId);
+    const scopes = yield* chargeScopes(ceremony, subjectId);
+
+    return both(
       ...policies.flatMap((policy) => [
         sql`${pendingCount(mapping)} + ${newFlow ? 1 : 0} <= ${policy.maximumPending}`,
         subjectId === undefined
           ? undefined
-          : sql`${pendingCount(mapping, subjectScope(subjectId))} + ${newFlow || resolvedSubject ? 1 : 0} <= ${policy.maximumPendingPerSubject}`,
-        ...chargeScopes(ceremony, subjectId).map(
+          : sql`${pendingCount(mapping, subject)} + ${newFlow || resolvedSubject ? 1 : 0} <= ${policy.maximumPendingPerSubject}`,
+        ...scopes.map(
           ({ kind, scope }) =>
             sql`${chargedCount(mapping, kind, scope, policy.admission[kind].windowMillis)} + ${added.includes(kind) ? 1 : 0} <= ${policy.admission[kind].limit}`,
         ),
       ]),
     );
+  });
 
   const guardAdmission = (
     mapping: any,
@@ -135,9 +140,11 @@ export const makePasskeyAdmissionKernel = (
     ceremony: PasskeyCeremony,
     subjectId?: string,
   ) =>
-    Effect.map(CurrentPasskeyTransaction, (owner) => {
+    Effect.gen(function* () {
+      const owner = yield* CurrentPasskeyTransaction;
+
       owner.postconditions.push(
-        admissionCondition(mapping, policies, ceremony, subjectId, [], false, false),
+        yield* admissionCondition(mapping, policies, ceremony, subjectId, [], false, false),
       );
     });
 
@@ -161,7 +168,7 @@ export const makePasskeyAdmissionKernel = (
       columns: mappedColumns(table),
     });
 
-    const scopes = chargeScopes(ceremony, subjectId);
+    const scopes = yield* chargeScopes(ceremony, subjectId);
 
     invariant(found.rows.length === scopes.length);
     for (const { kind, scope } of scopes) {
@@ -202,7 +209,7 @@ export const makePasskeyAdmissionKernel = (
     Effect.flatMap(CurrentPasskeyTransaction, (owner) =>
       Effect.gen(function* () {
         const table = mapping.charge;
-        const scopes = chargeScopes(ceremony, subjectId);
+        const scopes = yield* chargeScopes(ceremony, subjectId);
 
         const where = equal(table.table, {
           [table.moduleId]: ceremony.moduleId,
@@ -241,7 +248,7 @@ export const makePasskeyAdmissionKernel = (
     const earliest = yield* owner.now(clock);
     const identities: Record<string, unknown>[] = [];
 
-    for (const { kind, scope } of chargeScopes(ceremony, subjectId).filter((item) =>
+    for (const { kind, scope } of (yield* chargeScopes(ceremony, subjectId)).filter((item) =>
       kinds.includes(item.kind),
     )) {
       const identity = {

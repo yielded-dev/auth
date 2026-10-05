@@ -26,7 +26,7 @@ export const makePasskeyRegistrationCustodyKernel = (
     const owner = yield* CurrentPasskeyTransaction;
     const handle = mapping.handle;
     const intent = mapping.intent;
-    const hashed = handleKey(ceremony.profile.rpId, ceremony.context.userHandle);
+    const hashed = yield* handleKey(ceremony.profile.rpId, ceremony.context.userHandle);
 
     const held = (yield* owner.read(
       handle.table,

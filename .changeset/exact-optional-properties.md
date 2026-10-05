@@ -2,7 +2,6 @@
 "@yielded/auth": patch
 "@yielded/auth-persistence": patch
 "@yielded/auth-persistence-drizzle": patch
-"@yielded/auth-openid-client": patch
 "@yielded/auth-simplewebauthn": patch
 ---
 
