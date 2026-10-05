@@ -19,7 +19,26 @@
     "plugins": [
       {
         "name": "@effect/language-service",
+        "allowedUnstableApis": [
+          "@effect/sql-d1",
+          "@effect/sql-pglite",
+          "@effect/sql-sqlite-do",
+          "effect/ai",
+          "effect/cli",
+          "effect/http",
+          "effect/http-api",
+          "effect/persistence/KeyValueStore",
+          "effect/persistence/RateLimiter",
+          "effect/process",
+          "effect/reactivity",
+          "effect/rpc",
+          "effect/sql"
+        ],
         "diagnosticSeverity": {
+          "unknownRuleName": "error",
+          "catchIfTagToCatchTag": "warning",
+          "catchRefailToTapError": "warning",
+          "flatMapIgnoredParamToAndThen": "warning",
           "anyUnknownInErrorContext": "suggestion",
           "instanceOfSchema": "suggestion",
           "nestedEffectGenYield": "suggestion",

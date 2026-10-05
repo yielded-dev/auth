@@ -24,6 +24,11 @@ The `preferTypedSchemaDecoder` diagnostic is an error: use typed Schema decoders
 when the input is assignable to the schema's encoded type. Typed decoders retain
 runtime validation while also checking the input type during compilation.
 
+Unknown diagnostic names fail compilation. The shared plugin also checks tag-specific
+error handling and ignored `flatMap` inputs. Stability diagnostics stay enabled;
+`allowedUnstableApis` records the Effect modules this repository intentionally uses.
+Review new unstable or experimental dependencies before extending those allowances.
+
 The root `patchedDependencies` carries a Drizzle patch from
 `@yielded/drizzle-effect-v4-patch`. The patch CLI configures the same Drizzle asset
 for Bun consumers; it bundles its own tooling dependencies and adds no application
