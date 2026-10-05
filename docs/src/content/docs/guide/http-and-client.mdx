@@ -304,6 +304,39 @@ The auth client sends the required CSRF header automatically. Keep custom cookie
 names and CSRF settings aligned with the server; [cookies and request policy](../reference/http#cookies-and-request-policy)
 lists the options.
 
+### Sharing sessions across apps
+
+Share a parent-domain cookie across apps with matching cookie names and session
+policy: use the same session store or compatible signing keys.
+
+```ts
+import { Email, Http, OAuth } from "@yielded/auth";
+
+const trustedOrigins = ["https://agent.yielded.dev"];
+
+export const http = Http.make(AppAuth, {
+  origin: "https://yielded.dev",
+  cookie: { domain: "yielded.dev" },
+  trustedOrigins,
+});
+
+const routes = ["/", "https://agent.yielded.dev/browser-use/"];
+export const OAuthReturns = OAuth.OAuthReturnTargets.exactRoutes(routes, { trustedOrigins });
+export const EmailReturns = Email.EmailReturnTargets.exactRoutes(routes, { trustedOrigins });
+```
+
+Provide the return-target Layer for each strategy. Routes match exactly: no queries,
+fragments, wildcards, or prefix matching. Paths stay relative to the sign-in app;
+absolute URLs require a listed trusted origin. Custom OAuth responses and email
+handlers must use the approved return target.
+
+Domain cookies change the default cookie names, so users sign in again. See
+[cookie options and CORS](../reference/http#cookies-and-request-policy) for details.
+
+**Every subdomain receives these cookies and can set them.** Never host user- or
+AI-generated content under this domain. Validate sessions server-side, keep
+Origin/CSRF checks on mutations, and monitor dangling DNS.
+
 ## Expose another method
 
 To add passkeys alongside passwords, declare the begin and complete actions in

@@ -177,6 +177,8 @@ export const AuthLive = AppAuth.layer.pipe(
 );
 ```
 
+For sibling apps, configure [cross-origin return targets](./http-and-client#sharing-sessions-across-apps).
+
 The relative imports are your application modules. `EmailLive` implements the
 email service. Auth's built-in worker keeps provider acceptance outside the request's
 wait for a response; build Auth in an application scope that outlives requests.

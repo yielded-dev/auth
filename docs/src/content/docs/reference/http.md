@@ -36,7 +36,7 @@ Configure paths through `basePath` rather than prefixing the generated endpoints
 Cookies default to `Secure`, `HttpOnly`, `SameSite=Lax`, path `/`, and the
 `__Host-effect-auth-` prefix. Override `cookie.name` for the session slot or
 `cookie.prefix` for all slots. Secure custom names and prefixes must begin with
-`__Host-`; their cookies retain path `/` and no Domain. `cookie.secure: false` is
+`__Host-` without a cookie domain. `cookie.secure: false` is
 allowed only with HTTP loopback origins (`localhost`, `127.0.0.1`, or `[::1]`).
 Use your real HTTPS origin; never derive trusted origins from an untrusted request
 header. Invalid combinations fail startup.
@@ -44,7 +44,20 @@ header. Invalid combinations fail startup.
 OAuth callbacks need the request-binding cookie on a cross-site return. Keep
 `SameSite=Lax`; configuring OAuth with `cookie.sameSite: "strict"` fails startup.
 
-POST auth actions require the configured Origin, JSON content type, and
+`cookie.domain` shares every auth cookie with a bare host and its subdomains
+(no scheme, port, path, or leading dot). It requires HTTPS, `Secure`, and
+`__Secure-` names; the default prefix becomes `__Secure-effect-auth-`.
+`__Host-` names fail startup with `OperationHttpConfigurationError`.
+
+`trustedOrigins` adds exact HTTPS origins alongside `origin` for request admission
+and default OAuth redirects. With a cookie domain, all origins must be inside it.
+Wildcards and URL paths are rejected; ports must match. Configure credentialed
+CORS separately for cross-origin fetches.
+
+Use domain cookies only when you trust every subdomain to receive and set them.
+See [shared-session setup and security](../guide/http-and-client#sharing-sessions-across-apps).
+
+POST auth actions require an admitted Origin, JSON content type, and
 `x-effect-auth-csrf: 1` by default. GET actions have no body or CSRF header and
 reject an explicitly untrusted Origin. Duplicate credential cookies are rejected,
 and session responses are not cacheable. If you override `csrf` on the server,

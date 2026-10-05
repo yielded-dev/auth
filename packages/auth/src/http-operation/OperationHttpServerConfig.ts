@@ -113,6 +113,7 @@ export const configurationLayer = (input: OperationHttpConfiguration) =>
 
 export const cookieConfiguration = (input: {
   readonly prefix: string;
+  readonly domain?: string;
   readonly secure: boolean;
   readonly path?: string;
   readonly sameSite?: OperationCookie["sameSite"];
@@ -122,6 +123,7 @@ export const cookieConfiguration = (input: {
       slot,
       {
         name: `${input.prefix}${slot}`,
+        ...(input.domain === undefined ? {} : { domain: input.domain }),
         path: input.path ?? "/",
         secure: input.secure,
         sameSite: input.sameSite ?? "lax",

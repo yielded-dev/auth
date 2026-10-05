@@ -2,6 +2,7 @@ import { Context, Effect, Layer, Result, Schema } from "effect";
 
 import type { AnyRoute } from "../http-operation/contract";
 import { OperationHttpConfigurationError, OperationHttpError } from "../http-operation/errors";
+import { OperationHttpServerConfig } from "../http-operation/OperationHttpServerConfig";
 import { oauthCallback, type OAuthHttpCallback } from "../http-operation/server";
 import { origin as Origin } from "../internal/origin";
 import { selectCallback } from "../oauth/callback";
@@ -184,6 +185,7 @@ export const makeOAuth = <E, R, ResponseR>(
   const callbacks = <Routes extends Readonly<Record<string, AnyRoute>>>(routes: Routes) =>
     Effect.gen(function* () {
       const { complete, entries } = yield* configuration;
+      const { trustedOrigins } = yield* OperationHttpServerConfig;
 
       const flowId = yield* makeRequestBindingFlowResolver("oauth-entry");
 
@@ -204,7 +206,7 @@ export const makeOAuth = <E, R, ResponseR>(
             ...(callbackRespond === undefined ? {} : { respond: callbackRespond }),
             provider: entry.provider,
             requestBinding: "context",
-            allowedRedirectOrigins: [],
+            allowedRedirectOrigins: trustedOrigins,
             flowId: (_request, credentials) => {
               const credential = credentials["request-binding"];
 
