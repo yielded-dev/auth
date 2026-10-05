@@ -97,6 +97,17 @@ agents can read the implementation.
 8. Concurrency is bounded and uses Effect structured concurrency.
 9. Node platform assumptions must not enter core domain modules.
 
+## Composition and override
+
+Every auth concern is an Effect service an application can replace; library code supplies defaults.
+
+- Applications choose persistence integration per strategy: managed tables, mapped tables, their
+  own SQL integration, or a replacement persistence service.
+- Persistence services hold only state that commits atomically with credentials or authority.
+  Rate limiting, delivery, rendering, and hooks are separate services.
+- Default optional services with `defaultLayer` and document what the default does not guarantee.
+- Write each persistence operation once; keep dialect and execution constraints in small helpers.
+
 ## Designing strategies
 
 Strategy constructors configure behavior; default to `make()` where possible and derive
