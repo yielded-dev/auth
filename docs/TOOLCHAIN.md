@@ -57,7 +57,7 @@ checks cover these executable entries, and publishing checks the built binaries.
 The export check validates casing, namespace targets, build entries, and workspace
 dependencies, including relative imports through the package's own public barrels.
 The enforced runtime graph is Effect → crypto → JOSE → OAuth → Auth; Auth also
-uses crypto directly. These packages permit no other runtime dependencies,
+uses crypto and JOSE directly. These packages permit no other runtime dependencies,
 including optional peers and bundled SDKs. Optional database, WebAuthn, and
 platform integrations belong in companion packages. The purity check rejects
 production paths that reach test-only code.

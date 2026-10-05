@@ -76,6 +76,7 @@
   },
   "dependencies": {
     "@yielded/crypto": "workspace:*",
+    "@yielded/jose": "workspace:*",
     "@yielded/oauth": "workspace:*"
   },
   "devDependencies": {

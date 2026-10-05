@@ -208,6 +208,7 @@
       "version": "0.1.0-beta.19",
       "dependencies": {
         "@yielded/crypto": "workspace:*",
+        "@yielded/jose": "workspace:*",
         "@yielded/oauth": "workspace:*",
       },
       "devDependencies": {
@@ -251,6 +252,8 @@
         "@effect/sql-libsql": "catalog:",
         "@effect/sql-sqlite-node": "catalog:",
         "@effect/vitest": "catalog:",
+        "@yielded/crypto": "workspace:*",
+        "@yielded/jose": "workspace:*",
         "effect": "catalog:",
         "typescript": "catalog:",
         "vite-plus": "catalog:",
