@@ -14,7 +14,6 @@ import { Base64Url } from "effect/encoding";
 import { Cookies, HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import { HttpApiBuilder, HttpApiSecurity } from "effect/http-api";
 
-import { cryptoLayer } from "../../auth/defaults";
 import { reportAuthFailure } from "../../internal/diagnostics";
 import { origin as Origin } from "../../internal/origin";
 import { SubjectId } from "../../Schema";
@@ -743,7 +742,7 @@ export const make = <const Id extends string>(
           cookieName,
         });
       }),
-    ).pipe(Layer.provide(cryptoLayer));
+    );
 
   const routes = Layer.unwrap(
     Effect.gen(function* () {

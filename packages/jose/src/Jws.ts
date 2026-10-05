@@ -25,6 +25,7 @@ import {
   Algorithm,
   type SigningKey,
   type VerificationKey,
+  type PublicKey,
   type PrivateJwk,
   type SecretJwk,
 } from "./Jwk";
@@ -85,41 +86,23 @@ const parseCompact = Effect.fnUntraced(function* (
   };
 });
 
-const verifySignature = Effect.fnUntraced(function* (
+const verifyAsymmetric = Effect.fnUntraced(function* (
   parsed: Effect.Success<ReturnType<typeof parseCompact>>,
-  key: VerificationKey,
+  key: PublicKey,
 ) {
   const algorithm = parsed.protectedHeader.alg;
 
-  if (key.algorithm !== algorithm) return yield* InvalidKey.make({});
+  if (algorithm === "HS256" || key.algorithm !== algorithm) return yield* InvalidKey.make({});
+  yield* KeyPolicy.check(key.jwk, algorithm, "verify");
+  const signatures = yield* Signature;
 
-  const metadata =
-    key._tag === "PublicKey" ? key.jwk : yield* reveal<PrivateJwk | SecretJwk>(key.jwk);
+  const valid = yield* signatures.verify({
+    algorithm: signatureAlgorithm(algorithm),
+    publicKey: key.material,
+    data: parsed.signingInput,
+    signature: parsed.signature,
+  });
 
-  yield* KeyPolicy.check(metadata, algorithm, "verify");
-  let valid: boolean;
-
-  if (key._tag === "SecretKey") {
-    if (algorithm !== "HS256") return yield* InvalidKey.make({});
-    const hmac = yield* Hmac;
-
-    valid = yield* hmac.verify({
-      algorithm: "SHA-256",
-      key: key.material,
-      data: parsed.signingInput,
-      tag: parsed.signature,
-    });
-  } else {
-    if (algorithm === "HS256") return yield* InvalidKey.make({});
-    const signatures = yield* Signature;
-
-    valid = yield* signatures.verify({
-      algorithm: signatureAlgorithm(algorithm),
-      publicKey: key.material,
-      data: parsed.signingInput,
-      signature: parsed.signature,
-    });
-  }
   if (!valid) return yield* SignatureVerificationFailed.make({});
 
   return {
@@ -180,7 +163,29 @@ export const verify = Effect.fnUntraced(function* (
   key: VerificationKey,
   options: VerifyOptions,
 ) {
-  return yield* verifySignature(yield* parseCompact(token, options), key);
+  const parsed = yield* parseCompact(token, options);
+
+  if (key._tag !== "SecretKey") return yield* verifyAsymmetric(parsed, key);
+  const algorithm = parsed.protectedHeader.alg;
+
+  if (key.algorithm !== algorithm) return yield* InvalidKey.make({});
+  yield* KeyPolicy.check(yield* reveal(key.jwk), algorithm, "verify");
+  if (algorithm !== "HS256") return yield* InvalidKey.make({});
+  const hmac = yield* Hmac;
+
+  const valid = yield* hmac.verify({
+    algorithm: "SHA-256",
+    key: key.material,
+    data: parsed.signingInput,
+    tag: parsed.signature,
+  });
+
+  if (!valid) return yield* SignatureVerificationFailed.make({});
+
+  return {
+    protectedHeader: parsed.protectedHeader,
+    payload: Redacted.make(parsed.payload),
+  } satisfies Verified;
 });
 
 export const verifyWithKeySet = Effect.fnUntraced(function* (
@@ -197,5 +202,5 @@ export const verifyWithKeySet = Effect.fnUntraced(function* (
     ...(parsed.protectedHeader.kid === undefined ? {} : { kid: parsed.protectedHeader.kid }),
   });
 
-  return yield* verifySignature(parsed, key);
+  return yield* verifyAsymmetric(parsed, key);
 });

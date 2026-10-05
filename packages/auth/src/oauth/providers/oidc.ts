@@ -1,4 +1,3 @@
-import type { Hmac } from "@yielded/crypto/Hmac";
 import type { Signature } from "@yielded/crypto/Signature";
 import type * as OAuth from "@yielded/oauth/OAuth";
 import * as Oidc from "@yielded/oauth/Oidc";
@@ -15,7 +14,7 @@ import type { OpenIdConnectConnectedProtocolOptions } from "./connected/models";
 import { OpenIdConnectConfigurationError, type OpenIdConnectOAuthProtocolOptions } from "./models";
 import type { Requirements as OAuthRequirements } from "./native";
 
-export type Requirements = OAuthRequirements | Hmac | Signature;
+export type Requirements = OAuthRequirements | Signature;
 
 const configurationError = (error: Effect.Error<ReturnType<typeof Oidc.discover>>) =>
   error._tag === "OAuthConfigurationError"
@@ -32,7 +31,7 @@ const makeVerifier = Effect.fn("OpenIdConnect.makeVerifier")(function* (
   clientId: string,
   timeoutSeconds: number,
 ) {
-  const context = yield* Effect.context<Crypto.Crypto | Hmac | Signature>();
+  const context = yield* Effect.context<Crypto.Crypto | Signature>();
 
   const verifier = yield* Oidc.makeVerifier({
     metadata,

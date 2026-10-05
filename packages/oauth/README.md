@@ -5,8 +5,8 @@ RS256 OpenID Connect. Runtime dependencies are Effect and `@yielded/jose`.
 
 Use `OAuth.make` for an installed client and `Oidc.makeVerifier` for its OIDC
 verifier. Both require `HttpClient` and an owning `Scope`; keep that scope open
-for their lifetime. `Pkce` requires Effect `Crypto`; verification requires the
-crypto services in `Jws.Requirements` and Effect `Crypto`. Runtime Layers belong
+for their lifetime. `Pkce` requires Effect `Crypto`; verification requires
+`Signature` from `@yielded/crypto` and Effect `Crypto`. Runtime Layers belong
 to the application. `Oidc.discover` retrieves metadata from the exact trusted
 issuer's OIDC discovery endpoint.
 

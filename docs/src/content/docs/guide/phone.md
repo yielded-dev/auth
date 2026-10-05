@@ -156,8 +156,8 @@ instead of `from` for a Twilio Messaging Service. The adapter uses Effect HTTP a
 requires no Twilio SDK.
 
 `AuthDependencies` is defined in the [shared application composition](../reference/adapters#compose-the-application-layer).
-It supplies session storage, account authority, request-binding configuration, and
-`ProofKeys`. Web Crypto, empty lifecycle hooks, and a bounded delivery worker have
+It supplies crypto Layers, session storage, account authority, request-binding configuration, and
+`ProofKeys`. Empty lifecycle hooks and a bounded delivery worker have
 defaults. Database storage, destination policy, claims, and delivery have no automatic
 implementations. Build Auth in an application scope that outlives requests; the built-in
 worker keeps SMS provider latency outside the response path without extra wiring.

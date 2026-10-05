@@ -28,6 +28,7 @@ import {
   Scope,
 } from "effect";
 import { FetchHttpClient } from "effect/http";
+import { TestClock } from "effect/testing";
 import { describe, expect } from "vite-plus/test";
 
 import { expectTag } from "./helpers/oauth";
@@ -142,6 +143,65 @@ it.effect("fails invalid GitHub provider configuration through the typed error c
 );
 
 describe("OAuth protocol credential and resource lifetimes", () => {
+  // At 28374b35, owner closure left application identity decoding running after HTTP completed.
+  it.effect("joins identity decoder cleanup when its provider scope closes", () =>
+    Effect.gen(function* () {
+      const owner = yield* Scope.fork(yield* Effect.scope);
+      const entered = yield* Deferred.make<void>();
+      const resume = yield* Deferred.make<void>();
+      const cleanup = yield* Deferred.make<void>();
+      let interrupted = false;
+      const provider = github();
+      const transport = makeTransport();
+
+      const services = yield* Layer.buildWithScope(
+        OpenIdConnect.layer({
+          providers: [
+            {
+              ...provider,
+              identitySource: {
+                ...provider.identitySource,
+                decodeIdentity: () =>
+                  Deferred.succeed(entered, undefined).pipe(
+                    Effect.andThen(Deferred.await(resume)),
+                    Effect.as({ subject: "42" }),
+                    Effect.onInterrupt(() =>
+                      Effect.sync(() => {
+                        interrupted = true;
+                      }),
+                    ),
+                    Effect.ensuring(Deferred.await(cleanup)),
+                  ),
+              },
+            },
+          ],
+        }).pipe(Layer.provide(platform)),
+        owner,
+      ).pipe(Effect.provideService(FetchHttpClient.Fetch, transport.fetch));
+
+      const protocol = Context.get(services, OAuthProtocol);
+      const started = yield* begin(protocol, "github");
+      const active = yield* exchange(protocol, started).pipe(Effect.result, Effect.forkChild);
+
+      yield* Deferred.await(entered);
+      const closing = yield* Scope.close(owner, Exit.void).pipe(Effect.forkChild);
+
+      yield* TestClock.adjust(1);
+      const closeBeforeCleanup = closing.pollUnsafe();
+      const interruptedBeforeCleanup = interrupted;
+
+      yield* Deferred.succeed(resume, undefined);
+      yield* Deferred.succeed(cleanup, undefined);
+      yield* Fiber.join(closing);
+      const result = yield* Fiber.join(active);
+
+      expect(result).toMatchObject({ _tag: "Failure", failure: { _tag: "OAuthUnavailable" } });
+      expect(interruptedBeforeCleanup).toBe(true);
+      expect(closeBeforeCleanup).toBeUndefined();
+      yield* expectTag(exchange(protocol, started), "OAuthUnavailable");
+    }),
+  );
+
   it.live(
     "finishes captured retired generations and never substitutes the active credentials",
     () =>

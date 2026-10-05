@@ -26,8 +26,8 @@ const Configuration = Schema.Struct({
  * Waiting is interruptible and bounded. The permit covers work and its cleanup;
  * backends protect nonabortable native calls until actual completion. Owned
  * interruptible work can stop and release its resources without finishing a KDF.
- * Nested work in the same fiber shares its permit; forked fibers must acquire
- * their own. This lets callers cover preparation and cleanup around a KDF call.
+ * Nested work in the same fiber shares its permit through scoped cleanup; forked
+ * fibers must acquire their own. This covers preparation and cleanup around a KDF.
  * Defaults: one running derivation, sixteen waiting, five-second acquisition wait.
  */
 export const layer = (options: Options = {}): Layer.Layer<KdfAdmission, InvalidInput> => {
@@ -66,11 +66,10 @@ export const layer = (options: Options = {}): Layer.Layer<KdfAdmission, InvalidI
           Effect.withFiber((fiber) => {
             if (owners.has(fiber.id)) return work;
 
-            const owned = Effect.acquireUseRelease(
+            const owned = Effect.acquireRelease(
               Effect.sync(() => owners.add(fiber.id)),
-              () => work,
               () => Effect.sync(() => owners.delete(fiber.id)),
-            );
+            ).pipe(Effect.andThen(work));
 
             return admitted
               .withPermitsIfAvailable(1)(Effect.scoped(Effect.andThen(acquire, owned)))

@@ -42,7 +42,7 @@ const issue = Effect.fnUntraced(function* (
   value: Proofs.ProofRecord,
   options: { readonly eligible?: boolean; readonly supersedes?: Proofs.ProofId } = {},
 ) {
-  const { proofPersistence } = yield* makeD1ProofPersistenceServices(d1Mapping);
+  const { proofPersistence } = yield* makeD1ProofPersistenceServices(yield* d1Mapping);
 
   const prepared = yield* proofPersistence.issue(
     {

@@ -2,7 +2,7 @@ import { Crypto, DateTime, Effect, Layer, Option, Schema } from "effect";
 import { Base64Url } from "effect/encoding";
 
 import { makeAuthStrategy } from "../auth/AuthStrategy";
-import { cryptoLayer, defaultLayer, hooksLayer } from "../auth/defaults";
+import { defaultLayer, hooksLayer } from "../auth/defaults";
 import { hasCommitScope } from "../hooks/commit";
 import { HookDenied } from "../hooks/models";
 import { LoginIdentifier } from "../identity/models";
@@ -318,7 +318,7 @@ export const makePhoneOtp = <
   const layer = handlersLayer.pipe(
     Layer.provide(defaultLayer(binding.RequestBinding, binding.layer)),
     Layer.provide(defaultLayer(proof.Proofs, proof.smsLayer.pipe(Layer.provide(deliveryLayer)))),
-    Layer.provide([cryptoLayer, hooksLayer]),
+    Layer.provide(hooksLayer),
   );
 
   return Object.freeze({
@@ -350,7 +350,7 @@ export const makePhoneOtp = <
         completeSignIn: Complete.invoke,
       },
       layer.pipe(
-        Layer.provideMerge(cryptoLayer),
+        Layer.merge(Layer.effect(Crypto.Crypto, Crypto.Crypto)),
         Layer.merge(Layer.effect(PhoneAdmission, PhoneAdmission)),
       ),
       { completion: true },

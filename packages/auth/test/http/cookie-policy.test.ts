@@ -1,5 +1,5 @@
 import { it } from "@effect/vitest";
-import { Auth, Http, Sessions, Strava } from "@yielded/auth";
+import { Auth, Http, Sessions, Strava, WebCrypto } from "@yielded/auth";
 import { Effect, Layer, Redacted, Schema } from "effect";
 import { expect } from "vite-plus/test";
 
@@ -16,9 +16,12 @@ const auth = Auth.make("test/cookie-policy", {
 });
 
 const startup = (options: Http.AuthHttpOptions<unknown, unknown, unknown>) =>
-  Layer.build(Http.make(auth, options).operationLayer.pipe(Layer.provide(auth.layer))).pipe(
-    Effect.scoped,
-  );
+  Layer.build(
+    Http.make(auth, options).operationLayer.pipe(
+      Layer.provide(auth.layer),
+      Layer.provide(WebCrypto.layerWebCrypto),
+    ),
+  ).pipe(Effect.scoped);
 
 // Requested hardening: exercise public layer acquisition, including custom cookie overrides.
 it.effect.each([

@@ -6,7 +6,7 @@ import { hooksLayer } from "@yielded/auth/Persistence";
 import { PhoneAdmission, PhoneSignInTargets, PhoneOtpUnavailable } from "@yielded/auth/PhoneOtp";
 import { ProofPersistence, ProofUnavailable } from "@yielded/auth/Proofs";
 import { AuthenticationAuthority, SessionUnavailable } from "@yielded/auth/Sessions";
-import { Context, Crypto, Effect, Layer, Schema } from "effect";
+import { Context, type Crypto, Effect, Layer, Schema } from "effect";
 import { SqlClient } from "effect/sql";
 
 import {
@@ -333,7 +333,7 @@ export const createPersistence = <T extends object, R>(
         yield* validateStorage(dialect, backend.describe(storage.subjects.table as T), [
           [storage.subjects.id],
         ]);
-        const mappings = makeMappings(storage, yield* Crypto.Crypto);
+        const mappings = yield* makeMappings(storage);
 
         const standalone = <E>(error: () => E) =>
           requireStandalone(error, client.transactionService);

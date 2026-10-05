@@ -1,5 +1,5 @@
 import * as Pkce from "@yielded/oauth/Pkce";
-import { Cause, Crypto, DateTime, Effect, Redacted, Schema, type Scope } from "effect";
+import { Cause, Crypto, DateTime, Effect, Fiber, Redacted, Schema, type Scope } from "effect";
 
 import { reportAuthFailure } from "../../internal/diagnostics";
 import { RequestBindingFlowId } from "../../operations/requestBindingModels";
@@ -76,8 +76,25 @@ export const makeOpenIdConnectOAuthProtocol = Effect.fn("makeOpenIdConnectOAuthP
   > {
     const context = yield* Effect.context<R>();
     const crypto = yield* Crypto.Crypto;
+    const scope = yield* Effect.scope;
     // Setup shares the protocol's containment for supplied platform services.
     const { installed, timeoutSeconds } = yield* installation;
+
+    // Own application decoding as well as the native client's individual requests.
+    const run = <A, E>(work: Effect.Effect<A, E>): Effect.Effect<A, E | OAuthUnavailable> =>
+      Effect.acquireUseRelease(
+        Effect.suspend(() =>
+          scope.state._tag === "Closed" ? Effect.fail(unavailable()) : Effect.forkIn(work, scope),
+        ),
+        Effect.fnUntraced(function* (fiber) {
+          const exit = yield* Fiber.await(fiber);
+
+          if (scope.state._tag === "Closed") return yield* unavailable();
+
+          return yield* exit;
+        }),
+        Fiber.interrupt,
+      );
 
     const prepareAuthorization: OAuthProtocol["Service"]["prepareAuthorization"] = Effect.fn(
       "OpenIdConnect.prepareAuthorization",
@@ -298,13 +315,15 @@ export const makeOpenIdConnectOAuthProtocol = Effect.fn("makeOpenIdConnectOAuthP
       });
 
     return OAuthProtocol.of({
-      prepareAuthorization: (input) => unavailableOnDefect(prepareAuthorization(input)),
+      prepareAuthorization: (input) => run(unavailableOnDefect(prepareAuthorization(input))),
       exchangeVerifiedIdentity: (input) =>
-        unavailableOnDefect(exchangeVerifiedIdentity(input)).pipe(
-          Effect.timeoutOrElse({
-            duration: timeoutSeconds * 1000,
-            orElse: () => Effect.fail(unavailable()),
-          }),
+        run(
+          unavailableOnDefect(exchangeVerifiedIdentity(input)).pipe(
+            Effect.timeoutOrElse({
+              duration: timeoutSeconds * 1000,
+              orElse: () => Effect.fail(unavailable()),
+            }),
+          ),
         ),
     });
   },

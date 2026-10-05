@@ -189,9 +189,8 @@ and receipt tables. It is a `PasswordPersistenceMapping` from `@yielded/auth-per
 Supply `LifecycleHooks` and your other account/session Layers at the composition root.
 Driver factories and transaction coordinators declare `Database` and Effect
 `Crypto` requirements at acquisition. Provide your platform's Crypto Layer to
-the persistence Layer itself; Auth's internal defaults do not supply services to
-an independently constructed storage Layer. SHA digests and entropy use Effect
-Crypto and may suspend.
+the persistence Layer itself and to Auth at your composition root. SHA digests and
+entropy use Effect Crypto and may suspend.
 
 Use `databaseLayer` to acquire `Database` from the platform SQL client. Most drivers
 also accept a native database through `Layer.succeed(Database, db)`. Durable Object
@@ -262,12 +261,14 @@ for each request or use [the HTTP adapter](../guide/http-and-client).
 
 ### Defaults and required configuration
 
-`Auth.make` wires the selected methods, session implementation, Web Crypto, and
-empty lifecycle hooks. Supply `PasswordHashing` explicitly, for example with the
-bounded [`Password.PasswordHashing.layer()`](../guide/passwords#supply-the-services).
-Adapter factories expose their crypto and hook requirements; supply them as above
-or use a Layer helper that installs defaults. You supply storage mappings, account authority, claims, delivery, and
-secret keys. Adapters provide implementations; they are not installed automatically.
+`Auth.make` wires the selected methods, session implementation, and empty lifecycle
+hooks. Supply the application's [crypto Layer](./crypto#use-with-auth) and
+`PasswordHashing` explicitly, for example with the bounded
+[`Password.PasswordHashing.layer()`](../guide/passwords#supply-the-services).
+Adapter factories expose their crypto and hook requirements; supply them as above.
+Layer helpers may supply empty hooks, while crypto remains an application choice.
+You supply storage mappings, account authority, claims, delivery, and secret keys.
+Adapters provide implementations; they are not installed automatically.
 
 ## Choose a driver
 
@@ -290,15 +291,15 @@ Adapter authors can reuse the canonical row codecs when composing explicit servi
 
 ```ts
 import { makeStorageMappings } from "@yielded/auth-persistence/Adapter";
-import { Crypto, Effect } from "effect";
+import { Effect } from "effect";
 
 const proofMapping = Effect.gen(function* () {
-  const crypto = yield* Crypto.Crypto;
-  const mappings = makeStorageMappings(storage, crypto);
+  const mappings = yield* makeStorageMappings(storage);
   return mappings.proofs();
 });
 ```
 
+Mapping construction requires Effect `Crypto`; provide it at the calling Layer.
 The layout must include each requested mapping's role tables. These are shared
 mapping types: the adapter still supplies typed table handles and, for D1, its
 engine clock and atomic commit predicates. Refine authority policy only for the
@@ -356,8 +357,8 @@ Prepared intents retain admission charges even after sensitive material is erase
 `makeEmailAddressServices` own account creation and address changes.
 
 For explicit composition over an existing storage layout, start from
-`makeStorageMappings(storage, crypto).emails()` and `.proofs()`, then supply the raw
-registration mapping's provisioning, receipt table, and inspection policy.
+`yield* makeStorageMappings(storage)` and use its `.emails()` and `.proofs()` factories.
+Supply the raw registration mapping's provisioning, receipt table, and inspection policy.
 
 Atomic email registration provisions a fresh subject after mailbox proof. Its
 `inspect` policy and proof authority's `identifier.isCurrent` must admit absent or
@@ -422,6 +423,7 @@ import {
 import { Proofs } from "@yielded/auth";
 
 import * as SqliteClient from "@effect/sql-sqlite-bun/SqliteClient";
+import { CryptoLive } from "./crypto-live";
 import { phoneMapping, proofMapping } from "./schema";
 
 const DatabaseLive = databaseLayer.pipe(
@@ -430,7 +432,7 @@ const DatabaseLive = databaseLayer.pipe(
 
 export const PhonePersistenceLive = phonePersistenceLayer(
   makePhonePersistenceServices(phoneMapping),
-).pipe(Layer.provide(DatabaseLive));
+).pipe(Layer.provide([DatabaseLive, CryptoLive]));
 
 export const ProofPersistenceLive = Layer.effect(
   Proofs.ProofPersistence,
@@ -438,13 +440,14 @@ export const ProofPersistenceLive = Layer.effect(
     const services = yield* makeProofPersistenceServices(proofMapping);
     return services.proofPersistence;
   }),
-).pipe(Layer.provide(DatabaseLive));
+).pipe(Layer.provide([DatabaseLive, CryptoLive]));
 ```
 
 The database connection above uses SQLite on Bun. The phone Layer supplies
-`PhonePersistence`, `PhoneAdmission`, and `PhoneSignInTargets`, with overridable
-Web Crypto and empty hook defaults. The proof Layer stores challenges, consumption,
-and rate limits. Sign-in uses lookup and admission; number-management operations
+`PhonePersistence`, `PhoneAdmission`, and `PhoneSignInTargets`, with empty hook
+defaults. Both persistence Layers use the application's explicit `CryptoLive`.
+The proof Layer stores challenges, consumption, and rate limits. Sign-in uses
+lookup and admission; number-management operations
 also use `PhonePersistence`. You provide table mappings and
 migrations. See the [SQLite example](https://github.com/yielded-dev/auth/blob/main/examples/auth/src/phone-sqlite-bun.ts)
 for the table definitions and mappings.

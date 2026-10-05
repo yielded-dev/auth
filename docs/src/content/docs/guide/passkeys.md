@@ -223,8 +223,8 @@ export const AuthLive = AppAuth.layer.pipe(
 
 The relative imports are your application modules. `PasskeyPersistenceLive`
 provides ceremony and credential storage through [the passkey adapters](../reference/adapters#passkeys).
-`AuthDependencies` provides shared [session, account, and key configuration](../reference/adapters#compose-the-application-layer).
-The method supplies its default policy, Web Crypto, and empty hooks.
+`AuthDependencies` provides shared [crypto, session, account, and key configuration](../reference/adapters#compose-the-application-layer).
+The method supplies its default policy and empty hooks.
 
 ## Registration and management
 

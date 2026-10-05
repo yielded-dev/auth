@@ -1,7 +1,7 @@
-import { DateTime, Effect, Layer, Schema } from "effect";
+import { Crypto, DateTime, Effect, Layer, Schema } from "effect";
 
 import { makeAuthStrategy } from "../auth/AuthStrategy";
-import { cryptoLayer, defaultLayer, hooksLayer } from "../auth/defaults";
+import { defaultLayer, hooksLayer } from "../auth/defaults";
 import { hasCommitScope } from "../hooks/commit";
 import { LifecycleHooks } from "../hooks/LifecycleHooks";
 import { lifecycleEvent, lifecycleSnapshot, LifecycleEventId } from "../hooks/models";
@@ -578,7 +578,7 @@ export const makePhoneLifecycle = <
   const layer = handlersLayer.pipe(
     Layer.provide(defaultLayer(binding.RequestBinding, binding.layer)),
     Layer.provide(defaultLayer(proof.Proofs, proof.smsLayer.pipe(Layer.provide(deliveryLayer)))),
-    Layer.provide([cryptoLayer, hooksLayer]),
+    Layer.provide(hooksLayer),
   );
 
   const methods = {
@@ -601,7 +601,7 @@ export const makePhoneLifecycle = <
     strategy: makeAuthStrategy(
       methods,
       layer.pipe(
-        Layer.provideMerge(cryptoLayer),
+        Layer.merge(Layer.effect(Crypto.Crypto, Crypto.Crypto)),
         Layer.merge(Layer.effect(PhoneAdmission, PhoneAdmission)),
       ),
       { completion: true },

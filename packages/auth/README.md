@@ -8,7 +8,7 @@ bun add @yielded/auth@beta effect
 ```
 
 The package owns authentication workflows and native OAuth/OIDC verification.
-Applications own identity, persistence, keys, policy, and private delivery.
+Applications own identity, persistence, keys, policy, private delivery, and crypto backend selection.
 Resources live in the caller’s Scope; credentials stay outside public results
 and telemetry. Runtime dependencies are Effect and the first-party
 `@yielded/crypto` and `@yielded/oauth` packages.
@@ -24,7 +24,7 @@ limits, configure the supplied KDF backend to permit those same limits.
 `OpenIdConnect.provider` and `GitHub.provider` configure native providers for the
 HTTP host; their `layer` and `layerConnected` constructors supply the protocol
 services directly. Construction requires an explicit nonretrying, nonredirecting
-Effect `HttpClient`, Effect `Crypto`, and owned `Signature`/`Hmac` services.
+Effect `HttpClient` and Effect `Crypto`; OpenID Connect also requires `Signature`.
 Provider clients and JOSE caches belong to the construction Scope. Keep that Scope
 open throughout use, and retain retired credential generations while issued flows
 or connected grants still reference them. Unknown exchange outcomes never authorize

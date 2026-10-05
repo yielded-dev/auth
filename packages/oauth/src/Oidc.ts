@@ -43,11 +43,15 @@ export interface Verified {
   readonly upstreamAuthenticatedAt?: DateTime.Utc;
 }
 
+type VerificationRequirements =
+  | Exclude<Effect.Services<ReturnType<typeof Jws.verifyWithKeySet>>, Jwks.Jwks>
+  | Crypto.Crypto;
+
 export interface Verifier {
   readonly verify: (
     token: Redacted.Redacted<string>,
     input: VerificationInput,
-  ) => Effect.Effect<Verified, Rejected | Unavailable, Jws.Requirements | Crypto.Crypto>;
+  ) => Effect.Effect<Verified, Rejected | Unavailable, VerificationRequirements>;
 }
 
 const Configuration = Schema.Struct({
@@ -155,7 +159,7 @@ export const makeVerifier = Effect.fnUntraced(function* (
   const verify = Effect.fnUntraced(function* (
     token: Redacted.Redacted<string>,
     input: VerificationInput,
-  ): Effect.fn.Return<Verified, Rejected | Unavailable, Jws.Requirements | Crypto.Crypto> {
+  ): Effect.fn.Return<Verified, Rejected | Unavailable, VerificationRequirements> {
     // Capture caller policy and secret values before key lookup or cryptography.
     const policy = yield* V.decode(VerifyInput, input);
     const start = DateTime.toEpochMillis(policy.verificationStartedAt);

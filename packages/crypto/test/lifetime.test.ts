@@ -185,3 +185,22 @@ it.effect("shares admission with nested work in the same fiber but not forked ch
     expect(yield* admission.run(Effect.succeed("reused"))).toBe("reused");
   }).pipe(Effect.provide(KdfAdmission.layer({ concurrency: 1, maxQueued: 0 }))),
 );
+
+// 3b9c0fe removed admission ownership before the work's scoped finalizers ran.
+it.effect("retains same-fiber admission through scoped cleanup", () =>
+  Effect.gen(function* () {
+    const admission = yield* KdfAdmission.KdfAdmission;
+    const cleanup = yield* Deferred.make<string, KdfBusy>();
+
+    yield* admission.run(
+      Effect.addFinalizer(() =>
+        Deferred.complete(cleanup, admission.run(Effect.succeed("cleaned"))),
+      ),
+    );
+
+    expect(yield* Deferred.await(cleanup).pipe(Effect.result)).toMatchObject({
+      _tag: "Success",
+      success: "cleaned",
+    });
+  }).pipe(Effect.scoped, Effect.provide(KdfAdmission.layer({ concurrency: 1, maxQueued: 0 }))),
+);

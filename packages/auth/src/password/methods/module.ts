@@ -1,7 +1,7 @@
 import { Context, Crypto, Effect, Layer, Option, Redacted, Schema, type Types } from "effect";
 
 import { makeAuthStrategy } from "../../auth/AuthStrategy";
-import { cryptoLayer, defaultLayer, hooksLayer } from "../../auth/defaults";
+import { defaultLayer, hooksLayer } from "../../auth/defaults";
 import { hasCommitScope, type PreparedCommit } from "../../hooks/commit";
 import { LifecycleHooks } from "../../hooks/LifecycleHooks";
 import { HookDenied, lifecycleEvent, lifecycleSnapshot } from "../../hooks/models";
@@ -936,7 +936,7 @@ const makePasswordWithManagement = <
         Layer.provide(defaultLayer(Passwords, layer)),
         Layer.provide(defaultLayer(reset.Proofs, reset.emailLayer)),
         Layer.provide([newPasswordLayer, hooksLayer]),
-        Layer.provideMerge(cryptoLayer),
+        Layer.merge(Layer.effect(Crypto.Crypto, Crypto.Crypto)),
         Layer.merge(defaultIngressLayer),
       ),
       { completion: true },

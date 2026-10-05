@@ -1,6 +1,5 @@
 import { Context, Effect, Layer, Result, Schema } from "effect";
 
-import { cryptoLayer } from "../auth/defaults";
 import type { AnyRoute } from "../http-operation/contract";
 import { OperationHttpConfigurationError, OperationHttpError } from "../http-operation/errors";
 import { oauthCallback, type OAuthHttpCallback } from "../http-operation/server";
@@ -186,9 +185,7 @@ export const makeOAuth = <E, R, ResponseR>(
     Effect.gen(function* () {
       const { complete, entries } = yield* configuration;
 
-      const flowId = yield* makeRequestBindingFlowResolver("oauth-entry").pipe(
-        Effect.provide(cryptoLayer),
-      );
+      const flowId = yield* makeRequestBindingFlowResolver("oauth-entry");
 
       // The selected name was validated against the same action table. Preserve
       // that table's concrete operation requirements through indexed lookup.

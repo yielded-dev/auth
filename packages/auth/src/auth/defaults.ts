@@ -1,7 +1,5 @@
-import { Hmac } from "@yielded/crypto/Hmac";
-import { layerCryptoWeb, layerHmacWeb } from "@yielded/crypto/WebCrypto";
 import type { Context } from "effect";
-import { Crypto, Effect, Layer, Option } from "effect";
+import { Effect, Layer, Option } from "effect";
 
 import { LifecycleHooks } from "../hooks/LifecycleHooks";
 
@@ -15,10 +13,5 @@ export const defaultLayer = <I, S, E, R>(
       Option.isSome(current) ? Layer.succeed(service, current.value) : fallback,
     ),
   );
-
-export const cryptoLayer = Layer.mergeAll(
-  defaultLayer(Crypto.Crypto, layerCryptoWeb),
-  defaultLayer(Hmac, layerHmacWeb),
-);
 
 export const hooksLayer = defaultLayer(LifecycleHooks, LifecycleHooks.empty);

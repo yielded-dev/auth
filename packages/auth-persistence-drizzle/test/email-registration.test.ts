@@ -16,7 +16,7 @@ import {
 import { PersistenceMappingError } from "../src/drizzle/model";
 import * as Sqlite from "../src/SqliteNode";
 import type { subjects } from "./fixtures/proof-sqlite";
-import { crypto, database, d1Database, d1Mapping, storage } from "./fixtures/proof-sqlite";
+import { database, d1Database, d1Mapping, storage } from "./fixtures/proof-sqlite";
 
 // User-requested finding 3 regression: real proof issuance/attempt and public raw
 // registration authority, including the independently compiled D1 atomic batch.
@@ -44,111 +44,117 @@ const { RegistrationAuthority } = Auth.make("test/email-registration", {
 const identifier = { namespace: "email", value: "owner@example.invalid" };
 const fingerprint = TokenDigest.make("owner-registration");
 const columns = getTableColumns(storage.schema.identifiers);
-const email = makeStorageMappings(storage, crypto).emails();
 
-const proofMapping: typeof d1Mapping = {
-  ...d1Mapping,
-  authority: {
-    ...d1Mapping.authority,
-    identifier: {
-      ...d1Mapping.authority.identifier,
-      isCurrent: (input, rows) =>
-        input.purpose === "email-code-registration" &&
-        input.binding._tag === "Identifier" &&
-        (rows.length === 0 ||
-          (rows.length === 1 && rows[0]!.active === true && rows[0]!.verifiedAt === null)),
-      d1CurrentCondition: ({ binding, purpose }) =>
-        purpose === "email-code-registration" && binding._tag === "Identifier"
-          ? sql`not exists(
+const mappings = Effect.gen(function* () {
+  const email = (yield* makeStorageMappings(storage)).emails();
+  const d1 = yield* d1Mapping;
+
+  const proofMapping: Effect.Success<typeof d1Mapping> = {
+    ...d1,
+    authority: {
+      ...d1.authority,
+      identifier: {
+        ...d1.authority.identifier,
+        isCurrent: (input, rows) =>
+          input.purpose === "email-code-registration" &&
+          input.binding._tag === "Identifier" &&
+          (rows.length === 0 ||
+            (rows.length === 1 && rows[0]!.active === true && rows[0]!.verifiedAt === null)),
+        d1CurrentCondition: ({ binding, purpose }) =>
+          purpose === "email-code-registration" && binding._tag === "Identifier"
+            ? sql`not exists(
               select 1 from ${storage.schema.identifiers}
               where ${columns.namespace} = ${binding.identifier.namespace}
                 and ${columns.value} = ${binding.identifier.value}
                 and (${columns.active} <> 1 or ${columns.verifiedAt} is not null))`
-          : sql`false`,
+            : sql`false`,
+      },
     },
-  },
-};
+  };
 
-const mapping = {
-  mode: "atomic",
-  ...email,
-  d1: d1Mapping.d1,
-  subject: { ...email.subject, d1ActiveStatusValue: true },
-  identifier: {
-    ...email.identifier,
-    d1CurrentCondition: (input: {
-      identifier: { namespace: string; value: string };
-      nativeSubjectId: string;
-      bindingRevision: string;
-    }) =>
-      sql`${columns.namespace} = ${input.identifier.namespace} and ${columns.value} = ${input.identifier.value}
+  const mapping = {
+    mode: "atomic",
+    ...email,
+    d1: d1.d1,
+    subject: { ...email.subject, d1ActiveStatusValue: true },
+    identifier: {
+      ...email.identifier,
+      d1CurrentCondition: (input: {
+        identifier: { namespace: string; value: string };
+        nativeSubjectId: string;
+        bindingRevision: string;
+      }) =>
+        sql`${columns.namespace} = ${input.identifier.namespace} and ${columns.value} = ${input.identifier.value}
         and ${columns.subjectId} = ${input.nativeSubjectId} and ${columns.revision} = ${input.bindingRevision}
         and ${columns.active} = 1 and ${columns.verifiedAt} is not null`,
-  },
-  credential: { ...email.credential, d1ActiveStatusValue: true },
-  authorityCredential: { ...email.authorityCredential, d1ActiveStatusValue: true },
-  constraints: requiredEmailRegistrationConstraints,
-  inspect: () => Effect.succeed({ fingerprint, eligible: true }),
-  snapshotRegistration: (value: typeof Registration.Type) =>
-    Schema.decodeUnknownEffect(Registration)(value).pipe(
-      Effect.mapError((cause) => PersistenceMappingError.make({ operation: "mapping", cause })),
-    ),
-  retentionMillis: 3_600_000,
-  isRequestConflict: () => false,
-  isIdentifierConflict: (cause: unknown) =>
-    cause instanceof Error &&
-    cause.message.includes("UNIQUE constraint failed: proof_test_identifiers"),
-  provisioning: {
-    idMode: "synchronous",
-    allocateSubjectIdSync: () => "mailbox-owner",
-    encodeSubjectInsert: (
-      _input: unknown,
-      values: { nativeSubjectId: string; securityRevision: string },
-    ) => ({
-      id: values.nativeSubjectId,
-      active: true,
-      revision: values.securityRevision,
-    }),
-  },
-  registration: {
-    table: registrations,
-    moduleId: "moduleId",
-    commandId: "commandId",
-    fingerprint: "fingerprint",
-    state: "state",
-    subjectId: "subjectId",
-    pendingReference: "pendingReference",
-    retentionUntil: "retentionUntil",
-    encodeInsert: (
-      input: { moduleId: string; commandId: string; fingerprint: string },
-      value: {
-        state: string;
-        nativeSubjectId?: string;
-        pendingReference?: string;
-        retentionUntilMillis: number;
-      },
-    ) => ({
-      moduleId: input.moduleId,
-      commandId: input.commandId,
-      fingerprint: input.fingerprint,
-      state: value.state,
-      subjectId: value.nativeSubjectId ?? null,
-      pendingReference: value.pendingReference ?? null,
-      retentionUntil: value.retentionUntilMillis,
-    }),
-    decodeReplay: () => Effect.succeed({ _tag: "Rejected" as const }),
-  },
-  // Production shared mappings erase table types; these are the same concrete
-  // Drizzle tables. No persisted value crosses a schema through this adapter cast.
-} as unknown as D1EmailRegistrationMapping<
-  typeof Registration.Type,
-  typeof subjects,
-  SQLiteTable,
-  SQLiteTable,
-  SQLiteTable,
-  typeof registrations,
-  string
->;
+    },
+    credential: { ...email.credential, d1ActiveStatusValue: true },
+    authorityCredential: { ...email.authorityCredential, d1ActiveStatusValue: true },
+    constraints: requiredEmailRegistrationConstraints,
+    inspect: () => Effect.succeed({ fingerprint, eligible: true }),
+    snapshotRegistration: (value: typeof Registration.Type) =>
+      Schema.decodeUnknownEffect(Registration)(value).pipe(
+        Effect.mapError((cause) => PersistenceMappingError.make({ operation: "mapping", cause })),
+      ),
+    retentionMillis: 3_600_000,
+    isRequestConflict: () => false,
+    isIdentifierConflict: (cause: unknown) =>
+      cause instanceof Error &&
+      cause.message.includes("UNIQUE constraint failed: proof_test_identifiers"),
+    provisioning: {
+      idMode: "synchronous",
+      allocateSubjectIdSync: () => "mailbox-owner",
+      encodeSubjectInsert: (
+        _input: unknown,
+        values: { nativeSubjectId: string; securityRevision: string },
+      ) => ({
+        id: values.nativeSubjectId,
+        active: true,
+        revision: values.securityRevision,
+      }),
+    },
+    registration: {
+      table: registrations,
+      moduleId: "moduleId",
+      commandId: "commandId",
+      fingerprint: "fingerprint",
+      state: "state",
+      subjectId: "subjectId",
+      pendingReference: "pendingReference",
+      retentionUntil: "retentionUntil",
+      encodeInsert: (
+        input: { moduleId: string; commandId: string; fingerprint: string },
+        value: {
+          state: string;
+          nativeSubjectId?: string;
+          pendingReference?: string;
+          retentionUntilMillis: number;
+        },
+      ) => ({
+        moduleId: input.moduleId,
+        commandId: input.commandId,
+        fingerprint: input.fingerprint,
+        state: value.state,
+        subjectId: value.nativeSubjectId ?? null,
+        pendingReference: value.pendingReference ?? null,
+        retentionUntil: value.retentionUntilMillis,
+      }),
+      decodeReplay: () => Effect.succeed({ _tag: "Rejected" as const }),
+    },
+    // Production shared mappings erase table types; these are the same concrete
+    // Drizzle tables. No persisted value crosses a schema through this adapter cast.
+  } as unknown as D1EmailRegistrationMapping<
+    typeof Registration.Type,
+    typeof subjects,
+    SQLiteTable,
+    SQLiteTable,
+    SQLiteTable,
+    typeof registrations,
+    string
+  >;
+
+  return { mapping, proofMapping };
+});
 
 const seed = Effect.gen(function* () {
   const client = yield* SqlClient.SqlClient;
@@ -170,8 +176,10 @@ const seed = Effect.gen(function* () {
     values ('password', 'squatter', 'attacker-password', 'old-password', 'old-verifier', 'opaque-attacker-verifier', 'none')`;
 });
 
-const services = (mode: "interactive" | "d1") =>
-  mode === "d1"
+const services = Effect.fnUntraced(function* (mode: "interactive" | "d1") {
+  const { mapping, proofMapping } = yield* mappings;
+
+  return yield* mode === "d1"
     ? Effect.all({
         registration: D1.makeEmailRegistrationServices(mapping, proofMapping),
         proofs: D1.makeProofPersistenceServices(proofMapping),
@@ -180,6 +188,7 @@ const services = (mode: "interactive" | "d1") =>
         registration: Sqlite.makeEmailRegistrationServices(mapping, proofMapping),
         proofs: Sqlite.makeProofPersistenceServices(proofMapping),
       });
+});
 
 const continuation = Effect.gen(function* () {
   const store = yield* Proofs.ProofPersistence;

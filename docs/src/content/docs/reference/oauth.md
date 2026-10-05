@@ -260,9 +260,11 @@ The application modules supply [OAuth persistence](./adapters#oauth), claims,
 transaction keys, and [shared auth dependencies](./adapters#compose-the-application-layer).
 [`CryptoLive`](./crypto#use-with-auth) supplies Effect `Crypto` and the first-party
 `Aead`, `Hmac`, and `Signature` services. Native `OpenIdConnect` and `GitHub`
-providers require `HttpClient`, `Crypto`, `Hmac`, and `Signature`; protectors need
+providers require `HttpClient` and `Crypto`; OpenID Connect also requires `Signature`. Protectors need
 `Aead` and `Crypto`. Keep the resulting Layer in the server's application scope:
-provider clients and per-configuration JWKS caches close with that scope. Do not
+provider clients and per-configuration JWKS caches close with that scope. Closure
+cancels and joins active operations, including application identity decoders;
+pending results and later calls fail with `OAuthUnavailable`. Do not
 extract a configured provider from a completed `Effect.provide` and reuse it later.
 
 Flows default to five minutes; the strategy's `policy` overrides this.

@@ -82,7 +82,7 @@ export const CryptoLive = Layer.merge(
 );
 ```
 
-Provide `CryptoLive` to `Password.PasswordHashing.layer()`,
+Provide `CryptoLive` to your Auth Layer and to `Password.PasswordHashing.layer()`,
 `Totp.TotpCryptography.layer`, and the `OAuth` protector Layers. TOTP also requires
 `TotpSecretKeys`; OAuth protectors take their application keyring as an argument.
 `OpenIdConnect` and `GitHub` provider Layers additionally require `HttpClient`.
@@ -90,7 +90,8 @@ Build provider and protector Layers in the application's owning scope.
 
 Sessions and numeric proofs use `Hmac` for their imported keys. Auth owns keyring
 validation, key IDs, and credential formats; crypto owns native key handling.
-Auth defaults preserve explicitly supplied `Hmac` and Effect `Crypto` services.
+Auth requires application-supplied crypto services and does not select a backend.
+Stateful sessions require Effect `Crypto`; signed sessions and numeric proofs also require `Hmac`.
 `@yielded/auth/WebCrypto` re-exports `layerCryptoWeb` and `layerWebCrypto` for
 existing compositions. Replace former `SubtleCrypto` overrides with an `Hmac`
 Layer, such as `WebCrypto.layerHmac(subtle)`. Direct callers of

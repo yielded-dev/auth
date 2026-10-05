@@ -77,11 +77,14 @@ const ProofContinuation = Schema.Struct({
 });
 
 /** Derive shared row mappings from a managed or custom storage layout.
+ * Acquire Effect Crypto once; the returned allocators retain that implementation.
  * Each factory requires its role tables to exist. Adapter authors supply typed
  * table handles and dialect-specific clocks/commit predicates, and may refine
  * authority policy for explicit services. This does not alter composed defaults.
  */
-export const makeMappings = (input: MappingInput, crypto: Crypto.Crypto) => {
+export const makeMappings = Effect.fnUntraced(function* (input: MappingInput) {
+  const crypto = yield* Crypto.Crypto;
+
   const allocate = randomId.pipe(
     Effect.provideService(Crypto.Crypto, crypto),
     Effect.mapError(failure),
@@ -715,4 +718,4 @@ export const makeMappings = (input: MappingInput, crypto: Crypto.Crypto) => {
   };
 
   return { table, authority, proofs, passwords, emails, sessions, string };
-};
+});

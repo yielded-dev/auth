@@ -85,7 +85,7 @@ export const AuthRoutes = Http.layer(AppAuth, { origin: "https://app.example.com
 <!-- #endregion auth-server -->
 
 The eight-hour lifetime and thirty-minute idle timeout are application policy.
-Supply your persistence and account Layers to `AuthRoutes`, then merge it with
+Supply your crypto, persistence, and account Layers to `AuthRoutes`, then merge it with
 your router. For application routes that call auth, use the middleware shown in the
 [router composition](docs/src/content/docs/guide/http-and-client.mdx#configure-the-server).
 Inside an existing Effect handler, call the service directly:

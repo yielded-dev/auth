@@ -11,7 +11,7 @@ import type { SessionConfigurationError } from "../sessions/errors";
 import { makeSessionModule, type ModuleService } from "../sessions/module";
 import { makeActionApi } from "./actions";
 import { AuthConfigurationError } from "./AuthConfigurationError";
-import { cryptoLayer, hooksLayer } from "./defaults";
+import { hooksLayer } from "./defaults";
 import type {
   BoundSelection,
   BoundStrategies,
@@ -291,7 +291,7 @@ const bind = <
               .completionLayer()
               .pipe(
                 Layer.provideMerge(configuredLayer(sessions, options.sessions)),
-                Layer.provide([cryptoLayer, hooksLayer]),
+                Layer.provide(hooksLayer),
               ),
           );
 

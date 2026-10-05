@@ -1,4 +1,4 @@
-import { cryptoLayer, hooksLayer } from "@yielded/auth/Persistence";
+import { hooksLayer } from "@yielded/auth/Persistence";
 import {
   type PhoneAdmissionPolicy,
   type PhoneLifecyclePolicy,
@@ -10,7 +10,7 @@ import {
 import type { SubjectId } from "@yielded/auth/Schema";
 import type { AuthenticationRequirement } from "@yielded/auth/Sessions";
 import type { InferInsertModel, InferSelectModel, SQL, Table } from "drizzle-orm";
-import { Effect, Layer, type Scope } from "effect";
+import { Effect, Layer } from "effect";
 
 import type { PersistenceMappingError } from "./model";
 import type { AnyProofPersistenceMapping, ProofPersistenceMapping } from "./proof-model";
@@ -175,17 +175,10 @@ export interface PhonePersistenceServices {
   readonly phoneSignInTargets: PhoneSignInTargets["Service"];
 }
 
-/** Bundle phone storage, admission, and lookup with overridable crypto and hook defaults. */
+/** Bundle phone storage, admission, and lookup with empty hook defaults. */
 export const phonePersistenceLayer = <E, R>(
   services: Effect.Effect<PhonePersistenceServices, E, R>,
-): Layer.Layer<
-  PhonePersistence | PhoneAdmission | PhoneSignInTargets,
-  E,
-  Exclude<
-    Exclude<R, Scope.Scope>,
-    Layer.Success<typeof cryptoLayer> | Layer.Success<typeof hooksLayer>
-  >
-> =>
+) =>
   Layer.unwrap(
     Effect.map(services, (value) =>
       Layer.mergeAll(
@@ -194,4 +187,4 @@ export const phonePersistenceLayer = <E, R>(
         Layer.succeed(PhoneSignInTargets, value.phoneSignInTargets),
       ),
     ),
-  ).pipe(Layer.provide([cryptoLayer, hooksLayer]));
+  ).pipe(Layer.provide(hooksLayer));

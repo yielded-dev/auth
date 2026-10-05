@@ -25,7 +25,7 @@ type CreateSubject = (input: {
  * always suppress; a public request ID never recovers a private password intent.
  */
 export const makeRegistrationAuthority = Effect.fn("makeRegistrationAuthority")(function* <R>(
-  mappings: ReturnType<typeof makeMappings>,
+  mappings: Effect.Success<ReturnType<typeof makeMappings>>,
   operations: QueryOperations,
   standalone: Effect.Effect<void, PasswordUnavailable>,
   provisioning: Context.Key<R, object>,
