@@ -256,8 +256,7 @@ export const Routes = AuthRoutes.pipe(
 );
 ```
 
-For absolute return URLs on sibling apps, use the explicit trusted-origin option
-shown in [sharing sessions across apps](../guide/http-and-client#sharing-sessions-across-apps).
+For sibling apps, configure [cross-origin return targets](../guide/http-and-client#sharing-sessions-across-apps).
 
 The application modules supply [OAuth persistence](./adapters#oauth), claims,
 transaction keys, and [shared auth dependencies](./adapters#compose-the-application-layer).

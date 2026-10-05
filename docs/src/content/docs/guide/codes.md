@@ -177,8 +177,7 @@ export const AuthLive = AppAuth.layer.pipe(
 );
 ```
 
-For absolute return URLs on sibling apps, use the explicit trusted-origin option
-shown in [sharing sessions across apps](./http-and-client#sharing-sessions-across-apps).
+For sibling apps, configure [cross-origin return targets](./http-and-client#sharing-sessions-across-apps).
 
 The relative imports are your application modules. `EmailLive` implements the
 email service. Auth's built-in worker keeps provider acceptance outside the request's

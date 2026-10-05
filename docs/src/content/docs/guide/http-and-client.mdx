@@ -306,18 +306,16 @@ lists the options.
 
 ### Sharing sessions across apps
 
-Use a parent-domain cookie when every subdomain belongs to the same trust boundary.
-All apps must agree on cookie names and session verification (including the same
-session store for stateful sessions or compatible keys and policy for stateless sessions).
+Share a parent-domain cookie across apps with matching cookie names and session
+policy: use the same session store or compatible signing keys.
 
 ```ts
 import { Email, Http, OAuth } from "@yielded/auth";
 
-const origin = "https://yielded.dev";
 const trustedOrigins = ["https://agent.yielded.dev"];
 
 export const http = Http.make(AppAuth, {
-  origin,
+  origin: "https://yielded.dev",
   cookie: { domain: "yielded.dev" },
   trustedOrigins,
 });
@@ -327,26 +325,17 @@ export const OAuthReturns = OAuth.OAuthReturnTargets.exactRoutes(routes, { trust
 export const EmailReturns = Email.EmailReturnTargets.exactRoutes(routes, { trustedOrigins });
 ```
 
-Provide the return-target Layer for each strategy you use. Paths remain relative
-to the sign-in app; absolute targets must match a listed HTTPS origin and a complete
-listed route. There is no wildcard, prefix matching, query string, fragment, or
-normalization. `exactRoutes(["/"])` keeps its existing same-origin behavior.
-Trusting an origin for mutations does not authorize every redirect path on it.
-OAuth's default callback response also checks the HTTP origin list; custom responses
-and email completion handlers must redirect only to the core-approved return target.
+Provide the return-target Layer for each strategy. Routes match exactly: no queries,
+fragments, wildcards, or prefix matching. Paths stay relative to the sign-in app;
+absolute URLs require a listed trusted origin. Custom OAuth responses and email
+handlers must use the approved return target.
 
-A domain sets `Domain=yielded.dev` on every auth cookie and changes the default
-prefix to `__Secure-effect-auth-`. Existing host-only sessions are not renamed or
-migrated; users sign in again after enabling this policy. Domain cookies always
-require HTTPS and `Secure`; `__Host-` names cannot have a domain. Additional origins
-are exact HTTPS origins inside the configured domain. Cross-origin browser fetches
-also need credentialed CORS configured by the application.
+Domain cookies change the default cookie names, so users sign in again. See
+[cookie options and CORS](../reference/http#cookies-and-request-policy) for details.
 
-**Every subdomain receives these cookies, and any subdomain can set them.** Never
-host user- or AI-generated content under this parent domain. Validate sessions
-server-side, keep Origin/CSRF checks on mutations, and watch for dangling DNS that
-could let someone take over a subdomain. Sharing a cookie does not grant application
-authorization; each app still enforces its own access policy.
+**Every subdomain receives these cookies and can set them.** Never host user- or
+AI-generated content under this domain. Validate sessions server-side, keep
+Origin/CSRF checks on mutations, and monitor dangling DNS.
 
 ## Expose another method
 
