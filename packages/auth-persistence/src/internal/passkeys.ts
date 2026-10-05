@@ -55,8 +55,9 @@ const ModuleRow = Schema.Struct({
 });
 
 const ConfiguredModuleRow = Schema.Struct({
-  ...ModuleRow.fields,
   moduleId: Schema.String,
+  active: Schema.Boolean,
+  policyRevision: Schema.String,
   admitted: Schema.Boolean,
 });
 
@@ -446,12 +447,9 @@ export const makeComposedPasskeys = (
               .select({
                 moduleId: columns.moduleId,
                 active: columns.active,
-                policy: columns.policy,
                 policyRevision: columns.policyRevision,
                 admitted: sql`exists(select 1 from ${admission}
-            where ${ac.authorityScope} = ${namespace} and ${ac.moduleId} = ${columns.moduleId}
-              and ${ac.version} = ${columns.policyRevision}
-              and ${ac.ownerMarker} = ${columns.policyRevision})`,
+            where ${ac.authorityScope} = ${namespace} and ${ac.moduleId} = ${columns.moduleId})`,
               })
               .from(module)
               .where(
