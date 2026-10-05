@@ -1,5 +1,17 @@
 # @yielded/auth
 
+## 0.1.0-beta.20
+
+### Minor Changes
+
+- [#121](https://github.com/yielded-dev/auth/pull/121) [`3d6d331`](https://github.com/yielded-dev/auth/commit/3d6d331856712cbc4804cf0c495f01bb3124b38b) Thanks [@danieljvdm](https://github.com/danieljvdm)! - Share auth cookies across a parent domain and admit additional trusted HTTPS origins. Allow exact absolute OAuth and email return routes on explicitly trusted origins while preserving existing host-only defaults.
+
+### Patch Changes
+
+- Updated dependencies [[`0c61f7a`](https://github.com/yielded-dev/auth/commit/0c61f7a766766929d642cc8e17b6091c89ea62e9)]:
+  - @yielded/oauth@0.1.0-beta.20
+  - @yielded/crypto@0.1.0-beta.20
+
 ## 0.1.0-beta.19
 
 ### Minor Changes
