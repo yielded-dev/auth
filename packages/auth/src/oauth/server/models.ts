@@ -1,3 +1,4 @@
+import { Jwk, Jwks } from "@yielded/jose";
 import { Context, type Effect, Schema } from "effect";
 
 import { SubjectId } from "../../Schema";
@@ -19,11 +20,75 @@ export const Random = Schema.String.check(Schema.isPattern(/^[A-Za-z0-9_-]{43}$/
 export const Scope = Schema.String.check(Schema.isPattern(/^[\x21\x23-\x5B\x5D-\x7E]{1,128}$/));
 export const Scopes = Schema.NonEmptyArray(Scope).check(Schema.isMaxLength(32));
 
+export class Rejected extends Schema.TaggedError<Rejected>()("OAuthServerRejected", {
+  error: Schema.Literals([
+    "invalid_request",
+    "invalid_client",
+    "invalid_grant",
+    "invalid_scope",
+    "unsupported_grant_type",
+    "unsupported_response_type",
+    "invalid_target",
+    "unauthorized_client",
+    "access_denied",
+  ]),
+}) {}
+
+export const reject = (error: Rejected["error"] = "invalid_request") => Rejected.make({ error });
+
+export const Url = Text.check(
+  Schema.makeFilter((text) => {
+    try {
+      const url = new URL(text);
+
+      return (
+        !url.username &&
+        !url.password &&
+        !text.includes("#") &&
+        !/[\s\\]/.test(text) &&
+        (url.protocol === "https:" ||
+          (url.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname)))
+      );
+    } catch {
+      return false;
+    }
+  }),
+);
+
+export const RedirectUri = Url.check(
+  Schema.makeFilter(
+    (text) => !["code", "state", "iss", "error"].some((key) => new URL(text).searchParams.has(key)),
+  ),
+);
+
+export const AssertionAlgorithms = ["RS256", "PS256", "ES256", "EdDSA"] as const;
+
+/** Exactly one registered public key source; never resolve a key URL from a JWT. */
+export const ClientAssertion = Schema.Struct({
+  jwks: Schema.optionalKey(Jwks.KeySet),
+  jwksUri: Schema.optionalKey(Url),
+  algorithm: Schema.optionalKey(Jwk.AsymmetricAlgorithm),
+}).check(
+  Schema.makeFilter((value) => (value.jwks === undefined) !== (value.jwksUri === undefined)),
+);
+
 export const Client = Schema.Struct({
   clientId: Text,
   name: Text,
-  redirectUris: Schema.NonEmptyArray(Text).check(Schema.isMaxLength(16)),
-});
+  redirectUris: Schema.NonEmptyArray(RedirectUri).check(Schema.isMaxLength(16)),
+  applicationType: Schema.optionalKey(Schema.Literals(["web", "native"])),
+  /** Pre-registered confidential clients authenticate using Basic or form credentials. */
+  clientSecret: Schema.optionalKey(Schema.Redacted(Text, { disallowJsonEncode: true })),
+  /** Authenticate with private_key_jwt instead of a shared secret. */
+  clientAssertion: Schema.optionalKey(ClientAssertion),
+  grantTypes: Schema.optionalKey(
+    Schema.Array(Schema.Literals(["authorization_code", "refresh_token"])),
+  ),
+}).check(
+  Schema.makeFilter(
+    (value) => value.clientSecret === undefined || value.clientAssertion === undefined,
+  ),
+);
 
 export type Client = typeof Client.Type;
 
@@ -43,10 +108,17 @@ export const AuthorizationMetadata = Schema.Struct({
   revocation_endpoint: Text,
   response_types_supported: Schema.Array(Schema.Literal("code")),
   grant_types_supported: Schema.Array(Schema.Literals(["authorization_code", "refresh_token"])),
-  token_endpoint_auth_methods_supported: Schema.Array(Schema.Literal("none")),
-  revocation_endpoint_auth_methods_supported: Schema.Array(Schema.Literal("none")),
+  token_endpoint_auth_methods_supported: Schema.Array(
+    Schema.Literals(["none", "client_secret_basic", "client_secret_post", "private_key_jwt"]),
+  ),
+  token_endpoint_auth_signing_alg_values_supported: Schema.Array(Jwk.AsymmetricAlgorithm),
+  revocation_endpoint_auth_methods_supported: Schema.Array(
+    Schema.Literals(["none", "client_secret_basic", "client_secret_post", "private_key_jwt"]),
+  ),
+  revocation_endpoint_auth_signing_alg_values_supported: Schema.Array(Jwk.AsymmetricAlgorithm),
   code_challenge_methods_supported: Schema.Array(Schema.Literal("S256")),
   authorization_response_iss_parameter_supported: Schema.Literal(true),
+  client_id_metadata_document_supported: Schema.Boolean,
   scopes_supported: Scopes,
 });
 
@@ -101,6 +173,15 @@ export const CurrentAccess = Context.Reference<Access | undefined>(
   { defaultValue: () => undefined },
 );
 
+/** A consumed assertion's identity and retention deadline, never its signed credential. */
+export const AssertionReceipt = Schema.Struct({
+  /** SHA-256 of the JSON tuple [clientId, jti], encoded as unpadded base64url. */
+  id: Random,
+  expiresAtMillis: Schema.Natural,
+});
+
+export type AssertionReceipt = typeof AssertionReceipt.Type;
+
 /** Linearizable, standalone commits. Never retry an ambiguous insert or CAS.
  * Revoke must atomically disable the record, including against concurrent CAS.
  * Grant IDs must never be reused. Retain records through expiresAtMillis;
@@ -109,6 +190,14 @@ export const CurrentAccess = Context.Reference<Access | undefined>(
 export class Persistence extends Context.Service<
   Persistence,
   {
+    /** Atomically consume (issuer namespace, receipt id) once, across processes.
+     * Retain through expiresAtMillis. An unknown commit outcome must fail closed;
+     * never retry the insert or release a consumed receipt after a later failure.
+     */
+    readonly consumeAssertion: (
+      namespace: string,
+      receipt: AssertionReceipt,
+    ) => Effect.Effect<boolean, Unavailable>;
     readonly get: (namespace: string, id: string) => Effect.Effect<Record | undefined, Unavailable>;
     readonly insert: (
       namespace: string,

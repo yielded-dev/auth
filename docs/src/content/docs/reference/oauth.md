@@ -9,21 +9,26 @@ Start with the [OAuth guide](../guide/oauth) for the flow and choice of API.
 
 `OAuthServer.make(id, { scopes })` supplies `Identity`, `Service`, `routes`,
 `middleware(requiredScopes)`, and `paths`. The acquired `Service` exposes the
-origin-dependent `cookieName`. It implements authorization
-code with S256 PKCE for registered public clients. It issues MCP bearer tokens;
-it does not issue OIDC ID tokens or implement the MCP transport.
+origin-dependent `cookieName`. It implements authorization code with S256 PKCE,
+Client ID Metadata Documents (CIMD), and pre-registered public or confidential
+clients for MCP's 2026-07-28 authorization profile. Effect owns the MCP transport.
+OIDC ID tokens, dynamic registration, client-credentials grants,
+and optional MCP authorization extensions are not supported.
 
 Provide these to `oauth.layer`:
 
-| Input                     | Purpose                                                                                                                            |
-| ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| `origin`                  | Authorization server issuer; one server per origin                                                                                 |
-| `resource`                | Exact MCP resource URL on that origin, with a non-root path and no query or fragment                                               |
-| `clients`                 | `{ clientId, name, redirectUris }[]`; redirect URIs match exactly, including loopback ports                                        |
-| `loginPath`               | Local login route that returns to `oauth.paths.authorize`                                                                          |
-| `keys`                    | Signing keyring in the same format as session keys; use separate random key material                                               |
-| `oauth.Identity`          | `current`: an Effect that verifies the application session and returns `SubjectId` or `undefined`; may require `HttpServerRequest` |
-| `OAuthServer.Persistence` | Durable grant storage; use `OAuthServerPersistence.layer` with SQLite, D1, or PostgreSQL                                           |
+| Input                     | Purpose                                                                                                                                        |
+| ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `origin`                  | Authorization server issuer; one server per origin                                                                                             |
+| `resource`                | Exact MCP resource URL on that origin, at the root or a path, without query or fragment                                                        |
+| `clients`                 | Static `{ clientId, name, redirectUris, applicationType?, clientSecret?, clientAssertion?, grantTypes? }[]`; may be empty when CIMD is enabled |
+| `clientMetadata`          | Optional `{ allowedOrigins: ["https://assistant.example"] }` trust policy for CIMD and its JWKS URLs                                           |
+| `HttpClient.HttpClient`   | Required Effect HTTP client; supplies the network egress policy for metadata fetches                                                           |
+| Crypto services           | `Crypto.Crypto`, `Hmac`, and `Signature`; supply an explicit `@yielded/crypto` backend, as in the runnable example                             |
+| `loginPath`               | Local login route that returns to `oauth.paths.authorize`                                                                                      |
+| `keys`                    | Signing keyring in the same format as session keys; use separate random key material                                                           |
+| `oauth.Identity`          | `current`: an Effect that verifies the application session and returns `SubjectId` or `undefined`; may require `HttpServerRequest`             |
+| `OAuthServer.Persistence` | Durable grants and assertion replay receipts; use `OAuthServerPersistence.layer` with SQLite, D1, or PostgreSQL                                |
 
 `Identity.current` runs on every consent GET and POST. Return `undefined` for an
 absent or invalid session and fail with `OAuthServer.Unavailable` for an unavailable
@@ -38,21 +43,102 @@ Domain. Loopback HTTP development uses an unprefixed cookie.
 Allow `oauth.paths.authorize` in `OAuthReturnTargets` and have your login page
 request that return target. Set `loginPath` to that page. Keep provider and MCP grants separate.
 
-| Route (ID `mcp`, resource `/mcp`)               | Behavior                                                                  |
-| ----------------------------------------------- | ------------------------------------------------------------------------- |
-| `GET /.well-known/oauth-authorization-server`   | Issuer, endpoints, scopes, public-client authentication and PKCE metadata |
-| `GET /.well-known/oauth-protected-resource/mcp` | Resource and authorization server metadata                                |
-| `GET /oauth/mcp/authorize`                      | Validate the authorization request, sign in if needed, and show consent   |
-| `POST /oauth/mcp/authorize`                     | Approve or deny the browser-bound request                                 |
-| `POST /oauth/mcp/token`                         | Redeem a code or rotate a refresh token                                   |
-| `POST /oauth/mcp/revoke`                        | Revoke a token's entire grant; unknown tokens also return 200             |
+| Route (ID `mcp`, resource `/mcp`)               | Behavior                                                                 |
+| ----------------------------------------------- | ------------------------------------------------------------------------ |
+| `GET /.well-known/oauth-authorization-server`   | Issuer, endpoints, scopes, client authentication, CIMD and PKCE metadata |
+| `GET /.well-known/oauth-protected-resource/mcp` | Resource and authorization server metadata                               |
+| `GET /oauth/mcp/authorize`                      | Validate the authorization request, sign in if needed, and show consent  |
+| `POST /oauth/mcp/authorize`                     | Approve or deny the browser-bound request                                |
+| `POST /oauth/mcp/token`                         | Redeem a code or rotate a refresh token                                  |
+| `POST /oauth/mcp/revoke`                        | Revoke a token's entire grant; unknown tokens also return 200            |
 
-Authorization requires `response_type=code`, `client_id`, `redirect_uri`, `resource`,
-`scope`, `code_challenge`, and `code_challenge_method=S256`. Optional `state` is echoed
-with the issuer (`iss`) in the callback. Token requests are form-encoded and require
-`client_id` and `resource`. Code redemption also requires the original `redirect_uri`
-and `code_verifier`. Refresh can retain or reduce scopes; it cannot expand them.
-Malformed or rejected requests return 400; dependency failures return 503.
+Authorization requires `response_type=code`, `client_id`, `resource`, `scope`,
+`code_challenge`, and `code_challenge_method=S256`. `redirect_uri` may be omitted
+when the client has exactly one registered callback. Optional `state` is echoed
+with `iss` in success and error callbacks. For an authenticated user, request
+errors return to a validated static or same-origin metadata callback; other
+metadata callbacks require an explicit return link. Unknown clients, invalid
+callbacks, and unauthenticated request errors fail locally. Token requests are form-encoded and
+require `resource` and client identification. Code redemption requires
+`code_verifier`; an optional `redirect_uri` must match the actual authorization
+callback exactly. Refresh can retain or reduce scopes; it cannot expand them.
+Malformed or rejected requests return 400; failed HTTP Basic authentication returns
+401 with a Basic challenge; unavailable dependencies return 503.
+
+### Clients and metadata discovery
+
+Static registrations take precedence over CIMD. A static client's optional
+`clientSecret` is a `Redacted<string>`: setting it makes the client confidential,
+requiring HTTP Basic or `client_secret` form authentication at both the token and
+revocation endpoints. Alternatively, set `clientAssertion: { jwks }` or
+`clientAssertion: { jwksUri: "https://client.example/keys.json" }` for
+`private_key_jwt`. Configure exactly one key source and no `clientSecret`.
+An optional `clientAssertion.algorithm` pins the signing algorithm. Public clients
+cannot submit client credentials. PKCE is required for all clients.
+`grantTypes` limits redemption to `authorization_code` and/or
+`refresh_token`; omitting it permits both for static clients.
+
+Callbacks match exactly. For a client with `applicationType: "native"` (CIMD:
+`application_type`), HTTP loopback callbacks may vary only their port during
+authorization. The selected callback remains bound to the code. Consent shows the
+callback host and warns for HTTP loopback callbacks.
+
+Set `clientMetadata.allowedOrigins` to trusted HTTPS DNS origins to enable CIMD;
+discovery then advertises `client_id_metadata_document_supported: true`. Each
+metadata URL must have a non-root path and no credentials, fragment, or dot
+segments. Documents require `client_id`, `client_name`, and `redirect_uris`, with
+an exact `client_id` match. `token_endpoint_auth_method` may be `"none"` (the
+default) or `"private_key_jwt"`. The latter requires exactly one of `jwks` or
+`jwks_uri`, and accepts an optional `token_endpoint_auth_signing_alg`.
+JWKS URLs must use HTTPS DNS names; metadata-discovered key URLs must also belong
+to `clientMetadata.allowedOrigins`. Shared-secret fields, private or symmetric
+keys, and unsupported authentication methods are rejected.
+Optional `grant_types` defaults to `authorization_code`; include
+`refresh_token` to enable refresh. Unknown extension fields are ignored. The
+consent page also displays the metadata URL's hostname.
+
+Fetches accept only 200 JSON responses, reject redirects, limit metadata bodies to
+5 KiB and JWKS bodies to 128 KiB,
+time out after five seconds, and allow at most eight concurrent requests per
+server Layer. Valid documents are cached according to HTTP freshness headers for
+at most five minutes, with at most 256 entries in each cache. `no-store`, `no-cache`, `private`, `Vary: *`, invalid
+documents, and errors are not cached; expired entries are never used on failure.
+Metadata is checked again as needed during consent, redemption, and access-token
+verification. Removing a callback can therefore invalidate an existing grant once
+the cached document expires.
+
+Supply an `HttpClient` even when CIMD is disabled. For metadata or JWKS fetches, use only
+origins your application trusts and a client/network policy that blocks private,
+loopback, and link-local destinations after DNS resolution, including DNS
+rebinding. The HTTP client must not follow redirects or inject ambient credentials;
+`FetchHttpClient` receives `redirect: "error"` and `credentials: "omit"`. Origin
+validation alone does not enforce DNS/network isolation.
+
+### Private-key client assertions
+
+Send a new signed JWT in `client_assertion` for each token or revocation request,
+with `client_assertion_type=urn:ietf:params:oauth:client-assertion-type:jwt-bearer`.
+Do not combine it with Basic or form-secret authentication. If `client_id` is
+omitted, the unverified `sub` identifies the registration to look up; signature
+and claim validation still establish authentication.
+
+Assertions require `iss` and `sub` equal to the exact client ID, `jti` unique to
+that client, and `exp` in the future and no more than five minutes ahead.
+The audience must include the issuer or token endpoint URL; revocation also
+accepts its own endpoint URL. Optional `nbf` and `iat` cannot be in the future;
+`iat` must precede `exp`. There is no clock-skew allowance. Assertions are limited
+to 8 KiB and support RS256, PS256, ES256, and EdDSA (Ed25519), advertised in
+discovery. Key selection and verification use `@yielded/jose`; JWT headers never
+supply key locations.
+
+Key rotation takes effect when the cached JWKS expires. Publish overlapping keys
+for that interval; there is no stale-key fallback on fetch failure. Every accepted
+assertion consumes a durable receipt before processing the grant. Reuse fails
+across endpoints and server instances, even if the subsequent operation failed.
+A lost receipt acknowledgment returns 503; create a fresh assertion for a later
+request. This does not make an uncertain token-issuance outcome safe to retry.
+
+### Protecting MCP routes
 
 Attach `oauth.middleware(scopes).layer` only to protected routes. It extracts Bearer
 credentials with Effect's HTTP APIs, verifies the grant, checks scopes, and supplies
@@ -60,7 +146,10 @@ credentials with Effect's HTTP APIs, verifies the grant, checks scopes, and supp
 challenge; insufficient scope returns 403; unavailable storage returns 503.
 `CurrentAccess` defaults to `undefined` outside those requests. Never install a
 principal at server startup. Use Effect's existing Origin checks and CORS middleware;
-expose `WWW-Authenticate` to browser MCP clients.
+expose `WWW-Authenticate` to browser MCP clients. Apply CORS to the token,
+metadata, revocation, and MCP routes as needed; exclude the authorization endpoint.
+Scope names are independent permissions; define any application hierarchy before
+choosing the scopes required by a route.
 
 ### Token lifecycle and storage
 
@@ -70,8 +159,14 @@ the grant's lifetime. Signing keys must remain available through the lifetimes o
 the credentials they signed. Tokens are opaque to clients and use Yielded's signed
 envelope rather than JWT serialization.
 
-Each grant occupies one row in `yielded_oauth_server`. Apply
-`OAuthServerPersistence.migration` through your application's migrations. The adapter
+Each grant occupies one row in `yielded_oauth_server`. Apply each statement in
+`OAuthServerPersistence.migrations` once through your application's migrations;
+the second creates `yielded_oauth_client_assertion` for replay receipts. Existing
+grant tables need only that additional table. Custom persistence adapters must
+implement `consumeAssertion` as an atomic standalone insert that returns false
+for a duplicate receipt. Retain receipts through their expiration; all server
+instances sharing an issuer must share this storage. Only a digest of the client
+ID and JWT ID is stored, alongside the issuer namespace and expiry. The adapter
 rejects ambient transactions and uses a conditional write for every transition;
 revocation cannot be overwritten by a concurrent refresh. It stores no bearer or
 provider tokens. Expired rows can be deleted using `expires_at_millis`.
@@ -93,8 +188,10 @@ schedule cleanup of expired rows using `expires_at_millis`. Exclude OAuth query 
 logs and tracing; the runnable example disables request logging and tracing.
 
 Run `vp run @yielded/example-auth#example:strava-mcp` with the Strava example's
-variables plus `MCP_SIGNING_KEY`, `MCP_CLIENT_ID`, and `MCP_REDIRECT_URI`. Configure
-that exact client ID and redirect URI in your MCP client. The example listens on
+variables plus `MCP_SIGNING_KEY` and `MCP_REDIRECT_URI`. Set `MCP_CLIENT_ID` for a
+static registration, or `MCP_CLIENT_METADATA_ORIGIN` to accept CIMD clients
+from that trusted origin. The callback origin also sets the example's CORS policy;
+apply the network restrictions above when enabling metadata discovery. The example listens on
 port 3000 and owns `strava-mcp.sqlite`; use HTTPS outside loopback development.
 
 ## Retained access

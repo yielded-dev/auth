@@ -33,7 +33,7 @@ const ProvisioningLive = Layer.effect(
           yield* sql`insert into customers (customer_key, enabled, auth_revision, display_name)
             values (${id}, ${active}, ${revision}, ${registration.displayName})`;
 
-          return yield* Schema.decodeUnknownEffect(AuthSchema.SubjectId)(id);
+          return yield* Schema.decodeEffect(AuthSchema.SubjectId)(id);
         },
         Effect.mapError(() => Password.PasswordUnavailable.make({})),
       ),

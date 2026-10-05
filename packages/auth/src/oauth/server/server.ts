@@ -7,6 +7,7 @@ import {
   Effect,
   Layer,
   Redacted,
+  Result,
   Schema,
   Stream,
 } from "effect";
@@ -19,10 +20,19 @@ import { origin as Origin } from "../../internal/origin";
 import { SubjectId } from "../../Schema";
 import { makeSessionSigningCodec, type SessionSigningKeyring } from "../../sessions/crypto";
 import {
+  makeClients,
+  matchesRedirect,
+  MetadataConfiguration,
+  type MetadataOptions,
+} from "./clients";
+import {
   Access,
+  AssertionAlgorithms,
   Authorization,
   AuthorizationMetadata,
   Client,
+  reject,
+  Url,
   ConfigurationError,
   CurrentAccess,
   InvalidToken,
@@ -36,17 +46,6 @@ import {
   type Record,
 } from "./models";
 
-class Rejected extends Schema.TaggedError<Rejected>()("OAuthServerRejected", {
-  error: Schema.Literals([
-    "invalid_request",
-    "invalid_client",
-    "invalid_grant",
-    "invalid_scope",
-    "unsupported_grant_type",
-    "access_denied",
-  ]),
-}) {}
-const reject = (error: Rejected["error"] = "invalid_request") => Rejected.make({ error });
 const now = DateTime.now.pipe(Effect.map(DateTime.toEpochMillis));
 
 const noStore = {
@@ -69,31 +68,17 @@ const escape = (value: string) =>
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#39;");
 
-const Url = Text.check(
-  Schema.makeFilter((text) => {
-    try {
-      const url = new URL(text);
-
-      return (
-        !url.username &&
-        !url.password &&
-        !text.includes("#") &&
-        !/[\s\\]/.test(text) &&
-        (url.protocol === "https:" ||
-          (url.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname)))
-      );
-    } catch {
-      return false;
-    }
-  }),
-);
-
 const LoginPath = Text.check(Schema.isPattern(/^\/(?!\/)[^?#\\\s]*$/));
 
-const AuthorizeQuery = Schema.Struct({
-  response_type: Schema.Literal("code"),
+const AuthorizationCallback = Schema.Struct({
   client_id: Text,
-  redirect_uri: Url,
+  redirect_uri: Schema.optionalKey(Url),
+  state: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(2048))),
+});
+
+const AuthorizeQuery = Schema.Struct({
+  ...AuthorizationCallback.fields,
+  response_type: Schema.Literal("code"),
   resource: Url,
   scope: Text,
   code_challenge: Random,
@@ -107,7 +92,7 @@ const TokenRequest = Schema.Union([
     client_id: Text,
     resource: Url,
     code: Text,
-    redirect_uri: Url,
+    redirect_uri: Schema.optionalKey(Url),
     code_verifier: Schema.String.check(Schema.isPattern(/^[A-Za-z0-9._~-]{43,128}$/)),
   }),
   Schema.Struct({
@@ -130,9 +115,35 @@ const Revocation = Schema.Struct({
 const parameters = Effect.fnUntraced(function* (params: URLSearchParams) {
   const entries: { [key: string]: string } = Object.create(null);
 
+  const recognized = new Set([
+    "response_type",
+    "client_id",
+    "redirect_uri",
+    "resource",
+    "scope",
+    "code_challenge",
+    "code_challenge_method",
+    "state",
+    "grant_type",
+    "code",
+    "code_verifier",
+    "refresh_token",
+    "csrf",
+    "decision",
+    "token",
+    "token_type_hint",
+    "client_secret",
+    "client_assertion",
+    "client_assertion_type",
+  ]);
+
+  const seen = new Set<string>();
+
   for (const [key, value] of params) {
-    if (Object.hasOwn(entries, key)) return yield* reject();
-    entries[key] = value;
+    if (!recognized.has(key)) continue;
+    if (seen.has(key)) return yield* reject();
+    seen.add(key);
+    if (value !== "") entries[key] = value;
   }
 
   return entries;
@@ -173,12 +184,14 @@ export interface Options {
   readonly origin: string;
   readonly resource: string;
   readonly clients: ReadonlyArray<Client>;
+  /** Enable public or private_key_jwt CIMD clients from these trusted HTTPS origins. */
+  readonly clientMetadata?: MetadataOptions;
   /** Login must return to paths.authorize. Pending authorization stays in a private cookie. */
   readonly loginPath: string;
   readonly keys: SessionSigningKeyring;
 }
 
-/** Authorization-code server for explicitly registered public clients. The
+/** Authorization-code server for registered clients and CIMD clients. The
  * application supplies identity; Effect owns the MCP protocol and transport.
  * Token rotation uses a single durable CAS. A lost commit response never
  * permits replaying issuance: the client must start authorization again.
@@ -236,7 +249,8 @@ export const make = <const Id extends string>(
             id: Schema.String.check(Schema.isPattern(/^[a-z][a-z0-9-]{0,47}$/)),
             origin: Origin.check(Schema.isMaxLength(256)),
             resource: Url.check(Schema.isMaxLength(512)),
-            clients: Schema.NonEmptyArray(Client),
+            clients: Schema.Array(Client),
+            clientMetadata: Schema.optionalKey(MetadataConfiguration),
             loginPath: LoginPath,
             scopes: Scopes,
           }),
@@ -255,30 +269,28 @@ export const make = <const Id extends string>(
         const resourceUrl = new URL(config.resource);
 
         if (
-          resourceUrl.href !== config.resource ||
+          (resourceUrl.pathname !== "/" && resourceUrl.href !== config.resource) ||
           resourceUrl.origin !== config.origin ||
           resourceUrl.search ||
-          resourceUrl.pathname === "/" ||
+          (config.clients.length === 0 && config.clientMetadata === undefined) ||
           config.loginPath === paths.authorize ||
           new Set(config.clients.map((client) => client.clientId)).size !== config.clients.length ||
           new Set(scopes).size !== scopes.length
         )
           return yield* ConfigurationError.make({});
-        for (const client of config.clients)
-          for (const uri of client.redirectUris) {
-            yield* Schema.decodeUnknownEffect(Url)(uri).pipe(
-              Effect.mapError(() => ConfigurationError.make({})),
-            );
-            const url = new URL(uri);
 
-            if (["code", "state", "iss", "error"].some((key) => url.searchParams.has(key)))
-              return yield* ConfigurationError.make({});
-          }
+        const clients = yield* makeClients(
+          config.clients,
+          config.clientMetadata,
+          config.origin,
+          `${config.origin}${paths.token}`,
+        );
+
         const store = yield* Persistence;
         const identity = yield* Identity;
         const crypto = yield* Crypto.Crypto;
         const namespace = `${config.origin}/oauth/${id}`;
-        const resourceMetadataPath = `/.well-known/oauth-protected-resource${resourceUrl.pathname}`;
+        const resourceMetadataPath = `/.well-known/oauth-protected-resource${resourceUrl.pathname === "/" ? "" : resourceUrl.pathname}`;
         const resourceMetadata = `${config.origin}${resourceMetadataPath}`;
 
         const Envelope = Schema.Struct({
@@ -335,17 +347,18 @@ export const make = <const Id extends string>(
           return value;
         });
 
-        const clientFor = (clientId: string) =>
-          Effect.fromNullishOr(config.clients.find((c) => c.clientId === clientId)).pipe(
-            Effect.mapError(() => reject("invalid_client")),
+        const clientFor = clients.resolve;
+
+        const validGrant = Effect.fnUntraced(function* (record: Record) {
+          const client = yield* clientFor(record.authorization.clientId).pipe(
+            Effect.catchTag("OAuthServerRejected", () => InvalidToken.make({})),
           );
 
-        const validGrant = (record: Record) =>
-          config.clients.some(
-            (c) =>
-              c.clientId === record.authorization.clientId &&
-              c.redirectUris.includes(record.authorization.redirectUri),
-          ) && record.authorization.scopes.every((scope) => config.scopes.includes(scope));
+          return (
+            matchesRedirect(client, record.authorization.redirectUri) &&
+            record.authorization.scopes.every((scope) => config.scopes.includes(scope))
+          );
+        });
 
         const read = Effect.fnUntraced(function* (token: Envelope) {
           const record = yield* store.get(namespace, token.grantId);
@@ -354,7 +367,7 @@ export const make = <const Id extends string>(
             !record ||
             record.status === "Revoked" ||
             record.expiresAtMillis <= (yield* now) ||
-            !validGrant(record)
+            !(yield* validGrant(record))
           )
             return yield* InvalidToken.make({});
 
@@ -382,7 +395,7 @@ export const make = <const Id extends string>(
           );
 
         const callback = (
-          authorization: Authorization,
+          authorization: Pick<Authorization, "redirectUri" | "state">,
           values: { code: string } | { error: string },
         ) => {
           const url = new URL(authorization.redirectUri);
@@ -437,10 +450,23 @@ export const make = <const Id extends string>(
                   revocation_endpoint: `${config.origin}${paths.revoke}`,
                   response_types_supported: ["code"],
                   grant_types_supported: ["authorization_code", "refresh_token"],
-                  token_endpoint_auth_methods_supported: ["none"],
-                  revocation_endpoint_auth_methods_supported: ["none"],
+                  token_endpoint_auth_methods_supported: [
+                    "none",
+                    "client_secret_basic",
+                    "client_secret_post",
+                    "private_key_jwt",
+                  ],
+                  token_endpoint_auth_signing_alg_values_supported: AssertionAlgorithms,
+                  revocation_endpoint_auth_methods_supported: [
+                    "none",
+                    "client_secret_basic",
+                    "client_secret_post",
+                    "private_key_jwt",
+                  ],
+                  revocation_endpoint_auth_signing_alg_values_supported: AssertionAlgorithms,
                   code_challenge_methods_supported: ["S256"],
                   authorization_response_iss_parameter_supported: true,
+                  client_id_metadata_document_supported: config.clientMetadata !== undefined,
                   scopes_supported: config.scopes,
                 }),
               );
@@ -458,29 +484,88 @@ export const make = <const Id extends string>(
               (web.method === "GET" || web.method === "POST")
             ) {
               if (web.method === "GET" && url.search !== "") {
-                const query = yield* parameters(url.searchParams).pipe(
-                  Effect.flatMap(Schema.decodeUnknownEffect(AuthorizeQuery)),
-                  Effect.mapError(() => reject()),
-                );
+                const params = yield* parameters(url.searchParams);
 
-                const client = yield* clientFor(query.client_id);
+                const target = yield* Schema.decodeUnknownEffect(AuthorizationCallback)(
+                  params,
+                ).pipe(Effect.mapError(() => reject()));
 
-                if (
-                  !client.redirectUris.includes(query.redirect_uri) ||
-                  query.resource !== config.resource
-                )
+                const client = yield* clientFor(target.client_id);
+
+                const redirectUri =
+                  target.redirect_uri ??
+                  (client.redirectUris.length === 1 ? client.redirectUris[0] : undefined);
+
+                if (redirectUri === undefined || !matchesRedirect(client, redirectUri))
                   return yield* reject();
-                const requested = yield* scopeList(query.scope);
 
-                if (!requested.every((scope) => config.scopes.includes(scope)))
-                  return yield* reject("invalid_scope");
+                const validation = yield* Effect.gen(function* () {
+                  if (params.response_type !== undefined && params.response_type !== "code")
+                    return yield* reject("unsupported_response_type");
+                  if (params.scope === undefined) return yield* reject("invalid_scope");
+
+                  const query = yield* Schema.decodeUnknownEffect(AuthorizeQuery)(params).pipe(
+                    Effect.mapError(() => reject()),
+                  );
+
+                  if (query.resource !== config.resource) return yield* reject("invalid_target");
+                  if (
+                    client.grantTypes !== undefined &&
+                    !client.grantTypes.includes("authorization_code")
+                  )
+                    return yield* reject("unauthorized_client");
+                  const requested = yield* scopeList(query.scope);
+
+                  if (!requested.every((scope) => config.scopes.includes(scope)))
+                    return yield* reject("invalid_scope");
+
+                  return { query, requested };
+                }).pipe(Effect.result);
+
+                if (Result.isFailure(validation)) {
+                  const subject = yield* identity.current.pipe(
+                    Effect.provideService(HttpServerRequest.HttpServerRequest, request),
+                  );
+
+                  if (subject === undefined) return json({ error: validation.failure.error }, 400);
+                  yield* Schema.decodeEffect(SubjectId)(subject).pipe(
+                    Effect.mapError(() => Unavailable.make({})),
+                  );
+
+                  const response = callback(
+                    { redirectUri, ...(target.state === undefined ? {} : { state: target.state }) },
+                    { error: validation.failure.error },
+                  );
+
+                  // Static registrations and same-origin metadata callbacks are trusted.
+                  // Other registered callbacks require an explicit navigation decision.
+                  if (
+                    config.clients.some((entry) => entry.clientId === client.clientId) ||
+                    new URL(redirectUri).origin === new URL(client.clientId).origin
+                  )
+                    return response;
+
+                  return new Response(
+                    `<!doctype html><html lang="en"><meta charset="utf-8"><title>Authorization failed</title><main><h1>Authorization failed</h1><p>${escape(validation.failure.error)}</p><a href="${escape(response.headers.get("location") ?? "")}">Return to ${escape(new URL(redirectUri).host)}</a></main></html>`,
+                    {
+                      status: 400,
+                      headers: {
+                        ...noStore,
+                        "content-type": "text/html; charset=utf-8",
+                        "content-security-policy":
+                          "default-src 'none'; frame-ancestors 'none'; base-uri 'none'",
+                      },
+                    },
+                  );
+                }
+                const { query, requested } = validation.success;
                 const grantId = yield* random;
                 const version = yield* random;
                 const expiresAtMillis = (yield* now) + 300_000;
 
                 const authorization = Authorization.make({
                   clientId: client.clientId,
-                  redirectUri: query.redirect_uri,
+                  redirectUri,
                   scopes: requested,
                   challenge: query.code_challenge,
                   ...(query.state === undefined ? {} : { state: query.state }),
@@ -523,7 +608,7 @@ export const make = <const Id extends string>(
                 return web.method === "GET"
                   ? redirect(config.loginPath)
                   : yield* reject("access_denied");
-              yield* Schema.decodeUnknownEffect(SubjectId)(subjectId).pipe(
+              yield* Schema.decodeEffect(SubjectId)(subjectId).pipe(
                 Effect.mapError(() => Unavailable.make({})),
               );
               if (web.method === "GET") {
@@ -541,7 +626,7 @@ export const make = <const Id extends string>(
                 const client = yield* clientFor(record.authorization.clientId);
 
                 return new Response(
-                  `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Authorize access</title><main><h1>Allow ${escape(client.name)}?</h1><p>Access to ${escape(config.resource)} as ${escape(subjectId)}.</p><ul>${record.authorization.scopes.map((scope) => `<li>${escape(scope)}</li>`).join("")}</ul><p>Return to ${escape(new URL(record.authorization.redirectUri).host)}.</p><form method="post" action="${paths.authorize}"><input type="hidden" name="csrf" value="${record.version}"><button name="decision" value="approve">Allow</button><button name="decision" value="deny">Deny</button></form></main></html>`,
+                  `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Authorize access</title><main><h1>Allow ${escape(client.name)}?</h1>${config.clients.some((c) => c.clientId === client.clientId) ? "" : `<p>Client: ${escape(new URL(client.clientId).hostname)}</p>`}<p>Access to ${escape(config.resource)} as ${escape(subjectId)}.</p><ul>${record.authorization.scopes.map((scope) => `<li>${escape(scope)}</li>`).join("")}</ul><p>Return to ${escape(new URL(record.authorization.redirectUri).host)}.</p>${new URL(record.authorization.redirectUri).protocol === "http:" ? "<p>A local application will receive this authorization. Only continue if you started this connection.</p>" : ""}<form method="post" action="${paths.authorize}"><input type="hidden" name="csrf" value="${record.version}"><button name="decision" value="approve">Allow</button><button name="decision" value="deny">Deny</button></form></main></html>`,
                   {
                     headers: {
                       ...noStore,
@@ -593,16 +678,23 @@ export const make = <const Id extends string>(
             if (web.method === "POST" && url.pathname === paths.token) {
               const body = yield* form(request);
 
+              const client = yield* clients.authenticate(
+                body,
+                web.headers.get("authorization"),
+                `${config.origin}${paths.token}`,
+              );
+
               if (body.grant_type !== "authorization_code" && body.grant_type !== "refresh_token")
                 return yield* reject("unsupported_grant_type");
 
-              const query = yield* Schema.decodeUnknownEffect(TokenRequest)(body).pipe(
-                Effect.mapError(() => reject()),
-              );
+              const query = yield* Schema.decodeUnknownEffect(TokenRequest)({
+                ...body,
+                client_id: client.clientId,
+              }).pipe(Effect.mapError(() => reject()));
 
-              yield* clientFor(query.client_id);
-              if (query.resource !== config.resource || web.headers.has("authorization"))
-                return yield* reject();
+              if (client.grantTypes !== undefined && !client.grantTypes.includes(query.grant_type))
+                return yield* reject("unauthorized_client");
+              if (query.resource !== config.resource) return yield* reject("invalid_target");
 
               const token = yield* decode(
                 Redacted.make(
@@ -629,7 +721,8 @@ export const make = <const Id extends string>(
                   );
 
                 if (
-                  query.redirect_uri !== record.authorization.redirectUri ||
+                  (query.redirect_uri !== undefined &&
+                    query.redirect_uri !== record.authorization.redirectUri) ||
                   digest !== record.authorization.challenge
                 )
                   return yield* reject("invalid_grant");
@@ -690,12 +783,18 @@ export const make = <const Id extends string>(
               );
             }
             if (web.method === "POST" && url.pathname === paths.revoke) {
-              const query = yield* form(request).pipe(
-                Effect.flatMap(Schema.decodeUnknownEffect(Revocation)),
-                Effect.mapError(() => reject()),
+              const input = yield* form(request);
+
+              const client = yield* clients.authenticate(
+                input,
+                web.headers.get("authorization"),
+                `${config.origin}${paths.revoke}`,
               );
 
-              yield* clientFor(query.client_id);
+              const query = yield* Schema.decodeUnknownEffect(Revocation)({
+                ...input,
+                client_id: client.clientId,
+              }).pipe(Effect.mapError(() => reject()));
 
               const token = yield* decode(Redacted.make(query.token)).pipe(
                 Effect.catchTag("OAuthServerInvalidToken", () => Effect.succeed(undefined)),
@@ -713,11 +812,21 @@ export const make = <const Id extends string>(
 
             return new Response(null, { status: 404, headers: noStore });
           },
-          (effect) =>
+          (effect, web) =>
             effect.pipe(
               Effect.timeout("30 seconds"),
               Effect.catchTags({
-                OAuthServerRejected: ({ error }) => Effect.succeed(json({ error }, 400)),
+                OAuthServerRejected: ({ error }) => {
+                  const response = json(
+                    { error },
+                    error === "invalid_client" && web.headers.has("authorization") ? 401 : 400,
+                  );
+
+                  if (response.status === 401)
+                    response.headers.set("www-authenticate", 'Basic realm="oauth"');
+
+                  return Effect.succeed(response);
+                },
                 OAuthServerInvalidToken: () =>
                   Effect.succeed(json({ error: "invalid_grant" }, 400)),
                 OAuthServerUnavailable: () =>

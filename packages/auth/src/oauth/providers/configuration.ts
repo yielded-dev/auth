@@ -320,7 +320,7 @@ export const installProvider = Effect.fn("OpenIdConnect.installProvider")(functi
   timeoutSeconds: number,
 ) {
   // oxlint-disable-next-line no-restricted-properties -- Discovered foreign metadata is not yet validated for this adapter profile.
-  const metadata = yield* Schema.decodeUnknownEffect(metadataSchema)(raw).pipe(
+  const metadata = yield* Schema.decodeEffect(metadataSchema)(raw).pipe(
     Effect.mapError(() => configError("metadata")),
   );
 

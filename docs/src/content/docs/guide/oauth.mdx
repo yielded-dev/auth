@@ -132,7 +132,7 @@ See [retained access](../reference/oauth#retained-access) for dependencies and r
 
 ## Authorize MCP clients
 
-`OAuthServer` lets a signed-in user grant a registered MCP client access to your
+`OAuthServer` lets a signed-in user grant an MCP client access to your
 application. `Auth` supplies the application session; the OAuth strategy owns retained
 upstream provider credentials. The two grants stay separate:
 
@@ -215,11 +215,40 @@ subject may access. Your application owns the subject-to-provider connection
 mapping. Resolve that connection from trusted storage, then call `withAccessToken`
 on the strategy’s `access.ConnectedAccess` service; MCP clients never receive provider tokens.
 
-This initial server supports explicitly registered public clients. Clients must
-support supplying their registered client ID; there is no dynamic registration
-or Client ID Metadata Document endpoint. See the
+Clients can be pre-registered or introduce themselves through a
+[Client ID Metadata Document](https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization/client-registration).
+For metadata discovery, enable the origins your application trusts and provide an
+Effect `HttpClient` with your network egress policy:
+
+```ts
+const authorization = oauth.layer({
+  origin: "https://app.example.com",
+  resource: "https://app.example.com/mcp",
+  loginPath: "/login",
+  keys,
+  clients: [],
+  clientMetadata: { allowedOrigins: ["https://assistant.example"] },
+});
+```
+
+The client sends an HTTPS document URL as its `client_id`. Yielded fetches its
+name and callback URLs, checks the request against them, and shows browser
+consent. Explicit registrations take precedence. All clients use PKCE.
+Confidential clients also authenticate with a configured `clientSecret` or a
+signed `private_key_jwt` assertion. Metadata clients declare `private_key_jwt`
+and publish public keys through `jwks` or a trusted `jwks_uri`; static clients
+configure `clientAssertion` with the same public key material.
+
+All server Layers require `HttpClient` and the crypto `Signature` service in
+addition to entropy and HMAC. The example supplies these through its shared
+crypto backend. Apply both OAuth persistence migrations for grants and consumed
+client assertions.
+
+The server implements the authorization-code and protected-resource roles of
+MCP's 2026-07-28 authorization spec. Dynamic registration and
+optional authorization extensions are not implemented or advertised. See the
 [authorization server reference](../reference/oauth#authorization-server) for
-the setup and token lifecycle.
+client configuration, network requirements, and the token lifecycle.
 
 ## Other providers
 

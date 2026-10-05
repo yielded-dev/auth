@@ -83,10 +83,10 @@ it.effect("protector scope closure cancels and joins an active seal before wipin
     const protector = Context.get(services, OAuth.OAuthTransactionProtector);
 
     const input = {
-      context: yield* Schema.decodeUnknownEffect(OAuth.OAuthSignInTransactionContext)(
+      context: yield* Schema.decodeEffect(OAuth.OAuthSignInTransactionContext)(
         fixtures.oauth.signIn.context,
       ),
-      secrets: yield* Schema.decodeUnknownEffect(OAuth.OAuthTransactionSecrets)(
+      secrets: yield* Schema.decodeEffect(OAuth.OAuthTransactionSecrets)(
         fixtures.oauth.signIn.plain,
       ),
     };
@@ -135,13 +135,9 @@ it.effect("TOTP reports erased application keys as typed unavailability", () =>
 
     const totp = Context.get(services, Totp.TotpCryptography);
 
-    const binding = yield* Schema.decodeUnknownEffect(Totp.TotpSecretBinding)(
-      fixtures.totp.binding,
-    );
+    const binding = yield* Schema.decodeEffect(Totp.TotpSecretBinding)(fixtures.totp.binding);
 
-    const envelope = yield* Schema.decodeUnknownEffect(Totp.TotpSecretEnvelope)(
-      fixtures.totp.envelope,
-    );
+    const envelope = yield* Schema.decodeEffect(Totp.TotpSecretEnvelope)(fixtures.totp.envelope);
 
     for (const operation of [
       totp.encryptSecret(binding, new Uint8Array(20)).pipe(Effect.asVoid),

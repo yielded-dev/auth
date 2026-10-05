@@ -25,7 +25,7 @@
           "nestedEffectGenYield": "suggestion",
           "newSchemaClass": "suggestion",
           "preferSchemaTypeProperty": "suggestion",
-          "preferTypedSchemaDecoder": "off",
+          "preferTypedSchemaDecoder": "error",
           "unsafeEffectTypeAssertion": "suggestion"
         },
         "overrides": [

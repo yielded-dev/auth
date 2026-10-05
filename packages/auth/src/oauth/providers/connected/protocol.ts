@@ -103,7 +103,7 @@ const receiptMetadata = Effect.fnUntraced(function* <R>(
 ): Effect.fn.Return<GrantMetadata, Schema.SchemaError> {
   const body = Redacted.value(receipt.body);
 
-  const decoded = yield* Schema.decodeUnknownEffect(rawMetadataSchema)(body);
+  const decoded = yield* Schema.decodeEffect(rawMetadataSchema)(body);
 
   let refreshExpiresIn: number | undefined;
 

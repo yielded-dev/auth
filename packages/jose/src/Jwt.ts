@@ -64,7 +64,7 @@ const checkClaims = Effect.fnUntraced(function* (
   header: Header,
   options: VerifyOptions,
 ) {
-  const registered = yield* Schema.decodeUnknownEffect(RegisteredClaims)(claims, {
+  const registered = yield* Schema.decodeEffect(RegisteredClaims)(claims, {
     reportInput: false,
   }).pipe(
     Effect.mapError(() => ClaimValidationFailed.make({ claim: "registered", reason: "invalid" })),
@@ -135,7 +135,7 @@ const decodeClaims = Effect.fnUntraced(function* <S extends Schema.Constraint>(
 ) {
   const wire = yield* json(yield* reveal(verified.payload), "payload");
   const registeredClaims = yield* checkClaims(wire, verified.protectedHeader, options);
-  const claims = yield* Schema.decodeUnknownEffect(schema)(wire, { reportInput: false });
+  const claims = yield* Schema.decodeEffect(schema)(wire, { reportInput: false });
 
   return { claims, registeredClaims, protectedHeader: verified.protectedHeader } satisfies Verified<
     S["Type"]
@@ -151,7 +151,7 @@ export const sign = Effect.fnUntraced(function* <S extends Schema.Constraint>(
   const encoded = yield* Schema.encodeEffect(schema)(claims, { reportInput: false });
   const wire = yield* Schema.decodeUnknownEffect(JsonObject)(encoded, { reportInput: false });
 
-  yield* Schema.decodeUnknownEffect(RegisteredClaims)(wire, { reportInput: false });
+  yield* Schema.decodeEffect(RegisteredClaims)(wire, { reportInput: false });
 
   return yield* Jws.sign(Redacted.make(utf8(yield* stringify(wire))), key, header);
 });

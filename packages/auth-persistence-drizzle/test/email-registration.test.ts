@@ -93,7 +93,7 @@ const mappings = Effect.gen(function* () {
     constraints: requiredEmailRegistrationConstraints,
     inspect: () => Effect.succeed({ fingerprint, eligible: true }),
     snapshotRegistration: (value: typeof Registration.Type) =>
-      Schema.decodeUnknownEffect(Registration)(value).pipe(
+      Schema.decodeEffect(Registration)(value).pipe(
         Effect.mapError((cause) => PersistenceMappingError.make({ operation: "mapping", cause })),
       ),
     retentionMillis: 3_600_000,
