@@ -313,7 +313,7 @@ export const makeComposedPasskeys = (
             action: metadata,
             remainingSignIn: (subjectId, excluded, row) =>
               Effect.gen(function* () {
-                const requirement = yield* Schema.decodeUnknownEffect(PasskeyRequirement)(
+                const requirement = yield* Schema.decodeEffect(PasskeyRequirement)(
                   yield* s.requirements(row),
                 );
 

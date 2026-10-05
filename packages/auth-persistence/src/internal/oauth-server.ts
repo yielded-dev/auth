@@ -52,7 +52,7 @@ const layer = Layer.effect(
         input,
       ) {
         yield* standalone;
-        const receipt = yield* Schema.decodeUnknownEffect(AssertionReceipt)(input);
+        const receipt = yield* Schema.decodeEffect(AssertionReceipt)(input);
 
         const rows =
           yield* sql`INSERT INTO yielded_oauth_client_assertion (namespace, assertion_id, expires_at_millis) VALUES (${namespace}, ${receipt.id}, ${receipt.expiresAtMillis}) ON CONFLICT (namespace, assertion_id) DO NOTHING RETURNING assertion_id`;

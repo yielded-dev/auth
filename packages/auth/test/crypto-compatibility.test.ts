@@ -51,9 +51,7 @@ it.effect(
     }).pipe(Effect.provide(Password.PasswordHashing.layer().pipe(Layer.provide(runtime)))),
 );
 
-const key = Redacted.make(
-  Schema.decodeUnknownSync(Schema.Uint8ArrayFromBase64Url)(fixtures.totp.key),
-);
+const key = Redacted.make(Schema.decodeSync(Schema.Uint8ArrayFromBase64Url)(fixtures.totp.key));
 
 const keys = Layer.succeed(Totp.TotpSecretKeys, {
   current: Effect.succeed({ keyId: "key1", key }),
@@ -63,8 +61,8 @@ const keys = Layer.succeed(Totp.TotpSecretKeys, {
 it.effect("opens stored TOTP secrets and retains recovery and RFC 6238 formats", () =>
   Effect.gen(function* () {
     const cryptography = yield* Totp.TotpCryptography;
-    const binding = Schema.decodeUnknownSync(Totp.TotpSecretBinding)(fixtures.totp.binding);
-    const envelope = Schema.decodeUnknownSync(Totp.TotpSecretEnvelope)(fixtures.totp.envelope);
+    const binding = Schema.decodeSync(Totp.TotpSecretBinding)(fixtures.totp.binding);
+    const envelope = Schema.decodeSync(Totp.TotpSecretEnvelope)(fixtures.totp.envelope);
     const secret = yield* cryptography.decryptSecret(binding, envelope);
 
     expect(Base64Url.encode(secret)).toBe(fixtures.totp.secret);
@@ -107,8 +105,8 @@ it.effect("opens all stored OAuth envelope domains and rejects changed durable a
       c = fixtures.oauth.connected,
       d = fixtures.oauth.token;
 
-    const context = Schema.decodeUnknownSync(OAuth.OAuthSignInTransactionContext)(a.context);
-    const sealed = Schema.decodeUnknownSync(OAuth.OAuthSealedTransaction)(a.sealed);
+    const context = Schema.decodeSync(OAuth.OAuthSignInTransactionContext)(a.context);
+    const sealed = Schema.decodeSync(OAuth.OAuthSealedTransaction)(a.sealed);
 
     expect(
       Schema.encodeSync(OAuth.OAuthTransactionSecrets)(yield* signIn.open({ context, sealed })),
@@ -121,24 +119,24 @@ it.effect("opens all stored OAuth envelope domains and rejects changed durable a
     expect(
       Schema.encodeSync(OAuth.OAuthTransactionSecrets)(
         yield* link.open({
-          context: Schema.decodeUnknownSync(OAuth.OAuthLinkTransactionContext)(b.context),
-          sealed: Schema.decodeUnknownSync(OAuth.OAuthSealedTransaction)(b.sealed),
+          context: Schema.decodeSync(OAuth.OAuthLinkTransactionContext)(b.context),
+          sealed: Schema.decodeSync(OAuth.OAuthSealedTransaction)(b.sealed),
         }),
       ),
     ).toEqual(b.plain);
     expect(
       Schema.encodeSync(OAuth.OAuthConnectedTransactionSecrets)(
         yield* connected.open({
-          context: Schema.decodeUnknownSync(OAuth.OAuthConnectedTransactionContext)(c.context),
-          sealed: Schema.decodeUnknownSync(OAuth.OAuthConnectedSealedTransaction)(c.sealed),
+          context: Schema.decodeSync(OAuth.OAuthConnectedTransactionContext)(c.context),
+          sealed: Schema.decodeSync(OAuth.OAuthConnectedSealedTransaction)(c.sealed),
         }),
       ),
     ).toEqual(c.plain);
     expect(
       Schema.encodeSync(OAuth.OAuthConnectedTokenMaterial)(
         yield* token.open({
-          context: Schema.decodeUnknownSync(OAuth.OAuthConnectedProtectionContext)(d.context),
-          sealed: Schema.decodeUnknownSync(OAuth.OAuthConnectedSealedTokens)(d.sealed),
+          context: Schema.decodeSync(OAuth.OAuthConnectedProtectionContext)(d.context),
+          sealed: Schema.decodeSync(OAuth.OAuthConnectedSealedTokens)(d.sealed),
         }),
       ),
     ).toEqual(d.plain);

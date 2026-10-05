@@ -19,8 +19,10 @@ patch CLI bundles its tooling dependencies. Upgrade the
 Effect family together and rerun installation and the handoff gate. Vite+ 0.3.3
 bundles Vitest 4.1.11. The root override pins `vitest` to the catalog,
 which keeps Effect's test integration on that Vitest despite its Vitest 5 peer range,
-matching Effect Agent; keep the catalog `vitest` pin equal to the bundled version. The `preferTypedSchemaDecoder` diagnostic follows the reference repository's disabled
-setting until the upstream TypeScript-Go panic is resolved.
+matching Effect Agent; keep the catalog `vitest` pin equal to the bundled version.
+The `preferTypedSchemaDecoder` diagnostic is an error: use typed Schema decoders
+when the input is assignable to the schema's encoded type. Typed decoders retain
+runtime validation while also checking the input type during compilation.
 
 The root `patchedDependencies` carries a Drizzle patch from
 `@yielded/drizzle-effect-v4-patch`. The patch CLI configures the same Drizzle asset

@@ -417,7 +417,7 @@ export const prepareConnectedConfigurations = Effect.fn(
 export const installConnectedProvider = Effect.fn("OpenIdConnect.installConnectedProvider")(
   function* <R>(provider: ConnectedProvider<R>, raw: OAuth.Metadata, timeoutSeconds: number) {
     // oxlint-disable-next-line no-restricted-properties -- Validate foreign discovery metadata at this adapter's bounded boundary.
-    const metadata = yield* Schema.decodeUnknownEffect(metadataSchema)(raw).pipe(
+    const metadata = yield* Schema.decodeEffect(metadataSchema)(raw).pipe(
       Effect.mapError(() => configurationError("metadata")),
     );
 

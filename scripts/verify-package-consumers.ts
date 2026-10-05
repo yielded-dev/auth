@@ -90,7 +90,7 @@ const checkReusableBuild = Effect.fn("packageConsumers.reusableBuild")(function*
         continue;
       }
 
-      const map = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(SourceMap))(
+      const map = yield* Schema.decodeEffect(Schema.fromJsonString(SourceMap))(
         yield* fs.readFileString(`${file}.map`),
       );
 
@@ -580,7 +580,7 @@ const stagePackage = Effect.fn("packageConsumers.stagePackage")(function* (
   const source = path.join(repositoryRoot, "packages", directory);
   const destination = path.join(stage, "packages", directory);
 
-  const manifest = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(PublishManifest))(
+  const manifest = yield* Schema.decodeEffect(Schema.fromJsonString(PublishManifest))(
     yield* fs.readFileString(path.join(source, "package.json")),
   );
 
@@ -635,9 +635,9 @@ const checkReusableConsumers = Effect.fn("packageConsumers.reusable")(function* 
   yield* withPublishManifests(stage, () =>
     Effect.gen(function* () {
       for (const directory of [destination, jose.destination, oauth.destination]) {
-        const published = yield* Schema.decodeUnknownEffect(
-          Schema.fromJsonString(ReusableManifest),
-        )(yield* fs.readFileString(path.join(directory, "package.json")));
+        const published = yield* Schema.decodeEffect(Schema.fromJsonString(ReusableManifest))(
+          yield* fs.readFileString(path.join(directory, "package.json")),
+        );
 
         const problems = reusableDependencyProblems(published, {});
 
@@ -747,7 +747,7 @@ export const verifyPackageConsumers = Effect.fn("verifyPackageConsumers")(functi
   const source = path.join(repositoryRoot, "packages/auth");
   const destination = path.join(stage, "packages/auth");
 
-  const manifest = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(PublishManifest))(
+  const manifest = yield* Schema.decodeEffect(Schema.fromJsonString(PublishManifest))(
     yield* fs.readFileString(path.join(source, "package.json")),
   );
 
@@ -776,7 +776,7 @@ export const verifyPackageConsumers = Effect.fn("verifyPackageConsumers")(functi
   }
   yield* withPublishManifests(stage, () =>
     Effect.gen(function* () {
-      const published = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(ReusableManifest))(
+      const published = yield* Schema.decodeEffect(Schema.fromJsonString(ReusableManifest))(
         yield* fs.readFileString(path.join(destination, "package.json")),
       );
 
@@ -827,9 +827,9 @@ export const verifyPackageConsumers = Effect.fn("verifyPackageConsumers")(functi
   const persistenceSource = path.join(repositoryRoot, "packages/auth-persistence");
   const persistenceDestination = path.join(stage, "packages/auth-persistence");
 
-  const persistenceManifest = yield* Schema.decodeUnknownEffect(
-    Schema.fromJsonString(PublishManifest),
-  )(yield* fs.readFileString(path.join(persistenceSource, "package.json")));
+  const persistenceManifest = yield* Schema.decodeEffect(Schema.fromJsonString(PublishManifest))(
+    yield* fs.readFileString(path.join(persistenceSource, "package.json")),
+  );
 
   yield* fs.makeDirectory(persistenceDestination, { recursive: true });
   yield* fs.copyFile(
@@ -850,7 +850,7 @@ export const verifyPackageConsumers = Effect.fn("verifyPackageConsumers")(functi
 
   yield* withPublishManifests(stage, () =>
     Effect.gen(function* () {
-      const published = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(ReusableManifest))(
+      const published = yield* Schema.decodeEffect(Schema.fromJsonString(ReusableManifest))(
         yield* fs.readFileString(path.join(persistenceDestination, "package.json")),
       );
 

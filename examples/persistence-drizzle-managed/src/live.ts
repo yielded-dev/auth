@@ -37,7 +37,7 @@ const ProvisioningLive = Layer.effect(
             displayName: registration.displayName,
           });
 
-          return yield* Schema.decodeUnknownEffect(AuthSchema.SubjectId)(id);
+          return yield* Schema.decodeEffect(AuthSchema.SubjectId)(id);
         },
         Effect.mapError(() => Password.PasswordUnavailable.make({})),
       ),
@@ -58,7 +58,7 @@ const ClaimsLive = Layer.effect(
           if (rows.length !== 1 || !rows[0].enabled)
             return yield* Password.PasswordUnavailable.make({});
 
-          return yield* Schema.decodeUnknownEffect(Claims)({
+          return yield* Schema.decodeEffect(Claims)({
             displayName: rows[0].displayName,
             email: credential.identifier.value,
             emailVerified: credential.identifierVerifiedAtMillis !== undefined,

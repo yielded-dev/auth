@@ -528,7 +528,7 @@ export const make = <const Id extends string>(
                   );
 
                   if (subject === undefined) return json({ error: validation.failure.error }, 400);
-                  yield* Schema.decodeUnknownEffect(SubjectId)(subject).pipe(
+                  yield* Schema.decodeEffect(SubjectId)(subject).pipe(
                     Effect.mapError(() => Unavailable.make({})),
                   );
 
@@ -608,7 +608,7 @@ export const make = <const Id extends string>(
                 return web.method === "GET"
                   ? redirect(config.loginPath)
                   : yield* reject("access_denied");
-              yield* Schema.decodeUnknownEffect(SubjectId)(subjectId).pipe(
+              yield* Schema.decodeEffect(SubjectId)(subjectId).pipe(
                 Effect.mapError(() => Unavailable.make({})),
               );
               if (web.method === "GET") {

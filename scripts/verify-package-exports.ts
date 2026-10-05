@@ -131,7 +131,7 @@ export const verifyPackageExports = Effect.fn("verifyPackageExports")(
       );
     });
 
-    const { catalog } = yield* Schema.decodeUnknownEffect(
+    const { catalog } = yield* Schema.decodeEffect(
       Schema.fromJsonString(Schema.Struct({ catalog: Dependencies })),
     )(yield* read("package.json"));
 
@@ -143,9 +143,7 @@ export const verifyPackageExports = Effect.fn("verifyPackageExports")(
         const file = `packages/${directory}/package.json`;
         const source = yield* read(file);
 
-        const manifest = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(Manifest))(
-          source,
-        ).pipe(
+        const manifest = yield* Schema.decodeEffect(Schema.fromJsonString(Manifest))(source).pipe(
           Effect.mapError(
             (cause) => new PackageExportsError({ message: `Invalid ${file}`, cause }),
           ),

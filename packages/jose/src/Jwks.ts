@@ -186,7 +186,7 @@ export const layerRemote = (
   return Layer.effect(
     Jwks,
     Effect.gen(function* () {
-      const options = yield* Schema.decodeUnknownEffect(RemoteConfiguration)(configuration, {
+      const options = yield* Schema.decodeEffect(RemoteConfiguration)(configuration, {
         reportInput: false,
       }).pipe(Effect.mapError(() => JwksUnavailable.make({ reason: "configuration" })));
 

@@ -69,13 +69,13 @@ const environment = Effect.sync(() => {
   // The maintained helper only checks OS version (and includes iOS 15).
   // Decode platform metadata before applying this adapter's iOS 16 minimum.
   // eslint-disable-next-line no-restricted-properties
-  const version = Schema.decodeUnknownSync(
-    Schema.String.check(Schema.isPattern(/^\d+(?:\.\d+){0,2}$/)),
-  )(Platform.Version);
+  const version = Schema.decodeSync(Schema.String.check(Schema.isPattern(/^\d+(?:\.\d+){0,2}$/)))(
+    Platform.Version,
+  );
 
   const [major = 0, minor = 0] = version.split(".").map(Number);
   // eslint-disable-next-line no-restricted-properties
-  const supported = Schema.decodeUnknownSync(Schema.Boolean)(Passkey.isSupported());
+  const supported = Schema.decodeSync(Schema.Boolean)(Passkey.isSupported());
 
   return {
     supported: major >= 16 && supported,

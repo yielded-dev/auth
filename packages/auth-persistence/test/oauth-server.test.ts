@@ -1029,7 +1029,7 @@ const assertion = Effect.fnUntraced(function* (
 ) {
   const now = Math.floor((yield* Clock.currentTimeMillis) / 1000);
 
-  const payload = yield* Schema.decodeUnknownEffect(Jwt.RegisteredClaims)(
+  const payload = yield* Schema.decodeEffect(Jwt.RegisteredClaims)(
     Object.fromEntries(
       Object.entries({
         iss: clientId,

@@ -209,7 +209,7 @@ export const makeClients = Effect.fnUntraced(function* (
 
   for (const client of clients) {
     if (client.clientAssertion?.jwksUri !== undefined)
-      yield* Schema.decodeUnknownEffect(KeyUrl)(client.clientAssertion.jwksUri).pipe(
+      yield* Schema.decodeEffect(KeyUrl)(client.clientAssertion.jwksUri).pipe(
         Effect.mapError(() => ConfigurationError.make({})),
       );
     if (client.clientSecret === undefined) continue;
@@ -264,7 +264,7 @@ export const makeClients = Effect.fnUntraced(function* (
   );
 
   const fetch = Effect.fnUntraced(function* (id: string) {
-    const url = yield* Schema.decodeUnknownEffect(MetadataUrl)(id).pipe(
+    const url = yield* Schema.decodeEffect(MetadataUrl)(id).pipe(
       Effect.mapError(() => reject("invalid_client")),
     );
 
@@ -272,7 +272,7 @@ export const makeClients = Effect.fnUntraced(function* (
       return yield* reject("invalid_client");
     const response = yield* fetchJson(url, 5120);
 
-    const document = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(Document))(
+    const document = yield* Schema.decodeEffect(Schema.fromJsonString(Document))(
       response.text,
     ).pipe(Effect.mapError(() => reject("invalid_client")));
 
@@ -284,7 +284,7 @@ export const makeClients = Effect.fnUntraced(function* (
 
     const clientAssertion =
       document.token_endpoint_auth_method === "private_key_jwt"
-        ? yield* Schema.decodeUnknownEffect(ClientAssertion)({
+        ? yield* Schema.decodeEffect(ClientAssertion)({
             ...(document.jwks === undefined ? {} : { jwks: document.jwks }),
             ...(document.jwks_uri === undefined ? {} : { jwksUri: document.jwks_uri }),
             ...(document.token_endpoint_auth_signing_alg === undefined
@@ -339,9 +339,9 @@ export const makeClients = Effect.fnUntraced(function* (
     keyCache.delete(settings.jwksUri);
     const response = yield* fetchJson(settings.jwksUri, 131072);
 
-    const keys = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(Jwks.KeySet))(
-      response.text,
-    ).pipe(Effect.mapError(() => reject("invalid_client")));
+    const keys = yield* Schema.decodeEffect(Schema.fromJsonString(Jwks.KeySet))(response.text).pipe(
+      Effect.mapError(() => reject("invalid_client")),
+    );
 
     if (response.expires > (yield* Clock.currentTimeMillis))
       remember(keyCache, settings.jwksUri, { value: keys, expires: response.expires });

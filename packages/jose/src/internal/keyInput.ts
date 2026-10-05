@@ -26,7 +26,7 @@ export const object = (input: unknown): unknown => {
 
 const array = (input: ReadonlyArray<unknown>) =>
   Result.gen(function* () {
-    const length = yield* Schema.decodeUnknownResult(ArrayLength)(input.length).pipe(
+    const length = yield* Schema.decodeResult(ArrayLength)(input.length).pipe(
       Result.mapError(() => InvalidKey.make({})),
     );
 
