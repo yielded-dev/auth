@@ -23,7 +23,7 @@ export const makePasskeyManagementKernel = (
   admission: Pick<ReturnType<typeof makePasskeyAdmissionKernel>, "lockAdmission">,
   credentials: Pick<
     ReturnType<typeof makePasskeyCredentialsKernel>,
-    "readModule" | "readPolicyGuards"
+    "readModule" | "readPolicyGuards" | "moduleRead" | "policyReads"
   >,
   state: Pick<
     ReturnType<typeof makePasskeyStateKernel>,
@@ -33,7 +33,9 @@ export const makePasskeyManagementKernel = (
     ReturnType<typeof makePasskeyWriteStateKernel>,
     | "authorizeAction"
     | "credentialRows"
+    | "credentialRead"
     | "currentSubject"
+    | "currentSubjectReads"
     | "invalidate"
     | "invalidationMatches"
     | "jsonStorage"
@@ -48,14 +50,16 @@ export const makePasskeyManagementKernel = (
 ) => {
   const { sql } = operations;
   const { lockAdmission } = admission;
-  const { readModule, readPolicyGuards } = credentials;
+  const { readModule, readPolicyGuards, moduleRead, policyReads } = credentials;
   const { credentialKey, copiedRow, equal, sameCredential, sameRevision } = state;
   const invariant: (value: unknown) => asserts value = state.invariant;
 
   const {
     authorizeAction,
     credentialRows,
+    credentialRead,
     currentSubject,
+    currentSubjectReads,
     invalidate,
     invalidationMatches,
     jsonStorage,
@@ -171,10 +175,26 @@ export const makePasskeyManagementKernel = (
     mapping: any,
     input: Parameters<Port["list"]>[0],
   ) {
-    const subject = yield* access(mapping, input.moduleId, input.subjectId, false);
+    const owner = yield* CurrentPasskeyTransaction;
+    const nativeId = mapping.read.subjectIds.toNative(input.subjectId);
+
+    invariant(input.moduleId === mapping.moduleId);
+    const metadata = mapping.write.policy.metadata(nativeId);
+
+    const [module, subjectRows, factors, captured, ...guards] = yield* owner.readMany([
+      moduleRead(mapping),
+      ...currentSubjectReads(mapping, input.subjectId, metadata),
+      credentialRead(mapping, nativeId),
+      ...policyReads(mapping),
+    ]);
+
+    invariant((yield* readModule(mapping, module!)) !== undefined);
+    const subject = yield* currentSubject(mapping, input.subjectId, [subjectRows!, factors!]);
 
     invariant(subject !== undefined);
-    const rows = [...(yield* credentialRows(mapping, subject))];
+    yield* readPolicyGuards(mapping, guards);
+    owner.postconditions.push(metadata);
+    const rows = [...captured!.rows];
 
     rows.sort((left, right) => {
       const a = left[mapping.read.credential.credentialId],

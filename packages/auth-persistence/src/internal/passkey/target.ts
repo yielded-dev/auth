@@ -147,8 +147,10 @@ export const makePasskeyTargetKernel = (
 
     return {
       ...execution,
-      run: (operation, mutation) =>
-        execution.run(operation, mutation).pipe(Effect.provideService(LifecycleHooks, hooks)),
+      run: (operation, mutation, snapshot) =>
+        execution
+          .run(operation, mutation, snapshot)
+          .pipe(Effect.provideService(LifecycleHooks, hooks)),
     };
   });
 
@@ -269,6 +271,13 @@ export const makePasskeyTargetKernel = (
         Effect.provideService(CurrentPasskeyTransaction, {
           ...owner,
           read: (table, where, options) => owner.read(table, where, { ...options, lock: false }),
+          readMany: (reads) =>
+            owner.readMany(
+              reads.map((read) => ({
+                ...read,
+                options: { ...read.options, lock: false },
+              })),
+            ),
         }),
       ),
     );
@@ -309,6 +318,7 @@ export const makePasskeyTargetKernel = (
                   : contextAssertion(mapping, access),
               ),
               false,
+              !registration,
             );
           }),
         claim: (input, prepare) =>
@@ -416,6 +426,7 @@ export const makePasskeyTargetKernel = (
                 : snapshotPasskeySync(PasskeyEnrollmentSnapshot, value),
             ),
             false,
+            true,
           ),
       },
       { capture: contextInput },

@@ -194,22 +194,8 @@ export const cleanup = Effect.fn("oauthConnected.cleanup")(function* (
 
   const at = yield* owner.now(mapping.clock);
 
-  const candidates = yield* owner.read(
-    f.table,
-    both(
-      eq(col(f.table, f.moduleId), input.moduleId),
-      sql`((${col(f.table, f.state)} in ('Prepared','Pending') and ${col(f.table, f.expiresAt)} <= ${mapping.clock.encodeInstant(at)}) or (${col(f.table, f.state)} = 'Claimed' and ${col(f.table, f.claimExpiresAt)} <= ${mapping.clock.encodeInstant(at)}) or (${col(f.table, f.state)} not in ('Prepared','Pending','Claimed') and ${col(f.table, f.work)} <> 'Unresolved' and ${col(f.table, f.retentionUntil)} <= ${mapping.clock.encodeInstant(at)}))`,
-    ),
-    {
-      limit: input.limit + 1,
-      takeOnly: true,
-      observe: false,
-      lock: false,
-      orderBy: asc(col(f.table, f.flowId)),
-    },
-  );
-
-  const collectionCandidates = yield* discover(mapping, input.moduleId, input.limit);
+  const collectionCandidates = yield* discover(mapping, input.moduleId, input.limit, at);
+  const candidates = { rows: collectionCandidates.flows };
 
   const g = mapping.grant,
     j = S.jobTable(mapping),

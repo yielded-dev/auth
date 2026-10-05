@@ -5,7 +5,7 @@ import { Effect } from "effect";
 
 import type { PasskeyChargeKind } from "../models/passkey-model";
 import type { SqlExpression as SQL, QueryOperations } from "../query-operations";
-import type { makeTransactionKernel } from "../transaction-kernel";
+import type { makeTransactionKernel, Observation, TransactionRead } from "../transaction-kernel";
 import { CurrentPasskeyTransaction } from "./state";
 import type { makePasskeyStateKernel } from "./state";
 
@@ -24,7 +24,7 @@ export const makePasskeyAdmissionKernel = (
   >,
   transactions: Pick<ReturnType<typeof makeTransactionKernel>, "both">,
 ) => {
-  const { or, sql } = operations;
+  const { sql } = operations;
   const { col, equal, existsExact, key, mappedColumns, subjectScope, targetScope } = state;
   const invariant: (value: unknown) => asserts value = state.invariant;
   const { both } = transactions;
@@ -45,33 +45,39 @@ export const makePasskeyAdmissionKernel = (
     return scopes;
   });
 
-  const lockAdmission = Effect.fn("passkey.lockAdmission")(function* (mapping: any) {
-    const owner = yield* CurrentPasskeyTransaction;
+  const admissionRead = (mapping: any): TransactionRead => {
     const table = mapping.admission;
 
-    const identity = {
-      [table.authorityScope]: mapping.authorityScope,
-      [table.moduleId]: mapping.moduleId,
+    return {
+      table: table.table,
+      where: equal(table.table, {
+        [table.authorityScope]: mapping.authorityScope,
+        [table.moduleId]: mapping.moduleId,
+      }),
+      options: { limit: 1, columns: [table.authorityScope, table.moduleId], clock: mapping.clock },
     };
+  };
 
-    // The guarded write locks admission and requires one byte-exact identity.
-    // Previous marker/time is telemetry, not an authentication CAS.
-    const marked = {
-      ...identity,
-      [table.version]: owner.marker,
-      [table.ownerMarker]: owner.marker,
-    };
+  const lockAdmission = Effect.fn("passkey.lockAdmission")(function* (
+    mapping: any,
+    captured?: Observation,
+  ) {
+    const owner = yield* CurrentPasskeyTransaction;
+    const table = mapping.admission;
+    const request = admissionRead(mapping);
+    const found = captured ?? (yield* owner.read(request.table, request.where, request.options));
+    const row = found.rows[0];
 
-    yield* owner.updateGuarded(
-      table.table,
-      owner.exact(table.table, identity),
-      {
-        [table.version]: owner.marker,
-        [table.ownerMarker]: owner.marker,
-        [table.admittedAt]: null,
-      },
-      { rows: 1, returned: marked, postcondition: yield* existsExact(table.table, marked) },
+    // PostgreSQL locks the admission row; SQLite serializes physical writes.
+    // D1 rechecks admission and the rolling budgets inside its atomic batch.
+    invariant(
+      row !== undefined &&
+        row[table.authorityScope] === mapping.authorityScope &&
+        row[table.moduleId] === mapping.moduleId &&
+        found.nowMillis !== undefined,
     );
+
+    return found.nowMillis;
   });
 
   const pendingCount = (mapping: any, scope?: string) => {
@@ -136,25 +142,31 @@ export const makePasskeyAdmissionKernel = (
       );
     });
 
+  const chargeRead = (mapping: any, ceremony: PasskeyCeremony): TransactionRead => {
+    const table = mapping.charge;
+
+    return {
+      table: table.table,
+      where: equal(table.table, {
+        [table.moduleId]: ceremony.moduleId,
+        [table.flowId]: ceremony.flowId,
+      }),
+      options: { limit: 3, observe: false, columns: mappedColumns(table) },
+    };
+  };
+
   const readCharges = Effect.fn("passkey.readCharges")(function* (
     mapping: any,
     ceremony: PasskeyCeremony,
     policy: PasskeyMethodPolicy,
     subjectId?: string,
+    captured?: Observation,
   ) {
     const owner = yield* CurrentPasskeyTransaction;
     const table = mapping.charge;
 
-    const where = equal(table.table, {
-      [table.moduleId]: ceremony.moduleId,
-      [table.flowId]: ceremony.flowId,
-    });
-
-    const found = yield* owner.read(table.table, where, {
-      limit: 3,
-      observe: false,
-      columns: mappedColumns(table),
-    });
+    const request = chargeRead(mapping, ceremony);
+    const found = captured ?? (yield* owner.read(request.table, request.where, request.options));
 
     const scopes = yield* chargeScopes(ceremony, subjectId);
 
@@ -233,7 +245,18 @@ export const makePasskeyAdmissionKernel = (
     const table = mapping.charge;
     const anchor = mapping.admission;
     const clock = mapping.clock;
-    const earliest = yield* owner.now(clock);
+
+    const earliest = owner.observations.find(
+      (observation) =>
+        observation.table === anchor.table &&
+        observation.rows.some(
+          (row) =>
+            row[anchor.authorityScope] === mapping.authorityScope &&
+            row[anchor.moduleId] === mapping.moduleId,
+        ),
+    )?.nowMillis;
+
+    invariant(earliest !== undefined);
     const entries: Array<{ values: Record<string, unknown>; key: Record<string, unknown> }> = [];
 
     for (const { kind, scope } of (yield* chargeScopes(ceremony, subjectId)).filter((item) =>
@@ -268,15 +291,6 @@ export const makePasskeyAdmissionKernel = (
       entries.push({ values, key: identity });
     }
     invariant(entries.length === kinds.length);
-    for (const observation of yield* owner.insertMany(table.table, entries)) {
-      observation.rows = observation.rows.map((row) =>
-        Object.fromEntries(
-          Object.entries(row).filter(
-            ([name]) => name !== table.admittedAt && name !== table.retainUntil,
-          ),
-        ),
-      );
-    }
 
     const anchorIdentity = {
       [anchor.authorityScope]: mapping.authorityScope,
@@ -298,48 +312,27 @@ export const makePasskeyAdmissionKernel = (
 
     yield* owner.finalUpdate(
       anchor.table,
-      owner.exact(anchor.table, { ...anchorIdentity, [anchor.admittedAt]: null }),
+      owner.exact(anchor.table, {
+        [anchor.authorityScope]: mapping.authorityScope,
+        [anchor.moduleId]: mapping.moduleId,
+      }),
       {
+        [anchor.version]: owner.marker,
+        [anchor.ownerMarker]: owner.marker,
         [anchor.admittedAt]: clock.fromMillis(clock.engineNowMillis),
       },
       { rows: 1, postcondition: validStamp },
     );
-    const chargeConditions: SQL[] = [];
-    const pendingCharges: SQL[] = [];
-
-    for (const { key: identity } of entries) {
-      const expected = {
-        ...identity,
-        [table.version]: owner.marker,
-        [table.ownerMarker]: owner.marker,
-      };
-
-      const postcondition = yield* existsExact(
-        table.table,
-        expected,
-        both(
-          sql`${clock.toMillis(sql`${col(table.table, table.admittedAt)}`)} = ${stampMillis}`,
-          sql`${clock.toMillis(sql`${col(table.table, table.retainUntil)}`)} = ${stampMillis} + ${chargeRetentionMillis}`,
-        ),
-      );
-
-      pendingCharges.push(
-        owner.exact(table.table, {
-          ...expected,
-          [table.admittedAt]: null,
-          [table.retainUntil]: null,
-        }),
-      );
-      chargeConditions.push(postcondition);
-    }
-    yield* owner.finalUpdate(
+    yield* owner.finalInsertMany(
       table.table,
-      or(...pendingCharges)!,
-      {
-        [table.admittedAt]: stamp,
-        [table.retainUntil]: clock.fromMillis(sql`${stampMillis} + ${chargeRetentionMillis}`),
-      },
-      { rows: entries.length, postcondition: both(...chargeConditions) },
+      entries.map(({ key, values }) => ({
+        key,
+        values: {
+          ...values,
+          [table.admittedAt]: stamp,
+          [table.retainUntil]: clock.fromMillis(sql`${stampMillis} + ${chargeRetentionMillis}`),
+        },
+      })),
     );
     owner.postconditions.push(
       sql`(select count(*) from ${table.table} where ${owner.exact(table.table, {
@@ -353,9 +346,11 @@ export const makePasskeyAdmissionKernel = (
   return {
     chargeRetentionMillis,
     chargeScopes,
+    admissionRead,
     lockAdmission,
     admissionCondition,
     guardAdmission,
+    chargeRead,
     readCharges,
     guardChargeSet,
     insertCharges,

@@ -8,7 +8,7 @@ import {
 import { Effect } from "effect";
 
 import type { QueryOperations } from "../query-operations";
-import type { makeTransactionKernel } from "../transaction-kernel";
+import type { makeTransactionKernel, Observation, TransactionRead } from "../transaction-kernel";
 import type { makePasskeyAdmissionKernel } from "./admission";
 import type { makePasskeyCredentialsKernel } from "./credentials";
 import type { makePasskeyFlowKernel } from "./flow";
@@ -24,15 +24,23 @@ export const makePasskeyEnrollmentKernel = (
   operations: QueryOperations,
   admission: Pick<
     ReturnType<typeof makePasskeyAdmissionKernel>,
-    "lockAdmission" | "readCharges" | "guardChargeSet"
+    "lockAdmission" | "readCharges" | "guardChargeSet" | "admissionRead" | "chargeRead"
   >,
   credentials: Pick<
     ReturnType<typeof makePasskeyCredentialsKernel>,
-    "readModule" | "readPolicyGuards"
+    "readModule" | "readPolicyGuards" | "moduleRead" | "policyReads"
   >,
   flow: Pick<
     ReturnType<typeof makePasskeyFlowKernel>,
-    "compatiblePolicy" | "exactClaim" | "issueFlow" | "liveCondition" | "readFlow" | "terminalFlow"
+    | "compatiblePolicy"
+    | "exactClaim"
+    | "issueFlow"
+    | "liveCondition"
+    | "readFlow"
+    | "terminalFlow"
+    | "flowRead"
+    | "issueRead"
+    | "issueCondition"
   >,
   state: Pick<
     ReturnType<typeof makePasskeyStateKernel>,
@@ -41,8 +49,9 @@ export const makePasskeyEnrollmentKernel = (
   writeState: Pick<
     ReturnType<typeof makePasskeyWriteStateKernel>,
     | "authorizeAction"
-    | "credentialRows"
+    | "credentialRead"
     | "currentSubject"
+    | "currentSubjectReads"
     | "enrollmentDigest"
     | "digest"
     | "insertCredential"
@@ -51,19 +60,30 @@ export const makePasskeyEnrollmentKernel = (
   >,
   transactions: Pick<ReturnType<typeof makeTransactionKernel>, "both">,
 ) => {
-  const { sql } = operations;
-  const { lockAdmission, readCharges, guardChargeSet } = admission;
-  const { readModule, readPolicyGuards } = credentials;
+  const { or, sql } = operations;
+  const { lockAdmission, readCharges, guardChargeSet, admissionRead, chargeRead } = admission;
+  const { readModule, readPolicyGuards, moduleRead, policyReads } = credentials;
 
-  const { compatiblePolicy, exactClaim, issueFlow, liveCondition, readFlow, terminalFlow } = flow;
+  const {
+    compatiblePolicy,
+    exactClaim,
+    issueFlow,
+    liveCondition,
+    readFlow,
+    terminalFlow,
+    flowRead,
+    issueRead,
+    issueCondition,
+  } = flow;
 
   const { equal, handleKey, sameRevision, credentialKey: credentialKeyFor } = state;
   const invariant: (value: unknown) => asserts value = state.invariant;
 
   const {
     authorizeAction,
-    credentialRows,
+    credentialRead,
     currentSubject,
+    currentSubjectReads,
     enrollmentDigest,
     digest,
     insertCredential,
@@ -73,44 +93,51 @@ export const makePasskeyEnrollmentKernel = (
 
   const { both } = transactions;
 
+  const handleRead = (
+    mapping: any,
+    nativeId: unknown,
+    ceremony: PasskeyCeremony,
+    hashed: string,
+  ): TransactionRead => {
+    const table = mapping.read.handleOwnership;
+
+    return {
+      table: table.table,
+      where: or(
+        equal(table.table, { [table.rpId]: ceremony.profile.rpId, [table.subjectId]: nativeId }),
+        equal(table.table, { [table.handleKey]: hashed }),
+      )!,
+      options: { limit: 2 },
+    };
+  };
+
   const enrollmentHandle = Effect.fn("passkey.enrollmentHandle")(function* (
     mapping: any,
     subject: WriteSubject,
     ceremony: PasskeyCeremony,
     create: boolean,
+    captured?: Observation,
   ) {
     const owner = yield* CurrentPasskeyTransaction;
 
     invariant(ceremony.context._tag === "Enrollment");
     const table = mapping.read.handleOwnership;
 
-    const where = equal(table.table, {
-      [table.rpId]: ceremony.profile.rpId,
-      [table.subjectId]: subject.nativeId,
-    });
-
-    const found = yield* owner.read(table.table, where, { limit: 1 });
-    const row = found.rows[0];
     const hashed = yield* handleKey(ceremony.profile.rpId, ceremony.context.userHandle);
+    const request = handleRead(mapping, subject.nativeId, ceremony, hashed);
+    const found = captured ?? (yield* owner.read(request.table, request.where, request.options));
+    const row = found.rows[0];
 
     if (row !== undefined)
       return (
+        found.rows.length === 1 &&
+        row[table.rpId] === ceremony.profile.rpId &&
         table.isOwnedState(row[table.state]) &&
         row[table.handleKey] === hashed &&
         row[table.userHandle] === ceremony.context.userHandle &&
         mapping.read.subjectIds.equals(table.decodeSubjectId(row), subject.nativeId)
       );
     if (!create) return false;
-
-    const absent = yield* owner.read(
-      table.table,
-      equal(table.table, { [table.handleKey]: hashed }),
-      {
-        limit: 1,
-      },
-    );
-
-    if (absent.rows.length !== 0) return false;
 
     const inserted = yield* owner.insert(
       table.table,
@@ -133,7 +160,6 @@ export const makePasskeyEnrollmentKernel = (
     );
 
     found.rows = inserted.rows;
-    absent.rows = inserted.rows;
 
     return true;
   });
@@ -157,25 +183,54 @@ export const makePasskeyEnrollmentKernel = (
       ceremony.moduleId !== mapping.moduleId
     )
       return { _tag: "Rejected" } as const;
-    const current = yield* readModule(mapping);
+    const subjectId = ceremony.context.revision.subjectId;
+    const nativeId = mapping.read.subjectIds.toNative(subjectId);
+
+    const [module, admitted, subjectRows, factors, credentialRows, identity, handle, ...guards] =
+      yield* owner.readMany([
+        moduleRead(mapping, {
+          admitted: yield* issueCondition(mapping, ceremony, input.policy, subjectId),
+        }),
+        admissionRead(mapping),
+        ...currentSubjectReads(
+          mapping,
+          subjectId,
+          mapping.write.policy.action(nativeId, input.authorization),
+        ),
+        credentialRead(mapping, nativeId),
+        issueRead(mapping, ceremony),
+        handleRead(
+          mapping,
+          nativeId,
+          ceremony,
+          yield* handleKey(ceremony.profile.rpId, ceremony.context.userHandle),
+        ),
+        ...policyReads(mapping),
+      ]);
+
+    const current = yield* readModule(mapping, module!);
 
     if (current === undefined || !compatiblePolicy(ceremony, input.policy, current))
       return { _tag: "Rejected" } as const;
-    yield* lockAdmission(mapping);
-    const subject = yield* currentSubject(mapping, ceremony.context.revision.subjectId);
+    yield* lockAdmission(mapping, admitted!);
+    const subject = yield* currentSubject(mapping, subjectId, [subjectRows!, factors!]);
 
     if (subject === undefined || !sameRevision(subject.revision, ceremony.context.revision))
       return { _tag: "Rejected" } as const;
-    yield* readPolicyGuards(mapping);
+    yield* readPolicyGuards(mapping, guards);
     const policy = managementPolicy(mapping, subject);
     const maximum = Math.min(policy.maximumCredentials, input.management.maximumCredentials);
-    const rows = yield* credentialRows(mapping, subject, ceremony.profile.rpId);
+
+    const rows = credentialRows!.rows.filter(
+      (row) => row[mapping.read.credential.rpId] === ceremony.profile.rpId,
+    );
+
     const ids = rows.map((row) => row[mapping.read.credential.protocolCredentialId]);
 
     if (
       ids.length !== ceremony.allowedCredentials.length ||
       !ids.every((id) => ceremony.allowedCredentials.some((item) => item.id === id)) ||
-      !(yield* owner.check(capCondition(mapping, subject, maximum, 1)))
+      credentialRows!.rows.length + 1 > maximum
     )
       return { _tag: "Rejected" } as const;
     if (
@@ -197,6 +252,8 @@ export const makePasskeyEnrollmentKernel = (
             input.management.maximumEvidenceAgeMillis,
           ),
         },
+        undefined,
+        true,
       ))
     )
       return { _tag: "Rejected" } as const;
@@ -207,10 +264,14 @@ export const makePasskeyEnrollmentKernel = (
           authorization: input.authorization,
         })),
     );
-    const issued = yield* issueFlow(mapping, ceremony, input.policy, current, subject.subjectId);
+
+    const issued = yield* issueFlow(mapping, ceremony, input.policy, current, subject.subjectId, {
+      identity: identity!,
+      admitted: module!.checks!.admitted!,
+    });
 
     if (issued._tag !== "Issued") return issued;
-    invariant(yield* enrollmentHandle(mapping, subject, ceremony, true));
+    invariant(yield* enrollmentHandle(mapping, subject, ceremony, true, handle!));
     owner.postconditions.push(capCondition(mapping, subject, maximum, 1));
 
     return issued;
@@ -229,18 +290,60 @@ export const makePasskeyEnrollmentKernel = (
       ceremony.moduleId !== mapping.moduleId
     )
       return { _tag: "Rejected" } as const;
-    const current = yield* readModule(mapping);
+    const subjectId = ceremony.context.revision.subjectId;
+    const nativeId = mapping.read.subjectIds.toNative(subjectId);
+    const tuple = mapping.read.credentialOwnership;
+    const key = yield* credentialKeyFor(ceremony.profile.rpId, input.verified.protocolCredentialId);
+
+    const [
+      module,
+      admitted,
+      subjectRows,
+      factors,
+      capturedFlow,
+      handle,
+      absent,
+      charges,
+      credentialRows,
+      ...guards
+    ] = yield* owner.readMany([
+      moduleRead(mapping),
+      admissionRead(mapping),
+      ...currentSubjectReads(
+        mapping,
+        subjectId,
+        mapping.write.policy.action(nativeId, input.authorization),
+      ),
+      flowRead(mapping, ceremony.flowId, liveCondition(mapping, ceremony, input.claim)),
+      handleRead(
+        mapping,
+        nativeId,
+        ceremony,
+        yield* handleKey(ceremony.profile.rpId, ceremony.context.userHandle),
+      ),
+      {
+        table: tuple.table,
+        where: equal(tuple.table, { [tuple.credentialKey]: key }),
+        options: { limit: 1 },
+      },
+      chargeRead(mapping, ceremony),
+      credentialRead(mapping, nativeId),
+      ...policyReads(mapping),
+    ]);
+
+    const current = yield* readModule(mapping, module!);
 
     if (current === undefined) return { _tag: "Rejected" } as const;
-    yield* lockAdmission(mapping);
-    const subject = yield* currentSubject(mapping, ceremony.context.revision.subjectId);
+    yield* lockAdmission(mapping, admitted!);
+    const subject = yield* currentSubject(mapping, subjectId, [subjectRows!, factors!]);
 
-    yield* readPolicyGuards(mapping);
+    yield* readPolicyGuards(mapping, guards);
 
     const read = yield* readFlow(
       mapping,
       ceremony.flowId,
       liveCondition(mapping, ceremony, input.claim),
+      capturedFlow!,
     );
 
     if (read === undefined || !exactClaim(read, input.claim)) return { _tag: "Rejected" } as const;
@@ -263,8 +366,8 @@ export const makePasskeyEnrollmentKernel = (
     const maximum = Math.min(policy.maximumCredentials, input.management.maximumCredentials);
 
     if (
-      !(yield* owner.check(capCondition(mapping, subject, maximum, 1))) ||
-      !(yield* enrollmentHandle(mapping, subject, ceremony, false))
+      credentialRows!.rows.length + 1 > maximum ||
+      !(yield* enrollmentHandle(mapping, subject, ceremony, false, handle!))
     )
       return yield* reject;
     if (
@@ -287,21 +390,12 @@ export const makePasskeyEnrollmentKernel = (
           ),
         },
         ceremony.context.authorization.requirement,
+        true,
       ))
     )
       return yield* reject;
-    const tuple = mapping.read.credentialOwnership;
-    // Credential ownership is RP-global, including retained registration custody.
-    const key = yield* credentialKeyFor(ceremony.profile.rpId, input.verified.protocolCredentialId);
-
-    const absent = yield* owner.read(
-      tuple.table,
-      equal(tuple.table, { [tuple.credentialKey]: key }),
-      { limit: 1 },
-    );
-
-    if (absent.rows.length !== 0) return yield* reject;
-    yield* readCharges(mapping, ceremony, read.policy, subject.subjectId);
+    if (absent!.rows.length !== 0) return yield* reject;
+    yield* readCharges(mapping, ceremony, read.policy, subject.subjectId, charges!);
     yield* guardChargeSet(mapping, ceremony, subject.subjectId);
 
     const safe = yield* insertCredential(
@@ -310,7 +404,7 @@ export const makePasskeyEnrollmentKernel = (
       ceremony,
       input.verified,
       read.nowMillis,
-      absent,
+      absent!,
     );
 
     yield* terminalFlow(mapping, read, "Verified");

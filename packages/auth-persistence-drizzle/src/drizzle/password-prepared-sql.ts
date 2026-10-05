@@ -1,5 +1,6 @@
 import {
-  type NativeDatabase,
+  NativeDatabase,
+  makeTransactionKernel,
   CurrentPasswordPreparedTransaction,
   PasswordPreparedPostconditions,
   PasswordPreparedJournalGuards,
@@ -67,7 +68,10 @@ import {
   type PasswordSqlQuery,
 } from "./password-sql";
 import { checkProofCompletionIn, completeProofPlanIn } from "./proof-sql";
+import { drizzleQueryOperations } from "./query-operations";
 import { validateDrizzleStorage } from "./storage-validation";
+
+const cleanupTransactions = makeTransactionKernel(drizzleQueryOperations);
 
 const translateFailure = <A, E, R>(
   effect: Effect.Effect<A, E, R>,
@@ -420,6 +424,13 @@ export const makeSqlPasswordPreparedPersistence = Effect.fn("makeSqlPasswordPrep
     LifecycleHooks | CurrentPasswordSql | NativeDatabase
   > {
     const database = yield* CurrentPasswordSql;
+    const native = yield* NativeDatabase;
+
+    const dialect = native.$client.onDialectOrElse({
+      pg: () => "pg" as const,
+      sqlite: () => "sqlite" as const,
+      orElse: () => "mysql" as const,
+    });
 
     if (!configuration.coordinated)
       yield* validateDrizzleStorage({
@@ -1147,6 +1158,69 @@ export const makeSqlPasswordPreparedPersistence = Effect.fn("makeSqlPasswordPrep
                 configuration.locking,
               );
 
+              const semanticRows = rows.map(({ row }) =>
+                Object.fromEntries(
+                  Object.keys(c).map((key) => {
+                    const field = t[key as keyof typeof c];
+
+                    return [field, row[field]];
+                  }),
+                ),
+              );
+
+              const owner = cleanupTransactions.makeTransactionOwner(
+                transaction,
+                journal,
+                "password-cleanup",
+                unavailable,
+                {
+                  batch: false,
+                  locking: configuration.locking,
+                  mysql: dialect === "mysql",
+                  dialect,
+                  maxParameters:
+                    configuration.maxParameters ??
+                    native.maxParameters ??
+                    (dialect === "sqlite" ? 900 : 16_000),
+                },
+              );
+
+              const grouped = owner.rowsets(t.table, semanticRows) !== undefined;
+
+              const identity = (row: Record<string, unknown>) => ({
+                [t.moduleId]: input.moduleId,
+                [t.intentId]: row[t.intentId],
+              });
+
+              const observed = grouped
+                ? yield* owner.observeKeys(t.table, semanticRows.map(identity), semanticRows)
+                : undefined;
+
+              const expiredRows = semanticRows.filter((_, index) => rows[index]!.expired === 1);
+              const retainedRows = semanticRows.filter((_, index) => rows[index]!.expired !== 1);
+
+              const removedGroup =
+                grouped &&
+                (yield* owner.changeRows(
+                  t.table,
+                  expiredRows.map((row) => ({
+                    key: identity(row),
+                    before: row,
+                    after: null,
+                  })),
+                ));
+
+              const expiredGroup =
+                grouped &&
+                (yield* owner.changeRows(
+                  t.table,
+                  retainedRows.map((row) => ({
+                    key: identity(row),
+                    before: row,
+                    after: t.encodeTerminal("Expired"),
+                  })),
+                ));
+
               let removed = 0;
               // Exact predicates include private snapshots. Bound both binds and expression
               // depth for SQLite, and retain the admission charge until BOTH horizons pass.
@@ -1171,12 +1245,13 @@ export const makeSqlPasswordPreparedPersistence = Effect.fn("makeSqlPasswordPrep
                 const retained = chunk.filter((entry) => entry.expired !== 1);
 
                 if (expired.length > 0) {
-                  yield* transaction
-                    .delete(t.table)
-                    .where(or(...expired.map(({ row }) => rowCondition(mapping, row))));
+                  if (!removedGroup)
+                    yield* transaction
+                      .delete(t.table)
+                      .where(or(...expired.map(({ row }) => rowCondition(mapping, row))));
                   removed += expired.length;
                 }
-                if (retained.length > 0)
+                if (!expiredGroup && retained.length > 0)
                   yield* transaction
                     .update(t.table)
                     .set(t.encodeTerminal("Expired"))
@@ -1184,7 +1259,7 @@ export const makeSqlPasswordPreparedPersistence = Effect.fn("makeSqlPasswordPrep
               }
               // Check after every write, including AFTER triggers affecting another chunk.
               // Unique module/intent keys make matching cardinality an exact row fence.
-              for (const chunk of chunks) {
+              for (const chunk of grouped ? [] : chunks) {
                 const retained = chunk.filter((entry) => entry.expired !== 1);
 
                 const expected =
@@ -1217,6 +1292,15 @@ export const makeSqlPasswordPreparedPersistence = Effect.fn("makeSqlPasswordPrep
 
                 if (checked?.total !== retained.length || checked.retained !== retained.length)
                   return yield* unavailable();
+              }
+              if (observed !== undefined) {
+                observed.rows = retainedRows.map((row) => ({
+                  ...row,
+                  [t.state]: t.states.Expired,
+                  [t.snapshot]: null,
+                  [t.digest]: null,
+                }));
+                yield* owner.finish();
               }
 
               return prepare(

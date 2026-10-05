@@ -11,9 +11,14 @@ import {
 import type { SubjectId } from "@yielded/auth/Schema";
 import { Effect, Schema } from "effect";
 
-import type { QueryOperations } from "../query-operations";
+import type { QueryOperations, SqlExpression } from "../query-operations";
 import type { TransactionTargetConfiguration } from "../transaction-execution-kernel";
-import type { makeTransactionKernel, TransactionNativeDatabase } from "../transaction-kernel";
+import type {
+  makeTransactionKernel,
+  Observation,
+  TransactionNativeDatabase,
+  TransactionRead,
+} from "../transaction-kernel";
 import { makePasskeyLookup } from "./lookup";
 import { CurrentPasskeyTransaction } from "./state";
 import type { makePasskeyStateKernel } from "./state";
@@ -70,9 +75,61 @@ export const makePasskeyCredentialsKernel = (
   const invariant: (value: unknown) => asserts value = state.invariant;
   const { both } = transactions;
 
+  const subjectRead = (mapping: any, subjectId: SubjectId): TransactionRead => {
+    const descriptor = mapping.subject;
+    const nativeId = mapping.subjectIds.toNative(subjectId);
+
+    invariant(mapping.subjectIds.toSubject(nativeId) === subjectId);
+
+    return {
+      table: descriptor.table,
+      where: equal(descriptor.table, { [descriptor.id]: nativeId }),
+      options: {
+        limit: 1,
+        columns: [descriptor.id, descriptor.status, descriptor.securityRevision],
+        condition: descriptor.activeCondition,
+      },
+    };
+  };
+
+  const moduleRead = (
+    mapping: any,
+    checks?: Readonly<Record<string, SqlExpression>>,
+  ): TransactionRead => {
+    const descriptor = mapping.module;
+
+    return {
+      table: descriptor.table,
+      where: equal(descriptor.table, { [descriptor.moduleId]: mapping.moduleId }),
+      options: {
+        limit: 1,
+        columns: [
+          ...new Set<string>([
+            descriptor.moduleId,
+            descriptor.status,
+            descriptor.policyRevision,
+            ...descriptor.policyColumns,
+          ]),
+        ],
+        condition: descriptor.activeCondition,
+        ...(checks === undefined ? {} : { checks }),
+      },
+    };
+  };
+
+  const policyReads = (mapping: any): ReadonlyArray<TransactionRead> =>
+    [...(mapping.module.guards ?? [])]
+      .sort((a, b) => (a.scope < b.scope ? -1 : a.scope > b.scope ? 1 : 0))
+      .map((guard) => ({
+        table: guard.table,
+        where: guard.where(mapping.moduleId),
+        options: { limit: 1, columns: guard.columns, condition: guard.condition(mapping.moduleId) },
+      }));
+
   const readSubject = Effect.fn("passkey.readSubject")(function* (
     mapping: any,
     subjectId: SubjectId,
+    captured?: Observation,
   ) {
     const owner = yield* CurrentPasskeyTransaction;
     const descriptor = mapping.subject;
@@ -80,15 +137,8 @@ export const makePasskeyCredentialsKernel = (
 
     invariant(mapping.subjectIds.toSubject(nativeId) === subjectId);
 
-    const found = yield* owner.read(
-      descriptor.table,
-      equal(descriptor.table, { [descriptor.id]: nativeId }),
-      {
-        limit: 1,
-        columns: [descriptor.id, descriptor.status, descriptor.securityRevision],
-        condition: descriptor.activeCondition,
-      },
-    );
+    const request = subjectRead(mapping, subjectId);
+    const found = captured ?? (yield* owner.read(request.table, request.where, request.options));
 
     const row = found.rows[0];
 
@@ -111,28 +161,15 @@ export const makePasskeyCredentialsKernel = (
     return { nativeId, subjectId, securityRevision };
   });
 
-  const readModule = Effect.fn("passkey.readModule")(function* (mapping: any) {
+  const readModule = Effect.fn("passkey.readModule")(function* (
+    mapping: any,
+    captured?: Observation,
+  ) {
     const owner = yield* CurrentPasskeyTransaction;
     const descriptor = mapping.module;
 
-    const columns = [
-      ...new Set<string>([
-        descriptor.moduleId,
-        descriptor.status,
-        descriptor.policyRevision,
-        ...descriptor.policyColumns,
-      ]),
-    ];
-
-    const found = yield* owner.read(
-      descriptor.table,
-      equal(descriptor.table, { [descriptor.moduleId]: mapping.moduleId }),
-      {
-        limit: 1,
-        columns,
-        condition: descriptor.activeCondition,
-      },
-    );
+    const request = moduleRead(mapping);
+    const found = captured ?? (yield* owner.read(request.table, request.where, request.options));
 
     const row = found.rows[0];
 
@@ -151,22 +188,21 @@ export const makePasskeyCredentialsKernel = (
     );
   });
 
-  const readPolicyGuards = Effect.fn("passkey.readPolicyGuards")(function* (mapping: any) {
+  const readPolicyGuards = Effect.fn("passkey.readPolicyGuards")(function* (
+    mapping: any,
+    captured?: ReadonlyArray<Observation>,
+  ) {
     const owner = yield* CurrentPasskeyTransaction;
+    const requests = policyReads(mapping);
 
-    for (const guard of [...(mapping.module.guards ?? [])].sort((a, b) =>
-      a.scope < b.scope ? -1 : a.scope > b.scope ? 1 : 0,
-    )) {
-      const condition = guard.condition(mapping.moduleId);
+    if (captured !== undefined) invariant(captured.length === requests.length);
 
-      const locked = yield* owner.read(guard.table, guard.where(mapping.moduleId), {
-        limit: 1,
-        columns: guard.columns,
-        condition,
-      });
+    for (const [index, request] of requests.entries()) {
+      const locked =
+        captured?.[index] ?? (yield* owner.read(request.table, request.where, request.options));
 
       invariant(locked.rows.length === 1 && locked.conditionHolds);
-      owner.postconditions.push(condition);
+      owner.postconditions.push(request.options!.condition!);
     }
   });
 
@@ -204,18 +240,16 @@ export const makePasskeyCredentialsKernel = (
     return subjectId as SubjectId;
   });
 
-  const readRevision = Effect.fn("passkey.readRevision")(function* (
+  const revisionRead = (
     mapping: any,
-    subject: SubjectRead,
+    nativeId: unknown,
     ids?: ReadonlyArray<string>,
-  ) {
-    const owner = yield* CurrentPasskeyTransaction;
-
+  ): TransactionRead => {
     if (ids !== undefined) invariant(ids.length <= 64 && new Set(ids).size === ids.length);
     const descriptor = mapping.authority;
 
     const where = both(
-      equal(descriptor.table, { [descriptor.subjectId]: subject.nativeId }),
+      equal(descriptor.table, { [descriptor.subjectId]: nativeId }),
       descriptor.activeCondition,
       ids === undefined
         ? undefined
@@ -224,11 +258,27 @@ export const makePasskeyCredentialsKernel = (
           : inArray(col(descriptor.table, descriptor.credentialId), [...ids]),
     );
 
-    const found = yield* owner.read(descriptor.table, where, {
-      limit: 64,
-      columns: mappedColumns(descriptor),
-      orderBy: asc(col(descriptor.table, descriptor.credentialId)),
-    });
+    return {
+      table: descriptor.table,
+      where,
+      options: {
+        limit: 64,
+        columns: mappedColumns(descriptor),
+        orderBy: asc(col(descriptor.table, descriptor.credentialId)),
+      },
+    };
+  };
+
+  const readRevision = Effect.fn("passkey.readRevision")(function* (
+    mapping: any,
+    subject: SubjectRead,
+    ids?: ReadonlyArray<string>,
+    captured?: Observation,
+  ) {
+    const owner = yield* CurrentPasskeyTransaction;
+    const descriptor = mapping.authority;
+    const request = revisionRead(mapping, subject.nativeId, ids);
+    const found = captured ?? (yield* owner.read(request.table, request.where, request.options));
 
     const credentials = found.rows.map((row) => {
       invariant(descriptor.isActiveStatus(row[descriptor.status]));
@@ -469,29 +519,60 @@ export const makePasskeyCredentialsKernel = (
     const owner = yield* CurrentPasskeyTransaction;
 
     if (input.moduleId !== mapping.moduleId) return undefined;
-    const policy = yield* readModule(mapping);
+    const nativeId = mapping.read.subjectIds.toNative(input.subjectId);
+    const handle = mapping.read.handleOwnership;
+    const credential = mapping.read.credential;
+
+    const [module, subjectRows, handles, found, factors, ...guards] = yield* owner.readMany([
+      moduleRead(mapping),
+      subjectRead(mapping.read, input.subjectId),
+      {
+        table: handle.table,
+        where: both(
+          equal(handle.table, {
+            [handle.rpId]: input.rpId,
+            [handle.subjectId]: nativeId,
+          }),
+          handle.ownedCondition,
+        ),
+        options: { limit: 1, columns: mappedColumns(handle) },
+      },
+      {
+        table: credential.table,
+        where: both(
+          equal(credential.table, {
+            [credential.rpId]: input.rpId,
+            [credential.subjectId]: nativeId,
+          }),
+          credential.activeCondition,
+        ),
+        options: {
+          limit: 64,
+          columns: [
+            credential.credentialId,
+            credential.rpId,
+            credential.protocolCredentialId,
+            credential.subjectId,
+            credential.credentialRevision,
+            credential.status,
+          ],
+          orderBy: asc(col(credential.table, credential.protocolCredentialId)),
+        },
+      },
+      revisionRead(mapping.read, nativeId),
+      ...policyReads(mapping),
+    ]);
+
+    const policy = yield* readModule(mapping, module!);
 
     if (policy === undefined || !policy.profiles.some((profile) => profile.rpId === input.rpId))
       return undefined;
-    const subject = yield* readSubject(mapping.read, input.subjectId);
+    const subject = yield* readSubject(mapping.read, input.subjectId, subjectRows!);
 
     if (subject === undefined) return undefined;
-    yield* readPolicyGuards(mapping);
-    const handle = mapping.read.handleOwnership;
+    yield* readPolicyGuards(mapping, guards);
 
-    const handles = yield* owner.read(
-      handle.table,
-      both(
-        equal(handle.table, {
-          [handle.rpId]: input.rpId,
-          [handle.subjectId]: subject.nativeId,
-        }),
-        handle.ownedCondition,
-      ),
-      { limit: 1, columns: mappedColumns(handle) },
-    );
-
-    const handleRow = handles.rows[0];
+    const handleRow = handles!.rows[0];
     let userHandle: PasskeyUserHandle | undefined;
 
     if (handleRow !== undefined) {
@@ -508,32 +589,8 @@ export const makePasskeyCredentialsKernel = (
       userHandle = Schema.decodeUnknownSync(PasskeyUserHandle)(handleRow[handle.userHandle]);
       invariant(handleRow[handle.handleKey] === (yield* handleKey(input.rpId, userHandle)));
     }
-    const credential = mapping.read.credential;
 
-    const found = yield* owner.read(
-      credential.table,
-      both(
-        equal(credential.table, {
-          [credential.rpId]: input.rpId,
-          [credential.subjectId]: subject.nativeId,
-        }),
-        credential.activeCondition,
-      ),
-      {
-        limit: 64,
-        columns: [
-          credential.credentialId,
-          credential.rpId,
-          credential.protocolCredentialId,
-          credential.subjectId,
-          credential.credentialRevision,
-          credential.status,
-        ],
-        orderBy: asc(col(credential.table, credential.protocolCredentialId)),
-      },
-    );
-
-    const credentials = found.rows.map((row) => {
+    const credentials = found!.rows.map((row) => {
       invariant(
         credential.isActiveStatus(row[credential.status]) && row[credential.rpId] === input.rpId,
       );
@@ -545,7 +602,7 @@ export const makePasskeyCredentialsKernel = (
     });
 
     invariant(new Set(credentials.map((item) => item.id)).size === credentials.length);
-    const revision = yield* readRevision(mapping.read, subject);
+    const revision = yield* readRevision(mapping.read, subject, undefined, factors!);
 
     invariant(revision !== undefined);
 
@@ -553,6 +610,10 @@ export const makePasskeyCredentialsKernel = (
   });
 
   return {
+    moduleRead,
+    policyReads,
+    subjectRead,
+    revisionRead,
     readSubject,
     readModule,
     readPolicyGuards,

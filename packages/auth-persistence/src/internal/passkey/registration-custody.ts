@@ -125,6 +125,11 @@ export const makePasskeyRegistrationCustodyKernel = (
     ) {
       const keys = [...new Set(values)];
       const rows: Row[] = [];
+      const key = (value: string) => ({ ...scope, [column]: value });
+      const captured = yield* owner.readKeys(table, keys.map(key), { observe: false });
+
+      if (captured !== undefined)
+        return { table, keys, rows: captured.rows, key, aliased: !captured.canonical };
       // IN, CASE identities and CASE positions consume three binds per key.
       const size = Math.max(1, Math.min(64, Math.floor((owner.maxParameters - 4) / 3)));
 
@@ -146,7 +151,6 @@ export const makePasskeyRegistrationCustodyKernel = (
 
         rows.push(...selected.rows);
       }
-      const key = (value: string) => ({ ...scope, [column]: value });
 
       const aliased = rows.some(
         (row) => !keys.some((value) => matchesNativeRow(table, row, key(value))),
@@ -181,12 +185,7 @@ export const makePasskeyRegistrationCustodyKernel = (
       return;
     }
     for (const selected of [handles, intents])
-      for (const value of selected.keys)
-        yield* owner.observe(
-          selected.table,
-          equal(selected.table, selected.key(value)),
-          selected.rows.filter((row) => matchesNativeRow(selected.table, row, selected.key(value))),
-        );
+      yield* owner.observeKeys(selected.table, selected.keys.map(selected.key), selected.rows);
 
     const rejected: Row[] = [],
       released: Row[] = [],
@@ -236,6 +235,17 @@ export const makePasskeyRegistrationCustodyKernel = (
       key: (row: Row) => Row,
       values?: Row,
     ) {
+      if (
+        yield* owner.changeRows(
+          table,
+          rows.map((row) => ({
+            key: key(row),
+            before: row,
+            after: values ?? null,
+          })),
+        )
+      )
+        return;
       const parameters = Object.keys(values ?? {}).length;
       const byteLimit = owner.maxParameters <= 100 ? 48_000 : 512_000;
 

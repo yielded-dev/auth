@@ -22,8 +22,8 @@ import { DateTime, Effect, Schema } from "effect";
 
 import { digest as digestText } from "../crypto";
 import type { PersistenceMappingError } from "../mapping-error";
-import type { QueryOperations } from "../query-operations";
-import type { Observation, makeTransactionKernel } from "../transaction-kernel";
+import type { QueryOperations, SqlExpression } from "../query-operations";
+import type { Observation, TransactionRead, makeTransactionKernel } from "../transaction-kernel";
 import { CurrentPasskeyTransaction } from "./state";
 import type { makePasskeyStateKernel } from "./state";
 
@@ -86,30 +86,66 @@ export const makePasskeyWriteStateKernel = (
     value: S["Type"],
   ) => digestText(jsonStorage(schema).encode(value));
 
+  const currentSubjectReads = (
+    mapping: any,
+    subjectId: SubjectId,
+    condition?: SqlExpression,
+  ): readonly [TransactionRead, TransactionRead] => {
+    const read = mapping.read;
+    const table = read.subject;
+    const nativeId = read.subjectIds.toNative(subjectId);
+    const factor = read.authority;
+
+    invariant(read.subjectIds.toSubject(nativeId) === subjectId);
+
+    return [
+      {
+        table: table.table,
+        where: equal(table.table, { [table.id]: nativeId }),
+        options: {
+          limit: 1,
+          columns: [
+            ...new Set<string>([
+              table.id,
+              table.status,
+              table.securityRevision,
+              ...mapping.write.policy.subjectColumns,
+            ]),
+          ],
+          condition: both(table.activeCondition, condition),
+          clock: mapping.clock,
+        },
+      },
+      {
+        table: factor.table,
+        where: both(equal(factor.table, { [factor.subjectId]: nativeId }), factor.activeCondition),
+        options: {
+          limit: 64,
+          columns: mappedColumns(factor),
+          orderBy: col(factor.table, factor.credentialId),
+        },
+      },
+    ];
+  };
+
   const currentSubject = Effect.fn("passkey.currentWriteSubject")(function* (
     mapping: any,
     subjectId: SubjectId,
+    captured?: ReadonlyArray<Observation>,
   ) {
     const owner = yield* CurrentPasskeyTransaction;
     const read = mapping.read;
     const table = read.subject;
     const nativeId = read.subjectIds.toNative(subjectId);
 
-    invariant(read.subjectIds.toSubject(nativeId) === subjectId);
+    const [found, authority] =
+      captured ?? (yield* owner.readMany(currentSubjectReads(mapping, subjectId)));
 
-    const found = yield* owner.read(table.table, equal(table.table, { [table.id]: nativeId }), {
-      limit: 1,
-      columns: [
-        ...new Set<string>([
-          table.id,
-          table.status,
-          table.securityRevision,
-          ...mapping.write.policy.subjectColumns,
-        ]),
-      ],
-      condition: table.activeCondition,
-      clock: mapping.clock,
-    });
+    invariant(
+      found !== undefined &&
+        authority !== undefined &&
+        read.subjectIds.toSubject(nativeId) === subjectId,
+    );
 
     const row = found.rows[0];
 
@@ -121,15 +157,7 @@ export const makePasskeyWriteStateKernel = (
     owner.postconditions.push(active);
     const factor = read.authority;
 
-    const factors = (yield* owner.read(
-      factor.table,
-      both(equal(factor.table, { [factor.subjectId]: nativeId }), factor.activeCondition),
-      {
-        limit: 64,
-        columns: mappedColumns(factor),
-        orderBy: col(factor.table, factor.credentialId),
-      },
-    )).rows;
+    const factors = authority.rows;
 
     const revision = snapshotPasskeySync(PasskeyRevision, {
       subjectId,
@@ -150,23 +178,29 @@ export const makePasskeyWriteStateKernel = (
     return { subjectId, nativeId, row, revision, nowMillis: found.nowMillis };
   });
 
+  const credentialRead = (mapping: any, nativeId: unknown, rpId?: string): TransactionRead => {
+    const table = mapping.read.credential;
+
+    return {
+      table: table.table,
+      where: both(
+        equal(table.table, { [table.subjectId]: nativeId }),
+        table.activeCondition,
+        rpId === undefined ? undefined : equal(table.table, { [table.rpId]: rpId }),
+      ),
+      options: { limit: 64, orderBy: col(table.table, table.credentialId) },
+    };
+  };
+
   const credentialRows = Effect.fn("passkey.writeCredentialRows")(function* (
     mapping: any,
     subject: WriteSubject,
     rpId?: string,
   ) {
     const owner = yield* CurrentPasskeyTransaction;
-    const table = mapping.read.credential;
+    const request = credentialRead(mapping, subject.nativeId, rpId);
 
-    return (yield* owner.read(
-      table.table,
-      both(
-        equal(table.table, { [table.subjectId]: subject.nativeId }),
-        table.activeCondition,
-        rpId === undefined ? undefined : equal(table.table, { [table.rpId]: rpId }),
-      ),
-      { limit: 64, orderBy: col(table.table, table.credentialId) },
-    )).rows;
+    return (yield* owner.read(request.table, request.where, request.options)).rows;
   });
 
   const summary = (mapping: any, row: any) => {
@@ -219,18 +253,31 @@ export const makePasskeyWriteStateKernel = (
     }
     const ownership = read.credentialOwnership;
     const keys = [...new Set(credentials.map(({ key }) => key))];
+    const handle = read.handleOwnership;
+    const handleKeys = [...new Set(credentials.map(({ hashedHandle }) => hashedHandle))];
 
-    // Lock each bounded collection in key order through the owner so D1 admission
-    // guards and final observations retain the exact mapped rows.
-    const tuples = (yield* owner.read(
-      ownership.table,
-      inArray(col(ownership.table, ownership.credentialKey), keys),
+    const [tupleRows, handleRows] = yield* owner.readMany([
       {
-        limit: keys.length,
-        columns: mappedColumns(ownership),
-        orderBy: col(ownership.table, ownership.credentialKey),
+        table: ownership.table,
+        where: inArray(col(ownership.table, ownership.credentialKey), keys),
+        options: {
+          limit: keys.length,
+          columns: mappedColumns(ownership),
+          orderBy: col(ownership.table, ownership.credentialKey),
+        },
       },
-    )).rows;
+      {
+        table: handle.table,
+        where: inArray(col(handle.table, handle.handleKey), handleKeys),
+        options: {
+          limit: handleKeys.length,
+          columns: mappedColumns(handle),
+          orderBy: col(handle.table, handle.handleKey),
+        },
+      },
+    ]);
+
+    const tuples = tupleRows!.rows;
 
     const tuplesByKey = new Map(tuples.map((tuple) => [tuple[ownership.credentialKey], tuple]));
 
@@ -251,18 +298,7 @@ export const makePasskeyWriteStateKernel = (
           row[table.credentialKey] === key,
       );
     }
-    const handle = read.handleOwnership;
-    const handleKeys = [...new Set(credentials.map(({ hashedHandle }) => hashedHandle))];
-
-    const handles = (yield* owner.read(
-      handle.table,
-      inArray(col(handle.table, handle.handleKey), handleKeys),
-      {
-        limit: handleKeys.length,
-        columns: mappedColumns(handle),
-        orderBy: col(handle.table, handle.handleKey),
-      },
-    )).rows;
+    const handles = handleRows!.rows;
 
     const handlesByKey = new Map(handles.map((held) => [held[handle.handleKey], held]));
 
@@ -380,6 +416,7 @@ export const makePasskeyWriteStateKernel = (
     },
     policy: PasskeyManagementPolicy,
     original?: typeof PasskeyRequirement.Type,
+    actionAllowed?: boolean,
   ) {
     const owner = yield* CurrentPasskeyTransaction;
     const { challenge, evidence } = authorization;
@@ -467,7 +504,7 @@ export const makePasskeyWriteStateKernel = (
     }
     const condition = mapping.write.policy.action(subject.nativeId, authorization);
 
-    if (!(yield* owner.check(condition))) return false;
+    if (!(actionAllowed ?? (yield* owner.check(condition)))) return false;
     owner.postconditions.push(condition);
 
     return true;
@@ -706,7 +743,9 @@ export const makePasskeyWriteStateKernel = (
   return {
     jsonStorage,
     digest,
+    currentSubjectReads,
     currentSubject,
+    credentialRead,
     credentialRows,
     summary,
     ownedCredential,

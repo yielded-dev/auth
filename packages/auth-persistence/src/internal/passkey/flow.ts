@@ -15,7 +15,7 @@ import { Array, DateTime, Effect } from "effect";
 
 import type { PasskeyFlowState } from "../models/passkey-model";
 import type { QueryOperations, SqlExpression as SQL } from "../query-operations";
-import type { makeTransactionKernel } from "../transaction-kernel";
+import type { makeTransactionKernel, Observation, TransactionRead } from "../transaction-kernel";
 import type { makePasskeyAdmissionKernel } from "./admission";
 import type { CredentialRead, SubjectRead, makePasskeyCredentialsKernel } from "./credentials";
 import type { makePasskeyRegistrationCustodyKernel } from "./registration-custody";
@@ -44,10 +44,20 @@ export const makePasskeyFlowKernel = (
     | "insertCharges"
     | "lockAdmission"
     | "readCharges"
+    | "admissionRead"
+    | "chargeRead"
   >,
   credentials: Pick<
     ReturnType<typeof makePasskeyCredentialsKernel>,
-    "readCredential" | "readModule" | "readPolicyGuards" | "readRevision" | "readSubject"
+    | "readCredential"
+    | "readModule"
+    | "readPolicyGuards"
+    | "readRevision"
+    | "readSubject"
+    | "moduleRead"
+    | "policyReads"
+    | "subjectRead"
+    | "revisionRead"
   >,
   registrationCustody: Pick<
     ReturnType<typeof makePasskeyRegistrationCustodyKernel>,
@@ -82,9 +92,21 @@ export const makePasskeyFlowKernel = (
     insertCharges,
     lockAdmission,
     readCharges,
+    admissionRead,
+    chargeRead,
   } = admission;
 
-  const { readCredential, readModule, readPolicyGuards, readRevision, readSubject } = credentials;
+  const {
+    readCredential,
+    readModule,
+    readPolicyGuards,
+    readRevision,
+    readSubject,
+    moduleRead,
+    policyReads,
+    subjectRead,
+    revisionRead,
+  } = credentials;
 
   const { releaseRegistrationCustody, scrubRegistrationIntent, cleanupRegistrationCustody } =
     registrationCustody;
@@ -279,27 +301,33 @@ export const makePasskeyFlowKernel = (
     };
   });
 
-  const readFlow = Effect.fn("passkey.readFlow")(function* (
-    mapping: any,
-    flowId: string,
-    condition?: SQL,
-  ) {
-    const owner = yield* CurrentPasskeyTransaction;
+  const flowRead = (mapping: any, flowId: string, condition?: SQL): TransactionRead => {
     const table = mapping.flow;
 
-    const found = yield* owner.read(
-      table.table,
-      equal(table.table, {
+    return {
+      table: table.table,
+      where: equal(table.table, {
         [table.moduleId]: mapping.moduleId,
         [table.flowId]: flowId,
       }),
-      {
+      options: {
         limit: 1,
         columns: mappedColumns(table),
         clock: mapping.clock,
         ...(condition === undefined ? {} : { condition }),
       },
-    );
+    };
+  };
+
+  const readFlow = Effect.fn("passkey.readFlow")(function* (
+    mapping: any,
+    flowId: string,
+    condition?: SQL,
+    captured?: Observation,
+  ) {
+    const owner = yield* CurrentPasskeyTransaction;
+    const request = flowRead(mapping, flowId, condition);
+    const found = captured ?? (yield* owner.read(request.table, request.where, request.options));
 
     const row = found.rows[0];
 
@@ -348,6 +376,7 @@ export const makePasskeyFlowKernel = (
     mapping: any,
     subject: SubjectRead | undefined,
     ceremony: PasskeyCeremony,
+    captured?: Observation,
   ) {
     const target = targetRevision(ceremony);
 
@@ -363,9 +392,40 @@ export const makePasskeyFlowKernel = (
       mapping.read,
       subject,
       target.credentials.map((item) => item.credentialId),
+      captured,
     );
 
     return current !== undefined && sameRevision(current, target);
+  });
+
+  const issueRead = (mapping: any, ceremony: PasskeyCeremony): TransactionRead => {
+    const table = mapping.flow;
+
+    return {
+      table: table.table,
+      where: both(
+        equal(table.table, { [table.moduleId]: mapping.moduleId }),
+        or(
+          equal(table.table, { [table.commandId]: ceremony.commandId }),
+          equal(table.table, { [table.flowId]: ceremony.flowId }),
+        ),
+      ),
+      options: { limit: 2, columns: [table.moduleId, table.commandId, table.flowId] },
+    };
+  };
+
+  const issueCondition = Effect.fnUntraced(function* (
+    mapping: any,
+    ceremony: PasskeyCeremony,
+    policy: PasskeyMethodPolicy,
+    subjectId?: SubjectId,
+  ) {
+    const kinds = (yield* chargeScopes(ceremony, subjectId)).map((item) => item.kind);
+
+    return both(
+      liveCondition(mapping, ceremony),
+      yield* admissionCondition(mapping, [policy], ceremony, subjectId, kinds, true, false),
+    );
   });
 
   /** The caller owns module, admission, subject and policy locks. Enrollment
@@ -376,6 +436,7 @@ export const makePasskeyFlowKernel = (
     suppliedPolicy: PasskeyMethodPolicy,
     current: PasskeyMethodPolicy,
     subjectId?: SubjectId,
+    captured?: { readonly identity: Observation; readonly admitted: boolean },
   ) {
     const owner = yield* CurrentPasskeyTransaction;
 
@@ -394,28 +455,19 @@ export const makePasskeyFlowKernel = (
       return { _tag: "Rejected" } as const;
     const table = mapping.flow;
 
-    const sameIdentity = yield* owner.read(
-      table.table,
-      both(
-        equal(table.table, { [table.moduleId]: mapping.moduleId }),
-        or(
-          equal(table.table, { [table.commandId]: ceremony.commandId }),
-          equal(table.table, { [table.flowId]: ceremony.flowId }),
-        ),
-      ),
-      { limit: 2, columns: [table.moduleId, table.commandId, table.flowId] },
-    );
+    const request = issueRead(mapping, ceremony);
+
+    const sameIdentity =
+      captured?.identity ?? (yield* owner.read(request.table, request.where, request.options));
 
     if (sameIdentity.rows.length !== 0) return { _tag: "Rejected" } as const;
     const kinds = (yield* chargeScopes(ceremony, subjectId)).map((item) => item.kind);
 
     if (
-      !(yield* owner.check(
-        both(
-          liveCondition(mapping, ceremony),
-          yield* admissionCondition(mapping, [current], ceremony, subjectId, kinds, true, false),
-        ),
-      ))
+      !(
+        captured?.admitted ??
+        (yield* owner.check(yield* issueCondition(mapping, ceremony, current, subjectId)))
+      )
     )
       return { _tag: "Rejected" } as const;
 
@@ -465,19 +517,57 @@ export const makePasskeyFlowKernel = (
     ceremony: PasskeyCeremony,
     suppliedPolicy: PasskeyMethodPolicy,
   ) {
-    const current = yield* readModule(mapping);
+    const owner = yield* CurrentPasskeyTransaction;
+    const subjectId = knownSubject(ceremony);
+    const target = targetRevision(ceremony);
+    const guards = policyReads(mapping);
+    const guardOffset = subjectId === undefined ? 2 : 3;
+    const revisionOffset = guardOffset + guards.length;
+
+    const captured = yield* owner.readMany([
+      moduleRead(mapping, {
+        admitted: yield* issueCondition(mapping, ceremony, suppliedPolicy, subjectId),
+      }),
+      admissionRead(mapping),
+      ...(subjectId === undefined ? [] : [subjectRead(mapping.read, subjectId)]),
+      ...guards,
+      ...(target === undefined
+        ? []
+        : [
+            revisionRead(
+              mapping.read,
+              mapping.read.subjectIds.toNative(target.subjectId),
+              target.credentials.map((item) => item.credentialId),
+            ),
+          ]),
+      issueRead(mapping, ceremony),
+    ]);
+
+    const current = yield* readModule(mapping, captured[0]!);
 
     if (current === undefined) return { _tag: "Rejected" } as const;
-    yield* lockAdmission(mapping);
-    const subjectId = knownSubject(ceremony);
+    yield* lockAdmission(mapping, captured[1]!);
 
     const subject =
-      subjectId === undefined ? undefined : yield* readSubject(mapping.read, subjectId);
+      subjectId === undefined
+        ? undefined
+        : yield* readSubject(mapping.read, subjectId, captured[2]!);
 
-    yield* readPolicyGuards(mapping);
-    if (!(yield* currentTarget(mapping, subject, ceremony))) return { _tag: "Rejected" } as const;
+    yield* readPolicyGuards(mapping, captured.slice(guardOffset, revisionOffset));
+    if (
+      !(yield* currentTarget(
+        mapping,
+        subject,
+        ceremony,
+        target === undefined ? undefined : captured[revisionOffset]!,
+      ))
+    )
+      return { _tag: "Rejected" } as const;
 
-    return yield* issueFlow(mapping, ceremony, suppliedPolicy, current, subjectId);
+    return yield* issueFlow(mapping, ceremony, suppliedPolicy, current, subjectId, {
+      identity: captured[captured.length - 1]!,
+      admitted: captured[0]!.checks!.admitted!,
+    });
   });
 
   const contextAssertion = Effect.fn("passkey.contextAssertion")(function* (
@@ -487,11 +577,18 @@ export const makePasskeyFlowKernel = (
     const owner = yield* CurrentPasskeyTransaction;
 
     if (access.moduleId !== mapping.moduleId) return undefined;
-    const current = yield* readModule(mapping);
+
+    const [module, captured, ...guards] = yield* owner.readMany([
+      moduleRead(mapping),
+      flowRead(mapping, access.flowId),
+      ...policyReads(mapping),
+    ]);
+
+    const current = yield* readModule(mapping, module!);
 
     if (current === undefined) return undefined;
-    yield* readPolicyGuards(mapping);
-    const read = yield* readFlow(mapping, access.flowId);
+    yield* readPolicyGuards(mapping, guards);
+    const read = yield* readFlow(mapping, access.flowId, undefined, captured!);
 
     if (
       read === undefined ||
@@ -500,7 +597,14 @@ export const makePasskeyFlowKernel = (
       !compatiblePolicy(read.ceremony, read.policy, current)
     )
       return undefined;
-    if (!(yield* owner.check(liveCondition(mapping, read.ceremony)))) return undefined;
+    if (
+      read.nowMillis < read.ceremony.issuedAtMillis ||
+      read.nowMillis >= read.ceremony.expiresAtMillis ||
+      read.nowMillis >= read.ceremony.requestBindingExpiresAtMillis ||
+      ("target" in read.ceremony.context &&
+        read.nowMillis >= read.ceremony.context.target.expiresAtMillis)
+    )
+      return undefined;
     owner.postconditions.push(liveCondition(mapping, read.ceremony));
 
     return read.ceremony;
@@ -517,22 +621,48 @@ export const makePasskeyFlowKernel = (
     },
   ) {
     const owner = yield* CurrentPasskeyTransaction;
-    const current = yield* readModule(mapping);
-
-    if (current === undefined || input.access.moduleId !== mapping.moduleId)
-      return { _tag: "Rejected" } as const;
-    yield* lockAdmission(mapping);
     const expectedSubject = knownSubject(input.ceremony);
     const subjectId = expectedSubject ?? input.credential?.revision.subjectId;
-
-    const subject =
-      subjectId === undefined ? undefined : yield* readSubject(mapping.read, subjectId);
-
-    yield* readPolicyGuards(mapping);
 
     const requested =
       targetRevision(input.ceremony)?.credentials.map((item) => item.credentialId) ??
       input.credential?.revision.credentials.map((item) => item.credentialId);
+
+    const captured =
+      input.credential === undefined && subjectId !== undefined
+        ? yield* owner.readMany([
+            moduleRead(mapping, {
+              admitted: yield* admissionCondition(
+                mapping,
+                [input.policy],
+                input.ceremony,
+                subjectId,
+                [],
+                false,
+                false,
+              ),
+            }),
+            admissionRead(mapping),
+            subjectRead(mapping.read, subjectId),
+            revisionRead(mapping.read, mapping.read.subjectIds.toNative(subjectId), requested),
+            flowRead(mapping, input.access.flowId, liveCondition(mapping, input.ceremony)),
+            chargeRead(mapping, input.ceremony),
+            ...policyReads(mapping),
+          ])
+        : undefined;
+
+    const current = yield* readModule(mapping, captured?.[0]);
+
+    if (current === undefined || input.access.moduleId !== mapping.moduleId)
+      return { _tag: "Rejected" } as const;
+    yield* lockAdmission(mapping, captured?.[1]);
+
+    const subject =
+      subjectId === undefined
+        ? undefined
+        : yield* readSubject(mapping.read, subjectId, captured?.[2]);
+
+    yield* readPolicyGuards(mapping, captured?.slice(6));
 
     const credential =
       input.credential === undefined || subject === undefined
@@ -549,6 +679,7 @@ export const makePasskeyFlowKernel = (
       mapping,
       input.access.flowId,
       liveCondition(mapping, input.ceremony),
+      captured?.[4],
     );
 
     if (
@@ -568,7 +699,7 @@ export const makePasskeyFlowKernel = (
     if (
       !compatiblePolicy(read.ceremony, read.policy, current) ||
       policyStorage.encode(input.policy) !== policyStorage.encode(current) ||
-      !(yield* currentTarget(mapping, subject, read.ceremony))
+      !(yield* currentTarget(mapping, subject, read.ceremony, captured?.[3]))
     )
       return yield* reject;
     if (
@@ -601,21 +732,24 @@ export const makePasskeyFlowKernel = (
         return yield* reject;
     }
     if (!read.conditionHolds) return yield* reject;
-    yield* readCharges(mapping, read.ceremony, read.policy, expectedSubject);
+    yield* readCharges(mapping, read.ceremony, read.policy, expectedSubject, captured?.[5]);
     const resolved = expectedSubject === undefined && subjectId !== undefined;
 
     if (
-      !(yield* owner.check(
-        yield* admissionCondition(
-          mapping,
-          [read.policy, current],
-          read.ceremony,
-          subjectId,
-          resolved ? ["subject"] : [],
-          false,
-          resolved,
-        ),
-      ))
+      !(captured !== undefined &&
+      policyStorage.encode(read.policy) === policyStorage.encode(current)
+        ? captured[0]!.checks!.admitted!
+        : yield* owner.check(
+            yield* admissionCondition(
+              mapping,
+              [read.policy, current],
+              read.ceremony,
+              subjectId,
+              resolved ? ["subject"] : [],
+              false,
+              resolved,
+            ),
+          ))
     )
       return yield* reject;
     const claimedAtMillis = read.nowMillis;
@@ -962,9 +1096,16 @@ export const makePasskeyFlowKernel = (
         input.limit >= 1 &&
         input.limit <= 1000,
     );
-    yield* readModule(mapping);
-    yield* lockAdmission(mapping);
-    yield* readPolicyGuards(mapping);
+
+    const [module, admitted, ...guards] = yield* owner.readMany([
+      moduleRead(mapping),
+      admissionRead(mapping),
+      ...policyReads(mapping),
+    ]);
+
+    yield* readModule(mapping, module!);
+    yield* lockAdmission(mapping, admitted!);
+    yield* readPolicyGuards(mapping, guards);
 
     const flow = mapping.flow,
       charge = mapping.charge;
@@ -1005,7 +1146,9 @@ export const makePasskeyFlowKernel = (
       table: any,
       rows: ReadonlyArray<CleanupRow>,
       identity: (rows: ReadonlyArray<CleanupRow>) => SQL,
+      key: (row: CleanupRow) => CleanupRow,
     ) {
+      if (!owner.batch) return [yield* owner.observeKeys(table, rows.map(key), rows)];
       const observations = [];
 
       for (let offset = 0; offset < rows.length; offset += 16) {
@@ -1028,12 +1171,24 @@ export const makePasskeyFlowKernel = (
 
     const transitioned: FlowRead[] = [];
     const deleted: FlowRead[] = [];
-    const flowObservations = yield* observeRows(flow.table, selected.rows, flowIdentity);
+
+    const flowKey = (row: CleanupRow) => ({
+      [flow.moduleId]: mapping.moduleId,
+      [flow.flowId]: row[flow.flowId],
+    });
+
+    const chargeKey = (row: CleanupRow) => ({
+      [charge.moduleId]: mapping.moduleId,
+      [charge.flowId]: row[charge.flowId],
+      [charge.kind]: row[charge.kind],
+    });
+
+    const flowObservations = yield* observeRows(flow.table, selected.rows, flowIdentity, flowKey);
     let horizon = 0;
 
     if (selected.rows.length > 0) {
       invariant(selected.nowMillis !== undefined);
-      for (const rows of Array.chunksOf(selected.rows, flowChunkSize))
+      for (const rows of owner.batch ? Array.chunksOf(selected.rows, flowChunkSize) : [])
         invariant(
           yield* owner.check(
             sql`not exists (select 1 from ${flow.table} where ${both(
@@ -1058,16 +1213,6 @@ export const makePasskeyFlowKernel = (
         } else {
           if (owner.batch) yield* scrubRegistrationIntent(mapping, read.ceremony);
           horizon = Math.max(horizon, read.ceremony.retentionUntilMillis);
-          owner.postconditions.push(
-            custodyFree(mapping, sql`${read.ceremony.flowId}`),
-            sql`not exists (select 1 from ${charge.table} where ${both(
-              equal(charge.table, {
-                [charge.moduleId]: mapping.moduleId,
-                [charge.flowId]: read.ceremony.flowId,
-              }),
-              sql`(${col(charge.table, charge.retainUntil)} is null or ${mapping.clock.toMillis(sql`${col(charge.table, charge.retainUntil)}`)} > ${mapping.clock.engineNowMillis})`,
-            )})`,
-          );
           deleted.push(read);
         }
       }
@@ -1080,7 +1225,43 @@ export const makePasskeyFlowKernel = (
         deleted.map((read) => read.ceremony),
       );
 
-    for (const rows of Array.chunksOf(transitioned, flowChunkSize)) {
+    const clearable = (flowId: SQL) =>
+      both(
+        custodyFree(mapping, sql`${flowId}`),
+        sql`not exists (select 1 from ${charge.table} where ${both(
+          equal(charge.table, { [charge.moduleId]: mapping.moduleId }),
+          sql`${col(charge.table, charge.flowId)} = ${flowId}`,
+          sql`(${col(charge.table, charge.retainUntil)} is null or ${mapping.clock.toMillis(sql`${col(charge.table, charge.retainUntil)}`)} > ${mapping.clock.engineNowMillis})`,
+        )})`,
+      );
+
+    const released = owner.rowsets(
+      flow.table,
+      deleted.map((read) => ({ [flow.flowId]: read.ceremony.flowId })),
+    );
+
+    if (released === undefined)
+      for (const read of deleted)
+        owner.postconditions.push(clearable(sql`${read.ceremony.flowId}`));
+    else
+      for (const set of released)
+        owner.postconditions.push(
+          sql`not exists(select 1 from ${set.source} where case when ${clearable(set.fields[flow.flowId]!)} then 0 else 1 end = 1)`,
+        );
+
+    const changed = yield* owner.changeRows(
+      flow.table,
+      transitioned.map((read) => ({
+        key: flowKey(read.row),
+        before: read.row,
+        after: {
+          [flow.state]: read.state === "Pending" ? flow.states.Rejected : flow.states.Ambiguous,
+          [flow.version]: owner.marker,
+        },
+      })),
+    );
+
+    for (const rows of changed ? [] : Array.chunksOf(transitioned, flowChunkSize)) {
       const stateColumn = col(flow.table, flow.state);
 
       yield* owner.write(
@@ -1093,7 +1274,13 @@ export const makePasskeyFlowKernel = (
           .where(flowIdentity(rows.map((read) => read.row))),
       );
     }
-    for (const rows of Array.chunksOf(deleted, flowChunkSize))
+
+    const removed = yield* owner.changeRows(
+      flow.table,
+      deleted.map((read) => ({ key: flowKey(read.row), before: read.row, after: null })),
+    );
+
+    for (const rows of removed ? [] : Array.chunksOf(deleted, flowChunkSize))
       yield* owner.write(
         owner.database.delete(flow.table).where(flowIdentity(rows.map((read) => read.row))),
       );
@@ -1127,16 +1314,37 @@ export const makePasskeyFlowKernel = (
         orderBy: sql`${col(charge.table, charge.flowId)}, ${col(charge.table, charge.kind)}`,
       })).rows;
 
-      const observations = yield* observeRows(charge.table, charges, chargeIdentity);
+      const observations = yield* observeRows(charge.table, charges, chargeIdentity, chargeKey);
 
       for (const row of charges) {
         const until = mapping.clock.decodeInstant(row[charge.retainUntil]);
 
         invariant(Number.isSafeInteger(until));
         horizon = Math.max(horizon, until);
-        owner.postconditions.push(custodyFree(mapping, sql`${row[charge.flowId]}`));
       }
-      for (const rows of Array.chunksOf(charges, chargeChunkSize))
+
+      const scopes = owner.rowsets(
+        charge.table,
+        [...new Set(charges.map((row) => row[charge.flowId]))].map((flowId) => ({
+          [charge.flowId]: flowId,
+        })),
+      );
+
+      if (scopes === undefined)
+        for (const row of charges)
+          owner.postconditions.push(custodyFree(mapping, sql`${row[charge.flowId]}`));
+      else
+        for (const set of scopes)
+          owner.postconditions.push(
+            sql`not exists(select 1 from ${set.source} where case when ${custodyFree(mapping, sql`${set.fields[charge.flowId]}`)} then 0 else 1 end = 1)`,
+          );
+
+      const removed = yield* owner.changeRows(
+        charge.table,
+        charges.map((row) => ({ key: chargeKey(row), before: row, after: null })),
+      );
+
+      for (const rows of removed ? [] : Array.chunksOf(charges, chargeChunkSize))
         yield* owner.write(owner.database.delete(charge.table).where(chargeIdentity(rows)));
       for (const observation of observations) observation.rows = [];
       removedCharges = charges;
@@ -1208,6 +1416,9 @@ export const makePasskeyFlowKernel = (
     liveCondition,
     matchesAccess,
     readFlow,
+    flowRead,
+    issueRead,
+    issueCondition,
     terminalFlow,
     issueFlow,
     issueAssertion,

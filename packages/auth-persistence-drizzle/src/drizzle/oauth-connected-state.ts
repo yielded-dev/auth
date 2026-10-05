@@ -2,9 +2,8 @@ import { type OAuthAccountRevision, snapshotOAuthSync } from "@yielded/auth/OAut
 import * as M from "@yielded/auth/OAuth";
 import { AuthenticationRequirement } from "@yielded/auth/Sessions";
 /* oxlint-disable no-explicit-any -- private table erasure retains declared callback error/requirements channels. */
-import { and, eq, inArray, is, isNull, sql, type SQL, type Table } from "drizzle-orm";
+import { and, eq, inArray, isNull, sql, type SQL, type Table } from "drizzle-orm";
 import type { EffectDrizzleQueryError } from "drizzle-orm/effect-core";
-import { MySqlTable } from "drizzle-orm/mysql-core";
 import { DateTime, Effect, Schema } from "effect";
 
 import type {
@@ -554,6 +553,7 @@ const lockDiscoveredClient = Effect.fn("oauthConnected.lockDiscoveredClient")(fu
   id: string,
   initial: Row,
   locked?: Row,
+  observed = false,
 ) {
   const owner = yield* CurrentOAuthTransaction;
 
@@ -567,7 +567,7 @@ const lockDiscoveredClient = Effect.fn("oauthConnected.lockDiscoveredClient")(fu
   const where = equal(c.table, { [c.clientKey]: id });
   const row = locked ?? (yield* owner.read(c.table, where, { limit: 1 })).rows[0];
 
-  if (locked !== undefined) yield* owner.observe(c.table, where, [locked]);
+  if (locked !== undefined && !observed) yield* owner.observe(c.table, where, [locked]);
 
   invariant(
     row !== undefined &&
@@ -616,16 +616,8 @@ export const prelockClients = Effect.fn("oauthConnected.prelockClients")(functio
   const discovered = new Map<string, Row>();
   const size = Math.max(1, Math.min(owner.batch ? 64 : 100, owner.maxParameters - 1));
 
-  for (let offset = 0; offset < unique.length; offset += size) {
-    const ids = unique.slice(offset, offset + size);
-
-    const read = yield* owner.read(c.table, inArray(col(c.table, c.clientKey), ids), {
-      limit: ids.length,
-      lock: false,
-      observe: false,
-    });
-
-    for (const row of read.rows) {
+  const retainDiscovery = Effect.fnUntraced(function* (rows: ReadonlyArray<Row>) {
+    for (const row of rows) {
       discovered.set(row[c.clientKey], row);
       scopes.set(yield* scopeKey(row[c.provider], row[c.issuer]), {
         provider: row[c.provider],
@@ -633,38 +625,62 @@ export const prelockClients = Effect.fn("oauthConnected.prelockClients")(functio
         required: true,
       });
     }
+  });
+
+  for (let offset = 0; offset < unique.length; offset += 1000) {
+    const group = unique.slice(offset, offset + 1000);
+
+    const selected = !owner.batch
+      ? yield* owner.readKeys(
+          c.table,
+          group.map((id) => ({ [c.clientKey]: id })),
+          { lock: false, observe: false },
+        )
+      : undefined;
+
+    if (selected !== undefined && selected.canonical) {
+      yield* retainDiscovery(selected.rows);
+      continue;
+    }
+    for (let index = 0; index < group.length; index += size) {
+      const ids = group.slice(index, index + size);
+
+      const read = yield* owner.read(c.table, inArray(col(c.table, c.clientKey), ids), {
+        limit: ids.length,
+        lock: false,
+        observe: false,
+      });
+
+      yield* retainDiscovery(read.rows);
+    }
   }
   invariant(discovered.size === unique.length);
   const orderedScopes = [...scopes].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
 
-  if (!owner.batch && owner.maxParameters > 100 && !is(c.table, MySqlTable)) {
-    const lockedRows = (ids: ReadonlyArray<string>) =>
-      owner.read(c.table, inArray(col(c.table, c.clientKey), [...ids]), {
-        limit: ids.length,
-        observe: false,
-        orderBy: sql`case ${sql.join(
-          ids.map((id, index) => sql`when ${equal(c.table, { [c.clientKey]: id })} then ${index}`),
-          sql` `,
-        )} else ${ids.length} end`,
-      });
+  if (!owner.batch) {
+    const lockedRows = Effect.fnUntraced(function* (ids: ReadonlyArray<string>) {
+      const keys = ids.map((id) => ({ [c.clientKey]: id }));
+      const selected = yield* owner.readKeys(c.table, keys, { observe: false });
+
+      if (selected === undefined || !selected.canonical) return undefined;
+      yield* owner.observeKeys(c.table, keys, selected.rows);
+
+      return new Map(selected.rows.map((row) => [row[c.clientKey], row]));
+    });
 
     const cache = yield* anchors(scopeCache, c.table);
 
-    for (let offset = 0; offset < orderedScopes.length; offset += 100) {
-      const group = orderedScopes.slice(offset, offset + 100);
-      const rows = (yield* lockedRows(group.map(([id]) => id))).rows;
-      const aliased = rows.some((row) => !group.some(([id]) => row[c.clientKey] === id));
+    for (let offset = 0; offset < orderedScopes.length; offset += 1000) {
+      const group = orderedScopes.slice(offset, offset + 1000);
+      const rows = yield* lockedRows(group.map(([id]) => id));
 
       for (const [id, { provider, issuer, required }] of group) {
-        const exact = rows.find((row) => row[c.clientKey] === id);
-        const where = equal(c.table, { [c.clientKey]: id });
-
         const row =
-          exact ??
-          (aliased ? (yield* owner.read(c.table, where, { limit: 1 })).rows[0] : undefined);
+          rows === undefined
+            ? (yield* owner.read(c.table, equal(c.table, { [c.clientKey]: id }), { limit: 1 }))
+                .rows[0]
+            : rows.get(id);
 
-        if (exact !== undefined || !aliased)
-          yield* owner.observe(c.table, where, row === undefined ? [] : [row]);
         invariant(!required || row !== undefined);
         if (row !== undefined) {
           invariant(
@@ -677,18 +693,19 @@ export const prelockClients = Effect.fn("oauthConnected.prelockClients")(functio
         }
       }
     }
-    // Every scope is held before any client; CASE follows the same sorted IDs
-    // as the former point reads. Collation aliases retain the point fallback.
-    for (let offset = 0; offset < unique.length; offset += 100) {
-      const ids = unique.slice(offset, offset + 100);
-      const rows = (yield* lockedRows(ids)).rows;
+    // Every scope precedes every client, in the same sorted identity order as
+    // individual operations. Unsupported encoders and aliases use point locks.
+    for (let offset = 0; offset < unique.length; offset += 1000) {
+      const ids = unique.slice(offset, offset + 1000);
+      const rows = yield* lockedRows(ids);
 
       for (const id of ids)
         yield* lockDiscoveredClient(
           mapping,
           id,
           discovered.get(id)!,
-          rows.find((row) => row[c.clientKey] === id),
+          rows?.get(id),
+          rows !== undefined,
         );
     }
 

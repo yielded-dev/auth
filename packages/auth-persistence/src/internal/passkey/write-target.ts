@@ -162,7 +162,8 @@ export const makePasskeyWriteTargetKernel = (
   ): PasskeyManagementPersistence["Service"] =>
     capturedService<PasskeyManagementPersistence["Service"]>(
       {
-        list: (input) => execute.run(observationalContext(listCredentials(mapping, input)), false),
+        list: (input) =>
+          execute.run(observationalContext(listCredentials(mapping, input)), false, true),
         inspectRemove: (input) =>
           execute.run(observationalContext(inspectRemove(mapping, input)), false),
         issueEnrollment: (input, prepare) =>

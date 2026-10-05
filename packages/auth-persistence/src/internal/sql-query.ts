@@ -67,6 +67,8 @@ const operations = {
             `${render(column, compiler)} IN (${values.map((value) => render(value, compiler)).join(", ")})`,
         ),
   sql: Object.assign(template, {
+    raw: (value: string) => new Fragment(() => value),
+    identifier: (value: string) => new Fragment(() => identifier(value)),
     param: (value: unknown, column: Column) => column.mapToDriverValue(value),
     join: (values: ReadonlyArray<unknown>, separator: Fragment = template``) =>
       new Fragment((compiler) =>
@@ -104,8 +106,8 @@ interface QueryState {
   readonly table?: Table | Fragment;
   readonly joins?: ReadonlyArray<{
     readonly table: Table | Fragment;
-    readonly on: Fragment;
-    readonly kind: "INNER" | "LEFT";
+    readonly on?: Fragment;
+    readonly kind: "INNER" | "LEFT" | "CROSS";
   }>;
   readonly selection?: Selection;
   readonly where?: Fragment | undefined;
@@ -115,7 +117,10 @@ interface QueryState {
   readonly order?: ReadonlyArray<Fragment>;
   readonly limit?: number;
   readonly lock?: boolean;
+  readonly lockTarget?: Table;
   readonly conflict?: boolean;
+  readonly unions?: ReadonlyArray<Query>;
+  readonly updateSource?: Table | Fragment;
 }
 
 const selectionFor = (state: QueryState): Selection =>
@@ -182,8 +187,10 @@ const compile = (state: QueryState, compiler: Compiler): string => {
 
   if (state.operation === "select") {
     query = `SELECT ${projection(selectionFor(state), compiler)} FROM ${table.render(compiler)}`;
-    for (const join of state.joins ?? [])
-      query += ` ${join.kind} JOIN ${join.table.render(compiler)} ON ${join.on.render(compiler)}`;
+    for (const join of state.joins ?? []) {
+      query += ` ${join.kind} JOIN ${join.table.render(compiler)}`;
+      if (join.on !== undefined) query += ` ON ${join.on.render(compiler)}`;
+    }
   } else {
     if (!(table instanceof Table))
       throw PersistenceMappingError.make({
@@ -204,6 +211,8 @@ const compile = (state: QueryState, compiler: Compiler): string => {
       query = `UPDATE ${target} SET ${fields.map(([key, value]) => `${identifier(table.columns[key].options.name)} = ${render(value, compiler)}`).join(", ")}`;
     } else query = `DELETE FROM ${target}`;
   }
+  if (state.operation === "update" && state.updateSource !== undefined)
+    query += ` FROM ${state.updateSource.render(compiler)}`;
   if (state.where !== undefined) query += ` WHERE ${state.where.render(compiler)}`;
   if (state.order?.length)
     query += ` ORDER BY ${state.order.map((field) => field.render(compiler)).join(", ")}`;
@@ -211,7 +220,12 @@ const compile = (state: QueryState, compiler: Compiler): string => {
   if (state.conflict) query += " ON CONFLICT DO NOTHING";
   if (state.returning)
     query += ` RETURNING ${projection(state.returning === true && table instanceof Table ? table.columns : state.returning === true ? {} : state.returning, compiler)}`;
-  if (state.lock && compiler.dialect === "pg") query += " FOR UPDATE";
+  if (state.lock && compiler.dialect === "pg")
+    query +=
+      state.lockTarget === undefined
+        ? " FOR UPDATE"
+        : ` FOR UPDATE OF ${identifier(state.lockTarget.name)}`;
+  for (const other of state.unions ?? []) query += ` UNION ALL ${render(other, compiler)}`;
 
   return query;
 };
@@ -268,15 +282,26 @@ export const makeSqlDatabase = Effect.fnUntraced(function* (dialect: Dialect) {
           ),
         );
       },
-      from: (table: Table | Fragment) => query({ ...state, table }),
+      from: (table: Table | Fragment) =>
+        state.operation === "update"
+          ? query({ ...state, updateSource: table })
+          : query({ ...state, table }),
       innerJoin: (table: Table | Fragment, on: Fragment) =>
         query({ ...state, joins: [...(state.joins ?? []), { table, on, kind: "INNER" }] }),
       leftJoin: (table: Table | Fragment, on: Fragment) =>
         query({ ...state, joins: [...(state.joins ?? []), { table, on, kind: "LEFT" }] }),
+      crossJoin: (table: Table | Fragment) =>
+        query({ ...state, joins: [...(state.joins ?? []), { table, kind: "CROSS" }] }),
       where: (where: Fragment | undefined) => query({ ...state, where }),
       limit: (limit: number) => query({ ...state, limit }),
       orderBy: (...order: Fragment[]) => query({ ...state, order }),
-      for: (_lock: "update") => query({ ...state, lock: true }),
+      for: (_lock: "update", options?: { readonly of: Table }) =>
+        query({
+          ...state,
+          lock: true,
+          ...(options === undefined ? {} : { lockTarget: options.of }),
+        }),
+      unionAll: (other: Query) => query({ ...state, unions: [...(state.unions ?? []), other] }),
       values: (values: Row | ReadonlyArray<Row>) =>
         Array.isArray(values)
           ? query({ ...state, insertRows: values })
@@ -312,10 +337,12 @@ interface Query extends Effect.Effect<Row[], SqlError> {
   from(table: Table | Fragment): Query;
   innerJoin(table: Table | Fragment, on: Fragment): Query;
   leftJoin(table: Table | Fragment, on: Fragment): Query;
+  crossJoin(table: Table | Fragment): Query;
   where(where: Fragment | undefined): Query;
   limit(limit: number): Query;
   orderBy(...order: Fragment[]): Query;
-  for(lock: "update"): Query;
+  for(lock: "update", options?: { readonly of: Table }): Query;
+  unionAll(other: Query): Query;
   values(values: Row | ReadonlyArray<Row>): Query;
   set(values: Row): Query;
   returning(returning?: Selection | true): Query;

@@ -21,7 +21,7 @@ import {
   ProofRequestConflict,
   ProofUnavailable,
 } from "@yielded/auth/Proofs";
-import { Array, Cause, Context, DateTime, Effect, Option, Schema } from "effect";
+import { Cause, Context, DateTime, Effect, Option, Schema } from "effect";
 import type * as SqlError from "effect/sql/SqlError";
 
 import { PersistenceMappingError } from "./mapping-error";
@@ -43,7 +43,9 @@ import {
 import type { TableModel as Table } from "./query-operations";
 import type { QueryFailure } from "./query-operations";
 import type { QueryOperations, SqlFragment, SqlColumn } from "./query-operations";
-import type { NativeDatabase } from "./transaction-kernel";
+import { makeKeyConditions } from "./sql-rowset";
+import { makeSnapshotReader } from "./sql-snapshot";
+import { NativeDatabase } from "./transaction-kernel";
 
 type AdapterFailure = QueryFailure | PersistenceMappingError | SqlError.SqlError;
 
@@ -78,6 +80,8 @@ export interface ProofSqlConfiguration {
   readonly mode: "interactive" | "synchronous";
   readonly locking: boolean;
   readonly maxParameters?: number;
+  /** PostgreSQL can sequence authority row locks within a materialized snapshot. */
+  readonly pgOrderedLocks?: boolean;
   readonly standaloneGuard: Effect.Effect<void, ProofUnavailable>;
   readonly coordinated?: boolean;
   /** Dialect-native insert-if-absent used to create serialization anchors. */
@@ -108,6 +112,7 @@ export const makeProofKernel = <
     operations;
 
   const unavailable = () => ProofUnavailable.make({});
+  const readSnapshots = makeSnapshotReader(operations);
 
   const translateFailure = <A, E, R>(
     effect: Effect.Effect<A, E, R>,
@@ -290,12 +295,13 @@ export const makeProofKernel = <
     moduleId: string,
     purpose: any,
     binding: ProofBinding,
-    locking: boolean,
+    configuration: ProofSqlConfiguration,
   ) {
     const database = yield* CurrentProofSql;
 
     const authority = mapping.authority;
     let nativeSubjectId: unknown | undefined;
+    let captured: ReadonlyArray<ReadonlyArray<Record<string, any>>> | undefined;
 
     // Canonical order: subject, identifier rows, credentials sorted by ID.
     if (binding._tag !== "Identifier") {
@@ -307,15 +313,56 @@ export const makeProofKernel = <
         return yield* unavailable();
       nativeSubjectId = yield* authority.subjectId.toNative(binding.revision.subjectId);
       const subject = authority.subject;
+      const identifier = authority.identifier;
+      const credential = authority.credential;
 
-      const rows = yield* selectRows(
-        database
-          .select()
-          .from(subject.table)
-          .where(eq(column(subject.table, subject.id), nativeSubjectId))
-          .limit(1),
-        locking,
-      );
+      if (!configuration.locking || configuration.pgOrderedLocks) {
+        captured = yield* readSnapshots(
+          database,
+          [
+            {
+              table: subject.table,
+              where: eq(column(subject.table, subject.id), nativeSubjectId),
+              limit: 1,
+            },
+            {
+              table: identifier.table,
+              where: and(
+                eq(column(identifier.table, identifier.namespace), binding.identifier.namespace),
+                eq(column(identifier.table, identifier.value), binding.identifier.value),
+              ),
+            },
+            ...(binding.revision.credentials.length === 0
+              ? []
+              : [
+                  {
+                    table: credential.table,
+                    where: and(
+                      eq(column(credential.table, credential.subjectId), nativeSubjectId),
+                      inArray(
+                        column(credential.table, credential.credentialId),
+                        binding.revision.credentials.map((item) => item.credentialId),
+                      ),
+                    ),
+                    orderBy: [column(credential.table, credential.credentialId)],
+                  },
+                ]),
+          ],
+          configuration.maxParameters,
+          configuration.pgOrderedLocks,
+        ).rows;
+      }
+
+      const rows =
+        captured?.[0] ??
+        (yield* selectRows(
+          database
+            .select()
+            .from(subject.table)
+            .where(eq(column(subject.table, subject.id), nativeSubjectId))
+            .limit(1),
+          configuration.locking,
+        ));
 
       const row = rows[0];
 
@@ -328,18 +375,20 @@ export const makeProofKernel = <
     }
     const identifier = authority.identifier;
 
-    const identifierRows = yield* selectRows(
-      database
-        .select()
-        .from(identifier.table)
-        .where(
-          and(
-            eq(column(identifier.table, identifier.namespace), binding.identifier.namespace),
-            eq(column(identifier.table, identifier.value), binding.identifier.value),
+    const identifierRows =
+      captured?.[1] ??
+      (yield* selectRows(
+        database
+          .select()
+          .from(identifier.table)
+          .where(
+            and(
+              eq(column(identifier.table, identifier.namespace), binding.identifier.namespace),
+              eq(column(identifier.table, identifier.value), binding.identifier.value),
+            ),
           ),
-        ),
-      locking,
-    );
+        configuration.locking,
+      ));
 
     if (
       !identifier.isCurrent(
@@ -363,7 +412,8 @@ export const makeProofKernel = <
     const rows =
       expected.length === 0
         ? []
-        : yield* selectRows(
+        : (captured?.[2] ??
+          (yield* selectRows(
             database
               .select()
               .from(credential.table)
@@ -375,9 +425,10 @@ export const makeProofKernel = <
                     expected.map((item) => item.credentialId),
                   ),
                 ),
-              ),
-            locking,
-          );
+              )
+              .orderBy(column(credential.table, credential.credentialId)),
+            configuration.locking,
+          )));
 
     if (rows.length !== expected.length) return false;
 
@@ -550,7 +601,7 @@ export const makeProofKernel = <
     );
   });
 
-  const ensureSeries = Effect.fn("DrizzleProof.ensureSeries")(function* (
+  const readSeries = Effect.fnUntraced(function* (
     mapping: Mapping,
     configuration: ProofSqlConfiguration,
     moduleId: string,
@@ -558,17 +609,7 @@ export const makeProofKernel = <
     scopeKey: string,
   ) {
     const database = yield* CurrentProofSql;
-
     const c = seriesColumns(mapping);
-    const initialVersion = yield* allocateVersion(mapping, configuration.mode);
-
-    const query = database
-      .insert(mapping.series.table)
-      .values(
-        mapping.series.encodeInsert({ moduleId, purpose, scopeKey, version: initialVersion }),
-      );
-
-    yield* configuration.insertIfAbsent(query, mapping.series.scopeKey, scopeKey);
 
     const rows = yield* selectRows(
       database
@@ -579,7 +620,32 @@ export const makeProofKernel = <
       configuration.locking,
     );
 
-    return rows[0] ?? (yield* unavailable());
+    return rows[0];
+  });
+
+  const ensureSeries = Effect.fn("DrizzleProof.ensureSeries")(function* (
+    mapping: Mapping,
+    configuration: ProofSqlConfiguration,
+    moduleId: string,
+    purpose: any,
+    scopeKey: string,
+  ) {
+    const database = yield* CurrentProofSql;
+
+    const initialVersion = yield* allocateVersion(mapping, configuration.mode);
+
+    const query = database
+      .insert(mapping.series.table)
+      .values(
+        mapping.series.encodeInsert({ moduleId, purpose, scopeKey, version: initialVersion }),
+      );
+
+    yield* configuration.insertIfAbsent(query, mapping.series.scopeKey, scopeKey);
+
+    return (
+      (yield* readSeries(mapping, configuration, moduleId, purpose, scopeKey)) ??
+      (yield* unavailable())
+    );
   });
 
   const readGeneration = Effect.fn("Drizzle.readGeneration")(function* (
@@ -702,13 +768,28 @@ export const makeProofKernel = <
 
   const makeSqlProofPersistence = Effect.fn("makeSqlProofPersistence")(function* (
     mapping: Mapping,
-    configuration: ProofSqlConfiguration,
+    initialConfiguration: ProofSqlConfiguration,
   ): Effect.fn.Return<
     ProofPersistence["Service"],
     ProofUnavailable,
     LifecycleHooks | CurrentProofSql | NativeDatabase
   > {
     const database = yield* CurrentProofSql;
+    const native = yield* NativeDatabase;
+
+    const cleanupDialect = native.$client.onDialectOrElse({
+      pg: () => "pg" as const,
+      sqlite: () => "sqlite" as const,
+      orElse: () => "mysql" as const,
+    });
+
+    const configuration: ProofSqlConfiguration = {
+      ...initialConfiguration,
+      pgOrderedLocks: native.$client.onDialectOrElse({
+        pg: () => initialConfiguration.locking,
+        orElse: () => false,
+      }),
+    };
 
     if (!configuration.coordinated)
       yield* (operations.validateStorage?.(mapping) ?? Effect.void).pipe(
@@ -737,7 +818,7 @@ export const makeProofKernel = <
               input.record.moduleId,
               input.record.purpose,
               input.record.binding,
-              configuration.locking,
+              configuration,
             );
 
             const scopes = scopeEntries(keys, input.record.binding, "issue", input.policy);
@@ -1022,7 +1103,7 @@ export const makeProofKernel = <
               input.moduleId,
               input.purpose,
               input.binding,
-              configuration.locking,
+              configuration,
             );
 
             const scopes = scopeEntries(keys, input.binding, "attempt", input.policy);
@@ -1058,7 +1139,7 @@ export const makeProofKernel = <
               );
 
             const series = actionOpen
-              ? yield* ensureSeries(
+              ? yield* readSeries(
                   mapping,
                   configuration,
                   input.moduleId,
@@ -1366,23 +1447,25 @@ export const makeProofKernel = <
             const transaction = yield* CurrentProofSql;
             const journal = yield* CurrentCommitJournal;
 
-            const initial = (yield* readGeneration(
-              mapping,
-              input.moduleId,
-              input.proofId,
-              false,
-            ))[0];
+            // Only cancellation mutates the series. Delivery acceptance and an
+            // ambiguous outcome serialize on the generation, like claimDelivery.
+            if (input.outcome._tag === "DefiniteFailure") {
+              const initial = (yield* readGeneration(
+                mapping,
+                input.moduleId,
+                input.proofId,
+                false,
+              ))[0];
 
-            if (initial === undefined) return prepare(undefined, journal);
-            const keys = initial[mapping.generation.seriesKey] as string;
-
-            yield* ensureSeries(
-              mapping,
-              configuration,
-              input.moduleId,
-              initial[mapping.generation.purpose],
-              keys,
-            );
+              if (initial === undefined) return prepare(undefined, journal);
+              yield* ensureSeries(
+                mapping,
+                configuration,
+                input.moduleId,
+                initial[mapping.generation.purpose],
+                initial[mapping.generation.seriesKey],
+              );
+            }
 
             const row = (yield* readGeneration(
               mapping,
@@ -1439,7 +1522,7 @@ export const makeProofKernel = <
                   and(
                     eq(sc.moduleId, input.moduleId),
                     eq(sc.purpose, row[mapping.generation.purpose]),
-                    eq(sc.scopeKey, keys),
+                    eq(sc.scopeKey, row[mapping.generation.seriesKey]),
                     eq(sc.activeProofId, input.proofId),
                   ),
                 );
@@ -1466,7 +1549,7 @@ export const makeProofKernel = <
               input.moduleId,
               input.purpose,
               input.binding,
-              configuration.locking,
+              configuration,
             );
 
             const keys = mapping.scopeKeys({
@@ -1475,7 +1558,7 @@ export const makeProofKernel = <
               binding: input.binding,
             });
 
-            const series = yield* ensureSeries(
+            const series = yield* readSeries(
               mapping,
               configuration,
               input.moduleId,
@@ -1483,7 +1566,7 @@ export const makeProofKernel = <
               keys.series,
             );
 
-            const active = series[mapping.series.activeProofId] as string | undefined | null;
+            const active = series?.[mapping.series.activeProofId] as string | undefined | null;
             const prepared = prepare(undefined, journal);
 
             if (authorityCurrent && active !== undefined && active !== null) {
@@ -1548,8 +1631,7 @@ export const makeProofKernel = <
             const rsc = scopeColumns(mapping);
             const parameterLimit = configuration.maxParameters ?? 16_000;
 
-            const chunkSize = (width: number, maximum = 128) =>
-              Math.max(1, Math.min(maximum, Math.floor((parameterLimit - 2) / width)));
+            const keys = makeKeyConditions(operations, transaction, cleanupDialect, parameterLimit);
 
             let remaining = input.limit;
             let hasMore = false;
@@ -1696,105 +1778,97 @@ export const makeProofKernel = <
             const removed = input.limit - remaining;
             const prepared = prepare({ removed, hasMore } satisfies ProofCleanupResult, journal);
 
-            for (const chunk of Array.chunksOf(continuations, chunkSize(1, 1000)))
-              yield* transaction.delete(mapping.continuation.table).where(
-                and(
-                  eq(cc.moduleId, input.moduleId),
-                  inArray(
-                    cc.continuationId,
-                    chunk.map((row: any) => row.continuationId),
+            for (const condition of keys(mapping.continuation.table, continuations, {
+              continuationId: mapping.continuation.continuationId,
+            }))
+              yield* transaction
+                .delete(mapping.continuation.table)
+                .where(
+                  and(
+                    eq(cc.moduleId, input.moduleId),
+                    condition,
+                    lte(cc.retentionUntil, nativeNow),
                   ),
-                  lte(cc.retentionUntil, nativeNow),
-                ),
-              );
-            for (const chunk of Array.chunksOf(generations, chunkSize(1, 1000)))
+                );
+            for (const condition of keys(mapping.series.table, generations, {
+              proofId: mapping.series.activeProofId,
+            }))
               yield* transaction
                 .update(mapping.series.table)
                 .set(updateValues([[mapping.series.activeProofId, null]]))
+                .where(and(eq(sc.moduleId, input.moduleId), condition));
+            for (const condition of keys(mapping.generation.table, generations, {
+              proofId: mapping.generation.proofId,
+            }))
+              yield* transaction
+                .delete(mapping.generation.table)
                 .where(
                   and(
-                    eq(sc.moduleId, input.moduleId),
-                    inArray(
-                      sc.activeProofId,
-                      chunk.map((row: any) => row.proofId),
-                    ),
+                    eq(gc.moduleId, input.moduleId),
+                    condition,
+                    lte(gc.retentionUntil, nativeNow),
                   ),
                 );
-            for (const chunk of Array.chunksOf(generations, chunkSize(1, 1000)))
-              yield* transaction.delete(mapping.generation.table).where(
-                and(
-                  eq(gc.moduleId, input.moduleId),
-                  inArray(
-                    gc.proofId,
-                    chunk.map((row: any) => row.proofId),
+            for (const condition of keys(mapping.request.table, requests, {
+              requestId: mapping.request.requestId,
+            }))
+              yield* transaction
+                .delete(mapping.request.table)
+                .where(
+                  and(
+                    eq(rc.moduleId, input.moduleId),
+                    condition,
+                    lte(rc.retentionUntil, nativeNow),
                   ),
-                  lte(gc.retentionUntil, nativeNow),
-                ),
-              );
-            for (const chunk of Array.chunksOf(requests, chunkSize(1, 1000)))
-              yield* transaction.delete(mapping.request.table).where(
-                and(
-                  eq(rc.moduleId, input.moduleId),
-                  inArray(
-                    rc.requestId,
-                    chunk.map((row: any) => row.requestId),
-                  ),
-                  lte(rc.retentionUntil, nativeNow),
-                ),
-              );
-            for (const chunk of Array.chunksOf(abuse, chunkSize(4)))
+                );
+            for (const condition of keys(mapping.abuseEvent.table, abuse, {
+              action: mapping.abuseEvent.action,
+              scopeKind: mapping.abuseEvent.scopeKind,
+              scopeKey: mapping.abuseEvent.scopeKey,
+              commandId: mapping.abuseEvent.commandId,
+            }))
               yield* transaction
                 .delete(mapping.abuseEvent.table)
                 .where(
                   and(
                     eq(ac.moduleId, input.moduleId),
-                    or(
-                      ...chunk.map((row) =>
-                        and(
-                          eq(ac.action, row.action),
-                          eq(ac.scopeKind, row.scopeKind),
-                          eq(ac.scopeKey, row.scopeKey),
-                          eq(ac.commandId, row.commandId),
-                        ),
-                      ),
-                    ),
+                    condition,
                     lte(ac.retentionUntil, nativeNow),
                   ),
                 );
-            for (const chunk of Array.chunksOf(failures, chunkSize(2)))
+            for (const condition of keys(mapping.failureEvent.table, failures, {
+              seriesKey: mapping.failureEvent.seriesKey,
+              commandId: mapping.failureEvent.commandId,
+            }))
               yield* transaction
                 .delete(mapping.failureEvent.table)
                 .where(
                   and(
                     eq(fc.moduleId, input.moduleId),
-                    or(
-                      ...chunk.map((row) =>
-                        and(eq(fc.seriesKey, row.seriesKey), eq(fc.commandId, row.commandId)),
-                      ),
-                    ),
+                    condition,
                     lte(fc.retentionUntil, nativeNow),
                   ),
                 );
-            for (const chunk of Array.chunksOf(commands, chunkSize(1, 1000)))
-              yield* transaction.delete(mapping.command.table).where(
-                and(
-                  eq(mc.moduleId, input.moduleId),
-                  inArray(
-                    mc.commandId,
-                    chunk.map((row: any) => row.commandId),
+            for (const condition of keys(mapping.command.table, commands, {
+              commandId: mapping.command.commandId,
+            }))
+              yield* transaction
+                .delete(mapping.command.table)
+                .where(
+                  and(
+                    eq(mc.moduleId, input.moduleId),
+                    condition,
+                    lte(mc.retentionUntil, nativeNow),
                   ),
-                  lte(mc.retentionUntil, nativeNow),
-                ),
-              );
-            for (const chunk of Array.chunksOf(series, chunkSize(2)))
+                );
+            for (const condition of keys(mapping.series.table, series, {
+              purpose: mapping.series.purpose,
+              scopeKey: mapping.series.scopeKey,
+            }))
               yield* transaction.delete(mapping.series.table).where(
                 and(
                   eq(sc.moduleId, input.moduleId),
-                  or(
-                    ...chunk.map((row) =>
-                      and(eq(sc.purpose, row.purpose), eq(sc.scopeKey, row.scopeKey)),
-                    ),
-                  ),
+                  condition,
                   isNull(sc.activeProofId),
                   notExists(
                     transaction
@@ -1810,20 +1884,16 @@ export const makeProofKernel = <
                   ),
                 ),
               );
-            for (const chunk of Array.chunksOf(rateScopes, chunkSize(4)))
+            for (const condition of keys(mapping.rateScope.table, rateScopes, {
+              purpose: mapping.rateScope.purpose,
+              action: mapping.rateScope.action,
+              scopeKind: mapping.rateScope.scopeKind,
+              scopeKey: mapping.rateScope.scopeKey,
+            }))
               yield* transaction.delete(mapping.rateScope.table).where(
                 and(
                   eq(rsc.moduleId, input.moduleId),
-                  or(
-                    ...chunk.map((row) =>
-                      and(
-                        eq(rsc.purpose, row.purpose),
-                        eq(rsc.action, row.action),
-                        eq(rsc.scopeKind, row.scopeKind),
-                        eq(rsc.scopeKey, row.scopeKey),
-                      ),
-                    ),
-                  ),
+                  condition,
                   notExists(
                     transaction
                       .select({ one: sql`1` })
@@ -1864,7 +1934,7 @@ export const makeProofKernel = <
       input.moduleId,
       input.purpose,
       input.binding,
-      configuration.locking,
+      configuration,
     );
 
     const keys = mapping.scopeKeys({
@@ -1873,8 +1943,14 @@ export const makeProofKernel = <
       binding: input.binding,
     });
 
-    if (ensure)
-      yield* ensureSeries(mapping, configuration, input.moduleId, input.purpose, keys.series);
+    // Issuance owns anchor creation. A live continuation already has its series;
+    // completion only locks it and never creates one for an invalid request.
+    if (
+      ensure &&
+      (yield* readSeries(mapping, configuration, input.moduleId, input.purpose, keys.series)) ===
+        undefined
+    )
+      return undefined;
     const c = continuationColumns(mapping);
 
     const rows = yield* selectRows(
@@ -1956,21 +2032,33 @@ export const makeProofKernel = <
 
     const assertApplied = Effect.flatMap(CurrentPasswordPreparedTransaction, (currentTransaction) =>
       Effect.gen(function* () {
-        const persisted = (yield* selectRows(
-          currentTransaction
-            .select()
-            .from(mapping.continuation.table)
-            .where(and(eq(c.moduleId, input.moduleId), eq(c.continuationId, input.continuationId)))
-            .limit(1),
-          false,
-        ))[0];
+        const commandFields = commandColumns(mapping);
 
-        const command = (yield* commandRow(
-          mapping,
-          input.moduleId,
-          input.continuationDigest,
-          false,
-        ))[0];
+        const [continuations, commands] = yield* readSnapshots(
+          currentTransaction,
+          [
+            {
+              table: mapping.continuation.table,
+              where: and(
+                eq(c.moduleId, input.moduleId),
+                eq(c.continuationId, input.continuationId),
+              ),
+              limit: 1,
+            },
+            {
+              table: mapping.command.table,
+              where: and(
+                eq(commandFields.moduleId, input.moduleId),
+                eq(commandFields.commandId, input.continuationDigest),
+              ),
+              limit: 1,
+            },
+          ],
+          configuration.maxParameters,
+        ).rows;
+
+        const persisted = continuations?.[0];
+        const command = commands?.[0];
 
         const decoded =
           persisted === undefined ? undefined : yield* mapping.continuation.decode(persisted);

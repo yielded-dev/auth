@@ -1,17 +1,24 @@
 import * as M from "@yielded/auth/OAuth";
-import { asc, eq, getTableColumns, inArray, lte, sql, type SQL, type Table } from "drizzle-orm";
-import type { EffectDrizzleQueryError } from "drizzle-orm/effect-core";
+import { asc, eq, getTableColumns, inArray, lte, sql, type Table } from "drizzle-orm";
 import { Effect } from "effect";
 
-import { cleanupQueryFits } from "./oauth-cleanup";
+import { checkCleanupRows, cleanupQueryFits } from "./oauth-cleanup";
 import * as C from "./oauth-connected-custody";
 import * as F from "./oauth-connected-flow";
 import { connectedReferenceCondition } from "./oauth-connected-reference";
 import * as S from "./oauth-connected-state";
-import { both, col, equal, CurrentOAuthTransaction, type Row } from "./oauth-owner";
-import { invariant, oauthIdentityKey, unavailable } from "./oauth-state";
+import {
+  both,
+  col,
+  equal,
+  matchesNativeRow,
+  CurrentOAuthTransaction,
+  type Row,
+} from "./oauth-owner";
+import { invariant, oauthIdentityKey } from "./oauth-state";
 
 export interface Candidates {
+  readonly flows: ReadonlyArray<Row>;
   readonly jobs: ReadonlyArray<Row>;
   readonly grants: ReadonlyArray<Row>;
   readonly cohorts: ReadonlyArray<Row>;
@@ -22,101 +29,110 @@ export const discover = Effect.fn("oauthConnected.collectionCandidates")(functio
   mapping: S.Mapping,
   moduleId: string,
   limit: number,
+  at: number,
 ) {
   const owner = yield* CurrentOAuthTransaction;
 
-  const g = mapping.grant,
+  const f = mapping.flow,
+    g = mapping.grant,
     j = S.jobTable(mapping),
     h = mapping.cohort,
-    at = yield* owner.now(mapping.clock);
+    t = mapping.ownership.tuple;
 
-  const jobs =
-    j === undefined
-      ? { rows: [] }
-      : yield* owner.read(
-          j.table,
-          both(
-            eq(col(j.table, j.moduleId), moduleId),
-            eq(col(j.table, j.state), "Confirmed"),
-            lte(col(j.table, j.retentionUntil), mapping.clock.encodeInstant(at)),
-          ),
-          {
-            limit: limit + 1,
-            takeOnly: true,
-            observe: false,
-            lock: false,
-            orderBy: asc(col(j.table, j.jobId)),
-          },
-        );
+  const options = { limit: limit + 1, takeOnly: true, observe: false, lock: false };
 
-  const grants = yield* owner.read(
-    g.table,
-    both(
-      eq(col(g.table, g.moduleId), moduleId),
-      sql`${col(g.table, g.state)} in ('Disconnected','ReauthorizationRequired')`,
-      sql`${col(g.table, g.sealed)} is null`,
-      sql`${col(g.table, g.refreshWork)} <> 'Unresolved'`,
-      lte(col(g.table, g.retentionUntil), mapping.clock.encodeInstant(at)),
-      sql`${col(g.table, g.revocationJobId)} is null`,
-      sql`not exists(select 1 from ${mapping.admission.table} where ${col(mapping.admission.table, mapping.admission.moduleId)} = ${col(g.table, g.moduleId)} and ${col(mapping.admission.table, mapping.admission.grantId)} = ${col(g.table, g.grantId)})`,
-      sql`not exists(select 1 from ${mapping.command.table} where ${col(mapping.command.table, mapping.command.moduleId)} = ${col(g.table, g.moduleId)} and ${col(mapping.command.table, mapping.command.grantId)} = ${col(g.table, g.grantId)})`,
-      j === undefined
-        ? undefined
-        : sql`not exists(select 1 from ${j.table} where ${col(j.table, j.moduleId)} = ${col(g.table, g.moduleId)} and ${col(j.table, j.grantId)} = ${col(g.table, g.grantId)})`,
-    ),
+  const reads: Array<{
+    readonly name: keyof Candidates;
+    readonly read: Parameters<typeof owner.readMany>[0][number];
+  }> = [
     {
-      limit: limit + 1,
-      takeOnly: true,
-      observe: false,
-      lock: false,
-      orderBy: asc(col(g.table, g.grantId)),
+      name: "flows",
+      read: {
+        table: f.table,
+        where: both(
+          eq(col(f.table, f.moduleId), moduleId),
+          sql`((${col(f.table, f.state)} in ('Prepared','Pending') and ${col(f.table, f.expiresAt)} <= ${mapping.clock.encodeInstant(at)}) or (${col(f.table, f.state)} = 'Claimed' and ${col(f.table, f.claimExpiresAt)} <= ${mapping.clock.encodeInstant(at)}) or (${col(f.table, f.state)} not in ('Prepared','Pending','Claimed') and ${col(f.table, f.work)} <> 'Unresolved' and ${col(f.table, f.retentionUntil)} <= ${mapping.clock.encodeInstant(at)}))`,
+        ),
+        options: { ...options, orderBy: asc(col(f.table, f.flowId)) },
+      },
     },
-  );
+  ];
 
-  const cohorts =
-    j === undefined
-      ? { rows: [] }
-      : yield* owner.read(
-          h.table,
-          both(
-            equal(h.table, { [h.state]: "Blocked" }),
-            C.clearableCondition(
-              mapping,
-              sql`${col(h.table, h.cohortKey)}`,
-              sql`${col(h.table, h.clientKey)}`,
-            ),
+  if (j !== undefined)
+    reads.push({
+      name: "jobs",
+      read: {
+        table: j.table,
+        where: both(
+          eq(col(j.table, j.moduleId), moduleId),
+          eq(col(j.table, j.state), "Confirmed"),
+          lte(col(j.table, j.retentionUntil), mapping.clock.encodeInstant(at)),
+        ),
+        options: { ...options, orderBy: asc(col(j.table, j.jobId)) },
+      },
+    });
+  reads.push({
+    name: "grants",
+    read: {
+      table: g.table,
+      where: both(
+        eq(col(g.table, g.moduleId), moduleId),
+        sql`${col(g.table, g.state)} in ('Disconnected','ReauthorizationRequired')`,
+        sql`${col(g.table, g.sealed)} is null`,
+        sql`${col(g.table, g.refreshWork)} <> 'Unresolved'`,
+        lte(col(g.table, g.retentionUntil), mapping.clock.encodeInstant(at)),
+        sql`${col(g.table, g.revocationJobId)} is null`,
+        sql`not exists(select 1 from ${mapping.admission.table} where ${col(mapping.admission.table, mapping.admission.moduleId)} = ${col(g.table, g.moduleId)} and ${col(mapping.admission.table, mapping.admission.grantId)} = ${col(g.table, g.grantId)})`,
+        sql`not exists(select 1 from ${mapping.command.table} where ${col(mapping.command.table, mapping.command.moduleId)} = ${col(g.table, g.moduleId)} and ${col(mapping.command.table, mapping.command.grantId)} = ${col(g.table, g.grantId)})`,
+        j === undefined
+          ? undefined
+          : sql`not exists(select 1 from ${j.table} where ${col(j.table, j.moduleId)} = ${col(g.table, g.moduleId)} and ${col(j.table, j.grantId)} = ${col(g.table, g.grantId)})`,
+      ),
+      options: { ...options, orderBy: asc(col(g.table, g.grantId)) },
+    },
+  });
+  if (j !== undefined)
+    reads.push({
+      name: "cohorts",
+      read: {
+        table: h.table,
+        where: both(
+          equal(h.table, { [h.state]: "Blocked" }),
+          C.clearableCondition(
+            mapping,
+            sql`${col(h.table, h.cohortKey)}`,
+            sql`${col(h.table, h.clientKey)}`,
           ),
-          {
-            limit: limit + 1,
-            takeOnly: true,
-            observe: false,
-            lock: false,
-            orderBy: asc(col(h.table, h.cohortKey)),
-          },
-        );
+        ),
+        options: { ...options, orderBy: asc(col(h.table, h.cohortKey)) },
+      },
+    });
+  if (mapping.externalReference !== undefined)
+    reads.push({
+      name: "tuples",
+      read: {
+        table: t.table,
+        where: both(
+          eq(col(t.table, t.state), "Owned"),
+          sql`not (${connectedReferenceCondition(mapping, sql`${col(t.table, t.identityKey)}`, { provider: sql`${col(t.table, t.provider)}`, issuer: sql`${col(t.table, t.issuer)}` })})`,
+          sql`not (${mapping.externalReference({ identityKey: sql`${col(t.table, t.identityKey)}`, subjectId: sql`${col(t.table, t.subjectId)}` })})`,
+        ),
+        options: { ...options, orderBy: asc(col(t.table, t.identityKey)) },
+      },
+    });
+  const selected = yield* owner.readMany(reads.map(({ read }) => read));
 
-  const t = mapping.ownership.tuple;
+  const result: Record<keyof Candidates, ReadonlyArray<Row>> = {
+    flows: [],
+    jobs: [],
+    grants: [],
+    cohorts: [],
+    tuples: [],
+  };
 
-  const tuples =
-    mapping.externalReference === undefined
-      ? { rows: [] }
-      : yield* owner.read(
-          t.table,
-          both(
-            eq(col(t.table, t.state), "Owned"),
-            sql`not (${connectedReferenceCondition(mapping, sql`${col(t.table, t.identityKey)}`, { provider: sql`${col(t.table, t.provider)}`, issuer: sql`${col(t.table, t.issuer)}` })})`,
-            sql`not (${mapping.externalReference({ identityKey: sql`${col(t.table, t.identityKey)}`, subjectId: sql`${col(t.table, t.subjectId)}` })})`,
-          ),
-          {
-            limit: limit + 1,
-            takeOnly: true,
-            observe: false,
-            lock: false,
-            orderBy: asc(col(t.table, t.identityKey)),
-          },
-        );
+  for (const [index, { name }] of reads.entries()) result[name] = selected[index]!.rows;
 
-  return { jobs: jobs.rows, grants: grants.rows, cohorts: cohorts.rows, tuples: tuples.rows };
+  return result;
 });
 
 export const collect = Effect.fn("oauthConnected.collect")(function* (
@@ -368,8 +384,8 @@ const collectNative = Effect.fn("oauthConnected.collectNative")(function* (
   const clearing = j === undefined ? [] : take(discovered.cohorts);
   const releasing = mapping.externalReference === undefined ? [] : take(discovered.tuples);
 
-  // Keep predicates small in final exact-row observations too: a 1,000-ID IN
-  // repeated for every observed row would itself restore a query multiplier.
+  // Native identity equality discovers aliases; canonical rows alone can enter
+  // keyed observations. Unsupported encoders keep the ordinary point path.
   let canonicalKeys = true;
 
   const readSet = Effect.fnUntraced(function* (
@@ -381,6 +397,29 @@ const collectNative = Effect.fn("oauthConnected.collectNative")(function* (
   ) {
     const ids = [...new Set(requested)].sort(),
       rows = new Map<string, Row>();
+
+    const keys = ids.map((id) => ({ [key]: id }));
+    const selected = yield* owner.readKeys(table, keys, { base, observe: false });
+
+    if (selected !== undefined) {
+      if (!selected.canonical) {
+        canonicalKeys = false;
+
+        return rows;
+      }
+      for (const row of selected.rows) {
+        invariant(ids.includes(row[key]) && !rows.has(row[key]));
+        rows.set(row[key], row);
+      }
+      yield* owner.observeKeys(
+        table,
+        presentOnly ? selected.rows.map((row) => ({ [key]: row[key] })) : keys,
+        selected.rows,
+        base,
+      );
+
+      return rows;
+    }
 
     const size = Math.max(1, Math.min(100, Math.floor((owner.maxParameters - 2) / 4)));
 
@@ -430,55 +469,6 @@ const collectNative = Effect.fn("oauthConnected.collectNative")(function* (
     return rows;
   });
 
-  // One native SELECT evaluates independent predicates; callers retain each
-  // accepted custody/expiry condition as a final transaction fence.
-  const checkMany = Effect.fnUntraced(function* (conditions: ReadonlyArray<SQL>) {
-    const accepted: boolean[] = [];
-
-    for (let offset = 0; offset < conditions.length;) {
-      let chunk = conditions.slice(offset, offset + 64);
-
-      const select = (conditions: ReadonlyArray<SQL>) =>
-        owner.database
-          .select(
-            Object.fromEntries(
-              conditions.map((condition, index) => [
-                String(index),
-                sql`case when ${condition} then 1 else 0 end`.mapWith(Number),
-              ]),
-            ),
-          )
-          .from(sql`(select 1) as oauth_collection_checks`);
-
-      let query = select(chunk);
-
-      while (chunk.length > 1 && !cleanupQueryFits(query, owner.maxParameters)) {
-        chunk = chunk.slice(0, Math.ceil(chunk.length / 2));
-        query = select(chunk);
-      }
-      invariant(cleanupQueryFits(query, owner.maxParameters));
-
-      const rows: ReadonlyArray<Row> = yield* (
-        query as Effect.Effect<ReadonlyArray<Row>, EffectDrizzleQueryError>
-      ).pipe(Effect.mapError(unavailable));
-
-      offset += chunk.length;
-
-      invariant(rows.length === 1);
-      accepted.push(
-        ...chunk.map((_, index) => {
-          const value = rows[0]![String(index)];
-
-          invariant(value === 0 || value === 1);
-
-          return value === 1;
-        }),
-      );
-    }
-
-    return accepted;
-  });
-
   // Raw bulk DML still updates every prior observation, including caller-owned
   // ones. Only values validated from locked rows enter these expected sets.
   const change = Effect.fnUntraced(function* (
@@ -489,6 +479,23 @@ const collectNative = Effect.fn("oauthConnected.collectNative")(function* (
     guards: ReadonlyMap<string, Row> = new Map(),
   ) {
     const entries = [...updates];
+
+    const changes = entries.map(([id, after]) => {
+      const before = owner.observations
+        .filter((observation) => observation.table === table)
+        .flatMap((observation) => observation.rows)
+        .find((row) => row[key] === id && (table !== g.table || row[g.moduleId] === moduleId));
+
+      invariant(before !== undefined && matchesNativeRow(table, before, guards.get(id) ?? {}));
+
+      return {
+        key: { [key]: id, ...(table === g.table ? { [g.moduleId]: moduleId } : {}) },
+        before,
+        after,
+      };
+    });
+
+    if (yield* owner.changeRows(table, changes, base)) return;
     const fields = Object.keys(entries[0]?.[1] ?? {});
 
     const binds =
@@ -644,28 +651,30 @@ const collectNative = Effect.fn("oauthConnected.collectNative")(function* (
       : new Map<string, Row>();
 
   if (!canonicalKeys) return undefined;
-  const ownedConditions = new Map<string, SQL>();
+  const owned = new Map<string, Row>();
 
   for (const { key, identity } of identities) {
     const row = tupleRows.get(key),
       external = externalRows.get(key);
 
     F.validateTuple(mapping, identity, row, external === undefined ? [] : [external]);
-    if (mapping.ownership.mode === "separate" && row?.[t.state] === "Owned") {
-      const o = mapping.ownership.external;
-
-      ownedConditions.set(
-        key,
-        sql`exists(select 1 from ${o.table} where ${both(equal(o.table, { [o.identityKey]: key }), o.ownedCondition)})`,
-      );
-    }
+    if (mapping.ownership.mode === "separate" && row?.[t.state] === "Owned")
+      owned.set(key, { [t.identityKey]: key });
   }
-  const owned = [...ownedConditions.values()];
-
-  invariant((yield* checkMany(owned)).every(Boolean));
   // Existing inspectTuple retains this condition even when later releasing the
   // tuple; retain that same final contract for separate-ownership mappings.
-  owner.postconditions.push(...owned);
+  if (mapping.ownership.mode === "separate") {
+    const o = mapping.ownership.external;
+
+    invariant(
+      (yield* checkCleanupRows(
+        t.table,
+        [...owned.values()],
+        (fields) =>
+          sql`exists(select 1 from ${o.table} where ${both(eq(col(o.table, o.identityKey), fields[t.identityKey]!), o.ownedCondition)})`,
+      )).every(Boolean),
+    );
+  }
 
   const cohortRows = yield* readSet(
     h.table,
@@ -776,16 +785,23 @@ const collectNative = Effect.fn("oauthConnected.collectNative")(function* (
     )
       continue;
 
-    const references = both(
-      ...[mapping.admission, mapping.command, ...(j === undefined ? [] : [j])].map(
-        (table) =>
-          sql`not exists(select 1 from ${table.table} where ${equal(table.table, { [table.moduleId]: moduleId, [table.grantId]: target.token.grantId })})`,
-      ),
-    );
-
-    removable.push({ id: target.token.grantId, references, until });
+    removable.push({ id: target.token.grantId, until });
   }
-  const grantAccepted = yield* checkMany(removable.map((value) => value.references));
+
+  const grantAccepted = yield* checkCleanupRows(
+    g.table,
+    removable.map(({ id }) => ({ [g.moduleId]: moduleId, [g.grantId]: id })),
+    (fields) =>
+      both(
+        ...[mapping.admission, mapping.command, ...(j === undefined ? [] : [j])].map(
+          (table) =>
+            sql`not exists(select 1 from ${table.table} where ${both(
+              eq(col(table.table, table.moduleId), fields[g.moduleId]!),
+              eq(col(table.table, table.grantId), fields[g.grantId]!),
+            )})`,
+        ),
+      ),
+  );
 
   const deletedGrants = new Map<string, null>(),
     grantGuards = new Map<string, Row>();
@@ -797,7 +813,6 @@ const collectNative = Effect.fn("oauthConnected.collectNative")(function* (
       if (deletedGrants.has(value.id)) continue;
       grantGuards.set(value.id, { [g.version]: grantRows.get(value.id)![g.version] });
       deletedGrants.set(value.id, null);
-      owner.postconditions.push(value.references);
       horizon = Math.max(horizon, value.until);
       removed++;
     }
@@ -814,11 +829,12 @@ const collectNative = Effect.fn("oauthConnected.collectNative")(function* (
     (value) => cohortRows.get(value.cohort)![h.state] === "Blocked",
   );
 
-  const clearConditions = blocked.map((value) =>
-    C.clearableCondition(mapping, value.cohort, value.client.id),
+  const clearAccepted = yield* checkCleanupRows(
+    h.table,
+    blocked.map((value) => ({ [h.cohortKey]: value.cohort, [h.clientKey]: value.client.id })),
+    (fields) => C.clearableCondition(mapping, fields[h.cohortKey]!, fields[h.clientKey]!),
   );
 
-  const clearAccepted = yield* checkMany(clearConditions);
   const clientGuards = new Map<string, Row>();
 
   const clientUpdates = new Map<string, Row>(),
@@ -843,7 +859,6 @@ const collectNative = Effect.fn("oauthConnected.collectNative")(function* (
         [h.state]: "Open",
         [h.version]: owner.marker,
       });
-      owner.postconditions.push(clearConditions[index]!);
     }
   yield* change(c.table, c.clientKey, clientUpdates, sql`1 = 1`, clientGuards);
   yield* change(h.table, h.cohortKey, cohortUpdates);
@@ -852,18 +867,29 @@ const collectNative = Effect.fn("oauthConnected.collectNative")(function* (
     (value) => tupleRows.get(value.key)?.[t.state] === "Owned",
   );
 
-  const releaseConditions = ownedReleases.map((value) => {
-    const native = tupleRows.get(value.key)![t.subjectId];
+  const releaseAccepted = yield* checkCleanupRows(
+    t.table,
+    ownedReleases.map(({ key }) => {
+      const row = tupleRows.get(key)!;
 
-    invariant(native !== null);
+      invariant(row[t.subjectId] !== null);
 
-    return both(
-      sql`not (${connectedReferenceCondition(mapping, value.key)})`,
-      sql`not (${mapping.externalReference!({ identityKey: value.key, subjectId: S.nativeCopy(native) })})`,
-    );
-  });
-
-  const releaseAccepted = yield* checkMany(releaseConditions);
+      return {
+        [t.identityKey]: key,
+        [t.provider]: row[t.provider],
+        [t.issuer]: row[t.issuer],
+        [t.subjectId]: S.nativeCopy(row[t.subjectId]),
+      };
+    }),
+    (fields) =>
+      both(
+        sql`not (${connectedReferenceCondition(mapping, fields[t.identityKey]!, {
+          provider: fields[t.provider]!,
+          issuer: fields[t.issuer]!,
+        })})`,
+        sql`not (${mapping.externalReference!({ identityKey: fields[t.identityKey]!, subjectId: fields[t.subjectId]! })})`,
+      ),
+  );
 
   const scopeGuards = new Map<string, Row>(),
     tupleGuards = new Map<string, Row>();
@@ -888,7 +914,6 @@ const collectNative = Effect.fn("oauthConnected.collectNative")(function* (
       });
       externalDeletes.set(key, null);
       scope.row = { ...scope.row, [c.version]: owner.marker };
-      owner.postconditions.push(releaseConditions[index]!);
     }
   yield* change(c.table, c.clientKey, scopeUpdates, sql`1 = 1`, scopeGuards);
   yield* change(t.table, t.identityKey, tupleUpdates, sql`1 = 1`, tupleGuards);

@@ -78,6 +78,8 @@ export interface QueryOperations<
     (parts: TemplateStringsArray, ...values: ReadonlyArray<unknown>): Fragment;
     readonly param: (value: unknown, column: SqlColumn) => unknown;
     readonly join: (values: ReadonlyArray<unknown>, separator: SqlExpression) => Fragment;
+    readonly raw?: (value: string) => Fragment;
+    readonly identifier?: (value: string) => SqlExpression;
   };
   readonly getTableColumns: (table: object) => Readonly<Record<string, Column>>;
   readonly column: (table: object, key: string) => Column;

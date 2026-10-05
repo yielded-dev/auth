@@ -913,12 +913,14 @@ export const makePhoneKernel = <
     if (!owner.batch) {
       const expired = [];
 
-      // The page is already locked. Keep point observations so final fences are
-      // bounded and detect skipped deletes, reinsertions and changed survivors.
+      // The page is already locked. Keep its identities in one bounded relation,
+      // including survivors and rows belonging to another module.
+      yield* owner.observeKeys(
+        state.table,
+        rows.map((row) => ({ [state.scope]: row[state.scope] })),
+        rows,
+      );
       for (const row of rows) {
-        yield* owner.observe(state.table, equal(state.table, { [state.scope]: row[state.scope] }), [
-          row,
-        ]);
         const stored = Schema.decodeSync(storageCodec)(row[state.state]);
 
         if (stored.moduleId !== mapping.moduleId) continue;
@@ -932,12 +934,26 @@ export const makePhoneKernel = <
 
         if (expiresAt !== undefined && expiresAt <= now) expired.push({ row, expiresAt });
       }
-      // Scope, encoded state and version retain the decoded eligibility decision
-      // in each DELETE. A trigger that refreshes a later candidate causes the
-      // final absence fence to abort the entire transaction.
+      // Scope, encoded state and version retain the decoded eligibility decision.
+      // Grouped deletes validate the actual removed rows; the final fence also
+      // catches skipped deletes and rows reinserted by triggers.
       const chunkSize = Math.max(1, Math.min(64, Math.floor(owner.maxParameters / 4)));
+      const horizon = expired.reduce((latest, entry) => Math.max(latest, entry.expiresAt), 0);
+      const current = sql`${mapping.engineNowMillis} >= ${horizon}`;
 
-      for (let offset = 0; offset < expired.length; offset += chunkSize) {
+      const changed = yield* owner.changeRows(
+        state.table,
+        expired.map(({ row }) => ({
+          key: { [state.scope]: row[state.scope] },
+          before: row,
+          after: null,
+        })),
+        current,
+      );
+
+      if (expired.length > 0) owner.postconditions.push(current);
+
+      for (let offset = 0; !changed && offset < expired.length; offset += chunkSize) {
         const selected = expired.slice(offset, offset + chunkSize);
 
         yield* owner.write(

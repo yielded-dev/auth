@@ -53,6 +53,7 @@ import type { SessionStepUpMapping } from "./models/step-up-model";
 /* oxlint-disable no-explicit-any -- existing storage kernels erase foreign table shapes; domain errors remain typed. */
 import type { QueryFailure } from "./query-operations";
 import type { QueryOperations } from "./query-operations";
+import { makeSnapshotReader } from "./sql-snapshot";
 import {
   decodeStepUpIntent,
   encodeStepUpIntent,
@@ -61,7 +62,7 @@ import {
   validateStepUpPlan,
   stepUpRotationMatches,
 } from "./step-up-state";
-import type { NativeDatabase } from "./transaction-kernel";
+import { NativeDatabase } from "./transaction-kernel";
 
 type CommitMode = "interactive" | "synchronous";
 
@@ -91,6 +92,7 @@ interface SessionSqlQuery<A = ReadonlyArray<any>> extends Effect.Effect<
 }
 
 export interface SessionSqlDatabase {
+  readonly maxParameters?: number;
   readonly select: (...args: ReadonlyArray<any>) => SessionSqlQuery;
   readonly insert: (...args: ReadonlyArray<any>) => SessionSqlQuery;
   readonly update: (...args: ReadonlyArray<any>) => SessionSqlQuery;
@@ -142,6 +144,7 @@ type SqlStepUpReadFailure = AdapterFailure | SqlStepUpRejectAbsence | SessionUna
 export const makeSessionKernel = (operations: QueryOperations) => {
   const { and, eq, gt, lte, inArray, or, sql, column, updateValues } = operations;
   const unavailable = () => SessionUnavailable.make({});
+  const readSnapshot = makeSnapshotReader(operations);
 
   const stale = () => StaleAuthentication.make({});
 
@@ -343,31 +346,69 @@ export const makeSessionKernel = (operations: QueryOperations) => {
     subjectId: SubjectId,
     credentialIds: ReadonlyArray<string>,
     locking: boolean,
-  ) {
+    dialect?: "pg" | "sqlite",
+    advisory = false,
+  ): Effect.fn.Return<
+    { readonly subject: Record<string, any>; readonly revision: AuthenticationRevision },
+    AdapterFailure | StaleAuthentication,
+    CurrentSessionSql
+  > {
     const database = yield* CurrentSessionSql;
     const requested = uniqueStrings(credentialIds);
 
     if (requested.length !== credentialIds.length) return yield* stale();
     const nativeSubjectId = yield* mapping.subjectId.toNative(subjectId);
-    const subjectRows = yield* readSubject(mapping, nativeSubjectId, locking);
-    const subject = subjectRows[0];
     const columns = authorityColumns(mapping);
+
+    const where = and(
+      eq(columns.credentialSubjectId, nativeSubjectId),
+      requested.length === 0 ? sql`false` : inArray(columns.credentialId, requested),
+    );
+
+    let subjectRows: ReadonlyArray<any>, credentialRows: ReadonlyArray<any>;
+
+    if (!locking || dialect === "pg" || dialect === "sqlite") {
+      const snapshot = readSnapshot(
+        database,
+        [
+          { table: mapping.subject.table, where: eq(columns.subjectId, nativeSubjectId), limit: 1 },
+          ...(requested.length === 0
+            ? []
+            : [{ table: mapping.credential.table, where, orderBy: [columns.credentialId] }]),
+        ],
+        database.maxParameters ?? 96,
+        locking && dialect === "pg",
+      );
+
+      // A single statement already has a consistent database snapshot. Opaque
+      // or oversized projections keep the existing transaction and lock path.
+      if (advisory && !snapshot.singleStatement)
+        return yield* inTransaction(
+          database,
+          captureDetailsIn(mapping, subjectId, credentialIds, true, dialect),
+        );
+      const rows = yield* snapshot.rows;
+
+      subjectRows = rows[0]!;
+      credentialRows = rows[1] ?? [];
+    } else {
+      subjectRows = yield* readSubject(mapping, nativeSubjectId, locking);
+      credentialRows =
+        requested.length === 0
+          ? []
+          : yield* selectRows(
+              database
+                .select()
+                .from(mapping.credential.table)
+                .where(where)
+                .orderBy(columns.credentialId),
+              locking,
+            );
+    }
+    const subject = subjectRows[0];
 
     if (subject === undefined || !mapping.subject.isActiveStatus(subject[mapping.subject.status]))
       return yield* stale();
-
-    const query = database
-      .select()
-      .from(mapping.credential.table)
-      .where(
-        and(
-          eq(columns.credentialSubjectId, nativeSubjectId),
-          requested.length === 0 ? sql`false` : inArray(columns.credentialId, requested),
-        ),
-      )
-      .orderBy(columns.credentialId);
-
-    const credentialRows = requested.length === 0 ? [] : yield* selectRows(query, locking);
 
     if (credentialRows.length !== requested.length) return yield* stale();
 
@@ -401,20 +442,27 @@ export const makeSessionKernel = (operations: QueryOperations) => {
     subjectId: SubjectId,
     credentialIds: ReadonlyArray<string>,
     locking: boolean,
+    dialect?: "pg" | "sqlite",
+    advisory = false,
   ) {
-    return (yield* captureDetailsIn(mapping, subjectId, credentialIds, locking)).revision;
+    return (yield* captureDetailsIn(mapping, subjectId, credentialIds, locking, dialect, advisory))
+      .revision;
   });
 
   const validateEvidenceIn = Effect.fn("DrizzleSession.validateEvidence")(function* (
     mapping: AnyAuthorityMapping,
     evidence: AuthenticationEvidence,
     locking: boolean,
+    dialect?: "pg" | "sqlite",
+    advisory = false,
   ) {
     const captured = yield* captureDetailsIn(
       mapping,
       evidence.revision.subjectId,
       evidence.revision.credentials.map((item) => item.credentialId),
       locking,
+      dialect,
+      advisory,
     );
 
     if (
@@ -637,6 +685,12 @@ export const makeSessionKernel = (operations: QueryOperations) => {
   > {
     const database = yield* CurrentSessionSql;
 
+    const dialect = (yield* NativeDatabase).$client.onDialectOrElse({
+      pg: () => "pg" as const,
+      sqlite: () => "sqlite" as const,
+      orElse: () => undefined,
+    });
+
     if (!options.coordinated)
       yield* (operations.validateStorage?.(mapping) ?? Effect.void).pipe(
         Effect.mapError(unavailable),
@@ -646,15 +700,26 @@ export const makeSessionKernel = (operations: QueryOperations) => {
     const service = {
       capture: (subjectId: SubjectId, credentialIds: ReadonlyArray<string>) =>
         safeTransaction(
-          inTransaction(database, captureIn(mapping, subjectId, credentialIds, true)),
+          captureIn(
+            mapping,
+            subjectId,
+            credentialIds,
+            options.coordinated === true && options.locking,
+            dialect,
+            options.coordinated !== true,
+          ).pipe(Effect.provideService(CurrentSessionSql, database)),
         ),
       requirements: (evidence: AuthenticationEvidence) =>
         safeTransaction(
-          inTransaction(
-            database,
-            validateEvidenceIn(mapping, evidence, true).pipe(
-              Effect.map((result) => result.requirement),
-            ),
+          validateEvidenceIn(
+            mapping,
+            evidence,
+            options.coordinated === true && options.locking,
+            dialect,
+            options.coordinated !== true,
+          ).pipe(
+            Effect.map((result) => result.requirement),
+            Effect.provideService(CurrentSessionSql, database),
           ),
         ),
       approve: <A>(
@@ -667,7 +732,13 @@ export const makeSessionKernel = (operations: QueryOperations) => {
           mapping.isConstraintConflict,
           Effect.gen(function* () {
             const journal = yield* CurrentCommitJournal;
-            const { requirement } = yield* validateEvidenceIn(mapping, input.evidence, true);
+
+            const { requirement } = yield* validateEvidenceIn(
+              mapping,
+              input.evidence,
+              options.locking,
+              dialect,
+            );
 
             if (input.pending === undefined) {
               const assessed = yield* assessAuthentication(input.evidence, requirement).pipe(
@@ -804,6 +875,12 @@ export const makeSessionKernel = (operations: QueryOperations) => {
   > {
     const database = yield* CurrentSessionSql;
 
+    const dialect = (yield* NativeDatabase).$client.onDialectOrElse({
+      pg: () => "pg" as const,
+      sqlite: () => "sqlite" as const,
+      orElse: () => undefined,
+    });
+
     if (!options.coordinated)
       yield* (operations.validateStorage?.(mapping) ?? Effect.void).pipe(
         Effect.mapError(unavailable),
@@ -827,7 +904,8 @@ export const makeSessionKernel = (operations: QueryOperations) => {
             const { nativeSubjectId, requirement } = yield* validateEvidenceIn(
               mapping,
               input.evidence,
-              true,
+              options.locking,
+              dialect,
             );
 
             const existing = (yield* readFlow(mapping, input.evidence.flowId, true))[0];
@@ -985,6 +1063,12 @@ export const makeSessionKernel = (operations: QueryOperations) => {
   > {
     const database = yield* CurrentSessionSql;
 
+    const dialect = (yield* NativeDatabase).$client.onDialectOrElse({
+      pg: () => "pg" as const,
+      sqlite: () => "sqlite" as const,
+      orElse: () => undefined,
+    });
+
     if (!options.coordinated)
       yield* (operations.validateStorage?.(mapping) ?? Effect.void).pipe(
         Effect.mapError(unavailable),
@@ -1009,7 +1093,8 @@ export const makeSessionKernel = (operations: QueryOperations) => {
             const { nativeSubjectId, requirement } = yield* validateEvidenceIn(
               mapping,
               input.evidence,
-              true,
+              options.locking,
+              dialect,
             );
 
             let flowInsert: unknown | undefined;

@@ -159,6 +159,18 @@ export const makeSessionModule = <
     readonly claims: Claims["Type"];
     readonly pending?: PendingConsumption;
   };
+
+  // Completion and issuance assess the same immutable evidence before hooks run.
+  // Carry that advisory read once through their private call, without adding a
+  // caller-supplied field. Persistence still validates authority at commit.
+  const issuanceRequirements = new WeakMap<
+    Issuance,
+    {
+      readonly evidence: AuthenticationEvidence;
+      readonly requirement: AuthenticationRequirement;
+    }
+  >();
+
   type Inspection = SessionInspection<Claims["Type"]>;
   type Strategy = {
     readonly policy: SessionPolicy;
@@ -405,7 +417,14 @@ export const makeSessionModule = <
   ) {
     const evidence = yield* snapshotAuthenticationEvidence(input.evidence);
     const authority = yield* AuthenticationAuthority;
-    const requirement = yield* authority.requirements(evidence);
+    const captured = issuanceRequirements.get(input);
+
+    issuanceRequirements.delete(input);
+
+    const requirement =
+      captured?.evidence === input.evidence
+        ? captured.requirement
+        : yield* authority.requirements(evidence);
 
     const assessed = yield* assessAuthentication(evidence, requirement).pipe(
       Effect.mapError(() => SessionInvalid.make({})),
@@ -1210,12 +1229,17 @@ export const makeSessionModule = <
             Effect.mapError(() => SessionInvalid.make({})),
           );
 
-          if (assessed.satisfied)
+          if (assessed.satisfied) {
+            const issuance = { ...input, claims: checkedClaims };
+
+            issuanceRequirements.set(issuance, { evidence: input.evidence, requirement });
+
             return completed(
               yield* strategy
-                .prepareEstablish({ ...input, claims: checkedClaims })
+                .prepareEstablish(issuance)
                 .pipe(Effect.provideService(AuthenticationAuthority, authority)),
             );
+          }
           if (
             input.pending !== undefined ||
             configuration === undefined ||

@@ -488,11 +488,12 @@ crypto Effects may suspend inside that owned transaction. An arbitrary raw Drizz
 outer transaction, including its `transactionSync` callbacks, is unsupported.
 No synchronous crypto implementation or `Effect.runSync` bridge is required.
 
-Cleanup groups respect the driver's bind limits and retain atomic commit checks.
-Durable Object SQLite needs smaller groups than PostgreSQL; a large cleanup page
-can still issue hundreds of statements. Budget each statement as a database roundtrip.
-Direct Effect SQL uses portable
-SQLite batch limits that also fit Durable Objects.
+Compatible scalar mappings use grouped cleanup reads and writes, with atomic checks
+after application work and database triggers. Groups split at the driver's statement
+and bound-data limits. Custom SQL encoders, collation aliases, and staged D1 writes
+can require additional statements; a page size alone does not determine its cost.
+Budget every statement and transaction-control call as a database roundtrip.
+Direct Effect SQL uses SQLite limits that also fit Durable Objects.
 
 </details>
 

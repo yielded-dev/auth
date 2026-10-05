@@ -58,6 +58,8 @@ export interface TransactionExecution<Failure, OwnerId, Requirements = Lifecycle
   readonly run: <A, E, R>(
     body: Effect.Effect<A, E, R>,
     mutation?: boolean,
+    /** Advisory read whose decisions use the same SQL snapshot. */
+    snapshot?: boolean,
   ) => Effect.Effect<
     A,
     Failure,
@@ -112,12 +114,14 @@ export const makeTransactionExecutionKernel = (
       run: <A, E, R>(
         body: Effect.Effect<A, E, R>,
         mutation = true,
+        snapshot = false,
       ): Effect.Effect<
         A,
         Failure,
         Exclude<Exclude<R, OwnerId | CurrentCommitJournal>, Crypto.Crypto> | LifecycleHooks
       > => {
         return Effect.suspend(() => {
+          invariant(!snapshot || !mutation);
           let entered = false;
 
           const work: Effect.Effect<
@@ -175,12 +179,15 @@ export const makeTransactionExecutionKernel = (
                         Effect.gen(function* () {
                           const owner = makeTransactionOwner(tx, journal, marker, unavailable, {
                             client: database.$client,
-                            batch: configuration.mode === "batch",
-                            locking: configuration.locking,
+                            batch: !snapshot && configuration.mode === "batch",
+                            locking: !snapshot && configuration.locking,
+                            readonlySnapshot: snapshot,
                             mysql: configuration.dialect === "mysql",
                             dialect: configuration.dialect,
                             ...(configuration.maxParameters === undefined
-                              ? {}
+                              ? snapshot && configuration.mode === "batch"
+                                ? { maxParameters: 96, compactGeneratedStatements: true }
+                                : {}
                               : { maxParameters: configuration.maxParameters }),
                           });
 
@@ -192,13 +199,13 @@ export const makeTransactionExecutionKernel = (
                           );
 
                           yield* owner.finish();
-                          if (configuration.mode === "batch")
+                          if (!snapshot && configuration.mode === "batch")
                             yield* tx.$client.batch(owner.statements);
 
                           return value;
                         });
 
-                      return configuration.mode === "batch"
+                      return snapshot || configuration.mode === "batch"
                         ? run(database)
                         : configuration.transaction !== undefined
                           ? configuration.transaction(database, run)

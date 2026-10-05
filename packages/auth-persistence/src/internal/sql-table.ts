@@ -99,7 +99,9 @@ export class Column extends Fragment {
   }
 
   getSQLType(): string {
-    return this.options.type;
+    // Portable integer columns carry safe JavaScript integers and timestamps;
+    // PostgreSQL's 32-bit INTEGER cannot represent that persisted range.
+    return this.options.type === "integer" ? "bigint" : this.options.type;
   }
 }
 
