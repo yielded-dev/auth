@@ -446,8 +446,9 @@ export const makeComposedPasskeys = (
           moduleId: columns.moduleId,
           active: columns.active,
           policyRevision: columns.policyRevision,
+          // Predicate SQL preserves qualifiers through single-table projections.
           admitted: sql`case when exists(select 1 from ${admission}
-            where ${ac.authorityScope} = ${namespace} and ${ac.moduleId} = ${columns.moduleId})
+            where ${and(eq(ac.authorityScope, namespace), eq(ac.moduleId, columns.moduleId))})
               then 'present' else 'missing' end`,
         })
         .from(module)
