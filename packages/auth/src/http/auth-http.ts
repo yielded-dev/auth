@@ -31,6 +31,7 @@ import {
 } from "../http-operation/OperationHttpServerConfig";
 import { mutationSecurity, requestSecurity } from "../http-operation/security";
 import { make as makeOperationServer } from "../http-operation/server";
+import { cookieDomain, httpsOrigin, origin, originWithinDomain } from "../internal/origin";
 import type { OAuthConnectedProtocol } from "../oauth/OAuthConnectedProtocol";
 import type { OAuthProtocol } from "../oauth/OAuthProtocol";
 import type { ProviderDefinition } from "../oauth/providerDefinition";
@@ -65,12 +66,19 @@ const withProofRequestContext = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
     return yield* Effect.provideService(effect, ProofRequestContext, context);
   });
 
-/** Browser transport policy. Secure names retain __Host-; insecure cookies are loopback-only. */
+/** Browser transport policy. Domain cookies require Secure and trust every subdomain.
+ * Never host user- or AI-generated content there; audit dangling DNS, verify sessions
+ * server-side and retain Origin/CSRF admission on mutations. */
 export interface AuthHttpOptions<E = never, R = never, ResponseR = never> {
   readonly origin: string;
+  /** Additional exact HTTPS origins admitted alongside origin, within cookie.domain if set. */
+  readonly trustedOrigins?: ReadonlyArray<string>;
   readonly maximumBodyBytes?: number;
   readonly maximumUrlBytes?: number;
   readonly cookie?: {
+    /** Bare parent host shared by all auth cookies. Defaults to host-only cookies.
+     * With a domain, names use __Secure-; __Host- and secure: false fail startup. */
+    readonly domain?: string;
     readonly prefix?: string;
     readonly name?: string;
     readonly secure?: boolean;
@@ -189,35 +197,65 @@ export const make = <
 
   const secure = options.cookie?.secure ?? true;
 
+  const domain = options.cookie?.domain;
+  const requiredPrefix = domain === undefined ? "__Host-" : "__Secure-";
+
   const cookies = cookieConfiguration({
-    prefix: options.cookie?.prefix ?? (secure ? "__Host-effect-auth-" : "effect-auth-"),
+    ...(domain === undefined ? {} : { domain }),
+    prefix: options.cookie?.prefix ?? (secure ? `${requiredPrefix}effect-auth-` : "effect-auth-"),
     secure,
     sameSite: options.cookie?.sameSite ?? "lax",
   });
 
   const sessionCookieName = options.cookie?.name ?? cookies.session.name;
 
-  const configuration =
-    (secure &&
-      (!cookies.session.name.startsWith("__Host-") || !sessionCookieName.startsWith("__Host-"))) ||
-    (!secure && options.origin.startsWith("https:")) ||
-    (options.oauth !== undefined && options.cookie?.sameSite === "strict")
-      ? Layer.effect(
-          OperationHttpServerConfig,
-          Effect.fail(OperationHttpConfigurationError.make({ reason: "cookies" })),
-        )
-      : configurationLayer({
-          publicOrigin: options.origin,
-          trustedOrigins: [options.origin],
-          cookies: {
-            ...cookies,
-            session: { ...cookies.session, name: sessionCookieName },
-          },
-          csrfHeader: options.csrf?.header ?? "x-effect-auth-csrf",
-          csrfValue: options.csrf?.value ?? "1",
-          maximumBodyBytes: options.maximumBodyBytes ?? 65536,
-          maximumUrlBytes: options.maximumUrlBytes ?? 8192,
-        });
+  const configuration = Layer.unwrap(
+    Effect.gen(function* () {
+      if (domain !== undefined) {
+        yield* Schema.decodeEffect(cookieDomain)(domain).pipe(
+          Effect.mapError(() => OperationHttpConfigurationError.make({ reason: "cookies" })),
+        );
+      }
+      if (
+        (secure &&
+          (!cookies.session.name.startsWith(requiredPrefix) ||
+            !sessionCookieName.startsWith(requiredPrefix))) ||
+        (domain !== undefined && !secure) ||
+        (!secure && options.origin.startsWith("https:")) ||
+        (options.oauth !== undefined && options.cookie?.sameSite === "strict")
+      )
+        return yield* OperationHttpConfigurationError.make({ reason: "cookies" });
+
+      yield* Schema.decodeEffect(domain === undefined ? origin : httpsOrigin)(options.origin).pipe(
+        Effect.mapError(() => OperationHttpConfigurationError.make({ reason: "origin" })),
+      );
+
+      const additional = yield* Schema.decodeEffect(Schema.Array(httpsOrigin))(
+        options.trustedOrigins ?? [],
+      ).pipe(Effect.mapError(() => OperationHttpConfigurationError.make({ reason: "origin" })));
+
+      const trustedOrigins = [...new Set([options.origin, ...additional])];
+
+      if (
+        domain !== undefined &&
+        !trustedOrigins.every((value) => originWithinDomain(value, domain))
+      )
+        return yield* OperationHttpConfigurationError.make({ reason: "origin" });
+
+      return configurationLayer({
+        publicOrigin: options.origin,
+        trustedOrigins,
+        cookies: {
+          ...cookies,
+          session: { ...cookies.session, name: sessionCookieName },
+        },
+        csrfHeader: options.csrf?.header ?? "x-effect-auth-csrf",
+        csrfValue: options.csrf?.value ?? "1",
+        maximumBodyBytes: options.maximumBodyBytes ?? 65536,
+        maximumUrlBytes: options.maximumUrlBytes ?? 8192,
+      });
+    }),
+  );
 
   const resolve = (
     api: Pick<SessionApi<S>, "verifySession">,

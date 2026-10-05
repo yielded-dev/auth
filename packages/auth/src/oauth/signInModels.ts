@@ -1,5 +1,6 @@
 import { Schema } from "effect";
 
+import { returnTarget } from "../internal/return-target";
 import { RequestBindingCredential, RequestBindingFlowId } from "../operations/requestBinding";
 import { SubjectId, TokenDigest } from "../Schema";
 import { SecurityRevision } from "../sessions/models";
@@ -37,10 +38,7 @@ export const OAuthRedirectUri = Schema.String.check(
   Schema.isPattern(/^[^\s\\\u0000-\u001f\u007f#]+$/),
 ).pipe(Schema.brand("effect-auth/OAuthRedirectUri"));
 
-export const OAuthReturnTarget = Schema.String.check(
-  Schema.isMaxLength(2048),
-  Schema.isPattern(/^\/(?!\/)[A-Za-z0-9/_-]*$/),
-).pipe(Schema.brand("effect-auth/OAuthReturnTarget"));
+export const OAuthReturnTarget = returnTarget.pipe(Schema.brand("effect-auth/OAuthReturnTarget"));
 
 export const OAuthProtocolKind = Schema.Literals(["oidc", "oauth"]);
 

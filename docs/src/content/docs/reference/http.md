@@ -36,7 +36,7 @@ Configure paths through `basePath` rather than prefixing the generated endpoints
 Cookies default to `Secure`, `HttpOnly`, `SameSite=Lax`, path `/`, and the
 `__Host-effect-auth-` prefix. Override `cookie.name` for the session slot or
 `cookie.prefix` for all slots. Secure custom names and prefixes must begin with
-`__Host-`; their cookies retain path `/` and no Domain. `cookie.secure: false` is
+`__Host-` without a cookie domain; their cookies retain path `/` and no Domain. `cookie.secure: false` is
 allowed only with HTTP loopback origins (`localhost`, `127.0.0.1`, or `[::1]`).
 Use your real HTTPS origin; never derive trusted origins from an untrusted request
 header. Invalid combinations fail startup.
@@ -44,7 +44,26 @@ header. Invalid combinations fail startup.
 OAuth callbacks need the request-binding cookie on a cross-site return. Keep
 `SameSite=Lax`; configuring OAuth with `cookie.sameSite: "strict"` fails startup.
 
-POST auth actions require the configured Origin, JSON content type, and
+Set `cookie.domain` to a bare host such as `example.com` to share **every** auth
+cookie with that host and its subdomains. No scheme, port, path, or leading dot
+is accepted. `origin` must be HTTPS on that host or a subdomain. Domain cookies
+require `secure: true` (the default), default to `__Secure-effect-auth-`, and
+require custom names/prefixes to start with `__Secure-`. An explicit `__Host-`
+name or prefix fails with `OperationHttpConfigurationError` at Layer construction.
+Without a domain, existing cookie names and behavior are unchanged.
+
+`trustedOrigins` adds exact HTTPS origins to `origin`; it does not replace it.
+With a cookie domain, every trusted origin must be inside that domain. Ports are
+part of an origin; wildcards and URL paths are not accepted. This controls Origin
+admission and default OAuth callback redirects, not CORS response headers.
+Configure credentialed CORS at your application boundary for cross-origin fetches.
+
+Domain cookies reach every subdomain, and any subdomain can set them. Never host
+user- or AI-generated content under the cookie domain. Validate sessions on the
+server, retain Origin/CSRF checks on mutations, and monitor dangling DNS. See
+[sharing sessions across apps](../guide/http-and-client#sharing-sessions-across-apps).
+
+POST auth actions require an admitted Origin, JSON content type, and
 `x-effect-auth-csrf: 1` by default. GET actions have no body or CSRF header and
 reject an explicitly untrusted Origin. Duplicate credential cookies are rejected,
 and session responses are not cacheable. If you override `csrf` on the server,
