@@ -96,7 +96,7 @@ export const makePasskeyWriteStateKernel = (
 
     invariant(read.subjectIds.toSubject(nativeId) === subjectId);
 
-    const row = (yield* owner.read(table.table, equal(table.table, { [table.id]: nativeId }), {
+    const found = yield* owner.read(table.table, equal(table.table, { [table.id]: nativeId }), {
       limit: 1,
       columns: [
         ...new Set<string>([
@@ -106,13 +106,16 @@ export const makePasskeyWriteStateKernel = (
           ...mapping.write.policy.subjectColumns,
         ]),
       ],
-    })).rows[0];
+      condition: table.activeCondition,
+    });
+
+    const row = found.rows[0];
 
     if (row === undefined || !table.isActiveStatus(row[table.status])) return undefined;
     invariant(read.subjectIds.equals(table.decodeId(copiedRow(row)), nativeId));
     const active = sql`exists(select 1 from ${table.table} where ${both(equal(table.table, { [table.id]: nativeId }), table.activeCondition)})`;
 
-    if (!(yield* owner.check(active))) return undefined;
+    if (!found.conditionHolds) return undefined;
     owner.postconditions.push(active);
     const factor = read.authority;
 

@@ -41,6 +41,7 @@ export interface Observation {
   readonly table: Table;
   readonly where: SQL;
   rows: ReadonlyArray<Row>;
+  readonly conditionHolds?: boolean;
 }
 
 /** Expressions deliberately do not replace observed values. Read only semantic
@@ -71,6 +72,8 @@ export interface TransactionOwner<Failure> {
       readonly takeOnly?: boolean;
       readonly orderBy?: any;
       readonly columns?: ReadonlyArray<string>;
+      /** Evaluate a row predicate in the same locked snapshot as its columns. */
+      readonly condition?: SQL;
     },
   ): Effect.Effect<Observation, Failure>;
   write(query: any): Effect.Effect<void, Failure>;
@@ -420,27 +423,69 @@ export const makeTransactionKernel = <
             open();
             const limit = options.limit ?? 64;
 
+            const columns = getTableColumns(table);
+
+            const selection: Record<string, Column | SQL> =
+              options.columns === undefined
+                ? { ...columns }
+                : Object.fromEntries(options.columns.map((key) => [key, col(table, key)]));
+
+            let conditionKey = "__auth_condition";
+
+            while (conditionKey in columns) conditionKey += "_";
+            if (options.condition !== undefined)
+              selection[conditionKey] = sql`case when ${options.condition} then 1 else 0 end`
+                .mapWith(Number)
+                .as(conditionKey);
+
             let query = database
-              .select(
-                options.columns === undefined
-                  ? undefined
-                  : Object.fromEntries(options.columns.map((key) => [key, col(table, key)])),
-              )
+              .select(selection)
               .from(table)
               .where(where)
               .limit(options.takeOnly ? limit : limit + 1);
 
             if (options.orderBy !== undefined) query = query.orderBy(options.orderBy);
             if (options.lock !== false && configuration.locking) query = query.for("update");
-            const rows: Row[] = yield* query as NativeQuery<Row[]>;
+            const selected: Row[] = yield* query as NativeQuery<Row[]>;
+
+            const rows =
+              options.condition === undefined
+                ? selected
+                : selected.map((row) => {
+                    invariant(row[conditionKey] === 0 || row[conditionKey] === 1);
+                    const { [conditionKey]: _condition, ...values } = row;
+
+                    return values;
+                  });
 
             invariant(rows.length <= limit);
             if (configuration.batch && (options.observe !== false || options.admissionOnly))
               appendAssertions(observedConditions(table, where, rows));
+            if (configuration.batch && options.condition !== undefined)
+              appendAssertions(
+                rows.map(
+                  (row, index) =>
+                    sql`exists(select 1 from ${table} where ${both(
+                      where,
+                      exactRow(table, row),
+                      selected[index]?.[conditionKey] === 1
+                        ? options.condition
+                        : sql`not (${options.condition})`,
+                    )})`,
+                ),
+              );
 
-            return options.observe === false || options.admissionOnly
-              ? { table, where, rows }
-              : observed(table, where, rows);
+            const observation =
+              options.observe === false || options.admissionOnly
+                ? { table, where, rows }
+                : observed(table, where, rows);
+
+            return options.condition === undefined
+              ? observation
+              : Object.assign(observation, {
+                  conditionHolds:
+                    rows.length > 0 && selected.every((row) => row[conditionKey] === 1),
+                });
           }),
         ),
       write: (query) =>
@@ -467,15 +512,16 @@ export const makeTransactionKernel = <
             const where = equal(table, key);
 
             if (configuration.batch) return observed(table, where, [values]);
-            const found = yield* owner.read(table, where, { limit: 1 });
+
+            const found = yield* owner.read(table, where, {
+              limit: 1,
+              condition: exactRow(table, values),
+            });
+
             const markerColumn = Object.keys(values).find((key) => values[key] === marker);
 
             if (!absent || (markerColumn !== undefined && found.rows[0]?.[markerColumn] === marker))
-              invariant(
-                yield* owner.check(
-                  sql`exists(select 1 from ${table} where ${both(where, exactRow(table, values))})`,
-                ),
-              );
+              invariant(found.rows.length === 1 && found.conditionHolds);
 
             return found;
           }),

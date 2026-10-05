@@ -54,20 +54,8 @@ export const makePasskeyAdmissionKernel = (
       [table.moduleId]: mapping.moduleId,
     };
 
-    // The previous marker/time is telemetry, not an authentication CAS. Actual
-    // engine predicates serialize admission, including separately planned D1 batches.
-    const found = yield* owner.read(table.table, equal(table.table, identity), {
-      limit: 1,
-      observe: false,
-      columns: [table.authorityScope, table.moduleId],
-    });
-
-    invariant(found.rows.length === 1);
-    invariant(
-      found.rows[0]![table.authorityScope] === mapping.authorityScope &&
-        found.rows[0]![table.moduleId] === mapping.moduleId,
-    );
-
+    // The guarded write locks admission and requires one byte-exact identity.
+    // Previous marker/time is telemetry, not an authentication CAS.
     const marked = {
       ...identity,
       [table.version]: owner.marker,

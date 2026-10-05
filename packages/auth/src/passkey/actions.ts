@@ -196,26 +196,11 @@ export const makePasskeyCeremony = <const Id extends string, const Purpose exten
       });
     });
 
-    const inspect = Effect.fn("Passkey.inspect")(function* (
-      input: Pick<PasskeyComplete, "flowId" | "bindingCredential">,
+    const validateInspection = Effect.fnUntraced(function* (
+      key: PasskeyAccess,
+      raw: PasskeyCeremony,
       expected?: PasskeyContext,
     ) {
-      yield* passkeyNoAmbient();
-      input = yield* snapshotPasskey(
-        Schema.toType(
-          Schema.Struct({
-            flowId: PasskeyComplete.fields.flowId,
-            bindingCredential: PasskeyComplete.fields.bindingCredential,
-          }),
-        ),
-        input,
-      );
-
-      const key = yield* access(input),
-        raw = yield* persistence.context(key);
-
-      if (raw === undefined) return yield* PasskeyRejected.make({});
-
       const ceremony = yield* snapshotPasskey(PasskeyCeremony, raw),
         clock = yield* now;
 
@@ -224,7 +209,7 @@ export const makePasskeyCeremony = <const Id extends string, const Purpose exten
         ceremony.generation !== policy.generation ||
         ceremony.purpose !== purpose ||
         contextPurpose[ceremony.context._tag] !== purpose ||
-        ceremony.flowId !== input.flowId ||
+        ceremony.flowId !== key.flowId ||
         ceremony.requestBindingVerifier !== key.requestBindingVerifier ||
         ceremony.requestBindingExpiresAtMillis !== key.requestBindingExpiresAtMillis ||
         ceremony.issuedAtMillis > clock ||
@@ -250,6 +235,29 @@ export const makePasskeyCeremony = <const Id extends string, const Purpose exten
         return yield* PasskeyRejected.make({});
 
       return { key, ceremony };
+    });
+
+    const inspect = Effect.fn("Passkey.inspect")(function* (
+      input: Pick<PasskeyComplete, "flowId" | "bindingCredential">,
+      expected?: PasskeyContext,
+    ) {
+      yield* passkeyNoAmbient();
+      input = yield* snapshotPasskey(
+        Schema.toType(
+          Schema.Struct({
+            flowId: PasskeyComplete.fields.flowId,
+            bindingCredential: PasskeyComplete.fields.bindingCredential,
+          }),
+        ),
+        input,
+      );
+
+      const key = yield* access(input),
+        raw = yield* persistence.context(key);
+
+      if (raw === undefined) return yield* PasskeyRejected.make({});
+
+      return yield* validateInspection(key, raw, expected);
     });
 
     const before = Effect.fn("Passkey.before")(function* (context: PasskeyContext) {
@@ -762,10 +770,13 @@ export const makePasskeyCeremony = <const Id extends string, const Purpose exten
 
     const verifyRegistration = Effect.fn("Passkey.verifyRegistration")(function* (
       input: PasskeyRegistrationComplete,
-      expected: PasskeyContext | undefined,
+      captured: Effect.Success<ReturnType<typeof inspect>>,
     ) {
+      yield* passkeyNoAmbient();
       input = yield* snapshotPasskey(Schema.toType(PasskeyRegistrationComplete), input);
-      const inspected = yield* inspect(input, expected);
+      // Authorization may await application work. Refresh binding and application
+      // time; the atomic claim rereads live policy, subject and the full ceremony.
+      const inspected = yield* validateInspection(yield* access(input), captured.ceremony);
 
       yield* before(inspected.ceremony.context);
 

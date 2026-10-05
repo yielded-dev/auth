@@ -31,7 +31,6 @@ export const makePasskeyCredentialsKernel = (
   operations: QueryOperations,
   state: Pick<
     ReturnType<typeof makePasskeyStateKernel>,
-    | "assertNow"
     | "col"
     | "copiedRow"
     | "credentialKey"
@@ -49,7 +48,6 @@ export const makePasskeyCredentialsKernel = (
   const { asc, inArray, sql } = operations;
 
   const {
-    assertNow,
     col,
     copiedRow,
     credentialKey,
@@ -81,6 +79,7 @@ export const makePasskeyCredentialsKernel = (
       {
         limit: 1,
         columns: [descriptor.id, descriptor.status, descriptor.securityRevision],
+        condition: descriptor.activeCondition,
       },
     );
 
@@ -94,7 +93,7 @@ export const makePasskeyCredentialsKernel = (
       descriptor.activeCondition,
     )})`;
 
-    if (!(yield* owner.check(active))) return undefined;
+    if (!found.conditionHolds) return undefined;
     owner.postconditions.push(active);
 
     // oxlint-disable-next-line no-restricted-properties -- native SQL column values enter through this untyped driver boundary.
@@ -124,6 +123,7 @@ export const makePasskeyCredentialsKernel = (
       {
         limit: 1,
         columns,
+        condition: descriptor.activeCondition,
       },
     );
 
@@ -131,7 +131,8 @@ export const makePasskeyCredentialsKernel = (
 
     if (row === undefined || !descriptor.isActiveStatus(row[descriptor.status])) return undefined;
     invariant(row[descriptor.moduleId] === mapping.moduleId);
-    yield* assertNow(
+    invariant(found.conditionHolds);
+    owner.postconditions.push(
       sql`exists(select 1 from ${descriptor.table} where ${both(
         owner.exact(descriptor.table, row),
         descriptor.activeCondition,
@@ -149,13 +150,16 @@ export const makePasskeyCredentialsKernel = (
     for (const guard of [...(mapping.module.guards ?? [])].sort((a, b) =>
       a.scope < b.scope ? -1 : a.scope > b.scope ? 1 : 0,
     )) {
+      const condition = guard.condition(mapping.moduleId);
+
       const locked = yield* owner.read(guard.table, guard.where(mapping.moduleId), {
         limit: 1,
         columns: guard.columns,
+        condition,
       });
 
-      invariant(locked.rows.length === 1);
-      yield* assertNow(guard.condition(mapping.moduleId));
+      invariant(locked.rows.length === 1 && locked.conditionHolds);
+      owner.postconditions.push(condition);
     }
   });
 
@@ -259,14 +263,17 @@ export const makePasskeyCredentialsKernel = (
     const ownership = mapping.credentialOwnership;
     const tupleKey = yield* credentialKey(rpId, protocolCredentialId);
 
-    const tuple = (yield* owner.read(
+    const tupleRead = yield* owner.read(
       ownership.table,
       equal(ownership.table, { [ownership.credentialKey]: tupleKey }),
       {
         limit: 1,
         columns: mappedColumns(ownership),
+        condition: ownership.ownedCondition,
       },
-    )).rows[0];
+    );
+
+    const tuple = tupleRead.rows[0];
 
     if (tuple === undefined) return undefined;
     invariant(
@@ -276,7 +283,8 @@ export const makePasskeyCredentialsKernel = (
     if (!ownership.isOwnedState(tuple[ownership.state])) return undefined;
     if (!mapping.subjectIds.equals(ownership.decodeSubjectId(copiedRow(tuple)), subject.nativeId))
       return undefined;
-    yield* assertNow(
+    invariant(tupleRead.conditionHolds);
+    owner.postconditions.push(
       sql`exists(select 1 from ${ownership.table} where ${both(owner.exact(ownership.table, tuple), ownership.ownedCondition)})`,
     );
     const descriptor = mapping.credential;
@@ -300,14 +308,17 @@ export const makePasskeyCredentialsKernel = (
     const handle = mapping.handleOwnership;
     const expectedHandleKey = yield* handleKey(rpId, decoded.userHandle);
 
-    const handleRow = (yield* owner.read(
+    const handleRead = yield* owner.read(
       handle.table,
       equal(handle.table, { [handle.handleKey]: expectedHandleKey }),
       {
         limit: 1,
         columns: mappedColumns(handle),
+        condition: handle.ownedCondition,
       },
-    )).rows[0];
+    );
+
+    const handleRow = handleRead.rows[0];
 
     invariant(
       row[descriptor.credentialKey] === tupleKey && row[descriptor.handleKey] === expectedHandleKey,
@@ -318,15 +329,19 @@ export const makePasskeyCredentialsKernel = (
     );
     if (!mapping.subjectIds.equals(handle.decodeSubjectId(copiedRow(handleRow)), subject.nativeId))
       return undefined;
-    yield* assertNow(
+    invariant(handleRead.conditionHolds);
+    owner.postconditions.push(
       sql`exists(select 1 from ${handle.table} where ${both(owner.exact(handle.table, handleRow), handle.ownedCondition)})`,
     );
 
-    const locked = (yield* owner.read(descriptor.table, where, {
+    const lockedRead = yield* owner.read(descriptor.table, where, {
       limit: 1,
       observe: false,
       columns: mappedColumns(descriptor),
-    })).rows[0];
+      condition: descriptor.activeCondition,
+    });
+
+    const locked = lockedRead.rows[0];
 
     if (locked === undefined) return undefined;
     invariant(
@@ -341,7 +356,8 @@ export const makePasskeyCredentialsKernel = (
     row = locked;
     decoded = descriptor.decode(copiedRow(row));
     yield* observeSemantic(descriptor, where, row);
-    yield* assertNow(
+    invariant(lockedRead.conditionHolds);
+    owner.postconditions.push(
       sql`exists(select 1 from ${descriptor.table} where ${both(
         owner.exact(descriptor.table, {
           [descriptor.credentialId]: row[descriptor.credentialId],

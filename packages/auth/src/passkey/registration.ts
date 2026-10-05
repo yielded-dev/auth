@@ -18,13 +18,13 @@ import { PasskeyRejected, PasskeyUnavailable } from "./errors";
 import type {
   PasskeyCeremony,
   PasskeyClaim,
-  PasskeyRegistrationComplete,
   PasskeyRegistrationStarted,
   PasskeyRegistrationVerified,
 } from "./models";
 import {
   PasskeyIssueDecision,
   PasskeyLabel,
+  PasskeyRegistrationComplete,
   PasskeyRegistrationResult,
   PasskeyUserHandle,
 } from "./models";
@@ -191,7 +191,9 @@ export const makePasskeyRegistration = <
           function* (invocation, input) {
             yield* passkeyNoAmbient();
             if (invocation._tag !== "Guest") return yield* PasskeyRejected.make({});
-            const { claim, verified } = yield* runtime.verifyRegistration(input, undefined);
+            input = yield* snapshotPasskey(Schema.toType(PasskeyRegistrationComplete), input);
+            const inspected = yield* runtime.inspect(input);
+            const { claim, verified } = yield* runtime.verifyRegistration(input, inspected);
             const authority = yield* RegistrationAuthority;
             const timestamp = DateTime.toEpochMillis(yield* DateTime.now);
 
