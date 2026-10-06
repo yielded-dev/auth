@@ -133,6 +133,13 @@ export const SessionSignOut = Schema.Struct({
 
 export type SessionSignOut = typeof SessionSignOut.Type;
 
+export const SessionReadOptions = Schema.Struct({
+  /** Bypass the cookie cache and verify against authoritative state. */
+  fresh: Schema.optionalKey(Schema.Boolean),
+});
+
+export type SessionReadOptions = typeof SessionReadOptions.Type;
+
 export const SessionCapabilities = Schema.Struct({
   mode: Schema.Literals(["stateful", "stateless", "state-assisted"]),
   listing: Schema.Boolean,

@@ -60,7 +60,7 @@ export type LocalActionApi<
   Default,
 > = {
   readonly [Name in keyof Actions]: (
-    ...args: [ActionInput<Actions[Name]>] extends [void]
+    ...args: undefined extends ActionInput<Actions[Name]>
       ? [input?: ActionInput<Actions[Name]>]
       : [input: ActionInput<Actions[Name]>]
   ) => Effect.Effect<

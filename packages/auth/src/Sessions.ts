@@ -15,6 +15,7 @@ export {
   SessionId,
   type SessionInspection,
   SessionMetadata,
+  SessionReadOptions,
   SessionSignOut,
 } from "./sessions/models";
 

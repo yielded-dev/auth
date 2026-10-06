@@ -11,8 +11,8 @@ and the [Effect Atom client](../guide/client) to call it. Both use the same
 
 | Actions                             | HTTP method | Default path                                          |
 | ----------------------------------- | ----------- | ----------------------------------------------------- |
-| `getSession`, `requireSession`      | GET         | `/auth/getSession`, `/auth/requireSession`            |
-| `getSessionFresh`                   | GET         | `/auth/getSessionFresh`                               |
+| `requireSession`                    | GET         | `/auth/requireSession`                                |
+| `getSession`                        | POST        | `/auth/getSession`                                    |
 | `signIn`, `signOut`, `renewSession` | POST        | `/auth/signIn`, `/auth/signOut`, `/auth/renewSession` |
 
 No-input queries use GET. Queries with payloads use POST so their inputs stay out
@@ -32,8 +32,8 @@ http.handlers(Api, { name: "account" });
 
 Configure paths through `basePath` rather than prefixing the generated endpoints.
 
-`getSessionFresh` always uses authoritative verification. Ordinary `getSession`
-and `requireSession` reads may use the configured session cookie cache.
+`getSession` accepts `{}` or `{ "payload": { "fresh": true } }` as its JSON body.
+The fresh option bypasses the cookie cache; the call remains a read-only query.
 
 ## Cookies and request policy
 
@@ -68,37 +68,36 @@ invalid or duplicate optional cache cookies are ignored. Session responses are
 not cacheable. If you override `csrf` on the server,
 pass matching settings to `Client.make`.
 
-With `Sessions.stateful({ cacheFor })`, the additional `session-cache` cookie
-holds a signed public session snapshot. It follows the same cookie security
-policy. Caching is off by default and only applies to browser requests with a
-cache response sink and a valid mutation generation cookie.
-
-The snapshot value is limited to the smaller of `maximumTokenBytes` and 3,072
-bytes. Delivery checks the complete serialized cookie against 4,096 bytes,
-including its name and attributes. Oversized or unencodable snapshots produce
-sanitized diagnostics and are cleared, preserving authoritative reads. Invalid,
-expired, or duplicate snapshots fall back without reporting a backend fault.
-
-Admitted mutations clear the snapshot and rotate an HttpOnly cookie named
-`${sessionCacheCookieName}-generation`, using the cache cookie's scope and security
-settings. Its lifetime is `maximumIssuedAge`. Reads never change this generation;
-a delayed read response cannot make an older snapshot usable after the mutation
-response arrives. A lost response leaves the existing snapshot usable until its
-fixed expiry. Missing or malformed generations disable caching until the next
-admitted mutation.
-
-Issuing, renewing, or clearing a session credential clears the snapshot too.
-No cache cookies are issued or cleared when caching is disabled. Other clients
-and replayed cookie pairs can retain a snapshot until `cacheFor` expires, delaying
-visibility of revocation, password changes, disablement, and claim changes.
-See [session cache policy](../guide/sessions#cache-ordinary-session-reads).
-
 Named mutations enforce Origin and CSRF before side effects, including local
 calls from application routes. Raw strategy methods are treated as mutations.
 For a custom credential-producing workflow, call `http.protect(effect)` inside
 the request boundary; it applies mutation policy and supplies private collectors
 without imposing a body format. Custom hosts still own webhook validation and
 ordinary application mutation policy.
+
+### Session cache cookies
+
+Enable caching with [`Sessions.stateful({ cacheFor })`](../guide/sessions#cache-ordinary-session-reads).
+Both cookies follow the configured auth cookie policy:
+
+| Cookie                                 | Content and lifetime                                                                                                       |
+| -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `session-cache`                        | Signed public snapshot bound to the credential and browser generation; expires within `cacheFor` and the session lifetime. |
+| `${sessionCacheCookieName}-generation` | HttpOnly mutation generation; lasts `maximumIssuedAge`.                                                                    |
+
+Browser caching requires a response command sink and a valid generation. Missing,
+malformed, or duplicate generations disable it until an admitted mutation. No
+cache cookies are sent when caching is off.
+
+Admitted mutations clear the snapshot and rotate the generation. Reads never
+rotate it, so delayed reads cannot restore a usable snapshot after a mutation
+response. Other clients, replayed cookie pairs, and lost responses retain the
+fixed `cacheFor` exposure window. Credential changes also clear the snapshot.
+
+Snapshot values are capped at `min(maximumTokenBytes, 3072)` bytes; the complete
+serialized cookie, including name and attributes, must fit 4,096 bytes. Oversize,
+encoding, and backend failures report sanitized diagnostics and fall back to
+authoritative reads. Invalid, expired, or duplicate snapshots fall back silently.
 
 ## Proof request rate limits
 

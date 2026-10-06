@@ -52,8 +52,7 @@ export const AppClient = Client.make(AuthApi, { baseUrl: "https://app.example.co
 export const auth = AuthAtom.make(AppClient);
 ```
 
-`auth.session` and `auth.freshSession` are query atoms; `auth.signIn` and
-`auth.signOut` are mutation atoms.
+`auth.session` is a query atom; `auth.signIn` and `auth.signOut` are mutation atoms.
 The application registry acquires and closes the client. Fetch is configured by
 default; declaring the client and atoms performs no I/O.
 
@@ -98,21 +97,16 @@ multi-step logic in [workflow atoms](#compose-a-passkey-workflow). Successful
 auth mutations refresh the session, so the UI follows the new account state.
 
 When the server enables [cookie caching](./sessions#cache-ordinary-session-reads),
-`auth.session` may return a signed claims snapshot until `cacheFor` expires.
-Use `useAtomValue(auth.freshSession)` when the server read must bypass that cookie.
-Both atoms refresh after auth mutations. Normal Atom query retention still applies:
-“fresh” describes each server fetch, not a network request on every render.
-
-The equivalent Effect client call is:
+`auth.session` may return a snapshot until `cacheFor` expires. To bypass the cookie,
+define an atom alongside your other queries, then pass it to `useAtomValue`:
 
 ```ts
-const client = yield* AppClient;
-const session = yield* client.auth.getSessionFresh();
+export const currentSession = auth.getSession({ fresh: true });
 ```
 
-It uses `/auth/getSessionFresh`. Custom AuthAtom contracts must expose both
-`getSession` and `getSessionFresh` as queries; `session` and `freshSession` are
-reserved atom aliases.
+Auth mutations refresh both queries. “Fresh” applies to each server fetch;
+normal Atom retention still applies between fetches. Outside Atom, use
+`yield* client.auth.getSession({ fresh: true })`.
 
 ## Dispatch a sign-in
 

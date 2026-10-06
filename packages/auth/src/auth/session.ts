@@ -18,7 +18,7 @@ import {
   type SessionError,
   type SessionSignOutUnavailable,
 } from "../sessions/errors";
-import type { SessionSignOut } from "../sessions/models";
+import type { SessionReadOptions, SessionSignOut } from "../sessions/models";
 import type { makeSessionModule } from "../sessions/module";
 import { AuthRequest } from "./AuthRequest";
 
@@ -30,10 +30,11 @@ export type SessionApi<Session, R = never> = SessionCacheOwner & {
   readonly verifySession: (
     credential: Redacted.Redacted<string>,
   ) => Effect.Effect<Session, SessionApiError>;
-  /** Missing or invalid credentials are anonymous; availability failures remain failures. */
-  readonly getSession: () => Effect.Effect<Session | null, SessionApiError, AuthRequest | R>;
-  /** Authoritative read even when cookie caching is enabled. */
-  readonly getSessionFresh: () => Effect.Effect<Session | null, SessionApiError, AuthRequest | R>;
+  /** Missing or invalid credentials are anonymous; availability failures remain failures.
+   * Set fresh to bypass the cookie cache. */
+  readonly getSession: (
+    options?: SessionReadOptions,
+  ) => Effect.Effect<Session | null, SessionApiError, AuthRequest | R>;
   readonly requireSession: () => Effect.Effect<Session, SessionApiError, AuthRequest | R>;
   /** Does not preverify. Local clearing and server invalidation have distinct outcomes. */
   readonly signOut: () => Effect.Effect<
@@ -93,7 +94,7 @@ export const makeSessionApi = <
       );
     });
 
-    const readSession = Effect.fn("Auth.getSession")(function* (fresh: boolean) {
+    const getSession = Effect.fn("Auth.getSession")(function* (options?: SessionReadOptions) {
       const request = yield* AuthRequest;
       const credential = request.credentials.session;
       const cached = request.credentials["session-cache"];
@@ -107,7 +108,12 @@ export const makeSessionApi = <
         generation !== undefined &&
         Schema.is(SessionCacheGeneration)(Redacted.value(generation));
 
-      if (cacheable && credential !== undefined && cached !== undefined && !fresh) {
+      if (
+        cacheable &&
+        credential !== undefined &&
+        cached !== undefined &&
+        options?.fresh !== true
+      ) {
         const snapshot = yield* cache.value
           .read(credential, cached, generation)
           .pipe(
@@ -146,9 +152,6 @@ export const makeSessionApi = <
 
       return session;
     });
-
-    const getSession = () => readSession(false);
-    const getSessionFresh = () => readSession(true);
 
     const requireSession = Effect.fn("Auth.requireSession")(function* () {
       const session = yield* getSession();
@@ -198,7 +201,6 @@ export const makeSessionApi = <
       ...(Option.isSome(cache) ? { [sessionCacheTransport]: cache.value.transport } : {}),
       verifySession,
       getSession,
-      getSessionFresh,
       requireSession,
       signOut,
       renewSession,
