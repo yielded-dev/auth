@@ -1,90 +1,15 @@
-import { Cause, Clock, Context, Duration, Effect, Layer, Schema, Semaphore } from "effect";
+import { Cause, Context, Duration, Effect, Layer, Schema } from "effect";
 import * as RateLimiter from "effect/persistence/RateLimiter";
 
 import { defaultLayer } from "../../auth/defaults";
+import { boundedMemoryRateLimiter } from "../../auth/rateLimiter";
 import { reportAuthFailure } from "../../internal/diagnostics";
 import { PasswordRejected, PasswordUnavailable } from "./errors";
 import { PasswordAttemptPolicy } from "./policy";
 
-const maximumKeys = 10_000;
-
-const storeFailure = (message: string) =>
-  Effect.fail(
-    RateLimiter.RateLimiterError.make({
-      reason: RateLimiter.RateLimitStoreError.make({ message }),
-    }),
-  );
-
-// Each stock store owns one bucket, so dropping an expired entry also releases
-// its counter. A shared stock memory store would retain every key indefinitely.
-const boundedMemoryStoreLayer = Layer.effect(
-  RateLimiter.RateLimiterStore,
-  Effect.sync(() => {
-    const entries = new Map<
-      string,
-      { readonly store: RateLimiter.RateLimiterStore["Service"]; expiresAt: number }
-    >();
-
-    const lock = Semaphore.makeUnsafe(1);
-    const unsupported = storeFailure("Password admission supports only token consumption");
-
-    return RateLimiter.RateLimiterStore.of({
-      fixedWindow: () => unsupported,
-      adaptiveConsume: () => unsupported,
-      adaptiveFeedback: () => unsupported,
-      tokenBucket: Effect.fnUntraced(
-        function* (options) {
-          if (options.allowOverflow || options.tokens !== 1) return yield* unsupported;
-
-          let entry = entries.get(options.key);
-
-          if (entry === undefined) {
-            if (entries.size >= maximumKeys) {
-              const now = yield* Clock.currentTimeMillis;
-
-              for (const [key, candidate] of entries) {
-                if (candidate.expiresAt <= now) entries.delete(key);
-              }
-            }
-            if (entries.size >= maximumKeys) {
-              return yield* storeFailure("Password admission memory capacity exhausted");
-            }
-
-            // This layer has only synchronous memory state and no resources. Build
-            // it in its own short scope so expired entries retain no layer memo map.
-            const store = yield* RateLimiter.RateLimiterStore.pipe(
-              Effect.provide(RateLimiter.layerStoreMemory, { local: true }),
-            );
-
-            entry = { store, expiresAt: 0 };
-            entries.set(options.key, entry);
-          }
-
-          const result = yield* entry.store.tokenBucket(options);
-          const now = yield* Clock.currentTimeMillis;
-
-          // Without overflow, a full idle refill window restores every token.
-          // Retain the longer horizon if the host changes its budget in place.
-          entry.expiresAt = Math.max(
-            entry.expiresAt,
-            now + Math.ceil(Duration.toMillis(options.refillRate) * options.limit),
-          );
-
-          return result;
-        },
-        Effect.uninterruptible,
-        Semaphore.withPermit(lock),
-      ),
-    });
-  }),
-);
-
-const rateLimiterLayer = defaultLayer(
-  RateLimiter.RateLimiter,
-  RateLimiter.layer.pipe(
-    Layer.provide(defaultLayer(RateLimiter.RateLimiterStore, boundedMemoryStoreLayer)),
-  ),
-);
+// Rejecting at capacity keeps active brute-force buckets; the action bucket,
+// checked first, bounds how quickly new identifier keys can arrive.
+const rateLimiterLayer = boundedMemoryRateLimiter("reject");
 
 /** Password admission independent of credential persistence and KDF concurrency.
  * Each successful check consumes one token without refunds, including when later

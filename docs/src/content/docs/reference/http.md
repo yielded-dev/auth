@@ -89,8 +89,9 @@ const AuthLive = AppAuth.layer.pipe(
 );
 ```
 
-Both options must be positive integers. The default Effect memory store retains
-network keys for the runtime's lifetime and resets when it is recreated. For
+Both options must be positive integers. The default store is process-local, resets
+when it is recreated, and holds at most 10,000 network keys. At capacity it evicts the
+least recently checked key, which later starts with a full bucket. For
 shared enforcement across servers, provide an Effect `RateLimiterStore`, such as
 `RateLimiter.layerStoreRedis({ prefix: "auth:requests" })`, to the Auth Layer.
 An explicitly provided `RateLimiter` or `HostIngressLimiter` also replaces its
