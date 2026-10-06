@@ -101,7 +101,7 @@ export const makeProxyEnvironment = (config: {
   readonly transactionKeys: OAuth.OAuthTransactionKeyring;
 }) => {
   const AppAuth = Auth.make(OAuthSignInApi, {
-    sessions: Sessions.stateless(),
+    sessions: Sessions.stateless({ keys: config.sessionKeys }),
     strategies: { oauth: OAuth.make() },
     defaultStrategy: "oauth",
   });
@@ -122,7 +122,6 @@ export const makeProxyEnvironment = (config: {
   });
 
   const dependencies = Layer.mergeAll(
-    Layer.succeed(Sessions.SessionSigningKeys, config.sessionKeys),
     makeStorage({
       moduleId: "example/oauth/oauth",
       provider: "github",

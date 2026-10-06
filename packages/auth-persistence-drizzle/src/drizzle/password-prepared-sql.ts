@@ -698,8 +698,7 @@ export const makeSqlPasswordPreparedPersistence = Effect.fn("makeSqlPasswordPrep
                 input.policy.admission.identifier.windowMillis,
                 input.policy.admission.subject.windowMillis,
               ) ||
-            ((input.invalidation.existingSessions === "immediate" ||
-              input.invalidation.existingSessions === "cache-expiry") &&
+            (input.invalidation.existingSessions === "immediate" &&
               p.sessionInvalidation !== "same-authority-immediate")
           )
             return yield* unavailable();

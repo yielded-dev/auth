@@ -20,7 +20,7 @@ export const makeSlackExample = (config: {
   readonly transactionKeys: Sessions.SessionSigningKeyring;
 }) => {
   const AppAuth = Auth.make(OAuthSignInApi, {
-    sessions: Sessions.stateless(),
+    sessions: Sessions.stateless({ keys: config.sessionKeys }),
     strategies: { oauth: OAuth.make({ profiles: { slack: Slack.SlackUserProfile } }) },
     defaultStrategy: "oauth",
   });
@@ -41,7 +41,6 @@ export const makeSlackExample = (config: {
   });
 
   const dependencies = Layer.mergeAll(
-    Layer.succeed(Sessions.SessionSigningKeys, config.sessionKeys),
     makeStorage({
       moduleId: "example/oauth/oauth",
       provider: "slack",

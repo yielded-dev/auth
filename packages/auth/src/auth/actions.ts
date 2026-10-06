@@ -154,9 +154,6 @@ export const makeActionApi = Effect.fn("Auth.makeActionApi")(function* <
         Effect.provideService(AuthRequest, {
           ...request,
           actionMode: action.mode,
-          freshSession:
-            request.freshSession === true ||
-            (action.method !== "getSession" && action.method !== "requireSession"),
           credentialCommandSink: sink,
           revealCommandCollector: collector,
         }),

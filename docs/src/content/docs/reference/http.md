@@ -12,7 +12,6 @@ and the [Effect Atom client](../guide/client) to call it. Both use the same
 | Actions                             | HTTP method | Default path                                          |
 | ----------------------------------- | ----------- | ----------------------------------------------------- |
 | `getSession`, `requireSession`      | GET         | `/auth/getSession`, `/auth/requireSession`            |
-| `getSessionFresh`                   | GET         | `/auth/getSessionFresh`                               |
 | `signIn`, `signOut`, `renewSession` | POST        | `/auth/signIn`, `/auth/signOut`, `/auth/renewSession` |
 
 No-input queries use GET. Queries with payloads use POST so their inputs stay out
@@ -31,13 +30,6 @@ http.handlers(Api, { name: "account" });
 ```
 
 Configure paths through `basePath` rather than prefixing the generated endpoints.
-
-`getSessionFresh` always bypasses the session cookie cache. Sending
-`x-effect-auth-session-fresh: 1` also forces fresh verification for ordinary
-request-aware session reads, including `getSession` and `requireSession`.
-Allow that header in application-owned CORS configuration; the lower-level
-operation transport admits it in preflights. Fresh verification still follows
-the [backend's consistency guarantee](./adapters#key-value-session-authority).
 
 ## Cookies and request policy
 
@@ -71,20 +63,6 @@ reject an explicitly untrusted Origin. Duplicate credential cookies are rejected
 and session responses are not cacheable. If you override `csrf` on the server,
 pass matching settings to `Client.make`.
 
-With `Sessions.stateful({ cacheFor })` or `Sessions.stateAssisted({ cacheFor })`,
-the additional `session-cache` cookie holds a signed public session snapshot.
-It follows the same cookie security policy. Caching is disabled by default;
-`maximumTokenBytes` defaults to `4096`. Cache hits need no server storage lookup.
-The snapshot is bound to its session credential, and invalid or expired snapshots
-fall back to authoritative verification. Oversized or unencodable snapshots are
-cleared instead of issued, leaving authoritative reads available.
-
-Auth mutations bypass and clear the snapshot. Issuing, renewing, or clearing a
-session credential clears it too; sign-out clears both cookies in this browser.
-Other clients can retain a snapshot until `cacheFor` expires, delaying visibility
-of revocation, password changes, disablement, and authoritative claim changes.
-See [session cache policy](../guide/sessions#cache-ordinary-session-reads).
-
 Named mutations enforce Origin and CSRF before side effects, including local
 calls from application routes. Raw strategy methods are treated as mutations.
 For a custom credential-producing workflow, call `http.protect(effect)` inside
@@ -114,10 +92,8 @@ const AuthLive = AppAuth.layer.pipe(
 Both options must be positive integers. The default store is process-local, resets
 when it is recreated, and holds at most 10,000 network keys. At capacity it evicts the
 least recently checked key, which later starts with a full bucket. For
-shared enforcement across servers, provide the application-wide
-[root storage Layer](../guide/storage#shared-key-value-storage) to Auth. Its
-`RateLimiterStore` also serves password limits; keep one Redis connection and
-storage provider for these features.
+shared enforcement across servers, provide an Effect `RateLimiterStore`, such as
+`RateLimiter.layerStoreRedis({ prefix: "auth:requests" })`, to the Auth Layer.
 An explicitly provided `RateLimiter` or `HostIngressLimiter` also replaces its
 default. Limit malformed traffic at the host before HTTP/RPC parsing.
 

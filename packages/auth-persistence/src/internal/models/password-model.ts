@@ -189,8 +189,7 @@ export interface PasswordPersistenceMapping<
   readonly allocateRevision?: Effect.Effect<SecurityRevision, PersistenceMappingError>;
   readonly allocateRevisionSync?: () => SecurityRevision;
   readonly commandRetentionMillis: number;
-  /** All semantic replacements still bump subject revision. This flag declares
-   * authoritative verification's invalidation latency; cookie exposure is separate. */
+  /** All semantic replacements still bump subject revision. This flag only declares bearer invalidation latency. */
   readonly sessionInvalidation: "same-authority-immediate" | "original-absolute-expiry";
   readonly d1?: PasswordD1Clock<Expression>;
 }

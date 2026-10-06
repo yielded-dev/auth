@@ -122,41 +122,6 @@ The same `Persistence.map` works without Drizzle. Import `AuthPersistence` from
 yourself. The [Effect SQL app](https://github.com/yielded-dev/auth/tree/main/examples/persistence-sql)
 runs on SQLite and PostgreSQL.
 
-## Shared key-value storage
-
-Configure one root storage Layer for KV-backed session validity and shared rate
-limits. The persistence package supplies Redis and process-local memory providers:
-
-```ts title="apps/server/storage.ts"
-import * as BunRedis from "@effect/platform-bun/BunRedis";
-import * as KeyValue from "@yielded/auth-persistence/KeyValue";
-import { Config, Layer } from "effect";
-
-const RedisLive = BunRedis.layerConfig({ url: Config.string("REDIS_URL") });
-
-export const RootStorage = KeyValue.layerRedis({ prefix: "app:auth" }).pipe(
-  Layer.provide(RedisLive),
-);
-```
-
-This Layer supplies Effect `KeyValueStore`, Auth's `Persistence.AtomicKeyValueStore`,
-and Effect `RateLimiterStore` over the same Redis connection. Reuse `RootStorage`
-at the application root, outside the feature Layers; do not create independent
-stores per feature. For local development, use `KeyValue.layerMemory` instead.
-Memory state disappears on restart and is not shared across processes.
-
-For signed sessions, `AppAuth.sessions.keyValueValidityLayer` supplies validity
-and the application's bound subject authority. Account provisioning and
-credential/revision changes must commit through that same subject aggregate;
-copying SQL authority into KV does not provide immediate invalidation. See
-[KV authority and consistency](../reference/adapters#key-value-session-authority)
-for composition and backend requirements.
-
-The [signed cookie cache](./sessions#cache-ordinary-session-reads) is separate:
-a cache hit makes no server KV lookup. SQL stateful verification uses one read
-for compatible native IDs, or two when different encodings require owner discovery.
-The [session read reference](../reference/adapters#session-reads) compares these costs.
-
 ## Your services
 
 Each storage role is a public service, such as `Password.PasswordPersistence`.

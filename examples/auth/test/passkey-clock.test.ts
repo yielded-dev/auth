@@ -175,10 +175,11 @@ const harness = (
 
   return module.layer.pipe(
     Layer.provide(module.binding.layer),
-    Layer.provide(sessions.statelessLayer(Sessions.stateless().policy(sessions.moduleId))),
+    Layer.provide(
+      sessions.statelessLayer(Sessions.stateless({ keys }).policy(sessions.moduleId), keys),
+    ),
     Layer.provide([
       protocol,
-      Layer.succeed(Sessions.SessionSigningKeys, keys),
       action,
       Auth.RequestBindingConfig.layer({ generation: 1, lifetimeMillis: 300000, keyring: keys }),
       Passkey.PasskeyConfig.layer({ profiles: [Tables.profile] }),

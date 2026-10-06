@@ -394,8 +394,7 @@ const makePasswordWithManagement = <
       ): Effect.fn.Return<Mutation, Failure> {
         if (
           policy.requireImmediateInvalidation &&
-          (strategy.capabilities.subjectInvalidation !== "immediate" ||
-            strategy.capabilities.positiveCacheMillis > 0)
+          strategy.capabilities.subjectInvalidation !== "immediate"
         )
           return yield* PasswordMethodUnsupported.make({});
         expectedRevision = snapshotPasswordRevision(expectedRevision);

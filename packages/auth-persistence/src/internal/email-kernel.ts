@@ -809,8 +809,7 @@ export const makeEmailKernel = <
       (action === "verify-address" && input.captured.source !== undefined) ||
       (action === "change-address" && input.captured.source === undefined) ||
       confirmsExisting !== (input.invalidation === undefined) ||
-      ((input.invalidation?.existingSessions === "immediate" ||
-        input.invalidation?.existingSessions === "cache-expiry") &&
+      (input.invalidation?.existingSessions === "immediate" &&
         mapping.sessionInvalidation !== "same-authority-immediate")
     )
       return undefined;

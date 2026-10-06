@@ -9,21 +9,20 @@ import { mutationSecurity } from "../../src/http-operation/security";
 
 const auth = Auth.make("test/cookie-policy", {
   claims: Schema.Struct({}),
-  sessions: Sessions.stateless(),
+  sessions: Sessions.stateless({
+    keys: {
+      activeKeyId: "test",
+      keys: [
+        { id: "test", material: Redacted.make("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA") },
+      ],
+    },
+  }),
 });
 
 const startup = (options: Http.AuthHttpOptions<unknown, unknown, unknown>) =>
   Layer.build(
     Http.make(auth, options).operationLayer.pipe(
       Layer.provide(auth.layer),
-      Layer.provide(
-        Layer.succeed(Sessions.SessionSigningKeys, {
-          activeKeyId: "test",
-          keys: [
-            { id: "test", material: Redacted.make("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA") },
-          ],
-        }),
-      ),
       Layer.provide(WebCrypto.layerWebCrypto),
     ),
   ).pipe(Effect.scoped);

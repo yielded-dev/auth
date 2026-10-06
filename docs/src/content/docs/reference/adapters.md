@@ -5,9 +5,9 @@ description: Choose managed storage, your own SQL schema, or custom Effect servi
 
 `@yielded/auth` owns workflows and service contracts. Its only third-party runtime
 dependency is Effect; first-party crypto and OAuth packages supply the primitives.
-`@yielded/auth-persistence` supplies direct Effect SQL persistence, root key-value
-providers, and shared storage contracts. `@yielded/auth-persistence-drizzle` adds
-Drizzle bindings, managed tables, and migration helpers. Applications choose their adapter and own customer
+`@yielded/auth-persistence` supplies direct Effect SQL persistence and shared storage
+contracts. `@yielded/auth-persistence-drizzle` adds Drizzle bindings, managed tables,
+and migration helpers. Applications choose their adapter and own customer
 provisioning, policy, claims, delivery, and database connections.
 
 Install the Drizzle companion, `drizzle-orm`, and an explicit Effect SQL driver when
@@ -293,128 +293,6 @@ Layer helpers may supply empty hooks, while crypto remains an application choice
 You supply storage mappings, account authority, claims, delivery, and secret keys.
 Adapters provide implementations; they are not installed automatically.
 
-## Session reads
-
-These are storage calls for verification, excluding setup, issuance, and mutations:
-
-| Verification path                                     | Storage calls |
-| ----------------------------------------------------- | ------------- |
-| Stateful SQL, compatible unencoded text owner IDs     | 1 statement   |
-| Stateful SQL, custom or differently encoded owner IDs | 2 statements  |
-| State-assisted interactive SQL validity               | 4 statements  |
-| State-assisted KV validity                            | 1 KV get      |
-| Valid signed cookie snapshot                          | 0             |
-| Stateless signed token                                | 0             |
-
-Direct Effect SQL and interactive Drizzle stateful verification open no transaction.
-The final statement reads the session and subject together, preserving active
-status, security revision, and idle/absolute expiry checks. A raw owner-column join
-is used only for compatible unencoded text. Other representations first decode
-the native owner, then bind it through each column's encoder in the final read.
-Never join encoded columns merely because they represent the same subject.
-
-Interactive SQL-assisted validity retains its transaction: begin, subject read,
-revocation-tombstone read, commit. These counts were measured on PGlite and SQLite
-with direct SQL and interactive Drizzle; D1's separate path is outside this count.
-
-Cookie caching is [opt-in session policy](../guide/sessions#cache-ordinary-session-reads).
-It avoids reads by accepting a bounded delay, rather than weakening the underlying
-authority. Management and explicit verification bypass it.
-
-## Key-value session authority
-
-Use `Sessions.stateAssisted()` with `AppAuth.sessions.keyValueValidityLayer` for
-signed sessions backed by one authoritative aggregate per subject. This Layer
-provides both `AppAuth.sessions.SignedSessionValidity` and the bound
-`AppAuth.sessions.KeyValueSessionAuthority`:
-
-```ts title="apps/server/auth-live.ts"
-import { Layer } from "effect";
-
-import { AppAuth } from "./auth";
-import { AccountsLive } from "./auth-accounts";
-import { CryptoLive } from "./crypto-live";
-import { SessionKeysLive } from "./session-keys";
-import { RootStorage } from "./storage";
-
-export const AuthLive = AppAuth.layer.pipe(
-  Layer.provide(AccountsLive),
-  Layer.provideMerge(AppAuth.sessions.keyValueValidityLayer),
-  Layer.provide(SessionKeysLive),
-  Layer.provide(RootStorage),
-  Layer.provide(CryptoLive),
-);
-```
-
-`RootStorage` is the shared [memory or Redis provider](../guide/storage#shared-key-value-storage)
-from `@yielded/auth-persistence/KeyValue`. `layerMemory` is a Layer value;
-`layerRedis({ prefix })` requires one application-supplied Effect `Redis` service.
-Both supply Effect `KeyValueStore`, `Persistence.AtomicKeyValueStore`, and Effect
-`RateLimiterStore`. Keep the root provider outside feature Layers so they share
-one store. `SessionKeysLive` supplies the [signing-key service](../guide/sessions#configure-sessions).
-
-`Sessions.KeyValueSessionSubject` defines the stored subject:
-
-| Field              | Meaning                                                                                                                            |
-| ------------------ | ---------------------------------------------------------------------------------------------------------------------------------- |
-| `subjectId`        | Application-owned subject ID.                                                                                                      |
-| `status`           | `"active"` or `"disabled"`.                                                                                                        |
-| `securityRevision` | Current authority revision, changed atomically with security decisions.                                                            |
-| `tombstones`       | Owner-scoped `{ sessionId, expiresAt }` revocations.                                                                               |
-| `authority`        | Schema `Json` containing only application state that must share this commit, such as credential revisions and pending consumption. |
-
-`read(subjectId)` returns the subject or `undefined`. Missing state denies session
-verification. Provision it through application authority, never from an incoming
-token. `transact(subjectId, (current, journal) => Effect<{ subject, value, expiresAt?: DateTime.Utc }>)`
-runs one conditional update and returns `value`. The journal supports commit receipts;
-the callback updates this aggregate only, without issuing credentials or writing
-another store. Compare-and-set conflicts fail with `SessionConflict`; neither conflicts nor
-unknown commit outcomes are automatically retried.
-
-Each aggregate is limited to 10,000 unexpired tombstones and 1 MiB encoded.
-Transactions prune only expired tombstones; capacity or schema violations fail
-with `SessionUnavailable` without evicting live revocations.
-
-`AccountsLive` must implement `Sessions.AuthenticationAuthority` against this same
-aggregate. Credential changes, security revisions, and pending-proof consumption
-must share its atomic commit, or use a replacement native transactional authority.
-An SQL authority plus a KV mirror cannot supply the immediate-invalidation
-guarantee. Ordinary profile data belongs in application storage; token and cookie
-claims remain snapshots.
-
-For `AuthenticationAuthority.approve`, the `transact` callback must return
-`expiresAt` as the earliest issuance, proof-freshness, or pending-state expiry.
-Omit it only for mutations with no time-dependent authorization. This is a commit
-deadline, not a storage TTL: `AtomicKeyValueStore.compareAndSet` receives it as
-optional `options.expiresAtMillis` and must reject expired writes atomically.
-The root Redis provider checks server `TIME` within its Lua write; memory uses
-the Effect clock. An expired deadline fails with `SessionConflict`.
-
-### Backend consistency
-
-`SignedSessionValidity.consistency` is `"strong"` or `"eventual"`; SQL services
-declare `"strong"`, while KV validity inherits `Persistence.AtomicKeyValueStore.consistency`.
-Custom atomic stores must compare-and-set the same keys and values exposed by
-their root `KeyValueStore`. A plain get/set pair does not satisfy that contract.
-
-For immediate revocation, use Redis primary reads with durability and failover
-settings that preserve committed authority, or a Durable Object transactional
-authority. Redis replicas update asynchronously; choose
-[persistence](https://redis.io/docs/latest/operate/oss_and_stack/management/persistence/)
-and [replication](https://redis.io/docs/latest/operate/oss_and_stack/management/replication/)
-settings deliberately. Cloudflare's [Durable Object storage](https://developers.cloudflare.com/durable-objects/api/sqlite-storage-api/)
-provides the transaction boundary for an application-owned authority.
-
-[Workers KV](https://developers.cloudflare.com/kv/concepts/how-kv-works/#consistency)
-reads can lag writes by about 60 seconds or longer. Workers KV alone also lacks
-the required atomic conditional write; use a transactional owner for that part.
-A custom root provider serving eventual reads must declare
-`AtomicKeyValueStore.consistency: "eventual"`, and the application must explicitly
-select `Sessions.stateAssisted({ allowEventualRevocation: true })`. The default
-policy rejects eventual validity. In eventual mode, invalidation reports
-`existingSessions: "eventual"` and `maximumExposureMillis: null`; a cookie TTL or
-fresh-read request cannot turn this into a bounded revocation guarantee.
-
 ## Choose a driver
 
 | Database / runtime    | Direct import                                  |
@@ -478,6 +356,24 @@ Standalone libSQL operations reject any ambient libSQL transaction, including on
 belonging to another client. Use the explicit transaction coordinators when
 application writes and auth changes must share a commit.
 
+## SQL session verification
+
+Interactive SQL adapters read a stateful session and its subject in one statement
+when both owner columns use compatible physical text types and collations without
+codecs. Service construction checks that compatibility with one catalog read.
+Custom codecs, incompatible columns, and converters without this metadata use two
+reads: discover the owner, then read both rows together and validate their ownership.
+Rebuild persistence Layers after schema migrations.
+
+SQL state-assisted validity reads the subject's current security revision and its
+owner-scoped revocation tombstone in one statement. Each ID uses its own column
+codec. Both modes check current authority and fresh expiry times on every read;
+committed revocations retain immediate invalidation.
+
+Ordinary verification opens no transaction. Within a caller-owned Effect SQL
+transaction, verification uses a savepoint so a caught query failure leaves the
+transaction usable. Mutation transaction and receipt guarantees still apply.
+
 ## Passwords
 
 Use `makePasswordPersistenceServices` for verification and mutation storage;
@@ -524,10 +420,9 @@ columns stay unchanged and the resulting row must satisfy `isCurrent`.
 
 Reclamation advances the previous subject's security revision without moving its
 credentials or application data. Identifier eligibility is separate from the prior
-subject's status: a disabled subject stays disabled. Authoritative session and
-pending-authentication checks must consult that revision. Cookie-cache readers
-can lag by `cacheFor`; purely stateless sessions retain their documented lifetime.
-Provisioning, reclamation, receipt, and proof consumption share
+subject's status: a disabled subject stays disabled. Sessions and pending authentication must consult
+that revision for immediate invalidation; purely stateless sessions retain their
+documented lifetime. Provisioning, reclamation, receipt, and proof consumption share
 one transaction or D1 batch. Verified addresses cannot be reclaimed. Pending-mode
 registration only records a provisioning intent; the application owns its eventual
 binding transition. Compose this guest workflow explicitly as shown in
@@ -538,9 +433,8 @@ Confirming an existing unverified address bound to the same subject preserves it
 security revision and sessions; the completion result omits `invalidation`. The
 adapter captures and rechecks the identifier's binding revision. Application policy
 may authorize this confirmation with a valid session; adding or replacing an address
-still requires recent authentication. Use a fresh session read to bypass cookie
-snapshots, and reload mutable application data when the UI needs to reflect
-verification immediately; verifying a signed token does not regenerate its claims.
+still requires recent authentication. Reload mutable application claims on session
+reads when the UI needs to reflect verification immediately.
 Notifications run after commit; durable delivery needs an outbox.
 
 ## OAuth

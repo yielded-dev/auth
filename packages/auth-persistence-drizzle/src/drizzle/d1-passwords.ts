@@ -668,8 +668,7 @@ const readAuthority = Effect.fn("DrizzleD1Password.readAuthority")(function* (
   )
     return undefined;
   if (
-    (input.invalidation.existingSessions === "immediate" ||
-      input.invalidation.existingSessions === "cache-expiry") &&
+    input.invalidation.existingSessions === "immediate" &&
     mapping.sessionInvalidation !== "same-authority-immediate"
   )
     return undefined;

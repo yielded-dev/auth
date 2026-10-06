@@ -12,7 +12,7 @@ import {
   Redacted,
   Scope,
 } from "effect";
-import { HttpEffect, HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
+import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import { HttpApi, HttpApiBuilder, type HttpApiGroup, type HttpApiEndpoint } from "effect/http-api";
 
 import { AuthRequest } from "../auth/AuthRequest";
@@ -379,45 +379,14 @@ export const make = <
         Effect.provideService(AuthRequest, {
           invocation: guest,
           credentials: security.credentials,
-          freshSession:
-            !["GET", "HEAD"].includes(request.method) ||
-            request.headers.get("x-effect-auth-session-fresh") === "1",
           resolveInvocation,
           beforeMutation,
           credentialCommandSink: sink,
-          sessionCacheCommandSink: (command) =>
-            Effect.sync(() => {
-              commands.push(command);
-            }),
         }),
         withProofRequestContext,
-        Effect.tapCause(() => {
-          if (
-            !mutationAdmitted &&
-            !commands.some(
-              (command) => command.slot === "session-cache" && command._tag === "Clear",
-            )
-          )
-            return Effect.void;
-
-          // Typed route failures are rendered outside this middleware. Carry only
-          // cache invalidation to that response; never issue credentials on failure.
-          const cookie = config.cookies["session-cache"];
-
-          return HttpEffect.appendPreResponseHandler((_request, response) =>
-            HttpServerResponse.setCookie(response, cookie.name, "", {
-              ...cookie,
-              httpOnly: true,
-              maxAge: Duration.zero,
-            }).pipe(Effect.orDie),
-          );
-        }),
       );
 
       const now = DateTime.toEpochMillis(yield* DateTime.now);
-
-      if (mutationAdmitted || commands.some((command) => command.slot === "session"))
-        commands.push({ _tag: "Clear", slot: "session-cache" });
 
       for (const command of commands) {
         const cookie = config.cookies[command.slot];

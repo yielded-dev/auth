@@ -125,8 +125,7 @@ export const makeTotpModule = <
 
     if (
       policy.requireImmediateInvalidation &&
-      (strategy.capabilities.subjectInvalidation !== "immediate" ||
-        strategy.capabilities.positiveCacheMillis > 0)
+      strategy.capabilities.subjectInvalidation !== "immediate"
     )
       return yield* TotpConfigurationError.make({});
 

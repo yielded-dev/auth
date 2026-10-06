@@ -18,15 +18,10 @@ const keys: Sessions.SessionSigningKeyring = {
 const sessionLayer = (audience: string) =>
   sessions
     .statelessLayer(
-      Sessions.stateless({ issuer: "kommunikasie", audience }).policy(sessions.moduleId),
+      Sessions.stateless({ keys, issuer: "kommunikasie", audience }).policy(sessions.moduleId),
+      keys,
     )
-    .pipe(
-      Layer.provide([
-        layerWebCrypto,
-        LifecycleHooks.empty,
-        Layer.succeed(Sessions.SessionSigningKeys, keys),
-      ]),
-    );
+    .pipe(Layer.provide([layerWebCrypto, LifecycleHooks.empty]));
 
 const authority = Layer.succeed(Sessions.AuthenticationAuthority, {
   capture: () => Effect.die("This regression supplies trusted method evidence directly"),

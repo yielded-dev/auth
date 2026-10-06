@@ -37,8 +37,7 @@ import {
 } from "./assurance";
 import { AuthenticationAuthority } from "./AuthenticationAuthority";
 import { makeSessionContract } from "./contract";
-import { makeSessionCookieCache, type SessionCookieCache as CookieCachePort } from "./cookieCache";
-import { makeSessionSecrets, makeSessionSigningCodec, SessionSigningKeys } from "./crypto";
+import { makeSessionSecrets, makeSessionSigningCodec, type SessionSigningKeyring } from "./crypto";
 import type { SessionError } from "./errors";
 import {
   SessionCapabilityUnsupported,
@@ -50,10 +49,6 @@ import {
   SessionStepUpInvalid,
 } from "./errors";
 import { sessionInvalidationWindow } from "./invalidation";
-import {
-  makeKeyValueValidity,
-  type KeyValueSessionAuthority as KeyValueAuthorityPort,
-} from "./keyValue";
 import {
   type AuthenticationEvidence,
   type PendingConsumption,
@@ -210,18 +205,6 @@ export const makeSessionModule = <
     `effect-auth/sessions/${moduleId}/Strategy`,
   );
 
-  const SessionCookieCache = Context.Service<
-    ModuleService<Id, "cookie-cache", Claims["Type"]>,
-    CookieCachePort<Session>
-  >(`effect-auth/sessions/${moduleId}/CookieCache`);
-
-  const cookieCacheLayer = Layer.effect(
-    SessionCookieCache,
-    Effect.flatMap(SessionStrategy, (strategy) =>
-      makeSessionCookieCache(moduleId, Session, strategy.policy),
-    ),
-  );
-
   // This tag is deliberately not returned by the module: no public precommit signer.
   const StepUpPlanner = Context.Service<
     ModuleService<Id, "step-up-planner", Claims["Type"]>,
@@ -259,21 +242,6 @@ export const makeSessionModule = <
     ModuleService<Id, "validity", Claims["Type"]>,
     ValidityPort
   >(`effect-auth/sessions/${moduleId}/Validity`);
-
-  const KeyValueSessionAuthority = Context.Service<
-    ModuleService<Id, "key-value-authority", Claims["Type"]>,
-    KeyValueAuthorityPort
-  >(`effect-auth/sessions/${moduleId}/KeyValueAuthority`);
-
-  const keyValueValidityLayer = Layer.effectContext(
-    Effect.gen(function* () {
-      const { authority, validity } = yield* makeKeyValueValidity(moduleId);
-
-      return Context.make(SignedSessionValidity, validity).pipe(
-        Context.add(KeyValueSessionAuthority, authority),
-      );
-    }),
-  ).pipe(Layer.provide(hooksLayer));
 
   const PendingAuthentication = Context.Service<
     ModuleService<Id, "pending", Claims["Type"]>,
@@ -615,10 +583,7 @@ export const makeSessionModule = <
 
         const strategy = SessionStrategy.of({
           policy,
-          capabilities: {
-            ...statefulCapabilities,
-            positiveCacheMillis: policy.positiveCacheMillis ?? 0,
-          },
+          capabilities: statefulCapabilities,
           inspectForStepUp,
           inspect,
           verify,
@@ -791,6 +756,7 @@ export const makeSessionModule = <
 
   const signedLayer = <Mode extends "stateless" | "state-assisted">(
     configured: SessionPolicy,
+    keyring: SessionSigningKeyring,
     mode: Mode,
   ) => {
     const layer = Layer.effectContext(
@@ -800,13 +766,9 @@ export const makeSessionModule = <
             ? Option.some(yield* SignedSessionValidity)
             : Option.none<ValidityPort>();
 
-        const capabilities = {
-          ...(Option.isSome(validity) ? stateAssistedCapabilities : statelessCapabilities),
-          ...(Option.isSome(validity) && validity.value.consistency === "eventual"
-            ? { subjectInvalidation: "eventual" as const }
-            : {}),
-          positiveCacheMillis: configured.positiveCacheMillis ?? 0,
-        };
+        const capabilities = Option.isSome(validity)
+          ? stateAssistedCapabilities
+          : statelessCapabilities;
 
         const policy = yield* validateSessionPolicy(configured, capabilities);
         const hooks = yield* LifecycleHooks;
@@ -827,11 +789,7 @@ export const makeSessionModule = <
           credentialVersion: SessionCredentialVersion,
         });
 
-        const signing = yield* makeSessionSigningCodec(
-          Envelope,
-          yield* SessionSigningKeys,
-          policy.maximumTokenBytes,
-        );
+        const signing = yield* makeSessionSigningCodec(Envelope, keyring, policy.maximumTokenBytes);
 
         const encode = (inspection: Inspection) =>
           signing.encode({
@@ -858,16 +816,11 @@ export const makeSessionModule = <
           if (Option.isSome(validity))
             yield* validity.value.verify(envelope.session, yield* DateTime.now);
 
-          const inspection = yield* inspectProvenance(
+          return yield* inspectProvenance(
             yield* projectSession(envelope.session),
             envelope.provenance,
             envelope.credentialVersion,
           );
-
-          // Validity reads and codec work may outlast a live token's expiry.
-          yield* validateSessionTimeline(inspection.session, policy);
-
-          return inspection;
         });
 
         const inspectForStepUp = Effect.fn("SignedSession.inspectForStepUp")(function* (
@@ -1159,9 +1112,11 @@ export const makeSessionModule = <
     >;
   };
 
-  const statelessLayer = (policy: SessionPolicy) => signedLayer(policy, "stateless");
+  const statelessLayer = (policy: SessionPolicy, keyring: SessionSigningKeyring) =>
+    signedLayer(policy, keyring, "stateless");
 
-  const stateAssistedLayer = (policy: SessionPolicy) => signedLayer(policy, "state-assisted");
+  const stateAssistedLayer = (policy: SessionPolicy, keyring: SessionSigningKeyring) =>
+    signedLayer(policy, keyring, "state-assisted");
 
   const AuthenticationCompletion = Context.Service<
     ModuleService<Id, "completion", Claims["Type"]>,
@@ -2088,8 +2043,6 @@ export const makeSessionModule = <
     Session,
     CompletionResult,
     SessionStrategy,
-    SessionCookieCache,
-    cookieCacheLayer,
     SessionStepUp,
     SessionStepUpPersistence,
     stepUpLayer,
@@ -2100,8 +2053,6 @@ export const makeSessionModule = <
     StatefulSessionPersistence,
     SessionRepository,
     SignedSessionValidity,
-    KeyValueSessionAuthority,
-    keyValueValidityLayer,
     PendingAuthentication,
     statefulLayer,
     statelessLayer,

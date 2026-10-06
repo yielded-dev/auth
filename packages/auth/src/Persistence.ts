@@ -2,4 +2,3 @@
 export { CurrentCommitJournal } from "./hooks/commit";
 export { reportAuthFailure, reportPersistenceFailure } from "./internal/diagnostics";
 export { hooksLayer } from "./auth/defaults";
-export { AtomicKeyValueStore } from "./key-value/AtomicKeyValueStore";

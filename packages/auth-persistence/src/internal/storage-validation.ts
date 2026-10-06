@@ -40,6 +40,62 @@ export interface PhysicalStorageTable {
 export const qualifiedTableName = (table: Pick<StorageTable, "name" | "schema">) =>
   (table.schema === undefined ? "" : quote(table.schema) + ".") + quote(table.name);
 
+export interface PhysicalTextColumn {
+  readonly table: Pick<PhysicalStorageTable, "name" | "schema">;
+  readonly name: string;
+}
+
+const TextColumns = Schema.Array(Schema.Struct({ type: Schema.String, collation: Schema.String }));
+
+/** One acquisition-only read: presence/unique-key validation does not establish
+ * equality compatibility. SQLite's pragma omits column collations, so only
+ * ordinary TEXT tables with no COLLATE declaration qualify (default BINARY). */
+export const canJoinTextColumns = Effect.fnUntraced(function* (
+  client: SqlClient,
+  left: PhysicalTextColumn | undefined,
+  right: PhysicalTextColumn | undefined,
+) {
+  if (left === undefined || right === undefined) return false;
+  const columns = [left, right];
+
+  if (
+    client.onDialectOrElse({ sqlite: () => true, orElse: () => false }) &&
+    columns.some((c) => c.table.schema !== undefined && c.table.schema !== "main")
+  )
+    return false;
+
+  const query = client.onDialectOrElse({
+    pg: () => client`
+      select a.atttypid::text as type, a.attcollation::text as collation
+      from (values ${client.join(", ", false)(columns.map((c) => client`(${qualifiedTableName(c.table)}::text, ${c.name}::text)`))}) requested(relation, name)
+      join pg_attribute a on a.attrelid = to_regclass(requested.relation)
+        and a.attname = requested.name and a.attnum > 0 and not a.attisdropped
+      where a.atttypid in ('text'::regtype, 'varchar'::regtype)`,
+    sqlite: () => client`
+      with requested(relation, name) as (values ${client.join(", ", false)(columns.map((c) => client`(${c.table.name}, ${c.name})`))})
+      select 'text' as type, 'BINARY' as collation from requested
+      join sqlite_schema s on s.name = requested.relation and s.type = 'table'
+      join pragma_table_info(requested.relation) c on c.name = requested.name
+      where upper(c.type) = 'TEXT' and instr(lower(s.sql), 'collate') = 0`,
+    mysql: () => client`
+      select c.data_type as type, c.collation_name as collation
+      from (${client.join(" union all ", false)(columns.map((c) => client`select ${c.table.schema ?? null} as schema_name, ${c.table.name} as table_name, ${c.name} as column_name`))}) requested
+      join information_schema.columns c
+        on c.table_schema = coalesce(requested.schema_name, database())
+        and c.table_name = requested.table_name and c.column_name = requested.column_name
+      where c.data_type in ('varchar', 'text', 'tinytext', 'mediumtext', 'longtext')`,
+    orElse: () => Effect.succeed([]),
+  });
+
+  const rows = yield* query.pipe(Effect.flatMap(Schema.decodeUnknownEffect(TextColumns)));
+
+  return (
+    rows.length === 2 &&
+    rows[0]?.type === rows[1]?.type &&
+    rows[0]?.collation === rows[1]?.collation
+  );
+});
+
 const validateKeys = Effect.fnUntraced(function* (
   table: PhysicalStorageTable,
   required: ReadonlyArray<ReadonlyArray<string>>,
