@@ -26,10 +26,7 @@ import type { SessionApi, SessionApiError } from "../auth/session";
 import { HookDenied } from "../hooks/models";
 import { OperationHttpConfigurationError, OperationHttpError } from "../http-operation/errors";
 import type { HttpCredentials, OperationHttpConfiguration } from "../http-operation/models";
-import {
-  invocationLayer,
-  OperationHttpInvocation,
-} from "../http-operation/OperationHttpInvocation";
+import { OperationHttpInvocation } from "../http-operation/OperationHttpInvocation";
 import {
   configurationLayer,
   cookieConfiguration,
@@ -284,13 +281,23 @@ export const make = <
   /** Existing operation contracts retain private predecode injection and their wire format. */
   const operationLayer = Layer.merge(
     configuration,
-    invocationLayer(
-      Effect.fn("AuthHttp.invocation")(function* (_request, credentials) {
+    Layer.effect(
+      OperationHttpInvocation,
+      Effect.gen(function* () {
         const api = yield* auth;
+        const cacheTransport = api[sessionCacheTransport];
 
-        return yield* resolve(api, credentials.session).pipe(
-          Effect.mapError(() => OperationHttpError.make({ reason: "unavailable" })),
-        );
+        return {
+          ...(cacheTransport === undefined ? {} : { [sessionCacheTransport]: cacheTransport }),
+          resolve: Effect.fn("AuthHttp.invocation")(function* (
+            _request: Request,
+            credentials: HttpCredentials,
+          ) {
+            return yield* resolve(api, credentials.session).pipe(
+              Effect.mapError(() => OperationHttpError.make({ reason: "unavailable" })),
+            );
+          }),
+        };
       }),
     ),
   );
@@ -403,7 +410,10 @@ export const make = <
           Effect.provideService(AuthRequest, {
             invocation: guest,
             credentials: security.credentials,
-            actionMode: ["GET", "HEAD"].includes(request.method) ? "query" : "mutation",
+            // Only named actions grant query mode; other HTTP methods stay fresh.
+            ...(["GET", "HEAD"].includes(request.method)
+              ? {}
+              : { actionMode: "mutation" as const }),
             ...(security.sessionCacheGeneration === undefined
               ? {}
               : { sessionCacheGeneration: security.sessionCacheGeneration }),

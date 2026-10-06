@@ -181,9 +181,11 @@ example and [TOTP](../guide/totp#expose-private-reveals-over-http) for private r
 ## Lower-level transports
 
 `http.withRequest` wraps a custom Effect returning `HttpServerResponse`.
-`http.operationLayer` supplies browser policy and caller resolution to existing
-`OperationHttpServer` contracts. Those descriptors continue to own private payload
-injection and explicitly selected reveals.
+Raw strategy calls retain mutation admission, including inside GET handlers;
+declare a named query action to expose a read.
+`http.operationLayer` supplies browser policy, caller resolution and configured
+session-cache invalidation to existing `OperationHttpServer` contracts. Those
+descriptors continue to own private payload injection and explicitly selected reveals.
 Encode expected response failures before leaving the request wrapper.
 
 `OperationHttpServer.make` retains configuration and caller resolution. Supply
