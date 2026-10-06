@@ -1,5 +1,12 @@
 # @yielded/jose
 
+## 0.1.0-beta.25
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @yielded/crypto@0.1.0-beta.25
+
 ## 0.1.0-beta.24
 
 ### Patch Changes
