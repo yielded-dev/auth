@@ -35,7 +35,7 @@ import { OperationHttpInvocation } from "./OperationHttpInvocation";
 import { OperationHttpServerConfig } from "./OperationHttpServerConfig";
 import { CredentialWire, RevealWire, credentialWire, revealWire } from "./private";
 import { requestSecurity } from "./security";
-import { rotateSessionCache, snapshotCookie } from "./session-cache-cookie";
+import { rotationCookies, snapshotCookie } from "./session-cache-cookie";
 
 const responseSchema = Schema.Union([
   Schema.TaggedStruct("Success", {
@@ -421,15 +421,16 @@ export const make = <
             ? Effect.void
             : yield* Effect.cached(
                 Effect.gen(function* () {
+                  const generation = yield* cacheTransport.rotate;
+
                   mutationCookies.push(
-                    ...(yield* rotateSessionCache(
-                      cacheTransport,
+                    ...(yield* rotationCookies(
                       config.cookies["session-cache"],
-                    ).pipe(
-                      Effect.mapError(() => OperationHttpError.make({ reason: "unavailable" })),
+                      generation,
+                      cacheTransport.lifetimeMillis,
                     )),
                   );
-                }),
+                }).pipe(Effect.mapError(() => OperationHttpError.make({ reason: "unavailable" }))),
               );
 
         if (route.operation.replay !== "read-only") yield* invalidateCache;

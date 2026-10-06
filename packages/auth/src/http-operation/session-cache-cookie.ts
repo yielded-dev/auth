@@ -3,7 +3,6 @@ import { Cookies } from "effect/http";
 
 import { reportAuthFailure } from "../internal/diagnostics";
 import type { AuthCredentialCommand } from "../operations/credentials";
-import type { SessionCacheTransport } from "../sessions/cookieCache";
 import { SessionUnavailable } from "../sessions/errors";
 import type { OperationCookie } from "./models";
 
@@ -46,17 +45,16 @@ export const optionalCookie = (parts: ReadonlyArray<string>, name: string): stri
   return Schema.is(OptionalCookieValue)(value) ? value : undefined;
 };
 
-/** Mutation-only binding rotation; failure prevents the mutation from starting. */
-export const rotateSessionCache = Effect.fnUntraced(function* (
-  transport: SessionCacheTransport,
+/** Cookies for a rotated mutation binding; failure prevents mutation admission. */
+export const rotationCookies = Effect.fnUntraced(function* (
   cookie: OperationCookie,
+  generation: Redacted.Redacted<string>,
+  lifetimeMillis: number,
 ) {
-  const generation = yield* transport.rotate;
-
   const binding = makeCacheCookie(
     generationCookieConfiguration(cookie),
     Redacted.value(generation),
-    transport.lifetimeMillis,
+    lifetimeMillis,
   );
 
   const clear = makeCacheCookie(cookie, "", 0);

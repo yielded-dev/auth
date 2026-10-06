@@ -37,7 +37,7 @@ import {
 } from "../http-operation/OperationHttpServerConfig";
 import { mutationSecurity, requestSecurity } from "../http-operation/security";
 import { make as makeOperationServer } from "../http-operation/server";
-import { rotateSessionCache, snapshotCookie } from "../http-operation/session-cache-cookie";
+import { rotationCookies, snapshotCookie } from "../http-operation/session-cache-cookie";
 import { cookieDomain, httpsOrigin, origin, originWithinDomain } from "../internal/origin";
 import type { OAuthConnectedProtocol } from "../oauth/OAuthConnectedProtocol";
 import type { OAuthProtocol } from "../oauth/OAuthProtocol";
@@ -371,15 +371,19 @@ export const make = <
           Effect.mapError(() => HookDenied.make({ reason: "policy" })),
           Effect.andThen(
             Effect.gen(function* () {
-              if (cacheTransport !== undefined)
+              if (cacheTransport !== undefined) {
+                const generation = yield* cacheTransport.rotate;
+
                 mutationCookies.push(
-                  ...(yield* rotateSessionCache(
-                    cacheTransport,
+                  ...(yield* rotationCookies(
                     config.cookies["session-cache"],
-                  ).pipe(Effect.mapError(() => HookDenied.make({ reason: "unavailable" })))),
+                    generation,
+                    cacheTransport.lifetimeMillis,
+                  )),
                 );
+              }
               mutationAdmitted = true;
-            }),
+            }).pipe(Effect.mapError(() => HookDenied.make({ reason: "unavailable" }))),
           ),
         ),
       );
