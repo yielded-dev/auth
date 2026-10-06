@@ -1,11 +1,12 @@
+import * as LibsqlClient from "@effect/sql-libsql/LibsqlClient";
 import { Auth, Http, OAuth, Sessions, Slack } from "@yielded/auth";
 import { LifecycleHooks } from "@yielded/auth/Hooks";
 import { Effect, FileSystem, Layer } from "effect";
 import { FetchHttpClient, HttpRouter, HttpServerResponse } from "effect/http";
 
 import { CryptoLive } from "../../shared/crypto";
+import { makeStorage } from "../../shared/oauth/storage";
 import { OAuthSignInApi } from "./oauth-contract";
-import { makeStorage } from "./oauth-storage";
 
 /** Single-owner sign-in example. SQL owns the exact external identity tuple;
  * verified workspace membership is checked separately before session issuance. */
@@ -48,8 +49,9 @@ export const makeSlackExample = (config: {
       issuer: "https://slack.com",
       externalSubject: config.userId,
       subjectId: `slack:${config.userId}`,
-      filename: config.filename,
-    }),
+    }).pipe(
+      Layer.provideMerge(LibsqlClient.layer({ url: `file:${config.filename}`, intMode: "number" })),
+    ),
     Layer.succeed(AppAuth.strategies.oauth.SessionClaims, {
       resolve: Effect.fnUntraced(function* ({ identity }) {
         if (identity.profile?.providerData?.["https://slack.com/team_id"] !== config.teamId)

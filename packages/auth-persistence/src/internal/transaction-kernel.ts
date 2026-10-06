@@ -366,9 +366,13 @@ export const makeTransactionKernel = <
           ? toStatement(query)
           : (query as NativeQuery<Row[]>);
 
-        invariant(rows.length === 1);
+        const row = rows[0];
 
-        return rows[0]!.value === 1;
+        invariant(rows.length === 1 && row !== undefined);
+
+        // SQLite executes the raw statement, before logical field decoding.
+        // This query projects one value; its alias belongs to the adapter compiler.
+        return Object.values(row)[0] === 1;
       });
 
     const guardedQuery = (table: Table, where: SQL, values: Row, guard: GuardedUpdate) => {

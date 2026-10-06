@@ -4,6 +4,7 @@ import * as Statement from "effect/sql/Statement";
 
 import { PersistenceMappingError } from "./mapping-error";
 import { Table, identifier } from "./sql-table";
+import type { PhysicalTextColumn } from "./storage-validation";
 
 /** Capture synchronous mapping callbacks without changing SQL execution errors. */
 export const sqlMapping = <A>(thunk: () => A): Effect.Effect<A, PersistenceMappingError> =>
@@ -19,6 +20,9 @@ export interface SqlTable {
   /** Alias reads only; writes continue to target the original physical table. */
   readonly as: (alias: string) => SqlTable;
   readonly column: (key: string) => Statement.Fragment;
+  /** Optional codec-free text candidate. Physical type/collation compatibility
+   * must still be checked against the database before comparing columns. */
+  readonly unencodedTextColumn?: (key: string) => PhysicalTextColumn | undefined;
   /** Project every column under an ordinal alias, using a distinct prefix per table. */
   readonly fields: (prefix: string) => Statement.Fragment;
   readonly decode: (
@@ -98,6 +102,16 @@ const directTable = (client: SqlClient, physical: object): SqlTable => {
       name: alias === undefined ? name : client`${name} AS ${reference}`,
       as: bind,
       column,
+      unencodedTextColumn: (key) =>
+        getColumn(key).options.type === "text"
+          ? {
+              table: {
+                name: physical.name,
+                ...(physical.schema === undefined ? {} : { schema: physical.schema }),
+              },
+              name: getColumn(key).options.name,
+            }
+          : undefined,
       value,
       fields: (prefix) =>
         client.join(

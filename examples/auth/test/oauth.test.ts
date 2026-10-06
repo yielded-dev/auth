@@ -1,5 +1,7 @@
+import * as LibsqlClient from "@effect/sql-libsql/LibsqlClient";
 import { it } from "@effect/vitest";
 import { Auth, Sessions } from "@yielded/auth";
+import { sql as storageSql } from "@yielded/auth-persistence/OAuthPersistence";
 import { AuthRequest } from "@yielded/auth/Auth";
 import { AuthContract } from "@yielded/auth/contracts";
 import { LifecycleHooks } from "@yielded/auth/Hooks";
@@ -21,7 +23,6 @@ import { SubjectId } from "@yielded/auth/Schema";
 import { AuthenticationFlowId, AuthenticationRequirement } from "@yielded/auth/Sessions";
 import { OAuth } from "@yielded/auth/strategies";
 import * as Strava from "@yielded/auth/Strava";
-import { sql as drizzleSql } from "drizzle-orm";
 import {
   Context,
   DateTime,
@@ -42,7 +43,7 @@ import { TestClock } from "effect/testing";
 import { expect } from "vite-plus/test";
 
 import { CryptoLive } from "../../shared/crypto";
-import { makeStorage } from "../src/oauth-storage";
+import { makeStorage } from "../../shared/oauth/storage";
 
 const keys = (byte: number) => ({
   activeKeyId: "key",
@@ -87,13 +88,12 @@ const durable = Layer.effectDiscard(
       issuer: "https://www.strava.com",
       externalSubject: "123",
       subjectId,
-      filename: ":memory:",
       clock: {
-        engineNowMillis: drizzleSql`(SELECT millis FROM oauth_test_clock)`,
+        engineNowMillis: storageSql`(SELECT millis FROM oauth_test_clock)`,
         encodeInstant: (millis) => millis,
         decodeInstant: Schema.decodeUnknownSync(Schema.Int),
       },
-    }),
+    }).pipe(Layer.provideMerge(LibsqlClient.layer({ url: "file::memory:", intMode: "number" }))),
   ),
   Layer.provide(LifecycleHooks.empty),
 );

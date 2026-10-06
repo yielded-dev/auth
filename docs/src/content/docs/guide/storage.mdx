@@ -120,7 +120,11 @@ persistence Layer checks each mapped column and unique key against the database.
 The same `Persistence.map` works without Drizzle. Import `AuthPersistence` from
 `@yielded/auth-persistence`, describe the tables for Effect SQL, and write the DDL
 yourself. The [Effect SQL app](https://github.com/yielded-dev/auth/tree/main/examples/persistence-sql)
-runs on SQLite and PostgreSQL.
+runs on SQLite and PostgreSQL. For upstream OAuth sign-in, registration, linked
+logins, and retained provider grants, use the explicit
+[`OAuthPersistence` factories](../reference/adapters#oauth) from the same package.
+They can map Kysely-owned tables and migrations; coordinated writes still use the
+Effect SQL transaction owner.
 
 ## Your services
 

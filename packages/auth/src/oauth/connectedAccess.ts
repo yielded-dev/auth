@@ -354,8 +354,13 @@ export const makeOAuthConnectedAccess = <const Id extends string>(
               owned.claimId !== claimId ||
               owned.nextTokenVersion !== nextTokenVersion ||
               !connectedSame(M.OAuthConnectedStoredGrant, owned.grant, grant) ||
-              owned.claimExpiresAtMillis !==
-                owned.claimedAtMillis + policy.refreshClaimLifetimeMillis ||
+              owned.claimExpiresAtMillis <= owned.claimedAtMillis ||
+              owned.claimExpiresAtMillis >
+                Math.min(
+                  owned.claimedAtMillis + policy.refreshClaimLifetimeMillis,
+                  grant.context.metadata.refreshUseUntilMillis ?? 0,
+                  authorization.expiresAtMillis,
+                ) ||
               owned.claimedAtMillis > DateTime.toEpochMillis(yield* DateTime.now)
             )
               return yield* OAuthUnavailable.make({});

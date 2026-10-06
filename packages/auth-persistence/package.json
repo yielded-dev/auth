@@ -20,7 +20,8 @@
   "sideEffects": [],
   "exports": {
     ".": "./src/index.ts",
-    "./Adapter": "./src/Adapter.ts"
+    "./Adapter": "./src/Adapter.ts",
+    "./OAuthPersistence": "./src/OAuthPersistence.ts"
   },
   "publishConfig": {
     "access": "public"
