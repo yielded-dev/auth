@@ -1,5 +1,25 @@
 # @yielded/auth
 
+## 0.1.0-beta.24
+
+### Minor Changes
+
+- [#137](https://github.com/yielded-dev/auth/pull/137) [`ade1bda`](https://github.com/yielded-dev/auth/commit/ade1bdaec762f291aad1fc5aac0e68684a940ddc) Thanks [@danieljvdm](https://github.com/danieljvdm)! - Add a stable OAuth callback proxy for registered local and preview environments, with single-use handoffs and independent local sessions. Provide encrypted proxy storage with direct SQL and Drizzle adapters for SQLite, D1, and PostgreSQL.
+
+- [#140](https://github.com/yielded-dev/auth/pull/140) [`33a3f3d`](https://github.com/yielded-dev/auth/commit/33a3f3d7c0a33c9b55bfc080ea5aad29c2d2f3f0) Thanks [@danieljvdm](https://github.com/danieljvdm)! - Declare provider profile schemas on OAuth strategies to validate and infer `providerData` in session claim resolvers. Narrow mixed-provider profiles using the resolver's `provider` field.
+
+### Patch Changes
+
+- [#142](https://github.com/yielded-dev/auth/pull/142) [`d980ff1`](https://github.com/yielded-dev/auth/commit/d980ff1e5f227fe3668052eb4f9852fd4e80ea73) Thanks [@danieljvdm](https://github.com/danieljvdm)! - Honor shortened OAuth refresh claim deadlines so authorized refreshes complete without leaving grants stuck in progress.
+
+- [#138](https://github.com/yielded-dev/auth/pull/138) [`009ae06`](https://github.com/yielded-dev/auth/commit/009ae060b1c5807e1948bcf399137f3081dd7388) Thanks [@danieljvdm](https://github.com/danieljvdm)! - Remove durable password attempts and fresh password sign-in flow writes while retaining commit-time authority checks. BEHAVIOR CHANGE: replace custom password admission/settlement/cleanup with `findCredential` and `rehashIfCurrent`, remove attempt mappings and `attemptLifetimeMillis`, return `{ revision, requirement }` from `AuthenticationAuthority.capture`, and honor fresh session issuance in custom stores; obsolete password attempt tables can be dropped without resetting credentials or sessions.
+
+- [#140](https://github.com/yielded-dev/auth/pull/140) [`33a3f3d`](https://github.com/yielded-dev/auth/commit/33a3f3d7c0a33c9b55bfc080ea5aad29c2d2f3f0) Thanks [@danieljvdm](https://github.com/danieljvdm)! - Add `Slack.provider` for Sign in with Slack using shared OIDC verification and S256 PKCE. Expose verified Slack workspace and user claims through `SlackUserProfile`.
+- Updated dependencies []:
+  - @yielded/crypto@0.1.0-beta.24
+  - @yielded/jose@0.1.0-beta.24
+  - @yielded/oauth@0.1.0-beta.24
+
 ## 0.1.0-beta.23
 
 ### Patch Changes
