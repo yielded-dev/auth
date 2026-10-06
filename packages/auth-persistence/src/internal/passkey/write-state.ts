@@ -428,10 +428,7 @@ export const makePasskeyWriteStateKernel = (
     supplied: SessionInvalidationWindow,
     policy: PasskeyManagementPolicy,
   ) => {
-    if (
-      supplied.existingSessions === "cache-expiry" &&
-      (supplied.maximumExposureMillis === null || supplied.maximumExposureMillis === 0)
-    )
+    if (supplied.existingSessions === "cache-expiry" && supplied.maximumExposureMillis === 0)
       return false;
 
     // Cookie-cache exposure does not weaken the mapping's authoritative

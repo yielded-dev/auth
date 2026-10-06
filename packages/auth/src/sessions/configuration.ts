@@ -1,7 +1,8 @@
 import type { Hmac } from "@yielded/crypto/Hmac";
-import { type Crypto, Duration, Layer, type Schema, type Scope } from "effect";
+import { Context, type Crypto, Duration, Effect, Layer, type Schema, type Scope } from "effect";
 
-import { defaultLayer, hooksLayer } from "../auth/defaults";
+import { hooksLayer } from "../auth/defaults";
+import { makeSessionCookieCache, sessionCookieCache } from "./cookieCache";
 import type { SessionSigningKeys } from "./crypto";
 import { SessionConfigurationError } from "./errors";
 import type { makeSessionModule, ModuleService } from "./module";
@@ -77,8 +78,9 @@ const policy = (options: SessionOptions, immediate: boolean, cacheFor?: Duration
   });
 };
 
-/** Authoritative sessions by default. cacheFor delays revocation and claim changes;
- * enabling it also requires SessionSigningKeys and Hmac at the composition root. */
+/** Authoritative sessions by default. cacheFor delays revocation and claim changes
+ * by at most five minutes or renewAfter, whichever is shorter. Enabling it also
+ * requires SessionSigningKeys and Hmac at the composition root. */
 export const stateful = <const CacheFor extends Duration.Input | undefined = undefined>(
   options: SessionOptions & { readonly cacheFor?: CacheFor } = {},
 ): StatefulConfiguration<CacheFor> =>
@@ -93,31 +95,17 @@ export const stateful = <const CacheFor extends Duration.Input | undefined = und
 export const stateless = (options: SessionOptions = {}): StatelessConfiguration =>
   Object.freeze({ mode: "stateless", policy: policy(options, false) });
 
-/** Signed credentials checked against application-owned validity state.
- * cacheFor opts into bounded revocation/claim lag on ordinary request reads. */
-export const stateAssisted = (
-  options: SessionOptions & {
-    readonly cacheFor?: Duration.Input;
-    /** Explicitly accept a backend whose revocation reads may lag without a fixed bound. */
-    readonly allowEventualRevocation?: boolean;
-  } = {},
-): StateAssistedConfiguration => {
-  const configured = policy(options, true, options.cacheFor);
-  const allowEventualRevocation = options.allowEventualRevocation === true;
-
-  return Object.freeze({
-    mode: "state-assisted",
-    policy: (namespace: string) => ({
-      ...configured(namespace),
-      allowEventualRevocation,
-      ...(allowEventualRevocation ? { requireImmediateInvalidation: false } : {}),
-    }),
-  });
-};
+/** Signed credentials checked against application-owned validity state on every read. */
+export const stateAssisted = (options: SessionOptions = {}): StateAssistedConfiguration =>
+  Object.freeze({ mode: "state-assisted", policy: policy(options, true) });
 
 export type SessionRequirements<C, Id extends string, Claims extends Schema.Top> =
   | Crypto.Crypto
-  | (C extends StatefulConfiguration ? never : Hmac | SessionSigningKeys)
+  | (C extends StatefulConfiguration<infer CacheFor>
+      ? Exclude<CacheFor, undefined> extends never
+        ? never
+        : Hmac | SessionSigningKeys
+      : Hmac | SessionSigningKeys)
   | Exclude<Claims["DecodingServices"] | Claims["EncodingServices"], Scope.Scope>
   | (C extends StatefulConfiguration<Duration.Input | undefined>
       ?
@@ -135,17 +123,31 @@ export const configuredLayer = <
   sessions: ReturnType<typeof makeSessionModule<Id, Claims>>,
   configuration: C,
 ): Layer.Layer<
-  ModuleService<Id, "strategy", Claims["Type"]> | ModuleService<Id, "cookie-cache", Claims["Type"]>,
+  ModuleService<Id, "strategy", Claims["Type"]>,
   SessionConfigurationError,
   SessionRequirements<C, Id, Claims>
 > => {
   const configured = configuration.policy(sessions.moduleId);
 
   const defaults = <A, E, R>(layer: Layer.Layer<A, E, R>) =>
-    defaultLayer(sessions.SessionCookieCache, sessions.cookieCacheLayer).pipe(
-      Layer.provideMerge(layer),
-      Layer.provide(hooksLayer),
-    );
+    Layer.effectContext(
+      Effect.gen(function* () {
+        const strategy = yield* sessions.SessionStrategy;
+
+        if (strategy.capabilities.positiveCacheMillis === 0) return Context.empty();
+
+        const cache = yield* makeSessionCookieCache(
+          sessions.moduleId,
+          sessions.Session,
+          strategy.policy,
+        );
+
+        return Context.make(
+          sessionCookieCache<Id, typeof sessions.Session.Type>(sessions.moduleId),
+          cache,
+        );
+      }),
+    ).pipe(Layer.provideMerge(layer), Layer.provide(hooksLayer));
 
   const layer =
     configuration.mode === "stateful"
@@ -156,8 +158,7 @@ export const configuredLayer = <
 
   // The selected mode determines exactly which persistence port the layer acquires.
   return layer as Layer.Layer<
-    | ModuleService<Id, "strategy", Claims["Type"]>
-    | ModuleService<Id, "cookie-cache", Claims["Type"]>,
+    ModuleService<Id, "strategy", Claims["Type"]>,
     SessionConfigurationError,
     SessionRequirements<C, Id, Claims>
   >;

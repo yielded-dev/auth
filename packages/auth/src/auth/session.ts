@@ -1,4 +1,4 @@
-import { Context, DateTime, Effect, Layer, Option, Redacted, type Schema, Scope } from "effect";
+import { Context, DateTime, Effect, Layer, Option, Redacted, Schema, Scope } from "effect";
 
 import type { HookDenied } from "../hooks/models";
 import { guest } from "../operations/context";
@@ -7,6 +7,12 @@ import {
   AuthRevealCommandCollectorService,
 } from "../operations/credentials";
 import { AuthenticationRequired, type OperationBoundaryError } from "../operations/errors";
+import {
+  SessionCacheGeneration,
+  type SessionCacheOwner,
+  sessionCacheTransport,
+  sessionCookieCache,
+} from "../sessions/cookieCache";
 import {
   SessionInvalid,
   type SessionError,
@@ -19,7 +25,7 @@ import { AuthRequest } from "./AuthRequest";
 export type SessionApiError = SessionError | HookDenied | OperationBoundaryError;
 
 /** Session actions share implementations across HTTP, native and local callers. */
-export interface SessionApi<Session, R = never> {
+export type SessionApi<Session, R = never> = SessionCacheOwner & {
   /** Explicit credential verification; does not read a request or renew credentials. */
   readonly verifySession: (
     credential: Redacted.Redacted<string>,
@@ -37,7 +43,7 @@ export interface SessionApi<Session, R = never> {
   >;
   /** Explicit renewal; ordinary session reads never rotate credentials. */
   readonly renewSession: () => Effect.Effect<Session, SessionApiError, AuthRequest | R>;
-}
+};
 
 export const makeSessionApi = <
   const Id extends string,
@@ -47,7 +53,10 @@ export const makeSessionApi = <
 ) =>
   Effect.gen(function* () {
     const strategy = yield* sessions.SessionStrategy;
-    const cache = yield* Effect.serviceOption(sessions.SessionCookieCache);
+
+    const cache = yield* Effect.serviceOption(
+      sessionCookieCache<Id, typeof sessions.Session.Type>(sessions.moduleId),
+    );
 
     // Handler installation captures its input context. Supply only its shared
     // dependency, so constructing auth inside a request cannot retain that request.
@@ -88,18 +97,19 @@ export const makeSessionApi = <
       const request = yield* AuthRequest;
       const credential = request.credentials.session;
       const cached = request.credentials["session-cache"];
+      const generation = request.sessionCacheGeneration;
       const cacheEnabled = strategy.capabilities.positiveCacheMillis > 0 && Option.isSome(cache);
 
-      if (
+      const cacheable =
         cacheEnabled &&
-        credential !== undefined &&
-        cached !== undefined &&
-        !fresh &&
-        request.freshSession !== true &&
-        request.actionMode !== "mutation"
-      ) {
+        request.sessionCacheCommandSink !== undefined &&
+        request.actionMode === "query" &&
+        generation !== undefined &&
+        Schema.is(SessionCacheGeneration)(Redacted.value(generation));
+
+      if (cacheable && credential !== undefined && cached !== undefined && !fresh) {
         const snapshot = yield* cache.value
-          .read(credential, cached)
+          .read(credential, cached, generation)
           .pipe(
             Effect.catchTag(["SessionInvalid", "SessionUnavailable"], () => Effect.succeed(null)),
           );
@@ -118,15 +128,10 @@ export const makeSessionApi = <
               Effect.catchTag("SessionInvalid", () => Effect.succeed(null)),
             );
 
-      if (request.sessionCacheCommandSink !== undefined) {
-        if (
-          cacheEnabled &&
-          session !== null &&
-          credential !== undefined &&
-          request.actionMode !== "mutation"
-        ) {
+      if (cacheEnabled && request.sessionCacheCommandSink !== undefined) {
+        if (cacheable && session !== null && credential !== undefined) {
           const command = yield* cache.value
-            .write(credential, session, checkedAt)
+            .write(credential, session, checkedAt, generation)
             .pipe(
               Effect.catchTag("SessionUnavailable", () =>
                 Effect.succeed({ _tag: "Clear" as const, slot: "session-cache" as const }),
@@ -189,12 +194,15 @@ export const makeSessionApi = <
       );
     });
 
-    return {
+    const api: SessionApi<typeof sessions.Session.Type> = {
+      ...(Option.isSome(cache) ? { [sessionCacheTransport]: cache.value.transport } : {}),
       verifySession,
       getSession,
       getSessionFresh,
       requireSession,
       signOut,
       renewSession,
-    } satisfies SessionApi<typeof sessions.Session.Type>;
+    };
+
+    return api;
   });

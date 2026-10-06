@@ -1,4 +1,4 @@
-import { Crypto, DateTime, Effect, Redacted, Schema } from "effect";
+import { Context, Crypto, DateTime, Effect, Redacted, Schema, type Types } from "effect";
 import { Base64Url } from "effect/encoding";
 
 import { reportAuthFailure } from "../internal/diagnostics";
@@ -10,32 +10,50 @@ import { type SessionPolicy, validateSessionTimeline } from "./policy";
 
 export type SessionCacheCommand = AuthCredentialCommand & { readonly slot: "session-cache" };
 
-/** Replaceable request cache. Entries bind a public session snapshot to its exact credential.
- * Cache failures fall back to authoritative verification; management never uses this service.
- * Implementations report unexpected backend failures before normalizing them to SessionUnavailable. */
+export const sessionCacheTransport = Symbol("effect-auth/session-cache-transport");
+
+export interface SessionCacheTransport {
+  readonly rotate: Effect.Effect<Redacted.Redacted<string>, SessionUnavailable>;
+  readonly lifetimeMillis: number;
+}
+
+export type SessionCacheOwner = {
+  readonly [sessionCacheTransport]?: SessionCacheTransport;
+};
+
+export const SessionCacheGeneration = Schema.String.check(Schema.isPattern(/^[A-Za-z0-9_-]{43}$/));
+
+/** Private implementation; only configured Auth Layers install it. */
 export interface SessionCookieCache<Session> {
+  readonly transport: SessionCacheTransport;
   readonly read: (
     credential: Redacted.Redacted<string>,
     cached: Redacted.Redacted<string>,
+    generation: Redacted.Redacted<string>,
   ) => Effect.Effect<Session, SessionInvalid | SessionUnavailable>;
   readonly write: (
     credential: Redacted.Redacted<string>,
     session: Session,
     checkedAt: DateTime.Utc,
+    generation: Redacted.Redacted<string>,
   ) => Effect.Effect<SessionCacheCommand, SessionUnavailable>;
 }
+
+interface CacheService<Id extends string, Session> {
+  readonly moduleId: Id;
+  readonly session: Types.Invariant<Session>;
+}
+
+export const sessionCookieCache = <Id extends string, Session>(moduleId: Id) =>
+  Context.Service<CacheService<Id, Session>, SessionCookieCache<Session>>(
+    `effect-auth/sessions/${moduleId}/CookieCache`,
+  );
 
 /** A signed cookie avoids a storage lookup only for the explicitly configured window. */
 export const makeSessionCookieCache = Effect.fnUntraced(function* <
   S extends Schema.Codec<SessionMetadata, unknown, unknown, unknown>,
 >(moduleId: string, sessionSchema: S, policy: SessionPolicy) {
   const maximumAge = policy.positiveCacheMillis ?? 0;
-
-  if (maximumAge === 0)
-    return {
-      read: () => Effect.fail(SessionInvalid.make({})),
-      write: () => Effect.fail(SessionUnavailable.make({})),
-    } satisfies SessionCookieCache<S["Type"]>;
 
   const SessionCodec: Schema.Codec<
     S["Type"],
@@ -50,6 +68,7 @@ export const makeSessionCookieCache = Effect.fnUntraced(function* <
     issuer: Schema.Literal(policy.issuer),
     audience: Schema.Literal(policy.audience),
     generation: Schema.Literal(policy.generation),
+    requestGeneration: SessionCacheGeneration,
     credentialDigest: Schema.String,
     cachedAt: Schema.DateTimeUtcFromMillis,
     expiresAt: Schema.DateTimeUtcFromMillis,
@@ -59,7 +78,8 @@ export const makeSessionCookieCache = Effect.fnUntraced(function* <
   const signing = yield* makeSessionSigningCodec(
     Envelope,
     yield* SessionSigningKeys,
-    policy.maximumTokenBytes,
+    Math.min(policy.maximumTokenBytes, 3072),
+    "session-cache",
   );
 
   const crypto = yield* Crypto.Crypto;
@@ -73,9 +93,18 @@ export const makeSessionCookieCache = Effect.fnUntraced(function* <
     );
 
   return {
+    transport: {
+      lifetimeMillis: policy.maximumIssuedAbsoluteLifetimeMillis,
+      rotate: crypto.randomBytes(32).pipe(
+        Effect.tapCause((cause) => reportAuthFailure("session-crypto", cause)),
+        Effect.map((bytes) => Redacted.make(Base64Url.encode(bytes))),
+        Effect.mapError(() => SessionUnavailable.make({})),
+      ),
+    },
     read: Effect.fnUntraced(function* (
       credential: Redacted.Redacted<string>,
       cached: Redacted.Redacted<string>,
+      generation: Redacted.Redacted<string>,
     ) {
       const envelope = yield* signing.decode(cached);
       const credentialDigest = yield* digest(credential);
@@ -89,7 +118,8 @@ export const makeSessionCookieCache = Effect.fnUntraced(function* <
         expiresAt <= now ||
         expiresAt <= cachedAt ||
         expiresAt - cachedAt > maximumAge ||
-        envelope.credentialDigest !== credentialDigest
+        envelope.credentialDigest !== credentialDigest ||
+        envelope.requestGeneration !== Redacted.value(generation)
       )
         return yield* SessionInvalid.make({});
       yield* validateSessionTimeline(envelope.session, policy);
@@ -100,6 +130,7 @@ export const makeSessionCookieCache = Effect.fnUntraced(function* <
       credential: Redacted.Redacted<string>,
       session: S["Type"],
       checkedAt: DateTime.Utc,
+      generation: Redacted.Redacted<string>,
     ) {
       const now = yield* DateTime.now;
 
@@ -117,6 +148,7 @@ export const makeSessionCookieCache = Effect.fnUntraced(function* <
         issuer: policy.issuer,
         audience: policy.audience,
         generation: policy.generation,
+        requestGeneration: Redacted.value(generation),
         credentialDigest: yield* digest(credential),
         cachedAt: checkedAt,
         expiresAt: DateTime.makeUnsafe(expiresAtMillis),

@@ -222,9 +222,7 @@ const checkInvalidation = (mapping: any, original: SessionInvalidationWindow) =>
       value.oldAuthenticationEvidence === "rejected" &&
       (mapping.sessionInvalidation === "same-authority-immediate"
         ? (value.existingSessions === "immediate" && value.maximumExposureMillis === 0) ||
-          (value.existingSessions === "cache-expiry" &&
-            value.maximumExposureMillis !== null &&
-            value.maximumExposureMillis > 0)
+          (value.existingSessions === "cache-expiry" && value.maximumExposureMillis > 0)
         : value.existingSessions === "original-absolute-expiry"),
   );
 

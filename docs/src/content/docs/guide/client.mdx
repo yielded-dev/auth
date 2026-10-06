@@ -110,9 +110,9 @@ const client = yield* AppClient;
 const session = yield* client.auth.getSessionFresh();
 ```
 
-It uses `/auth/getSessionFresh`. Custom HTTP callers can also send
-`x-effect-auth-session-fresh: 1` on an ordinary session query. These reads retain
-the selected backend's consistency guarantee; an eventual store can still lag.
+It uses `/auth/getSessionFresh`. Custom AuthAtom contracts must expose both
+`getSession` and `getSessionFresh` as queries; `session` and `freshSession` are
+reserved atom aliases.
 
 ## Dispatch a sign-in
 

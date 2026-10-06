@@ -32,12 +32,8 @@ http.handlers(Api, { name: "account" });
 
 Configure paths through `basePath` rather than prefixing the generated endpoints.
 
-`getSessionFresh` always bypasses the session cookie cache. Sending
-`x-effect-auth-session-fresh: 1` also forces fresh verification for ordinary
-request-aware session reads, including `getSession` and `requireSession`.
-Allow that header in application-owned CORS configuration; the lower-level
-operation transport admits it in preflights. Fresh verification still follows
-the [backend's consistency guarantee](./adapters#key-value-session-authority).
+`getSessionFresh` always uses authoritative verification. Ordinary `getSession`
+and `requireSession` reads may use the configured session cookie cache.
 
 ## Cookies and request policy
 
@@ -67,22 +63,34 @@ See [shared-session setup and security](../guide/http-and-client#sharing-session
 
 POST auth actions require an admitted Origin, JSON content type, and
 `x-effect-auth-csrf: 1` by default. GET actions have no body or CSRF header and
-reject an explicitly untrusted Origin. Duplicate credential cookies are rejected,
-and session responses are not cacheable. If you override `csrf` on the server,
+reject an explicitly untrusted Origin. Duplicate authority credentials are rejected;
+invalid or duplicate optional cache cookies are ignored. Session responses are
+not cacheable. If you override `csrf` on the server,
 pass matching settings to `Client.make`.
 
-With `Sessions.stateful({ cacheFor })` or `Sessions.stateAssisted({ cacheFor })`,
-the additional `session-cache` cookie holds a signed public session snapshot.
-It follows the same cookie security policy. Caching is disabled by default;
-`maximumTokenBytes` defaults to `4096`. Cache hits need no server storage lookup.
-The snapshot is bound to its session credential, and invalid or expired snapshots
-fall back to authoritative verification. Oversized or unencodable snapshots are
-cleared instead of issued, leaving authoritative reads available.
+With `Sessions.stateful({ cacheFor })`, the additional `session-cache` cookie
+holds a signed public session snapshot. It follows the same cookie security
+policy. Caching is off by default and only applies to browser requests with a
+cache response sink and a valid mutation generation cookie.
 
-Auth mutations bypass and clear the snapshot. Issuing, renewing, or clearing a
-session credential clears it too; sign-out clears both cookies in this browser.
-Other clients can retain a snapshot until `cacheFor` expires, delaying visibility
-of revocation, password changes, disablement, and authoritative claim changes.
+The snapshot value is limited to the smaller of `maximumTokenBytes` and 3,072
+bytes. Delivery checks the complete serialized cookie against 4,096 bytes,
+including its name and attributes. Oversized or unencodable snapshots produce
+sanitized diagnostics and are cleared, preserving authoritative reads. Invalid,
+expired, or duplicate snapshots fall back without reporting a backend fault.
+
+Admitted mutations clear the snapshot and rotate an HttpOnly cookie named
+`${sessionCacheCookieName}-generation`, using the cache cookie's scope and security
+settings. Its lifetime is `maximumIssuedAge`. Reads never change this generation;
+a delayed read response cannot make an older snapshot usable after the mutation
+response arrives. A lost response leaves the existing snapshot usable until its
+fixed expiry. Missing or malformed generations disable caching until the next
+admitted mutation.
+
+Issuing, renewing, or clearing a session credential clears the snapshot too.
+No cache cookies are issued or cleared when caching is disabled. Other clients
+and replayed cookie pairs can retain a snapshot until `cacheFor` expires, delaying
+visibility of revocation, password changes, disablement, and claim changes.
 See [session cache policy](../guide/sessions#cache-ordinary-session-reads).
 
 Named mutations enforce Origin and CSRF before side effects, including local
@@ -114,10 +122,8 @@ const AuthLive = AppAuth.layer.pipe(
 Both options must be positive integers. The default store is process-local, resets
 when it is recreated, and holds at most 10,000 network keys. At capacity it evicts the
 least recently checked key, which later starts with a full bucket. For
-shared enforcement across servers, provide the application-wide
-[root storage Layer](../guide/storage#shared-key-value-storage) to Auth. Its
-`RateLimiterStore` also serves password limits; keep one Redis connection and
-storage provider for these features.
+shared enforcement across servers, provide an Effect `RateLimiterStore`, such as
+`RateLimiter.layerStoreRedis({ prefix: "auth:requests" })`, to the Auth Layer.
 An explicitly provided `RateLimiter` or `HostIngressLimiter` also replaces its
 default. Limit malformed traffic at the host before HTTP/RPC parsing.
 

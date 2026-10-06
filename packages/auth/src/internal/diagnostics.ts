@@ -17,6 +17,7 @@ type FailureStage =
   | "oauth-connected"
   | "oauth-registration"
   | "session-crypto"
+  | "session-cache"
   | "session-sign-out"
   | "password-screening"
   | "password-hashing"

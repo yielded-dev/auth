@@ -165,12 +165,20 @@ export const makeEmailAddresses = <
         Effect.mapError(() => EmailConfigurationError.make({})),
       );
 
+      const strategy = yield* sessions.SessionStrategy;
+
+      if (
+        policy.requireImmediateInvalidation &&
+        (strategy.capabilities.subjectInvalidation !== "immediate" ||
+          strategy.capabilities.positiveCacheMillis > 0)
+      )
+        return yield* EmailConfigurationError.make({});
+
       const binder = yield* binding.RequestBinding;
       const persistence = yield* EmailAddressPersistence;
       const actionAuthority = yield* EmailActionEvidence;
       const verify = yield* verifyProof.Proofs;
       const change = yield* changeProof.Proofs;
-      const strategy = yield* sessions.SessionStrategy;
       const crypto = yield* Crypto.Crypto;
       const hooks = yield* LifecycleHooks;
 
@@ -227,14 +235,6 @@ export const makeEmailAddresses = <
             ? {}
             : { source: yield* snapshotEmailCredential(current.source) }),
         });
-
-        if (
-          !(action === "verify-address" && captured.targetIdentifierRevision !== undefined) &&
-          policy.requireImmediateInvalidation &&
-          (strategy.capabilities.subjectInvalidation !== "immediate" ||
-            strategy.capabilities.positiveCacheMillis > 0)
-        )
-          return yield* EmailMethodUnsupported.make({});
 
         if (
           captured.revision.subjectId !== invocation.subjectId ||

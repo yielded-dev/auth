@@ -33,30 +33,16 @@ Adding an authentication strategy also selects the default completion authority;
 your account Layer supplies `AuthenticationAuthority` for issuing sessions.
 
 Choose `Sessions.stateful()`, `Sessions.stateless()`, or `Sessions.stateAssisted()`.
-Cookie caching is optional for stateful and state-assisted sessions. Per-request
-verification costs and revocation visibility are:
 
-| Mode                                         | Cache hit | Miss / uncached | Fresh read  | Revocation lag                       |
-| -------------------------------------------- | --------- | --------------- | ----------- | ------------------------------------ |
-| Stateful, interactive SQL                    | —         | 1 SQL call      | 1 SQL call  | Immediate                            |
-| Stateful, interactive SQL + `cacheFor`       | 0         | 1 SQL call      | 1 SQL call  | Up to `cacheFor`                     |
-| Stateless                                    | —         | 0               | 0           | Until token expiry                   |
-| State-assisted, interactive SQL              | —         | 4 SQL calls     | 4 SQL calls | Immediate                            |
-| State-assisted, interactive SQL + `cacheFor` | 0         | 4 SQL calls     | 4 SQL calls | Up to `cacheFor`                     |
-| State-assisted, KV                           | —         | 1 KV get        | 1 KV get    | Immediate with strong storage        |
-| State-assisted, KV + `cacheFor`              | 0         | 1 KV get        | 1 KV get    | Up to `cacheFor` with strong storage |
+| Mode           | Ordinary verification                                               | Revocation visibility                                 |
+| -------------- | ------------------------------------------------------------------- | ----------------------------------------------------- |
+| Stateful       | Authoritative persistence, or an explicitly enabled cookie snapshot | Immediate without caching; otherwise up to `cacheFor` |
+| Stateless      | Signed session, without storage                                     | Until token expiry                                    |
+| State-assisted | Signed session plus authoritative validity storage                  | Immediate                                             |
 
-SQL counts cover direct Effect SQL and interactive Drizzle on PGlite/SQLite.
-Stateful verification uses **2 calls** when custom or differently encoded owner
-IDs require a decoded-owner lookup. SQL-assisted verification uses two reads plus
-begin/commit. D1 has a separate path; these measured interactive counts do not
-describe it. See [storage read details](../reference/adapters#session-reads).
-
-KV with eventual consistency requires `allowEventualRevocation: true` and has no
-fixed revocation bound, cached or uncached. Fresh reads bypass the cookie but
-retain backend consistency. Costs exclude application profile lookups, issuance,
-and mutations. Token and cookie claims remain snapshots; a fresh validity check
-does not refresh signed claims or load profile data.
+State-assisted sessions require a `SignedSessionValidity` service backed by the
+same authority as identity changes. Signed claims remain snapshots; a validity
+check does not refresh them or load application profile data.
 
 Signed modes acquire their keys from `Sessions.SessionSigningKeys`. Supply the
 service once, alongside your [crypto Layer](../reference/crypto#use-with-auth):
@@ -91,40 +77,41 @@ while issuing new shorter-lived tokens.
 
 ### Cache ordinary session reads
 
-Cookie caching is off by default. Opt in on either authoritative session mode:
+Cookie caching is off by default. Opt in for opaque stateful sessions:
 
 ```ts
 Sessions.stateful({ cacheFor: "5 minutes" });
-Sessions.stateAssisted({ cacheFor: "5 minutes" });
 ```
 
-The `cacheFor` window starts before the authoritative read, so storage or response
-delays cannot extend it.
-Features with `requireImmediateInvalidation: true` reject positive caching;
-explicitly relax those feature policies only when accepting the delay (TOTP defaults to `true`).
+`cacheFor` cannot exceed five minutes or `renewAfter`, whichever is shorter.
+The window starts before the authoritative read, so storage or response delays
+cannot extend it. Features with `requireImmediateInvalidation: true` reject this
+configuration at startup; relax those feature policies only when accepting the
+delay (TOTP defaults to `true`).
 
-The bound `AppAuth.sessions.SessionCookieCache` has a default signed-cookie
-implementation. It requires `SessionSigningKeys` and HMAC support even for
-stateful sessions. A hit verifies the snapshot locally with no SQL or server KV
-lookup. The snapshot is bound to the exact session credential and expires no later
-than the session. `maximumTokenBytes` defaults to `4096`; a snapshot that cannot
-fit falls back to authoritative reads. The cookie is signed, not encrypted.
+Provide `SessionSigningKeys` and HMAC support with your crypto Layer. A cache hit
+verifies a signed public snapshot locally without a persistence lookup. The
+snapshot is bound to the exact credential, session namespace and browser mutation
+generation, and expires no later than the session. Cache signatures use a separate
+purpose and derived key from signed sessions. The cookie is signed, not encrypted.
 
-Cached claims are snapshots. Revocation, password changes, account disablement,
-and claim changes visible to authoritative session reads may remain unseen for
-up to `cacheFor`. This is an explicit delay in ordinary `getSession()` and
-`requireSession()` reads. Signing out clears this browser's credential and
-snapshot; auth mutations also clear its snapshot. Other clients may retain theirs
-until expiry. Replace the bound cache service to customize caching behavior.
-Invalidation reports `existingSessions: "cache-expiry"` with the configured
-`maximumExposureMillis`.
+Cached claims may hide revocation, password changes, disablement, or authoritative
+claim updates for up to `cacheFor`. This delay applies to ordinary `getSession()`
+and `requireSession()` reads. Invalidation reports `existingSessions: "cache-expiry"`
+with the configured `maximumExposureMillis`. Explicit verification, management,
+step-up, and mutations always read authoritative state.
 
-State-assisted sessions require a `SignedSessionValidity` service. SQL services
-declare `consistency: "strong"`; the [KV authority](../reference/adapters#key-value-session-authority)
-inherits its root store's consistency. Eventual validity requires
-`Sessions.stateAssisted({ allowEventualRevocation: true })`. Its revocation delay
-has no fixed upper bound (`maximumExposureMillis: null`), even without cookie
-caching. A fresh read bypasses the cookie, not the backend's consistency model.
+The HTTP boundary clears the snapshot and rotates a small HttpOnly generation
+cookie on admitted mutations. Reads never write that generation: a delayed read
+response cannot restore a usable snapshot after the mutation response arrives.
+Without a valid generation or a cache response sink, reads use persistence. Lost
+mutation responses, other clients, and replayed cookie pairs retain the fixed
+`cacheFor` exposure bound.
+
+Invalid or duplicate cache cookies are ignored. Oversized snapshots and cache
+backend failures produce sanitized diagnostics and fall back to authoritative
+reads. See [cookie limits and delivery](../reference/http#cookies-and-request-policy).
+Signed session modes remain uncached, avoiding a second copy of their claims.
 
 ## Read the current session
 
@@ -157,8 +144,7 @@ To bypass the cookie snapshot:
 const session = yield* auth.getSessionFresh();
 ```
 
-Over HTTP, use `GET /auth/getSessionFresh` or send
-`x-effect-auth-session-fresh: 1` on a session read. The client exposes
+Over HTTP, use `GET /auth/getSessionFresh`. The client exposes
 `client.auth.getSessionFresh()` and the query atom `auth.freshSession`; see the
 [client guide](./client#read-a-session-and-sign-out). A fresh read checks current
 validity; it does not regenerate signed-token claims or load application profile
@@ -218,8 +204,8 @@ Omit `sessions` from `Auth.make` when supplying custom session/completion Layers
 The lower-level `AppAuth.sessions.statefulLayer(policy)`, `statelessLayer(policy)`,
 and `stateAssistedLayer(policy)` constructors remain available for runtime-selected
 policy. Signed layers acquire `SessionSigningKeys` from their environment too.
-For custom composition with caching, provide `AppAuth.sessions.cookieCacheLayer`
-over the selected strategy Layer; `Auth.make` installs that default automatically.
+Configure cookie caching through `Auth.make` with `Sessions.stateful({ cacheFor })`;
+the cache implementation is private to that configured Auth Layer.
 
 Configure `completionLayer({ pendingLifetimeMillis, attemptLimit })` with
 `PendingAuthentication` persistence to support a second factor. A pending proof

@@ -153,10 +153,7 @@ export const makeActionApi = Effect.fn("Auth.makeActionApi")(function* <
       const value = yield* method(payload).pipe(
         Effect.provideService(AuthRequest, {
           ...request,
-          actionMode: action.mode,
-          freshSession:
-            request.freshSession === true ||
-            (action.method !== "getSession" && action.method !== "requireSession"),
+          actionMode: request.actionMode === "mutation" ? "mutation" : action.mode,
           credentialCommandSink: sink,
           revealCommandCollector: collector,
         }),

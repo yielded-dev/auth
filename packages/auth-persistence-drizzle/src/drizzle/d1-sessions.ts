@@ -1541,7 +1541,6 @@ export const makeD1SignedValidity = (
   };
 
   return {
-    consistency: "strong" as const,
     verify: (session: Parameters<SignedSessionValidity["verify"]>[0], _now: DateTime.Utc) =>
       Effect.gen(function* () {
         const database = yield* CurrentD1PlanningDatabase;
@@ -1778,7 +1777,6 @@ export const makeD1SessionServiceEffects = {
         });
 
       const signedSessionValidity: SignedSessionValidity = {
-        consistency: raw.consistency,
         verify: (session, now) => run(raw.verify(session, now)),
         revoke: (input, prepare) => run(raw.revoke(input, prepare)),
         revokeAll: (input, prepare) => run(raw.revokeAll(input, prepare)),
@@ -2260,7 +2258,6 @@ export function coordinateD1SignedSessionValidity<
             );
 
           const signedSessionValidity: SignedSessionValidity = {
-            consistency: raw.consistency,
             verify: (session, now) => run(raw.verify(session, now)),
             revoke: (input, prepare) => run(raw.revoke(input, prepare)),
             revokeAll: (input, prepare) => run(raw.revokeAll(input, prepare)),

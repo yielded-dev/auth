@@ -2,12 +2,13 @@ import { Context, Effect, Layer } from "effect";
 
 import type { SessionApiError } from "../auth/session";
 import type { AuthInvocation } from "../operations/context";
+import type { SessionCacheOwner } from "../sessions/cookieCache";
 import type { OperationHttpError } from "./errors";
 import type { HttpCredentials } from "./models";
 
 export class OperationHttpInvocation extends Context.Service<
   OperationHttpInvocation,
-  {
+  SessionCacheOwner & {
     /** A public action resolves caller identity only when its local method needs it. */
     readonly request?: (
       request: Request,

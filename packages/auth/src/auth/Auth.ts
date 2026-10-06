@@ -269,7 +269,7 @@ const bind = <
     const built = yield* build(selected, defaultStrategy);
     const sessionApi = yield* makeSessionApi(sessions);
 
-    const raw = { ...built.api, ...sessionApi };
+    const raw: typeof built.api & typeof sessionApi = { ...built.api, ...sessionApi };
 
     const actions = yield* makeActionApi<
       typeof sessionApi,

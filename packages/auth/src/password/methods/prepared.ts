@@ -326,6 +326,15 @@ export const makePasswordPrepared = <
       const config = yield* validatePasswordPreparedConfiguration(configInput),
         policy = yield* validatePasswordMethodPolicy(policyInput);
 
+      const strategy = yield* strategyTag;
+
+      if (
+        policy.requireImmediateInvalidation &&
+        (strategy.capabilities.subjectInvalidation !== "immediate" ||
+          strategy.capabilities.positiveCacheMillis > 0)
+      )
+        return yield* PasswordMethodConfigurationError.make({});
+
       const persistence = yield* PasswordPreparedPersistence,
         store = yield* PasswordPersistence,
         limiter = yield* PasswordAttemptLimiter,
@@ -333,7 +342,6 @@ export const makePasswordPrepared = <
         checker = yield* NewPasswordCheck,
         authority = yield* AuthenticationAuthority,
         actionEvidence = yield* PasswordActionEvidence,
-        strategy = yield* strategyTag,
         hooks = yield* LifecycleHooks,
         crypto = yield* Crypto.Crypto;
 
@@ -511,12 +519,6 @@ export const makePasswordPrepared = <
         },
       ): Effect.fn.Return<BeginValue, Failure> {
         yield* passwordNoAmbient();
-        if (
-          policy.requireImmediateInvalidation &&
-          (strategy.capabilities.subjectInvalidation !== "immediate" ||
-            strategy.capabilities.positiveCacheMillis > 0)
-        )
-          return yield* PasswordMethodUnsupported.make({});
         if (action !== "reset-password" && invocation._tag !== "Authenticated")
           return yield* PasswordRejected.make({});
 

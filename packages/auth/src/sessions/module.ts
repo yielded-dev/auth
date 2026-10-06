@@ -37,7 +37,6 @@ import {
 } from "./assurance";
 import { AuthenticationAuthority } from "./AuthenticationAuthority";
 import { makeSessionContract } from "./contract";
-import { makeSessionCookieCache, type SessionCookieCache as CookieCachePort } from "./cookieCache";
 import { makeSessionSecrets, makeSessionSigningCodec, SessionSigningKeys } from "./crypto";
 import type { SessionError } from "./errors";
 import {
@@ -50,10 +49,6 @@ import {
   SessionStepUpInvalid,
 } from "./errors";
 import { sessionInvalidationWindow } from "./invalidation";
-import {
-  makeKeyValueValidity,
-  type KeyValueSessionAuthority as KeyValueAuthorityPort,
-} from "./keyValue";
 import {
   type AuthenticationEvidence,
   type PendingConsumption,
@@ -210,18 +205,6 @@ export const makeSessionModule = <
     `effect-auth/sessions/${moduleId}/Strategy`,
   );
 
-  const SessionCookieCache = Context.Service<
-    ModuleService<Id, "cookie-cache", Claims["Type"]>,
-    CookieCachePort<Session>
-  >(`effect-auth/sessions/${moduleId}/CookieCache`);
-
-  const cookieCacheLayer = Layer.effect(
-    SessionCookieCache,
-    Effect.flatMap(SessionStrategy, (strategy) =>
-      makeSessionCookieCache(moduleId, Session, strategy.policy),
-    ),
-  );
-
   // This tag is deliberately not returned by the module: no public precommit signer.
   const StepUpPlanner = Context.Service<
     ModuleService<Id, "step-up-planner", Claims["Type"]>,
@@ -259,21 +242,6 @@ export const makeSessionModule = <
     ModuleService<Id, "validity", Claims["Type"]>,
     ValidityPort
   >(`effect-auth/sessions/${moduleId}/Validity`);
-
-  const KeyValueSessionAuthority = Context.Service<
-    ModuleService<Id, "key-value-authority", Claims["Type"]>,
-    KeyValueAuthorityPort
-  >(`effect-auth/sessions/${moduleId}/KeyValueAuthority`);
-
-  const keyValueValidityLayer = Layer.effectContext(
-    Effect.gen(function* () {
-      const { authority, validity } = yield* makeKeyValueValidity(moduleId);
-
-      return Context.make(SignedSessionValidity, validity).pipe(
-        Context.add(KeyValueSessionAuthority, authority),
-      );
-    }),
-  ).pipe(Layer.provide(hooksLayer));
 
   const PendingAuthentication = Context.Service<
     ModuleService<Id, "pending", Claims["Type"]>,
@@ -802,9 +770,6 @@ export const makeSessionModule = <
 
         const capabilities = {
           ...(Option.isSome(validity) ? stateAssistedCapabilities : statelessCapabilities),
-          ...(Option.isSome(validity) && validity.value.consistency === "eventual"
-            ? { subjectInvalidation: "eventual" as const }
-            : {}),
           positiveCacheMillis: configured.positiveCacheMillis ?? 0,
         };
 
@@ -2088,8 +2053,6 @@ export const makeSessionModule = <
     Session,
     CompletionResult,
     SessionStrategy,
-    SessionCookieCache,
-    cookieCacheLayer,
     SessionStepUp,
     SessionStepUpPersistence,
     stepUpLayer,
@@ -2100,8 +2063,6 @@ export const makeSessionModule = <
     StatefulSessionPersistence,
     SessionRepository,
     SignedSessionValidity,
-    KeyValueSessionAuthority,
-    keyValueValidityLayer,
     PendingAuthentication,
     statefulLayer,
     statelessLayer,

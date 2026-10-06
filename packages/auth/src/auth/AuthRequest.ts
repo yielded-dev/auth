@@ -1,4 +1,4 @@
-import { Context, type Effect } from "effect";
+import { Context, type Effect, type Redacted } from "effect";
 
 import type { HookDenied } from "../hooks/models";
 import type { AuthInvocation } from "../operations/context";
@@ -14,8 +14,8 @@ export class AuthRequest extends Context.Service<
   AuthResolvedCall & {
     /** Set by the trusted named action declaration while its implementation executes. */
     readonly actionMode?: "query" | "mutation";
-    /** Bypass positive session caches for this request. Management always sets this. */
-    readonly freshSession?: boolean;
+    /** Browser mutation binding; missing or malformed values disable cookie caching. */
+    readonly sessionCacheGeneration?: Redacted.Redacted<string>;
     /** Cookie snapshots are private read responses, separate from credential issuance. */
     readonly sessionCacheCommandSink?: (command: SessionCacheCommand) => Effect.Effect<void>;
     /** Host admission runs before mutation side effects; absent for trusted local callers. */

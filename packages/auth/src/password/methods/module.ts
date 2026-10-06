@@ -296,6 +296,15 @@ const makePasswordWithManagement = <
       if (!Schema.is(Schema.NonEmptyString.check(Schema.isMaxLength(128)))(moduleId))
         return yield* PasswordMethodConfigurationError.make({});
       const policy = yield* validatePasswordMethodPolicy(policyInput);
+
+      const strategy = yield* sessions.SessionStrategy;
+
+      if (
+        policy.requireImmediateInvalidation &&
+        (strategy.capabilities.subjectInvalidation !== "immediate" ||
+          strategy.capabilities.positiveCacheMillis > 0)
+      )
+        return yield* PasswordMethodConfigurationError.make({});
       const store = yield* PasswordPersistence;
       const limiter = yield* PasswordAttemptLimiter;
       const hasher = yield* PasswordHashing;
@@ -304,7 +313,6 @@ const makePasswordWithManagement = <
       const claims = yield* SessionClaims;
       const authority = yield* AuthenticationAuthority;
       const completion = yield* sessions.AuthenticationCompletion;
-      const strategy = yield* sessions.SessionStrategy;
       const proofs = yield* reset.Proofs;
       const hooks = yield* LifecycleHooks;
       const crypto = yield* Crypto.Crypto;
@@ -392,12 +400,6 @@ const makePasswordWithManagement = <
         currentPasswordEvidence?: AuthenticationEvidence,
         recovery?: import("../../proofs/completion").ProofCompletionPlan,
       ): Effect.fn.Return<Mutation, Failure> {
-        if (
-          policy.requireImmediateInvalidation &&
-          (strategy.capabilities.subjectInvalidation !== "immediate" ||
-            strategy.capabilities.positiveCacheMillis > 0)
-        )
-          return yield* PasswordMethodUnsupported.make({});
         expectedRevision = snapshotPasswordRevision(expectedRevision);
 
         const replacement = yield* newReplacement(

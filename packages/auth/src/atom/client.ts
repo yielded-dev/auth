@@ -132,6 +132,7 @@ export const make = <
 
     if (
       actions.getSession.mode !== "query" ||
+      actions.getSessionFresh.mode !== "query" ||
       ["session", "freshSession", "runtime", "client"].some((name) =>
         Object.hasOwn(actions, name),
       ) ||

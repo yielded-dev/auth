@@ -31,10 +31,6 @@ const Keyring = Schema.Struct({
   ).check(Schema.isMinLength(1)),
 });
 
-const tokenFormat = Schema.String.check(
-  Schema.isPattern(/^eas1\.[A-Za-z0-9_-]{1,64}\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/),
-);
-
 const textEncoder = new TextEncoder();
 
 const digestMessage = Schema.fromJsonString(
@@ -84,7 +80,12 @@ export const makeSessionSecrets = Effect.fn("makeSessionSecrets")(function* (mod
 /** Scoped key snapshot: retirement is effective only after every runtime installs it. */
 export const makeSessionSigningCodec = Effect.fn("makeSessionSigningCodec")(function* <
   S extends Schema.Top,
->(schema: S, configuration: SessionSigningKeyring, maximumTokenBytes: number) {
+>(
+  schema: S,
+  configuration: SessionSigningKeyring,
+  maximumTokenBytes: number,
+  purpose: "session" | "session-cache" = "session",
+) {
   const checked = yield* Schema.decodeEffect(Keyring)(configuration).pipe(
     Effect.mapError(() => SessionConfigurationError.make({ reason: "keyring" })),
   );
@@ -92,6 +93,23 @@ export const makeSessionSigningCodec = Effect.fn("makeSessionSigningCodec")(func
   const hmac = yield* Hmac;
   const services = yield* Effect.context<S["DecodingServices"] | S["EncodingServices"]>();
   const keys = new Map<string, Key>();
+
+  const version = purpose === "session-cache" ? "eac1" : "eas1";
+
+  const tokenFormat = Schema.String.check(
+    Schema.isPattern(
+      purpose === "session-cache"
+        ? /^eac1\.[A-Za-z0-9_-]{1,64}\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/
+        : /^eas1\.[A-Za-z0-9_-]{1,64}\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/,
+    ),
+  );
+
+  const importKey = (material: Uint8Array) =>
+    hmac.importKey({ algorithm: "SHA-256", key: Redacted.make(material) }).pipe(
+      Effect.tapCause((cause) => reportAuthFailure("session-crypto", cause)),
+      Effect.mapError(() => SessionConfigurationError.make({ reason: "keyring" })),
+      Effect.ensuring(Effect.sync(() => material.fill(0))),
+    );
 
   for (const entry of checked.keys) {
     yield* Schema.decodeEffect(keyIdSchema)(entry.id).pipe(
@@ -104,10 +122,16 @@ export const makeSessionSigningCodec = Effect.fn("makeSessionSigningCodec")(func
       return yield* SessionConfigurationError.make({ reason: "keyring" });
     }
 
-    const key = yield* hmac.importKey({ algorithm: "SHA-256", key: Redacted.make(material) }).pipe(
-      Effect.mapError(() => SessionConfigurationError.make({ reason: "keyring" })),
-      Effect.ensuring(Effect.sync(() => material.fill(0))),
-    );
+    const root = yield* importKey(material);
+
+    const key =
+      purpose === "session-cache"
+        ? yield* root.sign(textEncoder.encode("effect-auth/session-cache/key/v1")).pipe(
+            Effect.tapCause((cause) => reportAuthFailure("session-crypto", cause)),
+            Effect.mapError(() => SessionConfigurationError.make({ reason: "keyring" })),
+            Effect.flatMap(importKey),
+          )
+        : root;
 
     keys.set(entry.id, key);
   }
@@ -123,10 +147,16 @@ export const makeSessionSigningCodec = Effect.fn("makeSessionSigningCodec")(func
     encode: Effect.fn("SessionSigningCodec.encode")(function* (claims: S["Type"]) {
       const json = yield* encode(claims).pipe(
         Effect.provide(services),
+        Effect.tapCause((cause) =>
+          reportAuthFailure(
+            purpose === "session-cache" ? "session-cache" : "session-crypto",
+            cause,
+          ),
+        ),
         Effect.mapError(() => SessionUnavailable.make({})),
       );
 
-      const message = `eas1.${activeKeyId}.${Base64Url.encode(json)}`;
+      const message = `${version}.${activeKeyId}.${Base64Url.encode(json)}`;
 
       const signature = yield* activeKey.sign(textEncoder.encode(message)).pipe(
         Effect.tapCause((cause) => reportAuthFailure("session-crypto", cause)),
@@ -135,7 +165,15 @@ export const makeSessionSigningCodec = Effect.fn("makeSessionSigningCodec")(func
 
       const token = `${message}.${Base64Url.encode(signature)}`;
 
-      if (token.length > maximumTokenBytes) return yield* SessionUnavailable.make({});
+      if (token.length > maximumTokenBytes)
+        return yield* SessionUnavailable.make({}).pipe(
+          Effect.tapCause((cause) =>
+            reportAuthFailure(
+              purpose === "session-cache" ? "session-cache" : "session-crypto",
+              cause,
+            ),
+          ),
+        );
 
       return Redacted.make(token);
     }),
