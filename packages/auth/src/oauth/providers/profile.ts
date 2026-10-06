@@ -52,13 +52,27 @@ export const OidcUserProfile = Schema.Struct({
 
 export type OidcUserProfile = typeof OidcUserProfile.Type;
 
+/** Standard profile and workspace identifiers projected only from verified Slack
+ * ID tokens. Workspace membership is application policy, not local identity. */
+export const SlackUserProfile = Schema.Struct({
+  ...standardOidcUserProfile.fields,
+  "https://slack.com/team_id": Schema.optionalKey(text),
+  "https://slack.com/user_id": Schema.optionalKey(text),
+});
+
+export type SlackUserProfile = typeof SlackUserProfile.Type;
+
 export const decodeOidcProfile = Effect.fn("OpenIdConnect.decodeProfile")(function* (
   claims: unknown,
   issuer: typeof OAuthIssuer.Type,
 ): Effect.fn.Return<OAuthDisplayProfile | undefined, OAuthProtocolRejected> {
   // oxlint-disable-next-line no-restricted-properties -- Project claims from an ID token already verified against this issuer.
   const profile = yield* Schema.decodeUnknownEffect(
-    issuer === "https://accounts.google.com" ? OidcUserProfile : standardOidcUserProfile,
+    issuer === "https://accounts.google.com"
+      ? OidcUserProfile
+      : issuer === "https://slack.com"
+        ? SlackUserProfile
+        : standardOidcUserProfile,
   )(claims).pipe(Effect.mapError(() => OAuthProtocolRejected.make({})));
 
   if (Object.keys(profile).length === 0) return undefined;

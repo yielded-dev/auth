@@ -42,6 +42,7 @@
     "./OAuthProxy": "./src/OAuthProxy.ts",
     "./OAuthServer": "./src/OAuthServer.ts",
     "./Strava": "./src/Strava.ts",
+    "./Slack": "./src/Slack.ts",
     "./Operations": "./src/Operations.ts",
     "./Schema": "./src/Schema.ts",
     "./WebCrypto": "./src/WebCrypto.ts",

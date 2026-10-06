@@ -20,7 +20,7 @@ export const OAuthSignInApi = AuthContract.make("example/oauth", {
 });
 
 export const OAuthApi = AuthContract.make("example/oauth", {
-  claims: Schema.Struct({ role: Schema.Literal("owner") }),
+  claims: OAuthSignInApi.claims,
   actions: (sessions) => ({
     signIn: AuthContract.oauthSignIn(),
     completeSignIn: AuthContract.oauthCompleteSignIn(sessions),

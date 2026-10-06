@@ -10,6 +10,7 @@ import {
 } from "../signInModels";
 import { freezeOAuth } from "../signInSnapshot";
 import { TokenCompatibility, tokenCompatibility } from "./compatibility";
+import { DiscoveryProfile, discoveryProfile } from "./discovery";
 import {
   OpenIdConnectConfigurationError,
   type OpenIdConnectOAuthProvider,
@@ -60,6 +61,7 @@ const optionsSchema = <R>() =>
           Schema.Struct({
             ...common,
             protocol: Schema.Literal("oidc"),
+            [discoveryProfile]: Schema.optionalKey(DiscoveryProfile),
             idTokenSignedResponseAlg: Schema.Literal("RS256"),
             maxAgeSeconds: Schema.optionalKey(
               Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 86400 })),

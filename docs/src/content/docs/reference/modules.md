@@ -45,21 +45,21 @@ required by the selected adapters.
 
 Import application services and authentication methods from the root:
 
-| Modules                                | Purpose                                                                  |
-| -------------------------------------- | ------------------------------------------------------------------------ |
-| `Auth`                                 | Application service, strategies, and request boundaries.                 |
-| `Identity`, `Schema`                   | Subject identifiers, claims, and shared schemas.                         |
-| `Operations`, `Hooks`                  | Operation contracts and lifecycle hooks.                                 |
-| `Sessions`                             | Session strategies, persistence ports, and lifecycle operations.         |
-| `BrowserLogin`, `BrowserLoginContract` | Native browser sign-in, shared handoff operations and platform services. |
-| `Password`                             | Password registration, sign-in, and account changes.                     |
-| `Email`, `PhoneOtp`, `Proofs`          | Email and phone methods, bound proofs, and private delivery.             |
-| `EmailDelivery`                        | Rendered private email, transport failures, templates, and link parsing. |
-| `Totp`, `Passkey`                      | Additional factors and passkey workflows.                                |
-| `PasskeyPassword`                      | Password-backed authority for passkey workflows.                         |
-| `OAuth`                                | Provider sign-in, registration, linked accounts, and connected grants.   |
-| `OAuthProxy`                           | Stable callbacks for local and preview sign-in and registration.         |
-| `OpenIdConnect`, `GitHub`, `Strava`    | Native provider configuration and protocol Layers.                       |
+| Modules                                      | Purpose                                                                  |
+| -------------------------------------------- | ------------------------------------------------------------------------ |
+| `Auth`                                       | Application service, strategies, and request boundaries.                 |
+| `Identity`, `Schema`                         | Subject identifiers, claims, and shared schemas.                         |
+| `Operations`, `Hooks`                        | Operation contracts and lifecycle hooks.                                 |
+| `Sessions`                                   | Session strategies, persistence ports, and lifecycle operations.         |
+| `BrowserLogin`, `BrowserLoginContract`       | Native browser sign-in, shared handoff operations and platform services. |
+| `Password`                                   | Password registration, sign-in, and account changes.                     |
+| `Email`, `PhoneOtp`, `Proofs`                | Email and phone methods, bound proofs, and private delivery.             |
+| `EmailDelivery`                              | Rendered private email, transport failures, templates, and link parsing. |
+| `Totp`, `Passkey`                            | Additional factors and passkey workflows.                                |
+| `PasskeyPassword`                            | Password-backed authority for passkey workflows.                         |
+| `OAuth`                                      | Provider sign-in, registration, linked accounts, and connected grants.   |
+| `OAuthProxy`                                 | Stable callbacks for local and preview sign-in and registration.         |
+| `OpenIdConnect`, `GitHub`, `Slack`, `Strava` | Native provider configuration and protocol Layers.                       |
 
 ## Browser and transport boundaries
 
