@@ -468,9 +468,7 @@ export const makeTransactionKernel = <
                     sql`exists(select 1 from ${table} where ${both(
                       where,
                       exactRow(table, row),
-                      selected[index]?.[conditionKey] === 1
-                        ? options.condition
-                        : sql`not (${options.condition})`,
+                      sql`case when ${options.condition} then 1 else 0 end = ${selected[index]?.[conditionKey]}`,
                     )})`,
                 ),
               );
