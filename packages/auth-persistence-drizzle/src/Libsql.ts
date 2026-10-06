@@ -3,6 +3,8 @@ import { EmailUnavailable } from "@yielded/auth/Email";
 import { PasswordUnavailable } from "@yielded/auth/Password";
 import { ProofUnavailable } from "@yielded/auth/Proofs";
 import { SessionUnavailable } from "@yielded/auth/Sessions";
+export { OAuthProxyPersistence } from "./internal/drizzle-sqlite-oauth-proxy";
+
 import type { AnyRelations } from "drizzle-orm";
 import { type EffectLibsqlDatabase, makeWithDefaults } from "drizzle-orm/effect-libsql";
 import type { AnySQLiteTable } from "drizzle-orm/sqlite-core";

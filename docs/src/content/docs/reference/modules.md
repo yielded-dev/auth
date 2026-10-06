@@ -126,6 +126,8 @@ driver modules export the same facade; its root exposes the Drizzle mapping cont
 Adapter authors can use `@yielded/auth-persistence/Adapter` for the shared SQL kernels.
 The root also exports `OAuthProxyPersistence` for the
 [callback proxy's durable handoffs](./oauth#callback-proxy).
+Drizzle's SQLite/D1 and PostgreSQL driver modules expose the same facade with
+Drizzle table definitions and column mapping.
 
 The [adapter guide](./adapters) covers transaction authority, durable receipts,
 and runtime constraints.

@@ -2,7 +2,26 @@ import { FlowContext, Persistence, Record, Unavailable } from "@yielded/auth/OAu
 import { Effect, Layer, Schema } from "effect";
 import { SqlClient } from "effect/sql";
 
+import { identifier } from "./sql-table";
 import { requireStandalone } from "./standalone";
+
+export const oauthProxyColumns = {
+  namespace: "namespace",
+  flowId: "flow_id",
+  version: "version",
+  stage: "stage",
+  context: "context",
+  expiresAtMillis: "expires_at_millis",
+  handoffExpiresAtMillis: "handoff_expires_at_millis",
+  payload: "payload",
+} as const;
+
+/** Plain text and integer-millisecond storage; adapters supply physical names. */
+export interface OAuthProxySqlTable {
+  readonly name: string;
+  readonly schema?: string;
+  readonly columns: { readonly [K in keyof typeof oauthProxyColumns]: string };
+}
 
 const codec = Schema.fromJsonString(Record);
 const contextCodec = Schema.fromJsonString(FlowContext);
@@ -34,106 +53,124 @@ const migration = `CREATE TABLE yielded_oauth_proxy (
     OR (stage <> 'Ready' AND handoff_expires_at_millis IS NULL))
 )`;
 
-const layer = Layer.effect(
-  Persistence,
-  Effect.gen(function* () {
-    const sql = yield* SqlClient.SqlClient;
+export const makeOAuthProxyPersistence = Effect.fnUntraced(function* (table: OAuthProxySqlTable) {
+  const sql = (yield* SqlClient.SqlClient).withoutTransforms();
 
-    if (!sql.onDialectOrElse({ sqlite: () => true, pg: () => true, orElse: () => false }))
-      return yield* Unavailable.make({});
-    const standalone = requireStandalone(() => Unavailable.make({}), sql.transactionService);
+  if (!sql.onDialectOrElse({ sqlite: () => true, pg: () => true, orElse: () => false }))
+    return yield* Unavailable.make({});
 
-    const failure = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-      effect.pipe(Effect.mapError(() => Unavailable.make({})));
+  const names = Object.values(table.columns);
 
-    const clock = sql.onDialectOrElse({
-      sqlite: () => sql.literal("CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER)"),
-      orElse: () => sql.literal("CAST(EXTRACT(EPOCH FROM clock_timestamp()) * 1000 AS BIGINT)"),
-    });
+  if (
+    [table.name, table.schema ?? "main", ...names].some((name) => !name || name.includes("\0")) ||
+    new Set(names).size !== names.length
+  )
+    return yield* Unavailable.make({});
 
-    return Persistence.of({
-      get: Effect.fnUntraced(function* (namespace, id) {
-        yield* standalone;
+  const name = sql.literal(
+    (table.schema === undefined ? "" : `${identifier(table.schema)}.`) + identifier(table.name),
+  );
 
-        const rows = yield* sql`SELECT payload, version, stage, context,
-          CAST(expires_at_millis AS TEXT) AS expiry,
-          CAST(handoff_expires_at_millis AS TEXT) AS deadline
-          FROM yielded_oauth_proxy WHERE namespace = ${namespace} AND flow_id = ${id}`;
+  const column = (key: keyof typeof oauthProxyColumns) =>
+    sql.literal(identifier(table.columns[key]));
 
-        if (rows.length === 0) return undefined;
-        if (rows.length !== 1) return yield* Unavailable.make({});
-        const row = yield* Schema.decodeUnknownEffect(Row)(rows[0]);
-        const record = yield* Schema.decodeEffect(codec)(row.payload);
-        const context = yield* Schema.encodeEffect(contextCodec)(record.context);
+  const standalone = requireStandalone(() => Unavailable.make({}), sql.transactionService);
 
-        if (
-          record.context.id !== id ||
-          record.version !== row.version ||
-          record._tag !== row.stage ||
-          context !== row.context ||
-          String(record.context.expiresAtMillis) !== row.expiry ||
-          (record._tag === "Ready" ? String(record.handoffExpiresAtMillis) : null) !== row.deadline
-        )
-          return yield* Unavailable.make({});
+  const failure = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+    effect.pipe(Effect.mapError(() => Unavailable.make({})));
 
-        return record;
-      }, failure),
-      insert: Effect.fnUntraced(function* (namespace, record) {
-        yield* standalone;
-        if (record._tag !== "Pending") return yield* Unavailable.make({});
-        const payload = yield* Schema.encodeEffect(codec)(record);
-        const context = yield* Schema.encodeEffect(contextCodec)(record.context);
+  const clock = sql.onDialectOrElse({
+    sqlite: () => sql.literal("CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER)"),
+    orElse: () => sql.literal("CAST(EXTRACT(EPOCH FROM clock_timestamp()) * 1000 AS BIGINT)"),
+  });
 
-        const rows = yield* sql`INSERT INTO yielded_oauth_proxy
-          (namespace, flow_id, version, stage, context, expires_at_millis, payload)
+  return Persistence.of({
+    get: Effect.fnUntraced(function* (namespace, id) {
+      yield* standalone;
+
+      const rows = yield* sql`SELECT ${column("payload")} AS payload,
+          ${column("version")} AS version, ${column("stage")} AS stage, ${column("context")} AS context,
+          CAST(${column("expiresAtMillis")} AS TEXT) AS expiry,
+          CAST(${column("handoffExpiresAtMillis")} AS TEXT) AS deadline
+          FROM ${name} WHERE ${column("namespace")} = ${namespace} AND ${column("flowId")} = ${id}`;
+
+      if (rows.length === 0) return undefined;
+      if (rows.length !== 1) return yield* Unavailable.make({});
+      const row = yield* Schema.decodeUnknownEffect(Row)(rows[0]);
+      const record = yield* Schema.decodeEffect(codec)(row.payload);
+      const context = yield* Schema.encodeEffect(contextCodec)(record.context);
+
+      if (
+        record.context.id !== id ||
+        record.version !== row.version ||
+        record._tag !== row.stage ||
+        context !== row.context ||
+        String(record.context.expiresAtMillis) !== row.expiry ||
+        (record._tag === "Ready" ? String(record.handoffExpiresAtMillis) : null) !== row.deadline
+      )
+        return yield* Unavailable.make({});
+
+      return record;
+    }, failure),
+    insert: Effect.fnUntraced(function* (namespace, record) {
+      yield* standalone;
+      if (record._tag !== "Pending") return yield* Unavailable.make({});
+      const payload = yield* Schema.encodeEffect(codec)(record);
+      const context = yield* Schema.encodeEffect(contextCodec)(record.context);
+
+      const rows = yield* sql`INSERT INTO ${name}
+          (${column("namespace")}, ${column("flowId")}, ${column("version")}, ${column("stage")},
+            ${column("context")}, ${column("expiresAtMillis")}, ${column("payload")})
           SELECT ${namespace}, ${record.context.id}, ${record.version}, ${record._tag},
             ${context}, ${record.context.expiresAtMillis}, ${payload}
           WHERE ${record.context.expiresAtMillis} > ${clock}
-          ON CONFLICT (namespace, flow_id) DO NOTHING RETURNING version`;
+          ON CONFLICT (${column("namespace")}, ${column("flowId")}) DO NOTHING
+          RETURNING ${column("version")}`;
 
-        return rows.length === 1;
-      }, failure),
-      compareAndSet: Effect.fnUntraced(function* (namespace, version, record) {
-        yield* standalone;
-        if (version === record.version || record._tag === "Pending")
-          return yield* Unavailable.make({});
+      return rows.length === 1;
+    }, failure),
+    compareAndSet: Effect.fnUntraced(function* (namespace, version, record) {
+      yield* standalone;
+      if (version === record.version || record._tag === "Pending")
+        return yield* Unavailable.make({});
 
-        // Explicitly omit private envelopes from both irreversible marker stages.
-        const payload = yield* Schema.encodeEffect(codec)(
-          record._tag === "Ready"
-            ? record
-            : { _tag: record._tag, version: record.version, context: record.context },
-        );
+      // Explicitly omit private envelopes from both irreversible marker stages.
+      const payload = yield* Schema.encodeEffect(codec)(
+        record._tag === "Ready"
+          ? record
+          : { _tag: record._tag, version: record.version, context: record.context },
+      );
 
-        const context = yield* Schema.encodeEffect(contextCodec)(record.context);
+      const context = yield* Schema.encodeEffect(contextCodec)(record.context);
 
-        const previous =
-          record._tag === "Exchanging"
-            ? "Pending"
-            : record._tag === "Ready"
-              ? "Exchanging"
-              : "Ready";
+      const previous =
+        record._tag === "Exchanging" ? "Pending" : record._tag === "Ready" ? "Exchanging" : "Ready";
 
-        const deadline = record._tag === "Ready" ? record.handoffExpiresAtMillis : null;
+      const deadline = record._tag === "Ready" ? record.handoffExpiresAtMillis : null;
 
-        const consume =
-          record._tag === "Consumed"
-            ? sql`AND handoff_expires_at_millis > ${clock}`
-            : sql.literal("");
+      const consume =
+        record._tag === "Consumed"
+          ? sql`AND ${column("handoffExpiresAtMillis")} > ${clock}`
+          : sql.literal("");
 
-        const rows = yield* sql`UPDATE yielded_oauth_proxy
-          SET version = ${record.version}, stage = ${record._tag},
-            handoff_expires_at_millis = ${deadline}, payload = ${payload}
-          WHERE namespace = ${namespace} AND flow_id = ${record.context.id}
-            AND version = ${version} AND stage = ${previous} AND context = ${context}
-            AND expires_at_millis = ${record.context.expiresAtMillis}
-            AND expires_at_millis > ${clock} ${consume}
-          RETURNING version`;
+      const rows = yield* sql`UPDATE ${name}
+          SET ${column("version")} = ${record.version}, ${column("stage")} = ${record._tag},
+            ${column("handoffExpiresAtMillis")} = ${deadline}, ${column("payload")} = ${payload}
+          WHERE ${column("namespace")} = ${namespace} AND ${column("flowId")} = ${record.context.id}
+            AND ${column("version")} = ${version} AND ${column("stage")} = ${previous}
+            AND ${column("context")} = ${context}
+            AND ${column("expiresAtMillis")} = ${record.context.expiresAtMillis}
+            AND ${column("expiresAtMillis")} > ${clock} ${consume}
+          RETURNING ${column("version")}`;
 
-        return rows.length === 1;
-      }, failure),
-    });
-  }),
+      return rows.length === 1;
+    }, failure),
+  });
+});
+
+const layer = Layer.effect(
+  Persistence,
+  makeOAuthProxyPersistence({ name: "yielded_oauth_proxy", columns: oauthProxyColumns }),
 );
 
 export const OAuthProxyPersistence = { migration, layer };

@@ -1,3 +1,5 @@
+export { OAuthProxyPersistence } from "./internal/drizzle-postgres-oauth-proxy";
+
 import type { AnyRelations } from "drizzle-orm";
 import { type EffectPgDatabase, makeWithDefaults } from "drizzle-orm/effect-postgres";
 import type { AnyPgTable } from "drizzle-orm/pg-core";

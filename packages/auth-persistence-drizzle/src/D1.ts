@@ -1,3 +1,5 @@
+export { OAuthProxyPersistence } from "./internal/drizzle-sqlite-oauth-proxy";
+
 import type { D1Client } from "@effect/sql-d1/D1Client";
 export { makeTotpPersistenceServices, coordinateTotpPersistence } from "./drizzle/d1-totp";
 import type { AnyRelations } from "drizzle-orm";

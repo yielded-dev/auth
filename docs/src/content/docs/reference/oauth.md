@@ -433,6 +433,22 @@ PostgreSQL Effect SQL client. Apply its `migration` once. Server replicas share 
 and protector keys. See the [complete composition](https://github.com/yielded-dev/auth/blob/main/examples/auth/src/oauth-proxy-application.ts)
 for the Layers, including [HTTP and crypto services](#supply-the-services).
 
+For Drizzle, import `OAuthProxyPersistence` from your SQLite/D1 or PostgreSQL
+driver module:
+
+```ts
+import { OAuthProxyPersistence } from "@yielded/auth-persistence-drizzle/SqliteBun";
+
+export const proxyAttempts = OAuthProxyPersistence.table("oauth_proxy_attempts");
+export const ProxyStorage = OAuthProxyPersistence.layer(proxyAttempts);
+```
+
+Export the table to Drizzle Kit and apply the generated migration before providing
+`ProxyStorage` to the server. The Layer requires the driver's Effect SQL client.
+For an existing table, pass column-key overrides as the second argument to `layer`.
+Mapped columns use plain text and integer milliseconds; Drizzle value codecs and
+write hooks do not run for these columns.
+
 ### App provider
 
 Pass these options to `OAuthProxy.provider` in each app:
