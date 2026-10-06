@@ -13,6 +13,12 @@ remain in `@yielded/auth`.
 storage for [MCP authorization](../../docs/src/content/docs/guide/oauth.mdx#authorize-mcp-clients).
 Its conditional writes and monotonic revocation require standalone commits.
 
+`OAuthProxyPersistence` supplies SQLite/D1 and PostgreSQL storage for the OAuth
+callback proxy. Apply its `migration` through your migration runner and provide
+an Effect SQL client to its `layer`. Transitions require standalone commits;
+the database enforces immutable context, stage order, and expiry, including the
+Ready handoff deadline. Retain terminal records until their flow expiry.
+
 Applications own subject provisioning, policy, claims, delivery, and their database
 connection and migration runner.
 

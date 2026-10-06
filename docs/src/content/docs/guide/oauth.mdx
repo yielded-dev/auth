@@ -130,6 +130,116 @@ upgrade session assurance. Provider tokens never enter browser results or sessio
 depends on the profile; cohort revocation needs the shared maintenance worker.
 See [retained access](../reference/oauth#retained-access) for dependencies and recovery.
 
+## Local and preview environments
+
+`OAuthProxy` gives explicitly registered local and preview environments one stable
+provider callback. The callback server exchanges the provider code and verifies
+identity. The initiating environment redeems that identity, resolves its own
+account, and issues its own session. Use `OAuth.make()` or
+`OAuth.makeRegistration(...)`; the proxy does not retain provider grants.
+
+Register `https://auth.example.com/oauth-proxy/github/callback` with GitHub.
+On that HTTPS server, register each environment's exact completion URL:
+
+```ts title="apps/callback-server/oauth.ts"
+import { Layer, Schema } from "effect";
+import { FetchHttpClient } from "effect/http";
+import { GitHub, OAuthProxy } from "@yielded/auth";
+import { OAuthProxyPersistence } from "@yielded/auth-persistence";
+import { CryptoLive } from "./crypto-live";
+import { DatabaseLive } from "./database";
+import { clientId, clientSecret, localSecret, previewSecret, proxyKeys } from "./config";
+
+const environments = Schema.decodeSync(Schema.Array(OAuthProxy.Environment))([
+  {
+    id: "local",
+    secret: localSecret,
+    callbacks: [{
+      provider: "github",
+      callbackId: "github",
+      redirectUri: "http://localhost:3000/auth/github/callback",
+    }],
+  },
+  {
+    id: "pr-123",
+    secret: previewSecret,
+    callbacks: [{
+      provider: "github",
+      callbackId: "github",
+      redirectUri: "https://pr-123.preview.example.com/auth/github/callback",
+    }],
+  },
+]);
+
+const ProxyLive = OAuthProxy.layer({
+  origin: "https://auth.example.com",
+  providers: { github: GitHub.provider({ clientId, clientSecret }) },
+  environments,
+}).pipe(
+  Layer.provide(OAuthProxy.protectorLayer(proxyKeys)),
+  Layer.provide(OAuthProxyPersistence.layer),
+  Layer.provide(Layer.mergeAll(DatabaseLive, CryptoLive, FetchHttpClient.layer)),
+);
+
+export const ProxyRoutes = OAuthProxy.routes.pipe(Layer.provide(ProxyLive));
+```
+
+Apply `OAuthProxyPersistence.migration` through your migration runner first.
+`DatabaseLive` supplies an Effect SQL client for SQLite, D1, or PostgreSQL;
+`CryptoLive` supplies the [crypto services](../reference/crypto#use-with-auth).
+Load secrets from server configuration as redacted values. Give each environment
+a distinct secret containing 32 random bytes encoded as unpadded base64url
+(43 characters). Keep `proxyKeys` and provider credentials on the callback server.
+
+In the local app, keep the normal OAuth actions, account storage, and session
+Layers, and select the proxy as its provider:
+
+```ts title="apps/server/oauth.ts"
+import { Http, OAuthProxy } from "@yielded/auth";
+import { AppAuth } from "./auth";
+import { localSecret } from "./config";
+
+export const AuthRoutes = Http.layer(AppAuth, {
+  origin: "http://localhost:3000",
+  cookie: { secure: false },
+  oauth: {
+    providers: {
+      github: OAuthProxy.provider({
+        url: "https://auth.example.com/oauth-proxy",
+        environment: "local",
+        secret: localSecret,
+        issuer: "https://github.com/login/oauth",
+      }),
+    },
+  },
+});
+```
+
+For the preview, use origin `https://pr-123.preview.example.com`, environment
+`pr-123`, and `previewSecret`; keep the default Secure cookies. `secure: false`
+is explicit for HTTP loopback development only. Each environment supplies its own
+account and session database, request-binding keys, and transaction encryption
+keys. Supply `HttpClient` and Effect `Crypto` to the proxy provider as part of the
+[normal auth dependencies](../reference/oauth#supply-the-services).
+
+The callback server is trusted to attest identity. An environment secret permits
+initiating and redeeming only that environment's registered flows; it cannot add
+destinations or sign identities. Environments share no identity-signing keys.
+The local private browser binder and a separate private verifier gate redemption;
+only a single-use opaque handoff code, state, and issuer travel in the completion
+URL. Provider tokens, identity data, and session credentials stay out of that URL.
+
+The hub sets no browser-binding cookie: browser binding is checked in the local
+completion, not at the hub callback. Protect authorization and callback URLs from
+access logs, traces, and referrer leakage; leaked state can let another caller
+consume an attempt. Attempts last five minutes and handoffs at most sixty seconds.
+After a lost response or an unknown outcome, start a new sign-in.
+
+See the [proxy example](https://github.com/yielded-dev/auth/blob/main/examples/auth/src/oauth-proxy.ts)
+and its [composition](https://github.com/yielded-dev/auth/blob/main/examples/auth/src/oauth-proxy-application.ts).
+The [callback proxy reference](../reference/oauth#callback-proxy) covers storage
+and transport requirements.
+
 ## Authorize MCP clients
 
 `OAuthServer` lets a signed-in user grant an MCP client access to your

@@ -7,6 +7,11 @@ export default defineConfig({
   },
   run: {
     tasks: {
+      "example:oauth-proxy": {
+        command: "bun src/oauth-proxy.ts",
+        cache: false,
+        dependsOn: ["build"],
+      },
       "example:github": {
         command: "bun src/github-app.ts",
         cache: false,
