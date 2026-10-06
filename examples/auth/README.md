@@ -33,10 +33,11 @@ See the [OAuth guide](../../docs/src/content/docs/guide/oauth.mdx) for setup.
 
 `example:github`, `example:strava`, and `example:strava-mcp` build their Atom browser
 client and run a single-owner OAuth application. `oauth-application.ts` composes
-`Auth.make` with `OAuth.make({ access: profile })`; `oauth-storage.ts` owns the
-explicit libSQL schema and allowlisted account provisioning. Provider grants use
+`Auth.make` with `OAuth.make({ access: profile })`; [shared OAuth storage](../shared/oauth/storage.ts) owns the
+explicit Effect SQL schema and allowlisted account provisioning. Provider grants use
 the same connected storage and refresh engine as authenticated account connections.
 Open `/login` and configure the provider callback at `/auth/{provider}/callback`.
+The storage uses `@yielded/auth-persistence/OAuthPersistence` without Drizzle.
 See [OAuth setup](../../docs/src/content/docs/reference/oauth.md#runnable-examples)
 for environment variables and the development-state reset.
 

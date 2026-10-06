@@ -7,8 +7,8 @@ import { HttpRouter, HttpServerResponse } from "effect/http";
 import { Migrator, SqlClient } from "effect/sql";
 
 import { CryptoLive } from "../../shared/crypto";
+import { makeStorage } from "../../shared/oauth/storage";
 import { OAuthSignInApi } from "./oauth-contract";
-import { makeStorage } from "./oauth-storage";
 
 export const githubIssuer = "https://github.com/login/oauth";
 export const localOrigin = "http://localhost:3000";
@@ -128,8 +128,9 @@ export const makeProxyEnvironment = (config: {
       issuer: githubIssuer,
       externalSubject: config.externalSubject,
       subjectId: `github:${config.externalSubject}`,
-      filename: config.filename,
-    }),
+    }).pipe(
+      Layer.provideMerge(LibsqlClient.layer({ url: `file:${config.filename}`, intMode: "number" })),
+    ),
     Layer.succeed(AppAuth.strategies.oauth.SessionClaims, {
       resolve: () => Effect.succeed({ role: "owner" as const }),
     }),

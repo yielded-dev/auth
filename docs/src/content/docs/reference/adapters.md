@@ -421,10 +421,75 @@ Notifications run after commit; durable delivery needs an outbox.
 
 ## OAuth
 
-Use `makeOAuthSignInServices` for durable flow and identity state. Registration
-and linking have separate factories and authorities. An external provider exchange
-cannot be rolled back with your database; retain the original decision and require
-a fresh flow after an uncertain exchange.
+Import `OAuthPersistence` from `@yielded/auth-persistence` for upstream provider
+accounts through Effect SQL. It uses the same operation implementations as the
+Drizzle companion. These explicit factories are separate from the composed
+`AuthPersistence.make` Layer and from downstream `OAuthServerPersistence` storage.
+
+| Factory                                | Workflow                                                        |
+| -------------------------------------- | --------------------------------------------------------------- |
+| `makeOAuthSignInServices`              | Single-use sign-in flows and existing login credentials         |
+| `makeOAuthRegistrationIntentServices`  | Verified identity to registration intent                        |
+| `makeOAuthRegistrationServices`        | Application provisioning, login credential, and durable receipt |
+| `makeOAuthAccountsServices`            | Linking and safe unlinking with exact-action evidence           |
+| `makeOAuthConnectedServices`           | Retained grants, listing, use, refresh, and disconnect          |
+| `makeOAuthConnectedRevocationServices` | Durable provider-revocation work                                |
+
+Direct Effect SQL supports PostgreSQL and SQLite clients with interactive
+transactions. It does not supply a MySQL, D1 batch, or native Kysely adapter.
+Use the existing Drizzle entrypoints for their documented driver-specific behavior.
+The [Effect SQL consumer](https://github.com/yielded-dev/auth/tree/main/examples/persistence-sql)
+has no Drizzle dependency.
+
+Describe physical tables with `OAuthPersistence.table`, then map semantic columns,
+row codecs, subject IDs, authority predicates, and required unique keys. Tables
+remain application-owned; construction checks the required keys against the actual
+database. `OAuthPersistence.clock` supplies an integer-millisecond engine clock.
+Use `sql`, `eq`, and `and` from that namespace for mapping expressions. These are
+mapping expressions; application queries use the supplied Effect `SqlClient`.
+
+```ts
+import { OAuthPersistence } from "@yielded/auth-persistence";
+import { Persistence } from "@yielded/auth";
+import { Layer } from "effect";
+
+import { SqlLive, CryptoLive, signInMapping } from "./infrastructure";
+
+export const OAuthStorageLive = OAuthPersistence.oauthSignInPersistenceLayer(
+  OAuthPersistence.makeOAuthSignInServices(signInMapping),
+).pipe(Layer.provide([SqlLive, CryptoLive, Persistence.hooksLayer]));
+```
+
+If session storage does not already supply `AuthenticationAuthority`, use
+`makeAuthenticationAuthorityServices` with the same subject and shared credential
+mapping. Session issuance must check that authority alongside the OAuth credential.
+
+Factories capture the client at construction. Standalone methods own their commit
+and reject ambient transactions. For atomic application work, use the matching
+`coordinateOAuth*({ mapping }, body)` function; registration additionally takes its
+`target` service. The body receives transaction-bound persistence, and queries
+through the same `SqlClient` participate in that transaction. Keep provider network
+exchanges outside it. Bound services cannot escape the coordinator. Coordinated registration also needs
+its synchronous `inspectSync` and `snapshotSync` callbacks; ID allocation precedes
+the transaction.
+
+### Kysely-owned schemas
+
+Keep Kysely as your migration and application-query tool, and map those physical
+tables for Effect SQL. Both clients may address the same database, but a Kysely
+transaction does not become an Effect SQL transaction. Provisioning and auth writes
+that must commit together must run through the adapter's coordinator and its exact
+Effect SQL client. Otherwise supply a replacement persistence service that owns
+both operations under your application's transaction authority. No native Kysely
+integration is implied by table mapping.
+
+An external provider exchange cannot be rolled back with your database. Single-use
+claims and durable receipts preserve the original decision; uncertain exchange or
+refresh outcomes never authorize repeating provider work. Retain unresolved work
+and require a fresh flow where the protocol calls for one. Linking preserves tuple
+uniqueness; unlinking rechecks remaining login methods and retained-grant references
+before releasing ownership. Login-credential listing is an application query over
+its mapped tables; connected-grant listing belongs to `OAuthConnectedPersistence`.
 
 ## Passkeys
 
@@ -487,15 +552,18 @@ for the table definitions and mappings.
 
 ## Connected OAuth grants
 
-`makeOAuthConnectedServices` and `makeOAuthConnectedRevocationServices` coordinate
-provider grants, refresh attempts, and revocation. Keep the durable grant identity
+`OAuthPersistence.makeOAuthConnectedServices` and
+`OAuthPersistence.makeOAuthConnectedRevocationServices` coordinate
+provider grants, refresh attempts, and revocation. When composing login unlinking,
+include `oauthConnectedOwnershipReferences(mapping, dialect)` in the accounts mapping
+so retained and unresolved provider work keeps ownership protected. Keep the durable grant identity
 and refresh claim so another worker cannot repeat an uncertain refresh.
 
 For `OAuth.make({ access: profile })`, use those same connected services alongside
 `makeOAuthSignInServices`. Map `signIn.credential` and `signIn.flow` to the shared
 sign-in tables and provide `flow.encodeSignIn`; the connected flow’s subject column
 must allow NULL until identity resolution. The
-[OAuth storage example](https://github.com/yielded-dev/auth/blob/main/examples/auth/src/oauth-storage.ts)
+[OAuth storage example](https://github.com/yielded-dev/auth/blob/main/examples/shared/oauth/storage.ts)
 shows the application-owned schema and authority.
 
 <details>

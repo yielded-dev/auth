@@ -9,8 +9,8 @@ import type { AuthenticationRequirement } from "@yielded/auth/Sessions";
 import { Crypto, DateTime, Effect, Schema } from "effect";
 import { Base64Url } from "effect/encoding";
 
-import { digest, randomId } from "./crypto";
-export { digest } from "./crypto";
+import { digest, randomId } from "../crypto";
+export { digest } from "../crypto";
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder("utf-8", { fatal: true });
@@ -23,7 +23,7 @@ export const invariant: (value: unknown) => asserts value = (value) => {
 
 export const nonce = randomId;
 
-/** Capture configuration/callback references while preserving Drizzle table, SQL
+/** Capture configuration/callback references while preserving adapter table, SQL
  * and Effect objects. Never freeze or mutate the consumer's original graph. */
 export const captureOAuthMapping = <A>(input: A): A => {
   const seen = new Map<object, unknown>();

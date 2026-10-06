@@ -50,3 +50,38 @@ Hashing, Cloudflare delivery, forms, and Atom workflows also live in
 [shared/account](../shared/account).
 Adding a passkey requires authentication from the last five minutes. Sign in again
 when prompted; an older valid session still permits ordinary account reads.
+
+## OAuth lifecycle
+
+Run a native CLI consumer with direct Effect SQL storage:
+
+```sh
+AUTH_DATA_DIR=/tmp/yielded-oauth-sqlite PERSISTENCE_DIALECT=sqlite \
+  vp -C examples/persistence-sql run example:oauth-lifecycle
+
+AUTH_DATA_DIR=/tmp/yielded-oauth-pg PERSISTENCE_DIALECT=pg \
+  vp -C examples/persistence-sql run example:oauth-lifecycle
+```
+
+The consumer signs in, retains an encrypted grant, links another login identity,
+lists grants, unlinks the login with durable command replay, registers a new user,
+and signs that user in. It closes and reopens its SQL client, then lists and uses
+the original retained grant. Login links and provider API grants are separate:
+`listAccountConnections` lists grants; application SQL reads the login inventory.
+
+The native Strava protocol uses simulated provider HTTP replies, so no provider
+account or secret is needed. The CLI privately receives demo action codes in place
+of an external delivery channel. SQL stores only their digests, binds them to an
+action, command, and subject revision, and consumes them once. Public demo keys
+are unsuitable for real credentials. This proves the library workflow and SQL
+boundary, not real provider consent, browser cookies, or production factor delivery.
+
+[The entrypoint](src/oauth-lifecycle.ts) composes the same
+[application-owned mappings](../shared/oauth/storage.ts) as the live GitHub/Strava
+examples. [Lifecycle storage](src/oauth-lifecycle-storage.ts) adds registration
+and account-management mappings. Both dialects use the same tables; PostgreSQL
+runs through PGlite with native `bigint` decoding. Only these two dialects are shown.
+
+Keep the data directory to replay against persisted state. Each run adds a new
+registered demo identity. Reset only the chosen disposable `AUTH_DATA_DIR` to start
+over; these commands use separate directories from the browser account app.
