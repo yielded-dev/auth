@@ -1,5 +1,21 @@
 # @yielded/auth-persistence
 
+## 0.1.0-beta.24
+
+### Minor Changes
+
+- [#137](https://github.com/yielded-dev/auth/pull/137) [`ade1bda`](https://github.com/yielded-dev/auth/commit/ade1bdaec762f291aad1fc5aac0e68684a940ddc) Thanks [@danieljvdm](https://github.com/danieljvdm)! - Add a stable OAuth callback proxy for registered local and preview environments, with single-use handoffs and independent local sessions. Provide encrypted proxy storage with direct SQL and Drizzle adapters for SQLite, D1, and PostgreSQL.
+
+### Patch Changes
+
+- [#141](https://github.com/yielded-dev/auth/pull/141) [`5548472`](https://github.com/yielded-dev/auth/commit/5548472bf692196cababcd4fedcd559c2f0ef145) Thanks [@danieljvdm](https://github.com/danieljvdm)! - Reduce SQL session verification to one read for compatible stateful mappings and state-assisted validity, preserving immediate invalidation. Retain safe fallbacks for custom codecs and physical column differences, and preserve caller transactions after verification errors.
+
+- [#142](https://github.com/yielded-dev/auth/pull/142) [`d980ff1`](https://github.com/yielded-dev/auth/commit/d980ff1e5f227fe3668052eb4f9852fd4e80ea73) Thanks [@danieljvdm](https://github.com/danieljvdm)! - Persist upstream OAuth sign-in, registration, linked accounts, and retained grants through explicit Effect SQL mappings on PostgreSQL and SQLite. Share OAuth operations and storage contracts with the Drizzle adapters.
+
+- [#138](https://github.com/yielded-dev/auth/pull/138) [`009ae06`](https://github.com/yielded-dev/auth/commit/009ae060b1c5807e1948bcf399137f3081dd7388) Thanks [@danieljvdm](https://github.com/danieljvdm)! - Remove durable password attempts and fresh password sign-in flow writes while retaining commit-time authority checks. BEHAVIOR CHANGE: replace custom password admission/settlement/cleanup with `findCredential` and `rehashIfCurrent`, remove attempt mappings and `attemptLifetimeMillis`, return `{ revision, requirement }` from `AuthenticationAuthority.capture`, and honor fresh session issuance in custom stores; obsolete password attempt tables can be dropped without resetting credentials or sessions.
+- Updated dependencies [[`d980ff1`](https://github.com/yielded-dev/auth/commit/d980ff1e5f227fe3668052eb4f9852fd4e80ea73), [`009ae06`](https://github.com/yielded-dev/auth/commit/009ae060b1c5807e1948bcf399137f3081dd7388), [`33a3f3d`](https://github.com/yielded-dev/auth/commit/33a3f3d7c0a33c9b55bfc080ea5aad29c2d2f3f0), [`ade1bda`](https://github.com/yielded-dev/auth/commit/ade1bdaec762f291aad1fc5aac0e68684a940ddc), [`33a3f3d`](https://github.com/yielded-dev/auth/commit/33a3f3d7c0a33c9b55bfc080ea5aad29c2d2f3f0)]:
+  - @yielded/auth@0.1.0-beta.24
+
 ## 0.1.0-beta.23
 
 ### Patch Changes

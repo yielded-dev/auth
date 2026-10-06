@@ -1,5 +1,12 @@
 # @yielded/oauth
 
+## 0.1.0-beta.24
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @yielded/jose@0.1.0-beta.24
+
 ## 0.1.0-beta.23
 
 ### Patch Changes
