@@ -1,4 +1,4 @@
-import { Context, DateTime, Effect, Layer, Redacted, Result, Schema } from "effect";
+import { Context, DateTime, Effect, Layer, Option, Redacted, Result, Schema } from "effect";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 
 import { httpsOrigin as Origin } from "../../internal/origin";
@@ -502,10 +502,18 @@ export const routes = Layer.unwrap(
 
     const handler = Effect.gen(function* () {
       const request = yield* HttpServerRequest.HttpServerRequest;
+      let web = yield* HttpServerRequest.toWeb(request);
 
-      return HttpServerResponse.fromWeb(
-        yield* server.handle(yield* HttpServerRequest.toWeb(request)),
-      );
+      // Bun retains its native HTTP source behind TLS termination. Reconstruct
+      // the trusted edge's URL without bypassing the server's exact-origin check.
+      if (request.headers["x-forwarded-proto"] === "https") {
+        const url = HttpServerRequest.toURL(request);
+
+        if (Option.isNone(url)) return HttpServerResponse.empty({ status: 400, headers: noStore });
+        web = new Request(url.value, web);
+      }
+
+      return HttpServerResponse.fromWeb(yield* server.handle(web));
     });
 
     return Layer.mergeAll(

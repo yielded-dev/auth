@@ -58,6 +58,8 @@ Use a TLS reverse proxy or tunnel for the stable host and preview app, forwardin
 to Bun on `127.0.0.1` (ports 4000 and 3001 by default). Preserve the public `Host`
 and set `X-Forwarded-Proto: https` at this trusted boundary. The proxy checks the
 exact external request origin; forwarding the upstream loopback Host fails.
+Replace client-supplied forwarding headers and keep the upstream listener private;
+`OAuthProxy.routes` reconstructs the public HTTPS URL on Bun before validation.
 Disable callback URL logging at the reverse proxy too. Only the registered local
 completion permits HTTP; `PROXY_URL` and both public host origins require HTTPS.
 

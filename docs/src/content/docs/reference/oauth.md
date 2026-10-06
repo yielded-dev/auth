@@ -432,6 +432,12 @@ exactly, including the port and path; no wildcard, query, or fragment is accepte
 HTTP is allowed only for loopback completions. The local HTTP app must explicitly
 set `cookie: { secure: false }`; HTTPS previews keep Secure cookies.
 
+When TLS terminates upstream, the trusted reverse proxy must preserve the public
+`Host` and replace client-supplied `X-Forwarded-Proto` with `https`. `OAuthProxy.routes`
+reconstructs that public URL before checking the configured origin, including on
+Bun. Restrict access to the upstream listener to that proxy. Custom hosts calling
+`Server.handle` directly must supply the public HTTPS request URL themselves.
+
 | Default route                          | Behavior                                                                                                                         |
 | -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
 | `POST /oauth-proxy/prepare`            | Authenticates the environment and captures its registered completion and private verifier digest.                                |
