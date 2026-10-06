@@ -154,6 +154,13 @@ export const make = <
         )
       : undefined;
 
+    const seedSubject = hasSeed
+      ? yield* Effect.try({
+          try: () => actions.getSession.subject?.fromSuccess(seed),
+          catch: () => OperationHttpError.make({ reason: "response" }),
+        })
+      : undefined;
+
     const memoMap = Atom.isAtom(factory.memoMap) ? parent.get(factory.memoMap) : factory.memoMap;
 
     const newRegistry = () =>
@@ -208,7 +215,13 @@ export const make = <
           return;
         }
         if (current.generation === event.state.generation) return;
-        binding.seedAvailable = false;
+        // Initial verification may acquire the already displayed account before
+        // its query publishes the result. Explicit replacement still retires it.
+        binding.seedAvailable =
+          binding.seedAvailable &&
+          current.generation === 0 &&
+          event.action === "getSession" &&
+          event.state.subject === seedSubject;
         // Retire public views and settle pending dispatch observers before disposal.
         for (const listener of [...listeners]) listener(event);
         current.registry.dispose();
