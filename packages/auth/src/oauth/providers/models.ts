@@ -6,6 +6,7 @@ import {
   type OAuthVerifiedExternalIdentity,
 } from "../signInModels";
 import type { TokenCompatibility, tokenCompatibility } from "./compatibility";
+import type { DiscoveryProfile, discoveryProfile } from "./discovery";
 
 export class OpenIdConnectConfigurationError extends Schema.TaggedError<OpenIdConnectConfigurationError>()(
   "OpenIdConnectConfigurationError",
@@ -52,6 +53,8 @@ interface ProviderGeneration {
 }
 
 export interface OpenIdConnectOidcProvider extends ProviderGeneration {
+  /** @internal Provider-specific discovery metadata, retained by the configuration codec. */
+  readonly [discoveryProfile]?: typeof DiscoveryProfile.Type;
   readonly protocol: "oidc";
   readonly idTokenSignedResponseAlg: "RS256";
   readonly maxAgeSeconds?: number;

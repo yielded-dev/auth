@@ -1,6 +1,7 @@
 import { Crypto, DateTime, Effect, Redacted, Schema } from "effect";
 import { Base64Url } from "effect/encoding";
 
+import { reportAuthFailure } from "../internal/diagnostics";
 import type { AuthCredentialCommand } from "../operations/credentials";
 import { makeSessionSigningCodec, SessionSigningKeys } from "./crypto";
 import { SessionInvalid, SessionUnavailable } from "./errors";
@@ -10,7 +11,8 @@ import { type SessionPolicy, validateSessionTimeline } from "./policy";
 export type SessionCacheCommand = AuthCredentialCommand & { readonly slot: "session-cache" };
 
 /** Replaceable request cache. Entries bind a public session snapshot to its exact credential.
- * Cache failures fall back to authoritative verification; management never uses this service. */
+ * Cache failures fall back to authoritative verification; management never uses this service.
+ * Implementations report unexpected backend failures before normalizing them to SessionUnavailable. */
 export interface SessionCookieCache<Session> {
   readonly read: (
     credential: Redacted.Redacted<string>,
@@ -65,6 +67,7 @@ export const makeSessionCookieCache = Effect.fnUntraced(function* <
 
   const digest = (credential: Redacted.Redacted<string>) =>
     crypto.digest("SHA-256", encoder.encode(Redacted.value(credential))).pipe(
+      Effect.tapCause((cause) => reportAuthFailure("session-crypto", cause)),
       Effect.map(Base64Url.encode),
       Effect.mapError(() => SessionUnavailable.make({})),
     );

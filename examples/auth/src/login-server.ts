@@ -19,6 +19,7 @@ export const makeAppAuth = (email: Email.EmailCodeOptions) =>
       }),
       social: OAuth.makeRegistration({
         namespace: "example/social-login",
+        profiles: { github: GitHub.GitHubUserProfile, google: OpenIdConnect.OidcUserProfile },
         registration: Registration,
         policy: {
           generation: 1,

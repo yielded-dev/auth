@@ -280,6 +280,8 @@ flow envelopes are unchanged.
 
 ### Runnable examples
 
+For sign-in without retained provider access, run the [Slack example](../guide/slack#run-the-example).
+
 Run `vp run @yielded/example-auth#example:github` with `GITHUB_CLIENT_ID`,
 `GITHUB_CLIENT_SECRET`, `GITHUB_USER_ID`, `SESSION_KEY`, `OAUTH_TRANSACTION_KEY`,
 and `OAUTH_TOKEN_KEY`. Open `/login`; the Atom client starts sign-in through the shared
@@ -402,11 +404,96 @@ It returns `Effect<Response, OperationHttpError, R>`; cookie delivery remains ma
 Custom completion actions need `oauthCallback: true` and the single-use request-binding
 mapping. See the [registration example](https://github.com/yielded-dev/auth/blob/main/examples/auth/src/login-server.ts).
 
+## Callback proxy
+
+Use `OAuthProxy` for sign-in or registration from explicitly registered local and
+preview environments. The [setup guide](../guide/oauth#local-and-preview-environments)
+explains how the callback server fits into an app.
+Account linking, retained grants, and connected-account workflows are unsupported;
+omit `access` from the OAuth strategy.
+
+### Callback server
+
+`OAuthProxy.layer(options)` installs `OAuthProxy.Server`:
+
+| Option         | Value                                                                    |
+| -------------- | ------------------------------------------------------------------------ |
+| `origin`       | Public HTTPS origin, such as `https://auth.example.com`                  |
+| `path`         | Route prefix; defaults to `/oauth-proxy`                                 |
+| `providers`    | Native provider declarations, such as `{ github: GitHub.provider(...) }` |
+| `environments` | Registrations decoded with `OAuthProxy.Environment`                      |
+
+Each environment is `{ id, secret, callbacks: [{ provider, callbackId, redirectUri }] }`.
+Give it a distinct redacted secret containing 32 random bytes encoded as unpadded
+base64url. Completion URLs must match exactly, with no wildcard, query, or fragment.
+Only loopback completions may use HTTP; set `cookie: { secure: false }` in those apps.
+
+Mount `OAuthProxy.routes` and register `{origin}{path}/{provider}/callback` with the
+provider. Supply `OAuthProxy.protectorLayer(keys)` with a separate transaction keyring
+and `OAuthProxyPersistence.layer` from `@yielded/auth-persistence` with a SQLite/D1 or
+PostgreSQL Effect SQL client. Apply its `migration` once. Server replicas share storage
+and protector keys. See the [complete composition](https://github.com/yielded-dev/auth/blob/main/examples/auth/src/oauth-proxy-application.ts)
+for the Layers, including [HTTP and crypto services](#supply-the-services).
+
+For Drizzle, import `OAuthProxyPersistence` from your SQLite/D1 or PostgreSQL
+driver module:
+
+```ts
+import { OAuthProxyPersistence } from "@yielded/auth-persistence-drizzle/SqliteBun";
+
+export const proxyAttempts = OAuthProxyPersistence.table("oauth_proxy_attempts");
+export const ProxyStorage = OAuthProxyPersistence.layer(proxyAttempts);
+```
+
+Export the table to Drizzle Kit and apply the generated migration before providing
+`ProxyStorage` to the server. The Layer requires the driver's Effect SQL client.
+For an existing table, pass column-key overrides as the second argument to `layer`.
+Mapped columns use plain text and integer milliseconds; Drizzle value codecs and
+write hooks do not run for these columns.
+
+### App provider
+
+Pass these options to `OAuthProxy.provider` in each app:
+
+| Option        | Value                                                                        |
+| ------------- | ---------------------------------------------------------------------------- |
+| `url`         | Callback server's HTTPS base, such as `https://auth.example.com/oauth-proxy` |
+| `environment` | Registered environment ID                                                    |
+| `secret`      | That environment's redacted secret; keep it in server configuration          |
+| `issuer`      | Expected provider issuer, such as `https://github.com/login/oauth`           |
+
+The app keeps its normal [auth services](#supply-the-services). Supply an `HttpClient`
+without retries, redirects, or cookie middleware.
+
+### Hosting and recovery
+
+When TLS terminates upstream, the trusted reverse proxy must preserve the public
+`Host` and replace client-supplied `X-Forwarded-Proto` with `https`. `OAuthProxy.routes`
+uses these to check the public origin. Restrict access to the upstream listener
+to that proxy. Custom hosts calling
+`Server.handle` directly must supply the public HTTPS request URL themselves.
+
+Exclude authorization and callback query strings from logs and traces, including
+at reverse proxies. The app checks the initiating browser when sign-in completes;
+the callback server sets no browser cookie, and leaked state can consume an attempt.
+
+| Behavior                        | Limit or action                                                                               |
+| ------------------------------- | --------------------------------------------------------------------------------------------- |
+| Sign-in attempt                 | Expires after five minutes                                                                    |
+| Return to the app               | Single-use handoff; expires after sixty seconds or the attempt deadline, whichever is earlier |
+| Timeout or lost response        | Start a new sign-in; exchange and redemption are not retried                                  |
+| Removed environment or callback | Outstanding flows cannot complete with the new configuration                                  |
+| Storage cleanup                 | Delete expired attempts only; retain encryption keys while attempts reference them            |
+
+Persistence operations require standalone commits. Applications own cleanup and
+ingress rate limits.
+
 ## Providers
 
 | Integration             | Configure                                                                                                         |
 | ----------------------- | ----------------------------------------------------------------------------------------------------------------- |
 | GitHub sign-in          | [`GitHub.provider`](../guide/github)                                                                              |
+| Slack sign-in           | [`Slack.provider`](../guide/slack) with client credentials; no retained API access                                |
 | GitHub with API access  | `GitHub.accessProfile({ clientId, scopes })` and `GitHub.provider({ clientId, clientSecret, access: [profile] })` |
 | Strava sign-in / access | `Strava.provider({ clientId, clientSecret, access: profile })`; omit `access` for sign-in only                    |
 | OIDC                    | [`OpenIdConnect.provider`](../guide/google) with issuer and credentials                                           |
@@ -468,12 +555,39 @@ metadata: display fields plus bounded `providerData`. It does not authorize acco
 linking or local roles. Normalized profile display URLs accept only HTTP(S).
 Expose only needed fields in claims; still treat profile URLs as untrusted input.
 
-| Consumer                      | Profile access                                               |
-| ----------------------------- | ------------------------------------------------------------ |
-| Returning shared-auth sign-in | `SessionClaims.resolve({ subjectId, credential, identity })` |
-| Shared-auth registration      | Server-side `OAuthRegistrationIntent.profile`                |
+| Consumer                      | Profile access                                                         |
+| ----------------------------- | ---------------------------------------------------------------------- |
+| Returning shared-auth sign-in | `SessionClaims.resolve({ subjectId, credential, provider, identity })` |
+| Shared-auth registration      | Server-side `OAuthRegistrationIntent.profile`                          |
 
-`GitHubUserProfile` and `OidcUserProfile` schemas decode the adapters' provider data.
+Declare provider schemas with `OAuth.make({ profiles })` or
+`OAuth.makeRegistration({ profiles, registration, registrationPolicy })`.
+Keys match the provider keys in `Http.make` or your protocol Layer:
+
+```ts
+const social = OAuth.make({
+  profiles: {
+    github: GitHub.GitHubUserProfile,
+    google: OpenIdConnect.OidcUserProfile,
+    slack: Slack.SlackUserProfile,
+    strava: Strava.Athlete,
+  },
+});
+```
+
+The library validates `providerData` against the matching schema before invoking
+`SessionClaims.resolve`. Its input is a discriminated union: narrow on `provider`
+to read the corresponding `identity.profile?.providerData`. For example,
+`provider === "github"` gives typed GitHub fields, including `email` as
+`string | null | undefined`. With one declared provider, no narrowing is needed.
+The same option works with retained access and `OAuth.makeModule`.
+
+A supplied map rejects undeclared providers or malformed data before session
+claims are resolved. Omitting `profiles` preserves the generic JSON object;
+consumers can decode it explicitly using the exported profile schemas. Custom
+providers use the same map with their own JSON-object schemas requiring no services.
+Schemas validate the adapter's projection; they do not add claims, scopes, or requests.
+
 Missing fields remain absent; GitHub nullable values remain null. GitHub's `/user`
 email is not asserted verified. Adapters do not fetch additional email or UserInfo
 endpoints or retain unknown fields. Connected-grant refresh need not update profiles.
@@ -481,6 +595,8 @@ endpoints or retain unknown fields. Connected-grant refresh need not update prof
 The OIDC adapter also includes Google's `hd` hosted-domain claim in `providerData`
 for verified Google ID tokens. Applications can use it to restrict access to a
 Google Workspace or Cloud organization. Other issuers' private `hd` claims remain ignored.
+Verified Slack ID tokens preserve `https://slack.com/team_id` and
+`https://slack.com/user_id`; see [Slack workspace policy](../guide/slack#identity-and-workspace-policy).
 
 Detailed signatures and invariants live beside the
 [OAuth source](https://github.com/yielded-dev/auth/tree/main/packages/auth/src/oauth).

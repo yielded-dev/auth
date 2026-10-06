@@ -4,6 +4,7 @@ import * as KeyValueStore from "effect/persistence/KeyValueStore";
 
 import { coordinateCommit, hasCommitScope, type CommitJournal } from "../hooks/commit";
 import { LifecycleHooks } from "../hooks/LifecycleHooks";
+import { reportPersistenceFailure } from "../internal/diagnostics";
 import { AtomicKeyValueStore } from "../key-value/AtomicKeyValueStore";
 import { SubjectId } from "../Schema";
 import { SessionConflict, SessionInvalid, SessionUnavailable, StaleAuthentication } from "./errors";
@@ -46,6 +47,13 @@ const RecordJson = Schema.fromJsonString(Record);
 const decode = Schema.decodeEffect(RecordJson);
 const encode = Schema.encodeEffect(RecordJson);
 
+const normalizeStorageFailure = <A, E, R>(
+  effect: Effect.Effect<A, E, R>,
+): Effect.Effect<A, SessionUnavailable, R> =>
+  reportPersistenceFailure(effect, () => false).pipe(
+    Effect.mapError(() => SessionUnavailable.make({})),
+  );
+
 /** Application-owned identity and session state must share this subject authority.
  * SQL plus a KV mirror does not supply its atomic invalidation guarantee. */
 export interface KeyValueSessionAuthority {
@@ -77,18 +85,16 @@ export const makeKeyValueValidity = Effect.fnUntraced(function* (moduleId: strin
 
   const readRecord = Effect.fnUntraced(function* (subjectId: SubjectId) {
     // One KV get contains both the subject marker and owner-scoped tombstones.
-    const raw = yield* store
-      .get(key(subjectId))
-      .pipe(Effect.mapError(() => SessionUnavailable.make({})));
+    const raw = yield* store.get(key(subjectId));
 
     if (raw === undefined) return { raw, subject: undefined };
     if (encoder.encode(raw).byteLength > 1_048_576) return yield* SessionUnavailable.make({});
-    const record = yield* decode(raw).pipe(Effect.mapError(() => SessionUnavailable.make({})));
+    const record = yield* decode(raw);
 
     if (record.subject.subjectId !== subjectId) return yield* SessionUnavailable.make({});
 
     return { raw, subject: record.subject };
-  });
+  }, normalizeStorageFailure);
 
   const transact: KeyValueSessionAuthority["transact"] = Effect.fnUntraced(function* <A, E, R>(
     subjectId: SubjectId,
@@ -107,9 +113,7 @@ export const makeKeyValueValidity = Effect.fnUntraced(function* (moduleId: strin
         if (next.subject.subjectId !== subjectId) return yield* SessionUnavailable.make({});
         const now = DateTime.toEpochMillis(yield* DateTime.now);
 
-        const bytes = yield* crypto
-          .randomBytes(32)
-          .pipe(Effect.mapError(() => SessionUnavailable.make({})));
+        const bytes = yield* crypto.randomBytes(32).pipe(normalizeStorageFailure);
 
         const raw = yield* encode({
           version: Base64Url.encode(bytes),
@@ -119,7 +123,7 @@ export const makeKeyValueValidity = Effect.fnUntraced(function* (moduleId: strin
               (entry) => DateTime.toEpochMillis(entry.expiresAt) > now,
             ),
           },
-        }).pipe(Effect.mapError(() => SessionUnavailable.make({})));
+        }).pipe(normalizeStorageFailure);
 
         if (encoder.encode(raw).byteLength > 1_048_576) return yield* SessionUnavailable.make({});
 
@@ -132,7 +136,7 @@ export const makeKeyValueValidity = Effect.fnUntraced(function* (moduleId: strin
               ? {}
               : { expiresAtMillis: DateTime.toEpochMillis(next.expiresAt) },
           )
-          .pipe(Effect.mapError(() => SessionUnavailable.make({})));
+          .pipe(normalizeStorageFailure);
 
         if (!committed) return yield* SessionConflict.make({});
 
@@ -212,9 +216,7 @@ export const makeKeyValueValidity = Effect.fnUntraced(function* (moduleId: strin
           )
             return yield* StaleAuthentication.make({});
 
-          const revision = yield* crypto
-            .randomBytes(32)
-            .pipe(Effect.mapError(() => SessionUnavailable.make({})));
+          const revision = yield* crypto.randomBytes(32).pipe(normalizeStorageFailure);
 
           return {
             subject: {

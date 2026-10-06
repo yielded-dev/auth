@@ -206,3 +206,4 @@ export { freezeOAuth, snapshotOAuth, snapshotOAuthSync } from "./oauth/signInSna
 
 export { selectCallback } from "./oauth/callback";
 export type { ProviderDefinition } from "./oauth/providerDefinition";
+export type { OAuthClaimsIdentity, OAuthProviderProfiles } from "./oauth/profiles";

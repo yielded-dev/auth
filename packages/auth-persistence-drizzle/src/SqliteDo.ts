@@ -1,3 +1,5 @@
+export { OAuthProxyPersistence } from "./internal/drizzle-sqlite-oauth-proxy";
+
 import { SqliteClient } from "@effect/sql-sqlite-do/SqliteClient";
 import { NativeDatabase, PersistenceConfigurationError } from "@yielded/auth-persistence/Adapter";
 import type { AnyRelations } from "drizzle-orm";

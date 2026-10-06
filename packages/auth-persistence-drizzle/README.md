@@ -20,6 +20,9 @@ Drizzle Kit generates migrations from managed or application-declared tables.
 Provide `AuthPersistence.migrationsLayer({ migrationsFolder })` explicitly to
 apply those files before starting auth.
 
+SQLite/D1 and PostgreSQL driver modules also expose `OAuthProxyPersistence` for
+[callback proxy storage](../../docs/src/content/docs/reference/oauth.md#callback-server).
+
 Durable Object SQLite uses Effect SQL’s asynchronous transaction owner. Use
 `SqliteDo.databaseLayer` or `SqliteDo.makeDatabase(existingDrizzle)` so cryptography
 can suspend inside the owned transaction; arbitrary raw Drizzle outer

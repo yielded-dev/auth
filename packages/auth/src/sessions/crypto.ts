@@ -2,6 +2,7 @@ import { Hmac, type Key } from "@yielded/crypto/Hmac";
 import { Context, Crypto, Effect, Redacted, Result, Schema } from "effect";
 import { Base64Url } from "effect/encoding";
 
+import { reportAuthFailure } from "../internal/diagnostics";
 import { TokenDigest } from "../Schema";
 import { SessionConfigurationError, SessionInvalid, SessionUnavailable } from "./errors";
 
@@ -127,9 +128,10 @@ export const makeSessionSigningCodec = Effect.fn("makeSessionSigningCodec")(func
 
       const message = `eas1.${activeKeyId}.${Base64Url.encode(json)}`;
 
-      const signature = yield* activeKey
-        .sign(textEncoder.encode(message))
-        .pipe(Effect.mapError(() => SessionUnavailable.make({})));
+      const signature = yield* activeKey.sign(textEncoder.encode(message)).pipe(
+        Effect.tapCause((cause) => reportAuthFailure("session-crypto", cause)),
+        Effect.mapError(() => SessionUnavailable.make({})),
+      );
 
       const token = `${message}.${Base64Url.encode(signature)}`;
 
@@ -155,7 +157,10 @@ export const makeSessionSigningCodec = Effect.fn("makeSessionSigningCodec")(func
 
       const valid = yield* key
         .verify(textEncoder.encode(`${version}.${keyId}.${payload}`), signature)
-        .pipe(Effect.mapError(() => SessionUnavailable.make({})));
+        .pipe(
+          Effect.tapCause((cause) => reportAuthFailure("session-crypto", cause)),
+          Effect.mapError(() => SessionUnavailable.make({})),
+        );
 
       if (!valid) return yield* SessionInvalid.make({});
       const json = Result.getOrUndefined(Base64Url.decodeString(payload));

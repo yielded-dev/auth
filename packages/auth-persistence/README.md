@@ -13,6 +13,10 @@ remain in `@yielded/auth`.
 storage for [MCP authorization](../../docs/src/content/docs/guide/oauth.mdx#authorize-mcp-clients).
 Its conditional writes and monotonic revocation require standalone commits.
 
+`OAuthProxyPersistence` stores encrypted attempts for the
+[OAuth callback proxy](../../docs/src/content/docs/reference/oauth.md#callback-proxy)
+on SQLite/D1 or PostgreSQL. Its operations require standalone commits.
+
 Applications own subject provisioning, policy, claims, delivery, and their database
 connection and migration runner.
 

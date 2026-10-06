@@ -1,4 +1,6 @@
 import { NativeDatabase } from "@yielded/auth-persistence/Adapter";
+export { OAuthProxyPersistence } from "./internal/drizzle-sqlite-oauth-proxy";
+
 import type { AnyRelations } from "drizzle-orm";
 import { type EffectSQLiteNodeDatabase, makeWithDefaults } from "drizzle-orm/effect-sqlite-node";
 import type { AnySQLiteTable } from "drizzle-orm/sqlite-core";

@@ -27,6 +27,7 @@ export class GitHubAuth extends Auth.Service<GitHubAuth>()("example/GitHubAuth",
   strategies: {
     github: OAuth.makeRegistration({
       namespace: "example/github-login",
+      profiles: { github: GitHub.GitHubUserProfile },
       policy: entryPolicy,
       registration: Registration,
       registrationPolicy: {
