@@ -164,8 +164,10 @@ export class OAuthConnectedPersistence extends Context.Service<
       readonly grantId: typeof M.OAuthGrantId.Type;
       readonly profileKey: typeof M.OAuthPermissionProfileKey.Type;
     }) => Effect.Effect<typeof M.OAuthConnectedAccessInspection.Type, OAuthUnavailable>;
-    /** One fixed claim only when due, exact grant/token/cohort/use authority. Busy
-     * losers, no expired takeover/reset/renewal. Claimed work blocks cohort clearing. */
+    /** One fixed claim only when due, exact grant/token/cohort/use authority. Its
+     * deadline is after claimedAtMillis and no later than claimedAtMillis +
+     * lifetimeMillis, refreshUseUntilMillis or authorization expiry. Busy losers,
+     * no expired takeover/reset/renewal. Claimed work blocks cohort clearing. */
     readonly claimRefresh: <A>(
       input: {
         readonly grant: M.OAuthConnectedStoredGrant;

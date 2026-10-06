@@ -142,7 +142,8 @@ export const makeOAuthKernel = (
     ]),
   );
 
-  // Preserve constructor-time snapshots before deferred Layer acquisition.
+  // Keep shared operation Layers local to this adapter compiler, even inside another
+  // coordinator. Preserve constructor-time snapshots before deferred acquisition.
   const makeTargetOAuthSignInServices: OAuthTarget["Service"]["makeTargetOAuthSignInServices"] = (
     mapping,
     configuration,
@@ -151,7 +152,7 @@ export const makeOAuthKernel = (
 
     return Effect.flatMap(OAuthTarget, (service) =>
       service.makeTargetOAuthSignInServices(captured, configuration),
-    ).pipe(Effect.provide(targetLive));
+    ).pipe(Effect.provide(targetLive, { local: true }));
   };
 
   const makeTargetOAuthRegistrationIntentServices: OAuthTarget["Service"]["makeTargetOAuthRegistrationIntentServices"] =
@@ -160,7 +161,7 @@ export const makeOAuthKernel = (
 
       return Effect.flatMap(OAuthTarget, (service) =>
         service.makeTargetOAuthRegistrationIntentServices(captured, configuration),
-      ).pipe(Effect.provide(targetLive));
+      ).pipe(Effect.provide(targetLive, { local: true }));
     };
 
   const makeTargetOAuthRegistrationServices: OAuthTarget["Service"]["makeTargetOAuthRegistrationServices"] =
@@ -169,7 +170,7 @@ export const makeOAuthKernel = (
 
       return Effect.flatMap(OAuthTarget, (service) =>
         service.makeTargetOAuthRegistrationServices(captured, configuration),
-      ).pipe(Effect.provide(targetLive));
+      ).pipe(Effect.provide(targetLive, { local: true }));
     };
 
   const makeTargetOAuthAccountsServices: OAuthTarget["Service"]["makeTargetOAuthAccountsServices"] =
@@ -178,7 +179,7 @@ export const makeOAuthKernel = (
 
       return Effect.flatMap(OAuthTarget, (service) =>
         service.makeTargetOAuthAccountsServices(captured, configuration),
-      ).pipe(Effect.provide(targetLive));
+      ).pipe(Effect.provide(targetLive, { local: true }));
     };
 
   const coordinateTargetOAuthRegistration: OAuthTarget["Service"]["coordinateTargetOAuthRegistration"] =
@@ -187,7 +188,7 @@ export const makeOAuthKernel = (
 
       return Effect.flatMap(OAuthTarget, (service) =>
         service.coordinateTargetOAuthRegistration(database, captured, configuration, owner),
-      ).pipe(Effect.provide(targetLive));
+      ).pipe(Effect.provide(targetLive, { local: true }));
     };
 
   const coordinateTargetOAuthSignIn: OAuthTarget["Service"]["coordinateTargetOAuthSignIn"] = (
@@ -200,7 +201,7 @@ export const makeOAuthKernel = (
 
     return Effect.flatMap(OAuthTarget, (service) =>
       service.coordinateTargetOAuthSignIn(database, captured, configuration, owner),
-    ).pipe(Effect.provide(targetLive));
+    ).pipe(Effect.provide(targetLive, { local: true }));
   };
 
   const coordinateTargetOAuthRegistrationIntents: OAuthTarget["Service"]["coordinateTargetOAuthRegistrationIntents"] =
@@ -209,7 +210,7 @@ export const makeOAuthKernel = (
 
       return Effect.flatMap(OAuthTarget, (service) =>
         service.coordinateTargetOAuthRegistrationIntents(database, captured, configuration, owner),
-      ).pipe(Effect.provide(targetLive));
+      ).pipe(Effect.provide(targetLive, { local: true }));
     };
 
   const coordinateTargetOAuthAccounts: OAuthTarget["Service"]["coordinateTargetOAuthAccounts"] = (
@@ -222,7 +223,7 @@ export const makeOAuthKernel = (
 
     return Effect.flatMap(OAuthTarget, (service) =>
       service.coordinateTargetOAuthAccounts(database, captured, configuration, owner),
-    ).pipe(Effect.provide(targetLive));
+    ).pipe(Effect.provide(targetLive, { local: true }));
   };
 
   const makeTargetOAuthConnectedServices: OAuthConnectedTarget["Service"]["makeTargetOAuthConnectedServices"] =
@@ -231,7 +232,7 @@ export const makeOAuthKernel = (
 
       return Effect.flatMap(OAuthConnectedTarget, (service) =>
         service.makeTargetOAuthConnectedServices(captured, configuration),
-      ).pipe(Effect.provide(connectedTargetLive));
+      ).pipe(Effect.provide(connectedTargetLive, { local: true }));
     };
 
   const makeTargetOAuthConnectedRevocationServices: OAuthConnectedTarget["Service"]["makeTargetOAuthConnectedRevocationServices"] =
@@ -240,7 +241,7 @@ export const makeOAuthKernel = (
 
       return Effect.flatMap(OAuthConnectedTarget, (service) =>
         service.makeTargetOAuthConnectedRevocationServices(captured, configuration),
-      ).pipe(Effect.provide(connectedTargetLive));
+      ).pipe(Effect.provide(connectedTargetLive, { local: true }));
     };
 
   const coordinateTargetOAuthConnected: OAuthConnectedTarget["Service"]["coordinateTargetOAuthConnected"] =
@@ -249,7 +250,7 @@ export const makeOAuthKernel = (
 
       return Effect.flatMap(OAuthConnectedTarget, (service) =>
         service.coordinateTargetOAuthConnected(database, captured, configuration, owner),
-      ).pipe(Effect.provide(connectedTargetLive));
+      ).pipe(Effect.provide(connectedTargetLive, { local: true }));
     };
 
   const coordinateTargetOAuthConnectedRevocations: OAuthConnectedTarget["Service"]["coordinateTargetOAuthConnectedRevocations"] =
@@ -258,7 +259,7 @@ export const makeOAuthKernel = (
 
       return Effect.flatMap(OAuthConnectedTarget, (service) =>
         service.coordinateTargetOAuthConnectedRevocations(database, captured, configuration, owner),
-      ).pipe(Effect.provide(connectedTargetLive));
+      ).pipe(Effect.provide(connectedTargetLive, { local: true }));
     };
 
   const sqlClientOAuthStandaloneGuard = (service: SqlClient["transactionService"] | undefined) =>

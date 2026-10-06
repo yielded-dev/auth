@@ -87,11 +87,7 @@ const acquire = Effect.gen(function* () {
       reason: "OAuth persistence requires PostgreSQL or SQLite with interactive transactions",
     });
 
-  // Mapping expressions and projection aliases own their physical names. Retain
-  // the client's connection/transaction identity while bypassing naming transforms.
-  const database = yield* makeSqlDatabase(dialect).pipe(
-    Effect.provideService(SqlClient.SqlClient, client.withoutTransforms()),
-  );
+  const database = yield* makeSqlDatabase(dialect);
 
   const configuration: OAuthTargetConfiguration = {
     mode: "interactive",

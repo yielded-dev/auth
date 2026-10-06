@@ -121,8 +121,8 @@ interface QueryState {
 const selectionFor = (state: QueryState): Selection =>
   state.selection ?? (state.table instanceof Table ? state.table.columns : {});
 
+// Logical keys may exceed SQL identifier limits; only short internal aliases reach the driver.
 const selectionFields = (selection: Selection) => {
-  const used = new Set(Object.keys(selection));
   let index = 0;
 
   return Object.entries(selection).flatMap<{
@@ -132,16 +132,13 @@ const selectionFields = (selection: Selection) => {
     readonly alias: string;
   }>(([key, value]) =>
     value instanceof Table
-      ? Object.entries(value.columns).map(([name, column]) => {
-          let alias: string;
-
-          do alias = `auth_column_${index++}`;
-          while (used.has(alias));
-          used.add(alias);
-
-          return { key, name, column, alias };
-        })
-      : [{ key, name: undefined, column: value, alias: key }],
+      ? Object.entries(value.columns).map(([name, column]) => ({
+          key,
+          name,
+          column,
+          alias: `auth_column_${index++}`,
+        }))
+      : [{ key, name: undefined, column: value, alias: `auth_column_${index++}` }],
   );
 };
 
@@ -216,7 +213,9 @@ const compile = (state: QueryState, compiler: Compiler): string => {
 
 /** Captures one Effect SQL client. Its transaction service remains the physical owner. */
 export const makeSqlDatabase = Effect.fnUntraced(function* (dialect: Dialect) {
-  const client = yield* SqlClient;
+  // Mappings and projection aliases own their names. Retain the client's
+  // connection and transaction identity while bypassing naming transforms.
+  const client = (yield* SqlClient).withoutTransforms();
 
   const query = (state: QueryState): Query => {
     const execute = Effect.suspend(() => {
