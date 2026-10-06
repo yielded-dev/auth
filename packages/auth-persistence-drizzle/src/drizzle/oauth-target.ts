@@ -5,18 +5,6 @@ import { oauthKernel } from "./oauth-kernel";
 export const sqlClientOAuthStandaloneGuard: OAuthKernel["target"]["sqlClientOAuthStandaloneGuard"] =
   oauthKernel.target.sqlClientOAuthStandaloneGuard;
 
-export const makeOAuthExecution: OAuthKernel["target"]["makeOAuthExecution"] =
-  oauthKernel.target.makeOAuthExecution;
-
-export const makeOAuthSignIn: OAuthKernel["target"]["makeOAuthSignIn"] =
-  oauthKernel.target.makeOAuthSignIn;
-
-export const makeOAuthRegistrationIntents: OAuthKernel["target"]["makeOAuthRegistrationIntents"] =
-  oauthKernel.target.makeOAuthRegistrationIntents;
-
-export const makeOAuthRegistration: OAuthKernel["target"]["makeOAuthRegistration"] =
-  oauthKernel.target.makeOAuthRegistration;
-
 export const makeTargetOAuthSignInServices: OAuthKernel["target"]["makeTargetOAuthSignInServices"] =
   oauthKernel.target.makeTargetOAuthSignInServices;
 
@@ -25,9 +13,6 @@ export const makeTargetOAuthRegistrationIntentServices: OAuthKernel["target"]["m
 
 export const makeTargetOAuthRegistrationServices: OAuthKernel["target"]["makeTargetOAuthRegistrationServices"] =
   oauthKernel.target.makeTargetOAuthRegistrationServices;
-
-export const coordinateOAuthOwner: OAuthKernel["target"]["coordinateOAuthOwner"] =
-  oauthKernel.target.coordinateOAuthOwner;
 
 export const coordinateTargetOAuthRegistration: OAuthKernel["target"]["coordinateTargetOAuthRegistration"] =
   oauthKernel.target.coordinateTargetOAuthRegistration;
@@ -40,9 +25,6 @@ export const coordinateTargetOAuthRegistrationIntents: OAuthKernel["target"]["co
 
 export const coordinateTargetOAuthAccounts: OAuthKernel["target"]["coordinateTargetOAuthAccounts"] =
   oauthKernel.target.coordinateTargetOAuthAccounts;
-
-export const makeOAuthAccounts: OAuthKernel["target"]["makeOAuthAccounts"] =
-  oauthKernel.target.makeOAuthAccounts;
 
 export const makeTargetOAuthAccountsServices: OAuthKernel["target"]["makeTargetOAuthAccountsServices"] =
   oauthKernel.target.makeTargetOAuthAccountsServices;

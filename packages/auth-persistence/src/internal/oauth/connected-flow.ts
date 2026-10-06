@@ -4,28 +4,26 @@ import {
   type OAuthConnectedPersistence,
 } from "@yielded/auth/OAuth";
 import * as M from "@yielded/auth/OAuth";
-import { Effect } from "effect";
+import { Effect, Context, Layer } from "effect";
 
-import type { QueryOperations } from "../query-operations";
+import { OAuthConnectedState } from "./connected-state";
 import type * as STypes from "./connected-state";
-import type { makeOAuthConnectedStateKernel } from "./connected-state";
 import { CurrentOAuthTransaction } from "./owner";
-import type { makeOAuthOwnerKernel } from "./owner";
-import type { makeOAuthRegistrationKernel } from "./registration";
+import { OAuthQueryCompiler } from "./query-compiler";
+import { OAuthRegistration } from "./registration";
 import { digest, invariant, oauthIdentityKey, sameIdentity, sameRevision } from "./state";
 
 export type Input<K extends keyof OAuthConnectedPersistence["Service"]> = Parameters<
   OAuthConnectedPersistence["Service"][K]
 >[0];
 
-export const makeOAuthConnectedFlowKernel = (
-  operations: QueryOperations,
-  S: ReturnType<typeof makeOAuthConnectedStateKernel>,
-  owner: Pick<ReturnType<typeof makeOAuthOwnerKernel>, "both" | "copiedRow" | "equal">,
-  registration: Pick<ReturnType<typeof makeOAuthRegistrationKernel>, "acquireTuple" | "readTuple">,
-) => {
+const make = Effect.gen(function* () {
+  const operations = yield* OAuthQueryCompiler;
+  const S = yield* OAuthConnectedState;
+  const registration = yield* OAuthRegistration;
+
   const { sql } = operations;
-  const { both, copiedRow, equal } = owner;
+  const { both, copiedRow, equal } = operations;
   const { acquireTuple, readTuple } = registration;
 
   const pending = Effect.fn("oauthConnected.pending")(function* (
@@ -554,4 +552,11 @@ export const makeOAuthConnectedFlowKernel = (
     acquireTuple,
     readTuple,
   };
-};
+});
+
+export class OAuthConnectedFlow extends Context.Service<
+  OAuthConnectedFlow,
+  Effect.Success<typeof make>
+>()("effect-auth/persistence/OAuthConnectedFlow") {
+  static readonly layer = Layer.effect(OAuthConnectedFlow, make);
+}

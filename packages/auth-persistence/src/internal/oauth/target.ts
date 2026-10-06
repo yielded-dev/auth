@@ -25,22 +25,20 @@ import {
   type OAuthUnavailable,
 } from "@yielded/auth/OAuth";
 import type { SecurityRevision } from "@yielded/auth/Sessions";
-import { type Crypto, type Context, Effect, Layer } from "effect";
+import { type Crypto, Context, Effect, Layer } from "effect";
 import type { Statement } from "effect/sql/Statement";
 
 import type { PersistenceMappingError } from "../models/common";
 import type { OAuthRegistrationAuthority } from "../models/oauth-model";
-import type { QueryOperations } from "../query-operations";
 import type {
   TransactionTargetConfiguration,
   TransactionCoordinatorError,
   TransactionExecution,
-  makeTransactionExecutionKernel,
 } from "../transaction-execution-kernel";
 /* oxlint-disable no-explicit-any -- compiler table shapes are erased; domain codecs and error channels remain typed. */
 import type { NativeDatabase } from "../transaction-kernel";
-import type { makeOAuthAccountsKernel } from "./accounts";
-import type { makeOAuthFlowKernel } from "./flow";
+import { OAuthAccounts } from "./accounts";
+import { OAuthFlow } from "./flow";
 import {
   accountsInputs,
   capturedOAuthService,
@@ -48,9 +46,11 @@ import {
   registrationIntentInputs,
   signInInputs,
 } from "./input";
-import { CurrentOAuthTransaction } from "./owner";
-import type { OAuthNativeDatabase, makeOAuthOwnerKernel } from "./owner";
-import type { RegistrationCallbacks, makeOAuthRegistrationKernel } from "./registration";
+import { OAuthTransactionExecution, CurrentOAuthTransaction } from "./owner";
+import type { OAuthNativeDatabase } from "./owner";
+import { OAuthQueryCompiler } from "./query-compiler";
+import { OAuthRegistration } from "./registration";
+import type { RegistrationCallbacks } from "./registration";
 import { captureOAuthMapping, invariant, nonce, unavailable } from "./state";
 
 export type OAuthTargetConfiguration = TransactionTargetConfiguration<OAuthUnavailable>;
@@ -59,46 +59,13 @@ export type OAuthCoordinatorError<E> = TransactionCoordinatorError<E, OAuthUnava
 
 export type OAuthExecution = TransactionExecution<OAuthUnavailable, CurrentOAuthTransaction, never>;
 
-export const makeOAuthTargetKernel = (
-  operations: QueryOperations,
-  accounts: Pick<
-    ReturnType<typeof makeOAuthAccountsKernel>,
-    | "accountCurrent"
-    | "claimLink"
-    | "inspectUnlink"
-    | "issueLink"
-    | "preflightLink"
-    | "settleLink"
-    | "unlink"
-  >,
-  flow: Pick<
-    ReturnType<typeof makeOAuthFlowKernel>,
-    | "claimFlow"
-    | "cleanupFlows"
-    | "discoverOwned"
-    | "exactClaim"
-    | "issueFlow"
-    | "matchesAccess"
-    | "readFlow"
-    | "resolveOwned"
-    | "terminalFlow"
-  >,
-  owner: Pick<ReturnType<typeof makeOAuthOwnerKernel>, "both" | "col" | "equal">,
-  registration: Pick<
-    ReturnType<typeof makeOAuthRegistrationKernel>,
-    | "inspectIntent"
-    | "register"
-    | "registrationData"
-    | "registrationResources"
-    | "settleRegistrationIntent"
-  >,
-  execution: Pick<
-    ReturnType<typeof makeTransactionExecutionKernel>,
-    | "coordinateTransactionOwner"
-    | "makeTransactionExecution"
-    | "sqlClientTransactionStandaloneGuard"
-  >,
-) => {
+const make = Effect.gen(function* () {
+  const operations = yield* OAuthQueryCompiler;
+  const accounts = yield* OAuthAccounts;
+  const flow = yield* OAuthFlow;
+  const registration = yield* OAuthRegistration;
+  const execution = yield* OAuthTransactionExecution;
+
   const { eq, sql } = operations;
 
   const { accountCurrent, claimLink, inspectUnlink, issueLink, preflightLink, settleLink, unlink } =
@@ -116,7 +83,7 @@ export const makeOAuthTargetKernel = (
     terminalFlow,
   } = flow;
 
-  const { both, col, equal } = owner;
+  const { both, col, equal } = operations;
 
   const {
     inspectIntent,
@@ -126,15 +93,7 @@ export const makeOAuthTargetKernel = (
     settleRegistrationIntent,
   } = registration;
 
-  const {
-    coordinateTransactionOwner,
-    makeTransactionExecution,
-    sqlClientTransactionStandaloneGuard,
-  } = execution;
-
-  const sqlClientOAuthStandaloneGuard = (
-    service: Parameters<typeof sqlClientTransactionStandaloneGuard>[1],
-  ) => sqlClientTransactionStandaloneGuard(unavailable, service);
+  const { coordinateTransactionOwner, makeTransactionExecution } = execution;
 
   const makeOAuthExecution = Effect.fnUntraced(function* (
     configuration: OAuthTargetConfiguration,
@@ -774,61 +733,8 @@ export const makeOAuthTargetKernel = (
     }));
   };
 
-  const oauthAccountsPersistenceLayer = <E, R>(
-    services: Effect.Effect<
-      { readonly oauthAccountsPersistence: OAuthAccountsPersistence["Service"] },
-      E,
-      R
-    >,
-  ) =>
-    Layer.effect(
-      OAuthAccountsPersistence,
-      Effect.map(services, (value) => value.oauthAccountsPersistence),
-    );
-
-  const oauthSignInPersistenceLayer = <E, R>(
-    services: Effect.Effect<
-      { readonly oauthSignInPersistence: OAuthSignInPersistence["Service"] },
-      E,
-      R
-    >,
-  ) =>
-    Layer.effect(
-      OAuthSignInPersistence,
-      Effect.map(services, (value) => value.oauthSignInPersistence),
-    );
-
-  const oauthRegistrationIntentsLayer = <E, R>(
-    services: Effect.Effect<
-      { readonly oauthRegistrationIntents: OAuthRegistrationIntents["Service"] },
-      E,
-      R
-    >,
-  ) =>
-    Layer.effect(
-      OAuthRegistrationIntents,
-      Effect.map(services, (value) => value.oauthRegistrationIntents),
-    );
-
-  const oauthRegistrationAuthorityLayer = <Id, Registration, E, R>(
-    tag: Context.Key<Id, OAuthRegistrationAuthority<Registration>>,
-    services: Effect.Effect<
-      { readonly registrationAuthority: OAuthRegistrationAuthority<Registration> },
-      E,
-      R
-    >,
-  ) =>
-    Layer.effect(
-      tag,
-      Effect.map(services, (value) => value.registrationAuthority),
-    );
-
   return {
-    sqlClientOAuthStandaloneGuard,
     makeOAuthExecution,
-    makeOAuthSignIn,
-    makeOAuthRegistrationIntents,
-    makeOAuthRegistration,
     makeTargetOAuthSignInServices,
     makeTargetOAuthRegistrationIntentServices,
     makeTargetOAuthRegistrationServices,
@@ -837,11 +743,61 @@ export const makeOAuthTargetKernel = (
     coordinateTargetOAuthSignIn,
     coordinateTargetOAuthRegistrationIntents,
     coordinateTargetOAuthAccounts,
-    makeOAuthAccounts,
     makeTargetOAuthAccountsServices,
-    oauthAccountsPersistenceLayer,
-    oauthSignInPersistenceLayer,
-    oauthRegistrationIntentsLayer,
-    oauthRegistrationAuthorityLayer,
   };
-};
+});
+
+export class OAuthTarget extends Context.Service<OAuthTarget, Effect.Success<typeof make>>()(
+  "effect-auth/persistence/OAuthTarget",
+) {
+  static readonly layer = Layer.effect(OAuthTarget, make);
+}
+
+export const oauthAccountsPersistenceLayer = <E, R>(
+  services: Effect.Effect<
+    { readonly oauthAccountsPersistence: OAuthAccountsPersistence["Service"] },
+    E,
+    R
+  >,
+) =>
+  Layer.effect(
+    OAuthAccountsPersistence,
+    Effect.map(services, (value) => value.oauthAccountsPersistence),
+  );
+
+export const oauthSignInPersistenceLayer = <E, R>(
+  services: Effect.Effect<
+    { readonly oauthSignInPersistence: OAuthSignInPersistence["Service"] },
+    E,
+    R
+  >,
+) =>
+  Layer.effect(
+    OAuthSignInPersistence,
+    Effect.map(services, (value) => value.oauthSignInPersistence),
+  );
+
+export const oauthRegistrationIntentsLayer = <E, R>(
+  services: Effect.Effect<
+    { readonly oauthRegistrationIntents: OAuthRegistrationIntents["Service"] },
+    E,
+    R
+  >,
+) =>
+  Layer.effect(
+    OAuthRegistrationIntents,
+    Effect.map(services, (value) => value.oauthRegistrationIntents),
+  );
+
+export const oauthRegistrationAuthorityLayer = <Id, Registration, E, R>(
+  tag: Context.Key<Id, OAuthRegistrationAuthority<Registration>>,
+  services: Effect.Effect<
+    { readonly registrationAuthority: OAuthRegistrationAuthority<Registration> },
+    E,
+    R
+  >,
+) =>
+  Layer.effect(
+    tag,
+    Effect.map(services, (value) => value.registrationAuthority),
+  );

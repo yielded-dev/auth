@@ -4,37 +4,32 @@ import {
   type OAuthConnectedRevocations,
   snapshotOAuthSync,
 } from "@yielded/auth/OAuth";
-import { Effect } from "effect";
+import { Effect, Context, Layer } from "effect";
 
-import type { QueryOperations } from "../query-operations";
-import type { makeOAuthConnectedCollectionKernel } from "./connected-collection";
-import type { makeOAuthConnectedCustodyKernel } from "./connected-custody";
+import { OAuthConnectedCollection } from "./connected-collection";
+import { OAuthConnectedCustody } from "./connected-custody";
+import { OAuthConnectedFlow } from "./connected-flow";
 import type * as FTypes from "./connected-flow";
-import type { makeOAuthConnectedFlowKernel } from "./connected-flow";
+import { OAuthConnectedState } from "./connected-state";
 import type * as STypes from "./connected-state";
-import type { makeOAuthConnectedStateKernel } from "./connected-state";
 import { CurrentOAuthTransaction } from "./owner";
-import type { makeOAuthOwnerKernel } from "./owner";
+import { OAuthQueryCompiler } from "./query-compiler";
 import { invariant, storage } from "./state";
 
 type WorkerInput<K extends keyof OAuthConnectedRevocations["Service"]> = Parameters<
   OAuthConnectedRevocations["Service"][K]
 >[0];
 
-export const makeOAuthConnectedMaintenanceKernel = (
-  operations: QueryOperations,
-  connectedCollection: Pick<
-    ReturnType<typeof makeOAuthConnectedCollectionKernel>,
-    "collect" | "discover"
-  >,
-  C: ReturnType<typeof makeOAuthConnectedCustodyKernel>,
-  F: ReturnType<typeof makeOAuthConnectedFlowKernel>,
-  S: ReturnType<typeof makeOAuthConnectedStateKernel>,
-  owner: Pick<ReturnType<typeof makeOAuthOwnerKernel>, "both" | "col" | "equal">,
-) => {
+const make = Effect.gen(function* () {
+  const operations = yield* OAuthQueryCompiler;
+  const connectedCollection = yield* OAuthConnectedCollection;
+  const C = yield* OAuthConnectedCustody;
+  const F = yield* OAuthConnectedFlow;
+  const S = yield* OAuthConnectedState;
+
   const { asc, eq, lte, sql } = operations;
   const { collect, discover } = connectedCollection;
-  const { both, col, equal } = owner;
+  const { both, col, equal } = operations;
 
   const revocationClaimStorage = storage(OAuthConnectedRevocationClaim);
 
@@ -374,4 +369,11 @@ export const makeOAuthConnectedMaintenanceKernel = (
   });
 
   return { claimRevocation, settleRevocation, cleanup };
-};
+});
+
+export class OAuthConnectedMaintenance extends Context.Service<
+  OAuthConnectedMaintenance,
+  Effect.Success<typeof make>
+>()("effect-auth/persistence/OAuthConnectedMaintenance") {
+  static readonly layer = Layer.effect(OAuthConnectedMaintenance, make);
+}

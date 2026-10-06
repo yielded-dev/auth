@@ -9,37 +9,35 @@ import {
   type OAuthUnavailable,
 } from "@yielded/auth/OAuth";
 /* oxlint-disable no-explicit-any -- concrete adapters retain the native database, table and ID types. */
-import { type Crypto, Effect, Layer, type PlatformError, Schema } from "effect";
+import { type Crypto, Effect, Layer, type PlatformError, Schema, Context } from "effect";
 import type { Statement } from "effect/sql/Statement";
 
 import type { PersistenceMappingError } from "../models/common";
-import type { makeOAuthConnectedAccessKernel } from "./connected-access";
-import type { makeOAuthConnectedFlowKernel } from "./connected-flow";
+import { OAuthConnectedAccess } from "./connected-access";
+import { OAuthConnectedFlow } from "./connected-flow";
 import { connectedInputs, connectedRevocationInputs } from "./connected-input";
-import type { makeOAuthConnectedMaintenanceKernel } from "./connected-maintenance";
-import type { makeOAuthConnectedManagementKernel } from "./connected-management";
-import type { makeOAuthConnectedSettlementKernel } from "./connected-settlement";
-import type { makeOAuthConnectedSignInKernel } from "./connected-sign-in";
+import { OAuthConnectedMaintenance } from "./connected-maintenance";
+import { OAuthConnectedManagement } from "./connected-management";
+import { OAuthConnectedSettlement } from "./connected-settlement";
+import { OAuthConnectedSignIn } from "./connected-sign-in";
+import { OAuthConnectedState } from "./connected-state";
 import type * as STypes from "./connected-state";
-import type { makeOAuthConnectedStateKernel } from "./connected-state";
 import { capturedOAuthService } from "./input";
 import { CurrentOAuthTransaction } from "./owner";
 import { captureOAuthMapping } from "./state";
-import type { OAuthExecution, OAuthTargetConfiguration, makeOAuthTargetKernel } from "./target";
+import { OAuthTarget } from "./target";
+import type { OAuthExecution, OAuthTargetConfiguration } from "./target";
 
-export const makeOAuthConnectedTargetKernel = (
-  A: ReturnType<typeof makeOAuthConnectedAccessKernel>,
-  F: ReturnType<typeof makeOAuthConnectedFlowKernel>,
-  Maintenance: ReturnType<typeof makeOAuthConnectedMaintenanceKernel>,
-  Management: ReturnType<typeof makeOAuthConnectedManagementKernel>,
-  connectedSettlement: Pick<ReturnType<typeof makeOAuthConnectedSettlementKernel>, "settle">,
-  SignIn: ReturnType<typeof makeOAuthConnectedSignInKernel>,
-  S: ReturnType<typeof makeOAuthConnectedStateKernel>,
-  target: Pick<
-    ReturnType<typeof makeOAuthTargetKernel>,
-    "coordinateOAuthOwner" | "makeOAuthExecution"
-  >,
-) => {
+const make = Effect.gen(function* () {
+  const A = yield* OAuthConnectedAccess;
+  const F = yield* OAuthConnectedFlow;
+  const Maintenance = yield* OAuthConnectedMaintenance;
+  const Management = yield* OAuthConnectedManagement;
+  const connectedSettlement = yield* OAuthConnectedSettlement;
+  const SignIn = yield* OAuthConnectedSignIn;
+  const S = yield* OAuthConnectedState;
+  const target = yield* OAuthTarget;
+
   const { settle } = connectedSettlement;
   const { coordinateOAuthOwner, makeOAuthExecution } = target;
 
@@ -269,38 +267,41 @@ export const makeOAuthConnectedTargetKernel = (
       owner,
     );
 
-  const oauthConnectedPersistenceLayer = <E, R>(
-    services: Effect.Effect<
-      { readonly oauthConnectedPersistence: OAuthConnectedPersistence["Service"] },
-      E,
-      R
-    >,
-  ) =>
-    Layer.effect(
-      OAuthConnectedPersistence,
-      Effect.map(services, (value) => value.oauthConnectedPersistence),
-    );
-
-  const oauthConnectedRevocationsLayer = <E, R>(
-    services: Effect.Effect<
-      { readonly oauthConnectedRevocations: OAuthConnectedRevocations["Service"] },
-      E,
-      R
-    >,
-  ) =>
-    Layer.effect(
-      OAuthConnectedRevocations,
-      Effect.map(services, (value) => value.oauthConnectedRevocations),
-    );
-
   return {
-    makeConnected,
-    makeRevocations,
     makeTargetOAuthConnectedServices,
     makeTargetOAuthConnectedRevocationServices,
     coordinateTargetOAuthConnected,
     coordinateTargetOAuthConnectedRevocations,
-    oauthConnectedPersistenceLayer,
-    oauthConnectedRevocationsLayer,
   };
-};
+});
+
+export class OAuthConnectedTarget extends Context.Service<
+  OAuthConnectedTarget,
+  Effect.Success<typeof make>
+>()("effect-auth/persistence/OAuthConnectedTarget") {
+  static readonly layer = Layer.effect(OAuthConnectedTarget, make);
+}
+
+export const oauthConnectedPersistenceLayer = <E, R>(
+  services: Effect.Effect<
+    { readonly oauthConnectedPersistence: OAuthConnectedPersistence["Service"] },
+    E,
+    R
+  >,
+) =>
+  Layer.effect(
+    OAuthConnectedPersistence,
+    Effect.map(services, (value) => value.oauthConnectedPersistence),
+  );
+
+export const oauthConnectedRevocationsLayer = <E, R>(
+  services: Effect.Effect<
+    { readonly oauthConnectedRevocations: OAuthConnectedRevocations["Service"] },
+    E,
+    R
+  >,
+) =>
+  Layer.effect(
+    OAuthConnectedRevocations,
+    Effect.map(services, (value) => value.oauthConnectedRevocations),
+  );

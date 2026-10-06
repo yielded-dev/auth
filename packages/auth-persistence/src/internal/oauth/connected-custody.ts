@@ -1,29 +1,24 @@
 import * as M from "@yielded/auth/OAuth";
 import { snapshotOAuthSync } from "@yielded/auth/OAuth";
-import { Effect } from "effect";
+import { Effect, Context, Layer } from "effect";
 
-import type { SqlExpression as SQL, QueryOperations } from "../query-operations";
+import type { SqlExpression as SQL } from "../query-operations";
+import { OAuthConnectedState } from "./connected-state";
 import type * as STypes from "./connected-state";
-import type { makeOAuthConnectedStateKernel } from "./connected-state";
 import { CurrentOAuthTransaction } from "./owner";
-import type { makeOAuthOwnerKernel } from "./owner";
+import { OAuthQueryCompiler } from "./query-compiler";
 import { invariant, oauthIdentityKey } from "./state";
 
-type Client = NonNullable<
-  Effect.Success<ReturnType<ReturnType<typeof makeOAuthConnectedStateKernel>["client"]>>
->;
+type Client = NonNullable<Effect.Success<ReturnType<OAuthConnectedState["Service"]["client"]>>>;
 
-type Cohort = Effect.Success<
-  ReturnType<ReturnType<typeof makeOAuthConnectedStateKernel>["cohort"]>
->;
+type Cohort = Effect.Success<ReturnType<OAuthConnectedState["Service"]["cohort"]>>;
 
-export const makeOAuthConnectedCustodyKernel = (
-  operations: QueryOperations,
-  S: ReturnType<typeof makeOAuthConnectedStateKernel>,
-  owner: Pick<ReturnType<typeof makeOAuthOwnerKernel>, "both" | "col" | "equal">,
-) => {
+const make = Effect.gen(function* () {
+  const operations = yield* OAuthQueryCompiler;
+  const S = yield* OAuthConnectedState;
+
   const { eq, isNotNull, ne, sql } = operations;
-  const { both, col, equal } = owner;
+  const { both, col, equal } = operations;
 
   const sameContext = (a: M.OAuthConnectedTokenContext, b: M.OAuthConnectedTokenContext) =>
     S.tokenContextStorage.encode(a) === S.tokenContextStorage.encode(b);
@@ -303,4 +298,11 @@ export const makeOAuthConnectedCustodyKernel = (
     clear,
     noFormerOwner,
   };
-};
+});
+
+export class OAuthConnectedCustody extends Context.Service<
+  OAuthConnectedCustody,
+  Effect.Success<typeof make>
+>()("effect-auth/persistence/OAuthConnectedCustody") {
+  static readonly layer = Layer.effect(OAuthConnectedCustody, make);
+}

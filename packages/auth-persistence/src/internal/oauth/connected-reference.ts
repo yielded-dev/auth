@@ -9,20 +9,20 @@ import {
 import type { SqlExpression as SQL } from "../query-operations";
 import type { QueryOperations } from "../query-operations";
 import type { TableModel } from "../query-operations";
-import type { Mapping, makeOAuthConnectedStateKernel } from "./connected-state";
-import type { makeOAuthOwnerKernel } from "./owner";
-import { captureOAuthMapping } from "./state";
+import { makeTransactionKernel } from "../transaction-kernel";
+import { scopeKey } from "./connected-keys";
+import type { Mapping } from "./connected-state";
+import { unavailable, captureOAuthMapping } from "./state";
 type Table = object;
 
 export const makeOAuthConnectedReferenceKernel = (
   operations: QueryOperations,
-  connectedState: Pick<ReturnType<typeof makeOAuthConnectedStateKernel>, "scopeKey">,
-  owner: Pick<ReturnType<typeof makeOAuthOwnerKernel>, "both" | "col" | "equal">,
   dialect: (table: object) => "pg" | "sqlite" | "mysql",
 ) => {
   const { eq, sql } = operations;
-  const { scopeKey } = connectedState;
-  const { both, col, equal } = owner;
+  const transactions = makeTransactionKernel(operations);
+  const { both } = transactions;
+  const { col, equal } = transactions.makeTransactionRows(unavailable);
 
   const exactText = (table: Table, key: string, value: string) => {
     const column = col(table, key),

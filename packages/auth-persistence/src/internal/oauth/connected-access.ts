@@ -1,29 +1,27 @@
 import * as M from "@yielded/auth/OAuth";
 import { snapshotOAuthSync } from "@yielded/auth/OAuth";
-import { Effect } from "effect";
+import { Effect, Context, Layer } from "effect";
 
-import type { QueryOperations } from "../query-operations";
-import type { makeOAuthConnectedCustodyKernel } from "./connected-custody";
+import { OAuthConnectedCustody } from "./connected-custody";
+import { OAuthConnectedFlow } from "./connected-flow";
 import type * as FTypes from "./connected-flow";
-import type { makeOAuthConnectedFlowKernel } from "./connected-flow";
-import type { makeOAuthConnectedSettlementKernel } from "./connected-settlement";
+import { OAuthConnectedSettlement } from "./connected-settlement";
+import { OAuthConnectedState } from "./connected-state";
 import type * as STypes from "./connected-state";
-import type { makeOAuthConnectedStateKernel } from "./connected-state";
 import { CurrentOAuthTransaction } from "./owner";
-import type { makeOAuthOwnerKernel } from "./owner";
+import { OAuthQueryCompiler } from "./query-compiler";
 import { invariant } from "./state";
 
-export const makeOAuthConnectedAccessKernel = (
-  operations: QueryOperations,
-  C: ReturnType<typeof makeOAuthConnectedCustodyKernel>,
-  F: ReturnType<typeof makeOAuthConnectedFlowKernel>,
-  connectedSettlement: Pick<ReturnType<typeof makeOAuthConnectedSettlementKernel>, "validMetadata">,
-  S: ReturnType<typeof makeOAuthConnectedStateKernel>,
-  owner: Pick<ReturnType<typeof makeOAuthOwnerKernel>, "equal">,
-) => {
+const make = Effect.gen(function* () {
+  const operations = yield* OAuthQueryCompiler;
+  const C = yield* OAuthConnectedCustody;
+  const F = yield* OAuthConnectedFlow;
+  const connectedSettlement = yield* OAuthConnectedSettlement;
+  const S = yield* OAuthConnectedState;
+
   const { sql } = operations;
   const { validMetadata } = connectedSettlement;
-  const { equal } = owner;
+  const { equal } = operations;
 
   const locked = Effect.fn("oauthConnected.lockedGrant")(function* (
     mapping: STypes.Mapping,
@@ -380,4 +378,11 @@ export const makeOAuthConnectedAccessKernel = (
   });
 
   return { locked, state, inspectAccess, claimRefresh, settleRefresh, admitUse };
-};
+});
+
+export class OAuthConnectedAccess extends Context.Service<
+  OAuthConnectedAccess,
+  Effect.Success<typeof make>
+>()("effect-auth/persistence/OAuthConnectedAccess") {
+  static readonly layer = Layer.effect(OAuthConnectedAccess, make);
+}

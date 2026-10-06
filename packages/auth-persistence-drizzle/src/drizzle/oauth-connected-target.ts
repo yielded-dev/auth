@@ -2,12 +2,6 @@ import type { OAuthKernel } from "@yielded/auth-persistence/Adapter";
 
 import { oauthKernel } from "./oauth-kernel";
 
-export const makeConnected: OAuthKernel["connectedTarget"]["makeConnected"] =
-  oauthKernel.connectedTarget.makeConnected;
-
-export const makeRevocations: OAuthKernel["connectedTarget"]["makeRevocations"] =
-  oauthKernel.connectedTarget.makeRevocations;
-
 export const makeTargetOAuthConnectedServices: OAuthKernel["connectedTarget"]["makeTargetOAuthConnectedServices"] =
   oauthKernel.connectedTarget.makeTargetOAuthConnectedServices;
 

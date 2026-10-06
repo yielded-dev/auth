@@ -12,14 +12,13 @@ import {
   snapshotOAuthSync,
 } from "@yielded/auth/OAuth";
 import type { SecurityRevision } from "@yielded/auth/Sessions";
-import { Effect, Schema } from "effect";
+import { Effect, Schema, Context, Layer } from "effect";
 
 import type { PersistenceMappingError, SubjectIdCodec } from "../models/common";
 import type { OAuthRegistrationBase } from "../models/oauth-model";
-import type { QueryOperations } from "../query-operations";
-import type { makeOAuthFlowKernel } from "./flow";
+import { OAuthFlow } from "./flow";
 import { CurrentOAuthTransaction } from "./owner";
-import type { makeOAuthOwnerKernel } from "./owner";
+import { OAuthQueryCompiler } from "./query-compiler";
 import { invariant, oauthIdentityKey, sameIdentity, storage } from "./state";
 
 export interface RegistrationResources {
@@ -37,20 +36,13 @@ export type RegistrationCallbacks<Registration> = Pick<
   "snapshot" | "snapshotSync" | "inspect" | "inspectSync"
 >;
 
-export const makeOAuthRegistrationKernel = (
-  operations: QueryOperations,
-  flow: Pick<
-    ReturnType<typeof makeOAuthFlowKernel>,
-    "discoverOwned" | "exactClaim" | "resolveOwned" | "terminalFlow"
-  >,
-  owner: Pick<
-    ReturnType<typeof makeOAuthOwnerKernel>,
-    "both" | "col" | "equal" | "matchesNativeRow"
-  >,
-) => {
+const make = Effect.gen(function* () {
+  const operations = yield* OAuthQueryCompiler;
+  const flow = yield* OAuthFlow;
+
   const { eq, sql } = operations;
   const { discoverOwned, exactClaim, resolveOwned, terminalFlow } = flow;
-  const { both, col, equal, matchesNativeRow } = owner;
+  const { both, col, equal, matchesNativeRow } = operations;
 
   const intentStorage = storage(OAuthRegistrationIntent);
 
@@ -674,4 +666,11 @@ export const makeOAuthRegistrationKernel = (
     registrationData,
     register,
   };
-};
+});
+
+export class OAuthRegistration extends Context.Service<
+  OAuthRegistration,
+  Effect.Success<typeof make>
+>()("effect-auth/persistence/OAuthRegistration") {
+  static readonly layer = Layer.effect(OAuthRegistration, make);
+}

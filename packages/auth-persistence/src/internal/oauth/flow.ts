@@ -11,24 +11,23 @@ import {
   OAuthLinkPendingFlow,
   snapshotOAuthSync,
 } from "@yielded/auth/OAuth";
-import { Effect } from "effect";
+import { Effect, Context, Layer } from "effect";
 
 import type { SubjectIdCodec } from "../models/common";
-import type { QueryOperations } from "../query-operations";
 import { CurrentOAuthTransaction } from "./owner";
-import type { Row, makeOAuthOwnerKernel } from "./owner";
+import type { Row } from "./owner";
+import { OAuthQueryCompiler } from "./query-compiler";
 import { invariant, oauthIdentityKey, storage } from "./state";
 
 export type Flow = typeof OAuthPendingFlow.Type | typeof OAuthLinkPendingFlow.Type;
 
 export type Claim = typeof OAuthClaim.Type | typeof OAuthLinkClaim.Type;
 
-export const makeOAuthFlowKernel = (
-  operations: QueryOperations,
-  owner: Pick<ReturnType<typeof makeOAuthOwnerKernel>, "both" | "col" | "copiedRow" | "equal">,
-) => {
+const make = Effect.gen(function* () {
+  const operations = yield* OAuthQueryCompiler;
+
   const { eq, sql } = operations;
-  const { both, col, copiedRow, equal } = owner;
+  const { both, col, copiedRow, equal } = operations;
 
   const pendingStorage = storage(OAuthPendingFlow);
 
@@ -497,4 +496,10 @@ export const makeOAuthFlowKernel = (
     resolveOwned,
     cleanupFlows,
   };
-};
+});
+
+export class OAuthFlow extends Context.Service<OAuthFlow, Effect.Success<typeof make>>()(
+  "effect-auth/persistence/OAuthFlow",
+) {
+  static readonly layer = Layer.effect(OAuthFlow, make);
+}

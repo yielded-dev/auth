@@ -1,135 +1,293 @@
-import { makeOAuthAccountsKernel } from "./oauth/accounts";
-import { makeOAuthConnectedAccessKernel } from "./oauth/connected-access";
-import { makeOAuthConnectedCollectionKernel } from "./oauth/connected-collection";
-import { makeOAuthConnectedCustodyKernel } from "./oauth/connected-custody";
-import { makeOAuthConnectedFlowKernel } from "./oauth/connected-flow";
-import { makeOAuthConnectedMaintenanceKernel } from "./oauth/connected-maintenance";
-import { makeOAuthConnectedManagementKernel } from "./oauth/connected-management";
+import { Effect, Layer } from "effect";
+import type { SqlClient } from "effect/sql/SqlClient";
+
+import { OAuthAccounts } from "./oauth/accounts";
+import { OAuthConnectedAccess } from "./oauth/connected-access";
+import { OAuthConnectedCollection } from "./oauth/connected-collection";
+import { OAuthConnectedCustody } from "./oauth/connected-custody";
+import { OAuthConnectedFlow } from "./oauth/connected-flow";
+import { OAuthConnectedMaintenance } from "./oauth/connected-maintenance";
+import { OAuthConnectedManagement } from "./oauth/connected-management";
 import { makeOAuthConnectedReferenceKernel } from "./oauth/connected-reference";
-import { makeOAuthConnectedSettlementKernel } from "./oauth/connected-settlement";
-import { makeOAuthConnectedSignInKernel } from "./oauth/connected-sign-in";
-import { makeOAuthConnectedStateKernel } from "./oauth/connected-state";
-import { makeOAuthConnectedTargetKernel } from "./oauth/connected-target";
-import { makeOAuthFlowKernel } from "./oauth/flow";
-import { makeOAuthOwnerKernel } from "./oauth/owner";
-import { makeOAuthRegistrationKernel } from "./oauth/registration";
-import { makeOAuthTargetKernel } from "./oauth/target";
+import { OAuthConnectedSettlement } from "./oauth/connected-settlement";
+import { OAuthConnectedSignIn } from "./oauth/connected-sign-in";
+import { OAuthConnectedState } from "./oauth/connected-state";
+import {
+  OAuthConnectedTarget,
+  oauthConnectedPersistenceLayer,
+  oauthConnectedRevocationsLayer,
+} from "./oauth/connected-target";
+import { OAuthFlow } from "./oauth/flow";
+import { OAuthTransactionExecution } from "./oauth/owner";
+import { OAuthQueryCompiler } from "./oauth/query-compiler";
+import { OAuthRegistration } from "./oauth/registration";
+import { captureOAuthMapping, unavailable } from "./oauth/state";
+import {
+  OAuthTarget,
+  oauthAccountsPersistenceLayer,
+  oauthSignInPersistenceLayer,
+  oauthRegistrationIntentsLayer,
+  oauthRegistrationAuthorityLayer,
+} from "./oauth/target";
 import type { QueryOperations } from "./query-operations";
+import { requireStandalone } from "./standalone";
 import { makeTransactionExecutionKernel } from "./transaction-execution-kernel";
 import { makeTransactionKernel } from "./transaction-kernel";
+
 export type OAuthKernel = ReturnType<typeof makeOAuthKernel>;
 
-/** Shared OAuth transitions; adapters supply only query compilation and transaction semantics. */
+/** Adapter composition root. Shared operation Layers acquire their dependencies;
+ * database and transaction services are still resolved by each operation. */
 export const makeOAuthKernel = (
   operations: QueryOperations,
   dialect: (table: object) => "pg" | "sqlite" | "mysql",
 ) => {
   const transactions = makeTransactionKernel(operations);
-  const execution = makeTransactionExecutionKernel(transactions);
-  const owner = makeOAuthOwnerKernel(transactions);
-  const flow = makeOAuthFlowKernel(operations, owner);
-  const registration = makeOAuthRegistrationKernel(operations, flow, owner);
-  const accounts = makeOAuthAccountsKernel(operations, flow, owner, registration);
-  const target = makeOAuthTargetKernel(operations, accounts, flow, owner, registration, execution);
-  const connectedState = makeOAuthConnectedStateKernel(operations, flow, owner);
+  const connectedReference = makeOAuthConnectedReferenceKernel(operations, dialect);
 
-  const connectedReference = makeOAuthConnectedReferenceKernel(
-    operations,
-    connectedState,
+  const compilerLive = Layer.succeed(OAuthQueryCompiler, {
+    ...operations,
+    ...transactions.makeTransactionRows(unavailable),
+    both: transactions.both,
+    connectedReferenceCondition: connectedReference.connectedReferenceCondition,
+  });
+
+  const executionLive = Layer.succeed(
+    OAuthTransactionExecution,
+    makeTransactionExecutionKernel(transactions),
+  );
+
+  const flowLive = OAuthFlow.layer.pipe(Layer.provide([compilerLive]));
+  const registrationLive = OAuthRegistration.layer.pipe(Layer.provide([compilerLive, flowLive]));
+
+  const accountsLive = OAuthAccounts.layer.pipe(
+    Layer.provide([compilerLive, flowLive, registrationLive]),
+  );
+
+  const targetLive = OAuthTarget.layer.pipe(
+    Layer.provide([compilerLive, accountsLive, flowLive, registrationLive, executionLive]),
+  );
+
+  const connectedStateLive = OAuthConnectedState.layer.pipe(
+    Layer.provide([compilerLive, flowLive]),
+  );
+
+  const connectedFlowLive = OAuthConnectedFlow.layer.pipe(
+    Layer.provide([compilerLive, connectedStateLive, registrationLive]),
+  );
+
+  const connectedCustodyLive = OAuthConnectedCustody.layer.pipe(
+    Layer.provide([compilerLive, connectedStateLive]),
+  );
+
+  const connectedCollectionLive = OAuthConnectedCollection.layer.pipe(
+    Layer.provide([compilerLive, connectedCustodyLive, connectedFlowLive, connectedStateLive]),
+  );
+
+  const connectedSettlementLive = OAuthConnectedSettlement.layer.pipe(
+    Layer.provide([compilerLive, connectedCustodyLive, connectedFlowLive, connectedStateLive]),
+  );
+
+  const connectedAccessLive = OAuthConnectedAccess.layer.pipe(
+    Layer.provide([
+      compilerLive,
+      connectedCustodyLive,
+      connectedFlowLive,
+      connectedSettlementLive,
+      connectedStateLive,
+    ]),
+  );
+
+  const connectedManagementLive = OAuthConnectedManagement.layer.pipe(
+    Layer.provide([
+      compilerLive,
+      connectedAccessLive,
+      connectedCustodyLive,
+      connectedFlowLive,
+      connectedStateLive,
+    ]),
+  );
+
+  const connectedMaintenanceLive = OAuthConnectedMaintenance.layer.pipe(
+    Layer.provide([
+      compilerLive,
+      connectedCollectionLive,
+      connectedCustodyLive,
+      connectedFlowLive,
+      connectedStateLive,
+    ]),
+  );
+
+  const connectedSignInLive = OAuthConnectedSignIn.layer.pipe(
+    Layer.provide([
+      compilerLive,
+      connectedCustodyLive,
+      connectedFlowLive,
+      connectedSettlementLive,
+      connectedStateLive,
+      flowLive,
+    ]),
+  );
+
+  const connectedTargetLive = OAuthConnectedTarget.layer.pipe(
+    Layer.provide([
+      connectedAccessLive,
+      connectedFlowLive,
+      connectedMaintenanceLive,
+      connectedManagementLive,
+      connectedSettlementLive,
+      connectedSignInLive,
+      connectedStateLive,
+      targetLive,
+    ]),
+  );
+
+  // Preserve constructor-time snapshots before deferred Layer acquisition.
+  const makeTargetOAuthSignInServices: OAuthTarget["Service"]["makeTargetOAuthSignInServices"] = (
+    mapping,
+    configuration,
+  ) => {
+    const captured = captureOAuthMapping(mapping);
+
+    return Effect.flatMap(OAuthTarget, (service) =>
+      service.makeTargetOAuthSignInServices(captured, configuration),
+    ).pipe(Effect.provide(targetLive));
+  };
+
+  const makeTargetOAuthRegistrationIntentServices: OAuthTarget["Service"]["makeTargetOAuthRegistrationIntentServices"] =
+    (mapping, configuration) => {
+      const captured = captureOAuthMapping(mapping);
+
+      return Effect.flatMap(OAuthTarget, (service) =>
+        service.makeTargetOAuthRegistrationIntentServices(captured, configuration),
+      ).pipe(Effect.provide(targetLive));
+    };
+
+  const makeTargetOAuthRegistrationServices: OAuthTarget["Service"]["makeTargetOAuthRegistrationServices"] =
+    (mapping, configuration) => {
+      const captured = captureOAuthMapping(mapping);
+
+      return Effect.flatMap(OAuthTarget, (service) =>
+        service.makeTargetOAuthRegistrationServices(captured, configuration),
+      ).pipe(Effect.provide(targetLive));
+    };
+
+  const makeTargetOAuthAccountsServices: OAuthTarget["Service"]["makeTargetOAuthAccountsServices"] =
+    (mapping, configuration) => {
+      const captured = captureOAuthMapping(mapping);
+
+      return Effect.flatMap(OAuthTarget, (service) =>
+        service.makeTargetOAuthAccountsServices(captured, configuration),
+      ).pipe(Effect.provide(targetLive));
+    };
+
+  const coordinateTargetOAuthRegistration: OAuthTarget["Service"]["coordinateTargetOAuthRegistration"] =
+    (database, mapping, configuration, owner) => {
+      const captured = captureOAuthMapping(mapping);
+
+      return Effect.flatMap(OAuthTarget, (service) =>
+        service.coordinateTargetOAuthRegistration(database, captured, configuration, owner),
+      ).pipe(Effect.provide(targetLive));
+    };
+
+  const coordinateTargetOAuthSignIn: OAuthTarget["Service"]["coordinateTargetOAuthSignIn"] = (
+    database,
+    mapping,
+    configuration,
     owner,
-    dialect,
-  );
+  ) => {
+    const captured = captureOAuthMapping(mapping);
 
-  const connectedFlow = makeOAuthConnectedFlowKernel(
-    operations,
-    connectedState,
+    return Effect.flatMap(OAuthTarget, (service) =>
+      service.coordinateTargetOAuthSignIn(database, captured, configuration, owner),
+    ).pipe(Effect.provide(targetLive));
+  };
+
+  const coordinateTargetOAuthRegistrationIntents: OAuthTarget["Service"]["coordinateTargetOAuthRegistrationIntents"] =
+    (database, mapping, configuration, owner) => {
+      const captured = captureOAuthMapping(mapping);
+
+      return Effect.flatMap(OAuthTarget, (service) =>
+        service.coordinateTargetOAuthRegistrationIntents(database, captured, configuration, owner),
+      ).pipe(Effect.provide(targetLive));
+    };
+
+  const coordinateTargetOAuthAccounts: OAuthTarget["Service"]["coordinateTargetOAuthAccounts"] = (
+    database,
+    mapping,
+    configuration,
     owner,
-    registration,
-  );
+  ) => {
+    const captured = captureOAuthMapping(mapping);
 
-  const connectedCustody = makeOAuthConnectedCustodyKernel(operations, connectedState, owner);
+    return Effect.flatMap(OAuthTarget, (service) =>
+      service.coordinateTargetOAuthAccounts(database, captured, configuration, owner),
+    ).pipe(Effect.provide(targetLive));
+  };
 
-  const connectedCollection = makeOAuthConnectedCollectionKernel(
-    operations,
-    connectedCustody,
-    connectedFlow,
-    connectedReference,
-    connectedState,
-    owner,
-  );
+  const makeTargetOAuthConnectedServices: OAuthConnectedTarget["Service"]["makeTargetOAuthConnectedServices"] =
+    (mapping, configuration) => {
+      const captured = captureOAuthMapping(mapping);
 
-  const connectedSettlement = makeOAuthConnectedSettlementKernel(
-    operations,
-    connectedCustody,
-    connectedFlow,
-    connectedState,
-    owner,
-  );
+      return Effect.flatMap(OAuthConnectedTarget, (service) =>
+        service.makeTargetOAuthConnectedServices(captured, configuration),
+      ).pipe(Effect.provide(connectedTargetLive));
+    };
 
-  const connectedAccess = makeOAuthConnectedAccessKernel(
-    operations,
-    connectedCustody,
-    connectedFlow,
-    connectedSettlement,
-    connectedState,
-    owner,
-  );
+  const makeTargetOAuthConnectedRevocationServices: OAuthConnectedTarget["Service"]["makeTargetOAuthConnectedRevocationServices"] =
+    (mapping, configuration) => {
+      const captured = captureOAuthMapping(mapping);
 
-  const connectedManagement = makeOAuthConnectedManagementKernel(
-    operations,
-    connectedAccess,
-    connectedCustody,
-    connectedFlow,
-    connectedState,
-    owner,
-  );
+      return Effect.flatMap(OAuthConnectedTarget, (service) =>
+        service.makeTargetOAuthConnectedRevocationServices(captured, configuration),
+      ).pipe(Effect.provide(connectedTargetLive));
+    };
 
-  const connectedMaintenance = makeOAuthConnectedMaintenanceKernel(
-    operations,
-    connectedCollection,
-    connectedCustody,
-    connectedFlow,
-    connectedState,
-    owner,
-  );
+  const coordinateTargetOAuthConnected: OAuthConnectedTarget["Service"]["coordinateTargetOAuthConnected"] =
+    (database, mapping, configuration, owner) => {
+      const captured = captureOAuthMapping(mapping);
 
-  const connectedSignIn = makeOAuthConnectedSignInKernel(
-    operations,
-    connectedCustody,
-    connectedFlow,
-    connectedSettlement,
-    connectedState,
-    flow,
-    owner,
-  );
+      return Effect.flatMap(OAuthConnectedTarget, (service) =>
+        service.coordinateTargetOAuthConnected(database, captured, configuration, owner),
+      ).pipe(Effect.provide(connectedTargetLive));
+    };
 
-  const connectedTarget = makeOAuthConnectedTargetKernel(
-    connectedAccess,
-    connectedFlow,
-    connectedMaintenance,
-    connectedManagement,
-    connectedSettlement,
-    connectedSignIn,
-    connectedState,
-    target,
-  );
+  const coordinateTargetOAuthConnectedRevocations: OAuthConnectedTarget["Service"]["coordinateTargetOAuthConnectedRevocations"] =
+    (database, mapping, configuration, owner) => {
+      const captured = captureOAuthMapping(mapping);
+
+      return Effect.flatMap(OAuthConnectedTarget, (service) =>
+        service.coordinateTargetOAuthConnectedRevocations(database, captured, configuration, owner),
+      ).pipe(Effect.provide(connectedTargetLive));
+    };
+
+  const sqlClientOAuthStandaloneGuard = (service: SqlClient["transactionService"] | undefined) =>
+    requireStandalone(unavailable, service);
 
   return {
-    owner,
-    flow,
-    registration,
-    accounts,
-    target,
-    connectedState,
+    target: {
+      makeTargetOAuthSignInServices,
+      makeTargetOAuthRegistrationIntentServices,
+      makeTargetOAuthRegistrationServices,
+      makeTargetOAuthAccountsServices,
+      coordinateTargetOAuthRegistration,
+      coordinateTargetOAuthSignIn,
+      coordinateTargetOAuthRegistrationIntents,
+      coordinateTargetOAuthAccounts,
+      sqlClientOAuthStandaloneGuard,
+      oauthAccountsPersistenceLayer,
+      oauthSignInPersistenceLayer,
+      oauthRegistrationIntentsLayer,
+      oauthRegistrationAuthorityLayer,
+    },
+    connectedTarget: {
+      makeTargetOAuthConnectedServices,
+      makeTargetOAuthConnectedRevocationServices,
+      coordinateTargetOAuthConnected,
+      coordinateTargetOAuthConnectedRevocations,
+      oauthConnectedPersistenceLayer,
+      oauthConnectedRevocationsLayer,
+    },
     connectedReference,
-    connectedFlow,
-    connectedCustody,
-    connectedCollection,
-    connectedSettlement,
-    connectedAccess,
-    connectedManagement,
-    connectedMaintenance,
-    connectedSignIn,
-    connectedTarget,
   };
 };

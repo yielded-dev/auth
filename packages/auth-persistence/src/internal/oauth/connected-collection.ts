@@ -1,13 +1,12 @@
-import { Effect } from "effect";
+import { Effect, Context, Layer } from "effect";
 
-import type { QueryOperations } from "../query-operations";
-import type { makeOAuthConnectedCustodyKernel } from "./connected-custody";
-import type { makeOAuthConnectedFlowKernel } from "./connected-flow";
-import type { makeOAuthConnectedReferenceKernel } from "./connected-reference";
+import { OAuthConnectedCustody } from "./connected-custody";
+import { OAuthConnectedFlow } from "./connected-flow";
+import { OAuthConnectedState } from "./connected-state";
 import type * as STypes from "./connected-state";
-import type { makeOAuthConnectedStateKernel } from "./connected-state";
 import { CurrentOAuthTransaction } from "./owner";
-import type { Row, makeOAuthOwnerKernel } from "./owner";
+import type { Row } from "./owner";
+import { OAuthQueryCompiler } from "./query-compiler";
 import { invariant, oauthIdentityKey } from "./state";
 
 export interface Candidates {
@@ -17,20 +16,15 @@ export interface Candidates {
   readonly tuples: ReadonlyArray<Row>;
 }
 
-export const makeOAuthConnectedCollectionKernel = (
-  operations: QueryOperations,
-  C: ReturnType<typeof makeOAuthConnectedCustodyKernel>,
-  F: ReturnType<typeof makeOAuthConnectedFlowKernel>,
-  connectedReference: Pick<
-    ReturnType<typeof makeOAuthConnectedReferenceKernel>,
-    "connectedReferenceCondition"
-  >,
-  S: ReturnType<typeof makeOAuthConnectedStateKernel>,
-  owner: Pick<ReturnType<typeof makeOAuthOwnerKernel>, "both" | "col" | "equal">,
-) => {
+const make = Effect.gen(function* () {
+  const operations = yield* OAuthQueryCompiler;
+  const C = yield* OAuthConnectedCustody;
+  const F = yield* OAuthConnectedFlow;
+  const S = yield* OAuthConnectedState;
+
   const { asc, eq, lte, sql } = operations;
-  const { connectedReferenceCondition } = connectedReference;
-  const { both, col, equal } = owner;
+  const { connectedReferenceCondition } = operations;
+  const { both, col, equal } = operations;
 
   const discover = Effect.fn("oauthConnected.collectionCandidates")(function* (
     mapping: STypes.Mapping,
@@ -341,4 +335,11 @@ export const makeOAuthConnectedCollectionKernel = (
   });
 
   return { discover, collect };
-};
+});
+
+export class OAuthConnectedCollection extends Context.Service<
+  OAuthConnectedCollection,
+  Effect.Success<typeof make>
+>()("effect-auth/persistence/OAuthConnectedCollection") {
+  static readonly layer = Layer.effect(OAuthConnectedCollection, make);
+}

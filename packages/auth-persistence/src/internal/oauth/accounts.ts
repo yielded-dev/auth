@@ -15,15 +15,14 @@ import {
   AuthenticationRequirement,
   SecurityRevision,
 } from "@yielded/auth/Sessions";
-import { DateTime, Effect } from "effect";
+import { DateTime, Effect, Context, Layer } from "effect";
 
 import type { SubjectIdCodec } from "../models/common";
 import type { OAuthReferenceGuardDescriptor, OAuthEligibilityFact } from "../models/oauth-model";
-import type { QueryOperations } from "../query-operations";
-import type { makeOAuthFlowKernel } from "./flow";
+import { OAuthFlow } from "./flow";
 import { CurrentOAuthTransaction } from "./owner";
-import type { makeOAuthOwnerKernel } from "./owner";
-import type { makeOAuthRegistrationKernel } from "./registration";
+import { OAuthQueryCompiler } from "./query-compiler";
+import { OAuthRegistration } from "./registration";
 import {
   invariant,
   oauthIdentityKey,
@@ -33,23 +32,11 @@ import {
   validAction,
 } from "./state";
 
-export const makeOAuthAccountsKernel = (
-  operations: QueryOperations,
-  flow: Pick<
-    ReturnType<typeof makeOAuthFlowKernel>,
-    | "claimFlow"
-    | "credentialStorage"
-    | "currentSubject"
-    | "exactClaim"
-    | "issueFlow"
-    | "linkStorage"
-    | "matchesAccess"
-    | "readFlow"
-    | "terminalFlow"
-  >,
-  owner: Pick<ReturnType<typeof makeOAuthOwnerKernel>, "both" | "col" | "copiedRow" | "equal">,
-  registration: Pick<ReturnType<typeof makeOAuthRegistrationKernel>, "acquireTuple" | "readTuple">,
-) => {
+const make = Effect.gen(function* () {
+  const operations = yield* OAuthQueryCompiler;
+  const flow = yield* OAuthFlow;
+  const registration = yield* OAuthRegistration;
+
   const { eq, sql } = operations;
 
   const {
@@ -64,7 +51,7 @@ export const makeOAuthAccountsKernel = (
     terminalFlow,
   } = flow;
 
-  const { both, col, copiedRow, equal } = owner;
+  const { both, col, copiedRow, equal } = operations;
   const { acquireTuple, readTuple } = registration;
 
   const contextStorage = storage(OAuthLinkTransactionContext);
@@ -842,4 +829,10 @@ export const makeOAuthAccountsKernel = (
     );
 
   return { accountCurrent, issueLink, preflightLink, claimLink, settleLink, inspectUnlink, unlink };
-};
+});
+
+export class OAuthAccounts extends Context.Service<OAuthAccounts, Effect.Success<typeof make>>()(
+  "effect-auth/persistence/OAuthAccounts",
+) {
+  static readonly layer = Layer.effect(OAuthAccounts, make);
+}

@@ -1,28 +1,26 @@
 import * as M from "@yielded/auth/OAuth";
 import { snapshotOAuthSync } from "@yielded/auth/OAuth";
-import { Effect } from "effect";
+import { Effect, Context, Layer } from "effect";
 
-import type { QueryOperations } from "../query-operations";
-import type { makeOAuthConnectedAccessKernel } from "./connected-access";
-import type { makeOAuthConnectedCustodyKernel } from "./connected-custody";
+import { OAuthConnectedAccess } from "./connected-access";
+import { OAuthConnectedCustody } from "./connected-custody";
+import { OAuthConnectedFlow } from "./connected-flow";
 import type * as FTypes from "./connected-flow";
-import type { makeOAuthConnectedFlowKernel } from "./connected-flow";
+import { OAuthConnectedState } from "./connected-state";
 import type * as STypes from "./connected-state";
-import type { makeOAuthConnectedStateKernel } from "./connected-state";
 import { CurrentOAuthTransaction } from "./owner";
-import type { makeOAuthOwnerKernel } from "./owner";
+import { OAuthQueryCompiler } from "./query-compiler";
 import { digest, invariant } from "./state";
 
-export const makeOAuthConnectedManagementKernel = (
-  operations: QueryOperations,
-  A: ReturnType<typeof makeOAuthConnectedAccessKernel>,
-  C: ReturnType<typeof makeOAuthConnectedCustodyKernel>,
-  F: ReturnType<typeof makeOAuthConnectedFlowKernel>,
-  S: ReturnType<typeof makeOAuthConnectedStateKernel>,
-  owner: Pick<ReturnType<typeof makeOAuthOwnerKernel>, "both" | "col" | "equal">,
-) => {
+const make = Effect.gen(function* () {
+  const operations = yield* OAuthQueryCompiler;
+  const A = yield* OAuthConnectedAccess;
+  const C = yield* OAuthConnectedCustody;
+  const F = yield* OAuthConnectedFlow;
+  const S = yield* OAuthConnectedState;
+
   const { asc, eq, gt, lte } = operations;
-  const { both, col, equal } = owner;
+  const { both, col, equal } = operations;
 
   const list = Effect.fn("oauthConnected.list")(function* (
     mapping: STypes.Mapping,
@@ -383,4 +381,11 @@ export const makeOAuthConnectedManagementKernel = (
   });
 
   return { list, inspectDisconnect, disconnect };
-};
+});
+
+export class OAuthConnectedManagement extends Context.Service<
+  OAuthConnectedManagement,
+  Effect.Success<typeof make>
+>()("effect-auth/persistence/OAuthConnectedManagement") {
+  static readonly layer = Layer.effect(OAuthConnectedManagement, make);
+}

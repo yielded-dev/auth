@@ -2,7 +2,7 @@
 import { type OAuthAccountRevision, snapshotOAuthSync } from "@yielded/auth/OAuth";
 import * as M from "@yielded/auth/OAuth";
 import { AuthenticationRequirement } from "@yielded/auth/Sessions";
-import { DateTime, Effect, Schema } from "effect";
+import { DateTime, Effect, Schema, Context, Layer } from "effect";
 
 import type {
   OAuthConnectedAuthorityMapping,
@@ -12,10 +12,12 @@ import type {
   OAuthConnectedPolicyInput,
   OAuthConnectedRevocationMapping,
 } from "../models/oauth-connected-model";
-import type { SqlExpression as SQL, QueryFailure, QueryOperations } from "../query-operations";
-import type { makeOAuthFlowKernel } from "./flow";
+import type { SqlExpression as SQL, QueryFailure } from "../query-operations";
+import { strings, clientKey, cohortKey, scopeKey, key } from "./connected-keys";
+import { OAuthFlow } from "./flow";
 import { CurrentOAuthTransaction } from "./owner";
-import type { OAuthOwner, Row, makeOAuthOwnerKernel } from "./owner";
+import type { OAuthOwner, Row } from "./owner";
+import { OAuthQueryCompiler } from "./query-compiler";
 import {
   digest,
   invariant,
@@ -52,7 +54,7 @@ export type Mapping = OAuthConnectedMapping<
 export type Revocations = OAuthConnectedRevocationMapping<any, any, any, any, any, any, any, any>;
 
 export type Current = NonNullable<
-  Effect.Success<ReturnType<ReturnType<typeof makeOAuthFlowKernel>["currentSubject"]>>
+  Effect.Success<ReturnType<OAuthFlow["Service"]["currentSubject"]>>
 >;
 
 export interface ScopeAnchor {
@@ -67,14 +69,13 @@ export interface ClientAnchor {
   readonly scope: ScopeAnchor;
 }
 
-export const makeOAuthConnectedStateKernel = (
-  operations: QueryOperations,
-  flow: Pick<ReturnType<typeof makeOAuthFlowKernel>, "currentSubject">,
-  owner: Pick<ReturnType<typeof makeOAuthOwnerKernel>, "both" | "col" | "copiedRow" | "equal">,
-) => {
+const make = Effect.gen(function* () {
+  const operations = yield* OAuthQueryCompiler;
+  const flow = yield* OAuthFlow;
+
   const { and, eq, isNull, sql } = operations;
   const { currentSubject } = flow;
-  const { both, col, copiedRow, equal } = owner;
+  const { both, col, copiedRow, equal } = operations;
 
   const contextStorage = storage(M.OAuthConnectedTransactionContext);
 
@@ -113,8 +114,6 @@ export const makeOAuthConnectedStateKernel = (
 
   const disconnectedStorage = storage(M.OAuthConnectedDisconnected);
 
-  const strings = storage(Schema.Array(Schema.String));
-
   const safeInteger = Schema.Int.check(
     Schema.isBetween({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }),
   );
@@ -135,26 +134,6 @@ export const makeOAuthConnectedStateKernel = (
 
   const nativeOrder = (mapping: Authority, value: unknown) =>
     orderParser(mapping.order.decode(value));
-
-  const encoder = new TextEncoder();
-
-  const decoder = new TextDecoder("utf-8", { fatal: true });
-
-  const key = Effect.fnUntraced(function* (domain: string, fields: ReadonlyArray<string>) {
-    for (const value of fields) invariant(decoder.decode(encoder.encode(value)) === value);
-
-    return "v1:" + (yield* digest(strings.encode([domain, ...fields])));
-  });
-
-  const clientKey = (configuration: M.OAuthConnectedConfiguration) =>
-    key("effect-auth/oauth-connected-client/v1", [
-      configuration.provider,
-      configuration.issuer,
-      configuration.profile.clientRegistrationId,
-    ]);
-
-  const cohortKey = (client: string, identity: string) =>
-    key("effect-auth/oauth-connected-cohort/v1", [client, identity]);
 
   const initialGeneration = (cohort: string) =>
     digest(cohort).pipe(
@@ -399,11 +378,6 @@ export const makeOAuthConnectedStateKernel = (
 
     return found;
   });
-
-  const scopeKey = (provider: string, issuer: string) =>
-    key("effect-auth/oauth-connected-provider-issuer/v1", [provider, issuer]).pipe(
-      Effect.map((value) => "scope:" + value),
-    );
 
   const scopeCache = new WeakMap<OAuthOwner, Map<Table, Map<string, ScopeAnchor>>>();
 
@@ -940,4 +914,11 @@ export const makeOAuthConnectedStateKernel = (
     unknownWork,
     cohortWork,
   };
-};
+});
+
+export class OAuthConnectedState extends Context.Service<
+  OAuthConnectedState,
+  Effect.Success<typeof make>
+>()("effect-auth/persistence/OAuthConnectedState") {
+  static readonly layer = Layer.effect(OAuthConnectedState, make);
+}
