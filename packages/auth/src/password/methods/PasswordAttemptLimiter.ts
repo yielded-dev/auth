@@ -9,8 +9,8 @@ const maximumKeys = 10_000;
 
 const storeFailure = (message: string) =>
   Effect.fail(
-    new RateLimiter.RateLimiterError({
-      reason: new RateLimiter.RateLimitStoreError({ message }),
+    RateLimiter.RateLimiterError.make({
+      reason: RateLimiter.RateLimitStoreError.make({ message }),
     }),
   );
 
