@@ -339,23 +339,30 @@ export const makePasswordAttempts = Effect.fnUntraced(function* (
               ? undefined
               : yield* snapshotPasswordCredential(input.captured);
 
-          // Only settlement and cleanup lock attempts, and mutations never do, so
-          // locking the attempt before its subject cannot form a lock cycle.
-          const row = yield* attemptRow(input.moduleId, input.attemptId, true);
+          const discovered = yield* attemptRow(input.moduleId, input.attemptId, false);
 
-          if (row === undefined || row[mapping.attempt.state] !== "pending")
+          if (discovered === undefined || discovered[mapping.attempt.state] !== "pending")
             return prepare("rejected", journal);
 
+          // Lock the subject before the attempt: a coordinated application
+          // transaction may already hold the subject lock. Without row locks
+          // the discovery read is already serialized, so it is not repeated.
           const current =
             input.outcome !== "verified" || captured === undefined
               ? undefined
               : yield* snapshot(
-                  row[mapping.attempt.subjectId],
+                  discovered[mapping.attempt.subjectId],
                   input.moduleId,
                   captured.identifier,
                   true,
                 );
 
+          const row = options.locking
+            ? yield* attemptRow(input.moduleId, input.attemptId, true)
+            : discovered;
+
+          if (row === undefined || row[mapping.attempt.state] !== "pending")
+            return prepare("rejected", journal);
           const now = yield* nowMillis;
           const deadline = yield* mapping.decodeInstant(row[mapping.attempt.deadline]);
 
