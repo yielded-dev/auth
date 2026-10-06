@@ -11,6 +11,7 @@ import {
   type InstalledConnectedProvider,
 } from "./connected/configuration";
 import type { OpenIdConnectConnectedProtocolOptions } from "./connected/models";
+import { discoveryProfile, supplementDiscovery } from "./discovery";
 import { OpenIdConnectConfigurationError, type OpenIdConnectOAuthProtocolOptions } from "./models";
 import type { Requirements as OAuthRequirements } from "./native";
 
@@ -55,7 +56,9 @@ export const installConfigurations = Effect.fn("OpenIdConnect.installConfigurati
   for (const provider of providers) {
     const raw =
       provider.protocol === "oidc"
-        ? yield* discover(provider.issuer, timeoutSeconds)
+        ? yield* discover(provider.issuer, timeoutSeconds).pipe(
+            Effect.flatMap((metadata) => supplementDiscovery(metadata, provider[discoveryProfile])),
+          )
         : {
             issuer: provider.issuer,
             authorization_endpoint: provider.authorizationEndpoint,

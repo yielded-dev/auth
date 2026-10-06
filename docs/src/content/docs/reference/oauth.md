@@ -280,6 +280,8 @@ flow envelopes are unchanged.
 
 ### Runnable examples
 
+For sign-in without retained provider access, run the [Slack example](../guide/slack#run-the-example).
+
 Run `vp run @yielded/example-auth#example:github` with `GITHUB_CLIENT_ID`,
 `GITHUB_CLIENT_SECRET`, `GITHUB_USER_ID`, `SESSION_KEY`, `OAUTH_TRANSACTION_KEY`,
 and `OAUTH_TOKEN_KEY`. Open `/login`; the Atom client starts sign-in through the shared
@@ -491,6 +493,7 @@ ingress rate limits.
 | Integration             | Configure                                                                                                         |
 | ----------------------- | ----------------------------------------------------------------------------------------------------------------- |
 | GitHub sign-in          | [`GitHub.provider`](../guide/github)                                                                              |
+| Slack sign-in           | [`Slack.provider`](../guide/slack) with client credentials; no retained API access                                |
 | GitHub with API access  | `GitHub.accessProfile({ clientId, scopes })` and `GitHub.provider({ clientId, clientSecret, access: [profile] })` |
 | Strava sign-in / access | `Strava.provider({ clientId, clientSecret, access: profile })`; omit `access` for sign-in only                    |
 | OIDC                    | [`OpenIdConnect.provider`](../guide/google) with issuer and credentials                                           |
@@ -552,12 +555,39 @@ metadata: display fields plus bounded `providerData`. It does not authorize acco
 linking or local roles. Normalized profile display URLs accept only HTTP(S).
 Expose only needed fields in claims; still treat profile URLs as untrusted input.
 
-| Consumer                      | Profile access                                               |
-| ----------------------------- | ------------------------------------------------------------ |
-| Returning shared-auth sign-in | `SessionClaims.resolve({ subjectId, credential, identity })` |
-| Shared-auth registration      | Server-side `OAuthRegistrationIntent.profile`                |
+| Consumer                      | Profile access                                                         |
+| ----------------------------- | ---------------------------------------------------------------------- |
+| Returning shared-auth sign-in | `SessionClaims.resolve({ subjectId, credential, provider, identity })` |
+| Shared-auth registration      | Server-side `OAuthRegistrationIntent.profile`                          |
 
-`GitHubUserProfile` and `OidcUserProfile` schemas decode the adapters' provider data.
+Declare provider schemas with `OAuth.make({ profiles })` or
+`OAuth.makeRegistration({ profiles, registration, registrationPolicy })`.
+Keys match the provider keys in `Http.make` or your protocol Layer:
+
+```ts
+const social = OAuth.make({
+  profiles: {
+    github: GitHub.GitHubUserProfile,
+    google: OpenIdConnect.OidcUserProfile,
+    slack: Slack.SlackUserProfile,
+    strava: Strava.Athlete,
+  },
+});
+```
+
+The library validates `providerData` against the matching schema before invoking
+`SessionClaims.resolve`. Its input is a discriminated union: narrow on `provider`
+to read the corresponding `identity.profile?.providerData`. For example,
+`provider === "github"` gives typed GitHub fields, including `email` as
+`string | null | undefined`. With one declared provider, no narrowing is needed.
+The same option works with retained access and `OAuth.makeModule`.
+
+A supplied map rejects undeclared providers or malformed data before session
+claims are resolved. Omitting `profiles` preserves the generic JSON object;
+consumers can decode it explicitly using the exported profile schemas. Custom
+providers use the same map with their own JSON-object schemas requiring no services.
+Schemas validate the adapter's projection; they do not add claims, scopes, or requests.
+
 Missing fields remain absent; GitHub nullable values remain null. GitHub's `/user`
 email is not asserted verified. Adapters do not fetch additional email or UserInfo
 endpoints or retain unknown fields. Connected-grant refresh need not update profiles.
@@ -565,6 +595,8 @@ endpoints or retain unknown fields. Connected-grant refresh need not update prof
 The OIDC adapter also includes Google's `hd` hosted-domain claim in `providerData`
 for verified Google ID tokens. Applications can use it to restrict access to a
 Google Workspace or Cloud organization. Other issuers' private `hd` claims remain ignored.
+Verified Slack ID tokens preserve `https://slack.com/team_id` and
+`https://slack.com/user_id`; see [Slack workspace policy](../guide/slack#identity-and-workspace-policy).
 
 Detailed signatures and invariants live beside the
 [OAuth source](https://github.com/yielded-dev/auth/tree/main/packages/auth/src/oauth).

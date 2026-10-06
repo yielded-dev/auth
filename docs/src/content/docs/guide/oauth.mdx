@@ -287,6 +287,8 @@ client configuration, network requirements, and the token lifecycle.
 
 ## Other providers
 
+For Sign in with Slack, use the [Slack preset and runnable example](./slack).
+
 `OpenIdConnect.provider` supports OIDC discovery and plain OAuth endpoints.
 Its optional `access` settings declare permission profiles and the provider's
 refresh/resource/revocation contract. A custom `ProviderDefinition.configure`
@@ -297,3 +299,8 @@ See [provider configuration](../reference/oauth#providers).
 The [combined login example](https://github.com/yielded-dev/auth/blob/main/examples/auth/src/login-server.ts)
 shares sessions across email, GitHub, and Google. Provider display metadata never
 authorizes linking accounts by matching email addresses.
+
+Declare a `profiles` schema map on the OAuth strategy to get typed `providerData`
+in `SessionClaims.resolve`. The map uses your provider keys and works with the
+GitHub, OIDC, Slack, and Strava schemas, or a custom provider's schema.
+See [provider profiles](../reference/oauth#provider-profiles) for mixed-provider narrowing.

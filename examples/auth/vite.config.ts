@@ -12,6 +12,11 @@ export default defineConfig({
         cache: false,
         dependsOn: ["build"],
       },
+      "example:slack": {
+        command: "bun src/slack-app.ts",
+        cache: false,
+        dependsOn: ["build"],
+      },
       "example:github": {
         command: "bun src/github-app.ts",
         cache: false,

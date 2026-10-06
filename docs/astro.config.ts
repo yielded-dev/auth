@@ -49,6 +49,7 @@ export default defineConfig({
             { label: "OAuth setup", slug: "guide/oauth" },
             { label: "GitHub", slug: "guide/github" },
             { label: "Google", slug: "guide/google" },
+            { label: "Slack", slug: "guide/slack" },
             { label: "Other OAuth / OIDC", link: "/guide/oauth/#other-providers" },
             { label: "MCP authorization", link: "/guide/oauth/#authorize-mcp-clients" },
           ],

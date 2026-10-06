@@ -42,6 +42,12 @@ import { OAuthRegistrationIntents, OAuthRegistrationSettlement } from "./OAuthRe
 import { OAuthReturnTargets } from "./OAuthReturnTargets";
 import { OAuthSignInPersistence, type PrepareOAuthCommit } from "./OAuthSignInPersistence";
 import { OAuthTransactionProtector } from "./OAuthTransactionProtector";
+import {
+  claimsIdentitySchema,
+  type OAuthClaimsIdentity,
+  type OAuthProviderProfiles,
+  type ProfileOptions,
+} from "./profiles";
 import { makeOAuthRegistration } from "./registration";
 import { OAuthRegistrationIntent, OAuthRegistrationPolicy } from "./registrationModels";
 import * as registrationSecrets from "./registrationSecrets";
@@ -76,7 +82,7 @@ import {
   OAuthTransactionSecrets,
   OAuthVerifiedExternalIdentity,
 } from "./signInModels";
-import { snapshotOAuth, snapshotOAuthSync } from "./signInSnapshot";
+import { freezeOAuth, snapshotOAuth, snapshotOAuthSync } from "./signInSnapshot";
 
 const Failure = Schema.Union([OAuthRejected, OAuthUnavailable, OAuthMethodUnsupported, HookDenied]);
 
@@ -134,26 +140,28 @@ export const makeOAuthMethod = <
   const SessionId extends string,
   Claims extends Schema.Codec<unknown, unknown, unknown, unknown>,
   Access extends OAuthConnectedProfile | undefined = undefined,
+  Profiles extends OAuthProviderProfiles = OAuthProviderProfiles,
 >(
   moduleId: Id,
-  options: {
+  options: ProfileOptions<Profiles> & {
     readonly sessions: ReturnType<typeof makeSessionModule<SessionId, Claims>>;
     readonly access?: Access;
   },
 ) => {
   const sessions = options.sessions;
   const binding = makeRequestBinding(moduleId, "oauth-entry");
+  const ClaimsIdentity = claimsIdentitySchema(options.profiles);
 
   /** Supply application session claims after provider verification and local account matching. */
   const SessionClaims = Context.Service<
     OAuthModule<Id, "claims", Claims["Type"]>,
     {
-      readonly resolve: (input: {
-        readonly subjectId: SubjectId;
-        readonly credential: OAuthCredentialSnapshot;
-        /** Fresh provider metadata. Select claims explicitly; profile email grants no linking authority. */
-        readonly identity: OAuthVerifiedExternalIdentity;
-      }) => Effect.Effect<Claims["Type"], OAuthUnavailable>;
+      readonly resolve: (
+        input: OAuthClaimsIdentity<Profiles> & {
+          readonly subjectId: SubjectId;
+          readonly credential: OAuthCredentialSnapshot;
+        },
+      ) => Effect.Effect<Claims["Type"], OAuthUnavailable>;
     }
   >(`effect-auth/oauth/${moduleId.length}:${moduleId}/Claims`);
 
@@ -759,10 +767,18 @@ export const makeOAuthMethod = <
               ),
             );
 
+            // Validate the selected projection even for replacement protocol services.
+            const claimsIdentity = yield* Schema.decodeEffect(ClaimsIdentity)({
+              provider: identity.identity.provider,
+              identity: snapshotOAuthSync(OAuthVerifiedExternalIdentity, identity),
+            }).pipe(Effect.mapError(() => OAuthUnavailable.make({})));
+
+            freezeOAuth(claimsIdentity);
+
             const claims = yield* resolveClaims({
               subjectId: credential.revision.subjectId,
               credential: snapshotOAuthSync(OAuthCredentialSnapshot, credential),
-              identity: snapshotOAuthSync(OAuthVerifiedExternalIdentity, identity),
+              ...claimsIdentity,
             });
 
             const established = yield* completeAuthentication({
