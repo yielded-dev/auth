@@ -152,9 +152,17 @@ burst and refill at `limit / windowMillis`. Consumption happens before writing a
 attempt and is never refunded, even if verification is interrupted or fails.
 A store failure denies the request.
 
-The default store holds at most 10,000 keys, reclaims fully idle buckets when full,
-and rejects new keys while all entries remain active. It is local to each process
-and resets on restart. Multi-instance deployments need a shared Effect
+The default store is process-local and resets on restart. Its fixed capacity is
+10,000 keys, shared by action, identifier, and subject buckets across every module
+using that store. Raising action limits or lengthening identifier/subject windows
+does not increase capacity. A full store returns `PasswordUnavailable` for requests
+needing a new key, including valid accounts; existing buckets keep their limits.
+High traffic or many distinct identifiers can exhaust this capacity.
+
+When full, the store reclaims buckets idle for a complete refill window, including
+time since their last rejected check. Active buckets are never evicted and no
+background cleanup fiber runs. Before increasing budgets, provide a store sized
+for the resulting active keys. Multi-instance deployments require a shared Effect
 `RateLimiterStore`, such as Redis, or a replacement `PasswordAttemptLimiter`:
 
 ```ts

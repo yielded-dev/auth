@@ -69,7 +69,9 @@ outside them.
   10,000 keys per runtime, is local to one process, and resets on restart.
   Multi-instance deployments must supply a shared Effect `RateLimiterStore` or
   replace `PasswordAttemptLimiter`. Consumption precedes attempt writes, is never
-  refunded, and store failures deny the request. Hosts also own network admission
+  refunded, and store failures deny the request. The fixed cap does not grow with
+  policy budgets; at capacity, requests needing new keys fail with
+  `PasswordUnavailable`. Active buckets are never evicted. Hosts also own network admission
   and the trusted network keys used by phone admission.
 - Identity selection, account provisioning, transaction authority, and
   authorization policy belong to the application. Provider claims and email

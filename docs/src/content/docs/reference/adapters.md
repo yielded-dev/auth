@@ -354,9 +354,14 @@ Use `makePasswordPersistenceServices` for verification and mutation storage;
 `makePasswordRegistrationServices` supplies registration authority. Reset support
 also needs a proof mapping.
 
+Password verification consumes token-bucket budgets through `PasswordAttemptLimiter`
+before durable attempt admission. Its default store is process-local, resets on
+restart, and has a fixed 10,000-key capacity. Multiple instances need a shared
+Effect `RateLimiterStore`; see [password limits](../guide/passwords#supply-the-services)
+for composition and capacity constraints. Consumed tokens are never refunded.
+
 ```text
 password mutation transaction
-  ├─ charge/check attempt budget
   ├─ check account + credential revisions
   ├─ update password and security revision
   └─ commit receipt
@@ -364,7 +369,7 @@ password mutation transaction
 
 Use the adapter's coordinator when combining authentication with application writes.
 Do not put standalone services inside an untracked raw Drizzle transaction.
-Prepared intents retain admission charges even after sensitive material is erased.
+Attempt state and receipts remain durable in persistence, independently of limiter storage.
 
 ## Email
 

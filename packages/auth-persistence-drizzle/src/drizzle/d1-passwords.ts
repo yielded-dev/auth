@@ -758,7 +758,7 @@ const admittedSnapshotCondition = (
       identifier: snapshot.identifier,
       nativeSubjectId: resolved.nativeSubjectId,
     }),
-    sql`exists(select 1 from ${mapping.identifier.table} where ${i.namespace} = ${sql.param(snapshot.identifier.namespace, i.namespace)} and ${i.value} = ${sql.param(snapshot.identifier.value, i.value)} and ${i.subjectId} = ${sql.param(resolved.nativeSubjectId, i.subjectId)} and ${i.bindingRevision} = ${sql.param(snapshot.identifierBindingRevision, i.bindingRevision)})`,
+    sql`exists(select 1 from ${mapping.identifier.table} where ${i.namespace} = ${sql.param(snapshot.identifier.namespace, i.namespace)} and ${i.value} = ${sql.param(snapshot.identifier.value, i.value)} and ${i.subjectId} = ${sql.param(resolved.nativeSubjectId, i.subjectId)} and ${i.bindingRevision} = ${sql.param(snapshot.identifierBindingRevision, i.bindingRevision)} and ${Predicate.isNullish(resolved.identifier[mapping.identifier.verifiedAt]) ? sql`${i.verifiedAt} is null` : sql`${i.verifiedAt} = ${sql.param(resolved.identifier[mapping.identifier.verifiedAt], i.verifiedAt)}`})`,
     sql`exists(select 1 from ${mapping.credential.table} where ${c.moduleId} = ${sql.param(moduleId, c.moduleId)} and ${c.subjectId} = ${sql.param(resolved.nativeSubjectId, c.subjectId)} and ${c.credentialId} = ${sql.param(snapshot.credentialId, c.credentialId)} and ${c.credentialRevision} = ${sql.param(snapshot.credentialRevision, c.credentialRevision)} and ${c.verifierVersion} = ${sql.param(snapshot.verifierVersion, c.verifierVersion)} and ${c.verifier} = ${sql.param(Redacted.value(snapshot.verifier), c.verifier)} and ${c.normalization} = ${sql.param(snapshot.normalization, c.normalization)})`,
     ...snapshot.revision.credentials.map(
       (item) =>

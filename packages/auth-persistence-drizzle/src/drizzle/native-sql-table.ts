@@ -39,7 +39,9 @@ const invalid = (cause: string): never => {
   throw PersistenceMappingError.make({ operation: "mapping", cause });
 };
 
-const capture = (database: object): CapturedDatabase => {
+const capture = (
+  database: object,
+): { readonly database: CapturedDatabase; readonly dialect: CapturedDialect } => {
   if (
     !Predicate.hasProperty(database, "select") ||
     typeof database.select !== "function" ||
@@ -50,8 +52,29 @@ const capture = (database: object): CapturedDatabase => {
   )
     return invalid("Expected a captured Drizzle database");
 
+  const selection: unknown = database.select();
+
+  if (!Predicate.hasProperty(selection, "dialect"))
+    return invalid("Expected a captured Drizzle dialect");
+  const dialect = selection.dialect;
+
+  if (
+    !Predicate.hasProperty(dialect, "escapeName") ||
+    typeof dialect.escapeName !== "function" ||
+    !Predicate.hasProperty(dialect, "escapeString") ||
+    typeof dialect.escapeString !== "function"
+  )
+    return invalid("Expected Drizzle dialect escaping methods");
+
+  if (
+    Predicate.hasProperty(dialect, "codecs") &&
+    dialect.codecs !== undefined &&
+    (!Predicate.hasProperty(dialect.codecs, "apply") || typeof dialect.codecs.apply !== "function")
+  )
+    return invalid("Expected Drizzle dialect codecs");
+
   // Drizzle's private dialect and generic query builders are erased only here.
-  return database as CapturedDatabase;
+  return { database: database as CapturedDatabase, dialect: dialect as CapturedDialect };
 };
 
 const compileWith =
@@ -126,8 +149,7 @@ export const makeDrizzleSqlTables = (
   client: SqlClient,
   capturedDatabase: object,
 ): NativeSqlTables => {
-  const database = capture(capturedDatabase);
-  const dialect = database.select().dialect;
+  const { database, dialect } = capture(capturedDatabase);
   const compile = compileWith(dialect);
 
   return makeNativeSqlTables(client, (_client, physical): SqlTable => {

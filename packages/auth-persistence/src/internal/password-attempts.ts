@@ -41,6 +41,10 @@ export const samePasswordCredentialSnapshot = (
   a.revision.subjectId === b.revision.subjectId &&
   a.revision.securityRevision === b.revision.securityRevision &&
   a.revision.credentials.length === b.revision.credentials.length &&
+  new Set(a.revision.credentials.map((entry) => entry.credentialId)).size ===
+    a.revision.credentials.length &&
+  new Set(b.revision.credentials.map((entry) => entry.credentialId)).size ===
+    b.revision.credentials.length &&
   a.revision.credentials.every((entry) =>
     b.revision.credentials.some(
       (other) => entry.credentialId === other.credentialId && entry.revision === other.revision,
