@@ -145,8 +145,20 @@ export const makeSessionApi = <
             );
 
           yield* request.sessionCacheCommandSink(command);
-        } else if (cached !== undefined) {
-          yield* request.sessionCacheCommandSink({ _tag: "Clear", slot: "session-cache" });
+        } else {
+          if (cached !== undefined)
+            yield* request.sessionCacheCommandSink({ _tag: "Clear", slot: "session-cache" });
+          if (
+            request.actionMode === "query" &&
+            session !== null &&
+            request.initializeSessionCache !== undefined
+          ) {
+            // Bootstrap only the binding. A delayed read may replace a generation,
+            // but must never deliver a matching pre-mutation snapshot with it.
+            yield* request.initializeSessionCache.pipe(
+              Effect.catchTag("SessionUnavailable", () => Effect.void),
+            );
+          }
         }
       }
 

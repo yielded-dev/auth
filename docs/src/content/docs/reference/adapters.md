@@ -108,8 +108,12 @@ Drizzle owns the migration journal and applies pending files transactionally.
 The generated migrations include the customer table and whichever auth tables the
 schema exports. Schema changes, including removal of a capability's tables, require
 a reviewed migration; startup only applies committed files. A failed migration stops
-auth startup. The persistence Layer checks physical columns and unique keys before
-serving auth. File-based drivers load the migration folder only when the Layer starts;
+auth startup. The composed persistence Layer initializes on its first storage operation,
+checking physical columns and unique keys before that operation runs. Cookie-cached
+and anonymous session reads perform no persistence initialization. Initialization is
+shared within that Layer's scope; failures remain the operation's typed availability
+error. Rebuild the Layer after migrations or an initialization failure.
+File-based drivers load the migration folder only when the migration Layer starts;
 SQLite WASM accepts Drizzle's `migrations` map instead of a folder. Direct Effect SQL
 applications supply their own migrations, as shown in the raw SQL example.
 
@@ -128,7 +132,7 @@ Enabling these strategies adds their storage and a `PasskeyConfig` requirement; 
 application still supplies action authorization, claims, and the protocol verifier.
 Composed passkey tables use integer milliseconds. Custom passkey timestamps use
 the explicit adapters or core service ports.
-The layer initializes module policy and admission records. Increment the strategy's
+Persistence initialization also prepares module policy and admission records. Increment the strategy's
 `policy.generation` when changing a stored passkey policy; disabled modules stay disabled.
 Removal preserves a remaining password or user-verified passkey that independently
 meets current sign-in requirements. More involved factor combinations use an explicit

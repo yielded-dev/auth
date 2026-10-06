@@ -70,6 +70,10 @@ A valid cookie snapshot avoids a persistence read. It contains public claims and
 is signed, not encrypted. Revocation, password changes, disablement, and claim
 updates may remain unseen for up to `cacheFor`.
 
+Existing logins begin caching automatically: one read establishes the browser
+binding and the next fills the snapshot. Cache hits verify the cookie locally;
+they do not read Postgres or require a server-side cache.
+
 The limit is the shorter of five minutes and `renewAfter`. Features configured
 with `requireImmediateInvalidation: true` reject caching at startup.
 Management, step-up, and mutations always read authoritative state. A mutation

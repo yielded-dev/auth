@@ -4,6 +4,7 @@ import type { HookDenied } from "../hooks/models";
 import type { AuthInvocation } from "../operations/context";
 import type { AuthResolvedCall } from "../operations/credentials";
 import type { SessionCacheCommand } from "../sessions/cookieCache";
+import type { SessionUnavailable } from "../sessions/errors";
 import type { SessionApiError } from "./session";
 
 /** Supplied by the host for one request or native workflow, never a shared auth Layer.
@@ -14,8 +15,10 @@ export class AuthRequest extends Context.Service<
   AuthResolvedCall & {
     /** Set by the trusted named action declaration while its implementation executes. */
     readonly actionMode?: "query" | "mutation";
-    /** Browser mutation binding; missing or malformed values disable cookie caching. */
+    /** Browser mutation binding; snapshots require a valid incoming generation. */
     readonly sessionCacheGeneration?: Redacted.Redacted<string>;
+    /** Establish a missing browser binding without issuing a snapshot in the same response. */
+    readonly initializeSessionCache?: Effect.Effect<void, SessionUnavailable>;
     /** Cookie snapshots are private read responses, separate from credential issuance. */
     readonly sessionCacheCommandSink?: (command: SessionCacheCommand) => Effect.Effect<void>;
     /** Host admission runs before mutation side effects; absent for trusted local callers. */

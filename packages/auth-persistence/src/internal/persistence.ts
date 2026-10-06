@@ -1,6 +1,13 @@
 import { EmailAddressPersistence, EmailUnavailable } from "@yielded/auth/Email";
-import { LifecycleHooks } from "@yielded/auth/Hooks";
-import type { PasskeyConfig } from "@yielded/auth/Passkey";
+import { hasCommitScope, LifecycleHooks } from "@yielded/auth/Hooks";
+import {
+  type PasskeyConfig,
+  PasskeyCredentials,
+  PasskeyEnrollmentContext,
+  PasskeyManagementPersistence,
+  PasskeyPersistence,
+  PasskeyUnavailable,
+} from "@yielded/auth/Passkey";
 import { PasswordPersistence, PasswordUnavailable } from "@yielded/auth/Password";
 import { hooksLayer } from "@yielded/auth/Persistence";
 import { PhoneAdmission, PhoneSignInTargets, PhoneOtpUnavailable } from "@yielded/auth/PhoneOtp";
@@ -44,6 +51,7 @@ import {
 } from "./proof-kernel";
 import type { QueryOperations } from "./query-operations";
 import { makeRegistrationAuthority } from "./registration";
+import type { PasswordRegistrationAuthority } from "./registration-contract";
 import { makeSessionKernel, CurrentSessionSql, type SessionSqlDatabase } from "./session-kernel";
 import { requireStandalone } from "./standalone";
 import { makeMappings } from "./storage-mapping";
@@ -602,10 +610,220 @@ export const createPersistence = <T extends object, R>(
       ),
     ).pipe(Layer.provide(hooksLayer));
 
+    const layer = Layer.effectContext(
+      Effect.gen(function* () {
+        const scope = yield* Effect.scope;
+        const captured = yield* Effect.context<Layer.Services<typeof services>>();
+        const client = Context.get(captured, SqlClient.SqlClient);
+
+        // Construction uses the layer's exact environment and lifetime, never the
+        // first operation's SQL transaction, service overrides, or request scope.
+        // Cache the full exit: concurrent callers share failures/interruption too,
+        // and cannot retry partially completed setup within this acquired layer.
+        const initialize = yield* Effect.cached(
+          Layer.buildWithScope(services, scope).pipe(Effect.setContext(captured)),
+        );
+
+        const service = Effect.fnUntraced(function* <I, S, Failure>(
+          key: Context.Key<I, S>,
+          unavailable: () => Failure,
+          standalone = true,
+        ): Effect.fn.Return<S, Failure> {
+          // Reject unsupported ownership before setup can perform any writes.
+          // Session/authority reads retain their existing ambient-read semantics.
+          if (standalone) {
+            if (yield* hasCommitScope) return yield* Effect.fail(unavailable());
+            yield* requireStandalone(unavailable, client.transactionService);
+          }
+          const acquired = yield* initialize.pipe(Effect.mapError(unavailable));
+          const value = Context.getOrUndefined(acquired, key);
+
+          return value === undefined ? yield* Effect.fail(unavailable()) : value;
+        });
+
+        const sessionUnavailable = () => SessionUnavailable.make({});
+        const authority = service(AuthenticationAuthority, sessionUnavailable, false);
+        const authorityMutation = service(AuthenticationAuthority, sessionUnavailable);
+
+        const sessions = service(
+          auth.sessions.StatefulSessionPersistence,
+          sessionUnavailable,
+          false,
+        );
+
+        const sessionMutations = service(
+          auth.sessions.StatefulSessionPersistence,
+          sessionUnavailable,
+        );
+
+        const repository = service(auth.sessions.SessionRepository, sessionUnavailable, false);
+
+        let context: Context.Context<never> = Context.make(AuthenticationAuthority, {
+          capture: (subjectId, credentialIds) =>
+            Effect.flatMap(authority, (s) => s.capture(subjectId, credentialIds)),
+          requirements: (evidence) => Effect.flatMap(authority, (s) => s.requirements(evidence)),
+          approve: (input, prepare) =>
+            Effect.flatMap(authorityMutation, (s) => s.approve(input, prepare)),
+        }).pipe(
+          Context.add(auth.sessions.StatefulSessionPersistence, {
+            establish: (input, prepare) =>
+              Effect.flatMap(sessionMutations, (s) => s.establish(input, prepare)),
+            verify: (input) => Effect.flatMap(sessions, (s) => s.verify(input)),
+            rotate: (input, prepare) =>
+              Effect.flatMap(sessionMutations, (s) => s.rotate(input, prepare)),
+            revokeDigest: (digest, prepare) =>
+              Effect.flatMap(sessionMutations, (s) => s.revokeDigest(digest, prepare)),
+            revoke: (input, prepare) =>
+              Effect.flatMap(sessionMutations, (s) => s.revoke(input, prepare)),
+            revokeAll: (input, prepare) =>
+              Effect.flatMap(sessionMutations, (s) => s.revokeAll(input, prepare)),
+          }),
+          Context.add(auth.sessions.SessionRepository, {
+            list: (input) => Effect.flatMap(repository, (s) => s.list(input)),
+          }),
+        );
+
+        if (proofs) {
+          const persistence = service(ProofPersistence, () => ProofUnavailable.make({}));
+
+          context = Context.add(context, ProofPersistence, {
+            issue: (input, prepare) => Effect.flatMap(persistence, (s) => s.issue(input, prepare)),
+            attempt: (input, prepare) =>
+              Effect.flatMap(persistence, (s) => s.attempt(input, prepare)),
+            complete: (input, prepare) =>
+              Effect.flatMap(persistence, (s) => s.complete(input, prepare)),
+            claimDelivery: (input, prepare) =>
+              Effect.flatMap(persistence, (s) => s.claimDelivery(input, prepare)),
+            settleDelivery: (input, prepare) =>
+              Effect.flatMap(persistence, (s) => s.settleDelivery(input, prepare)),
+            cancel: (input, prepare) =>
+              Effect.flatMap(persistence, (s) => s.cancel(input, prepare)),
+            cleanup: (input, prepare) =>
+              Effect.flatMap(persistence, (s) => s.cleanup(input, prepare)),
+          });
+        }
+        if (password) {
+          const persistence = service(PasswordPersistence, () => PasswordUnavailable.make({}));
+
+          context = Context.add(context, PasswordPersistence, {
+            findCredential: (input) => Effect.flatMap(persistence, (s) => s.findCredential(input)),
+            rehashIfCurrent: (input) =>
+              Effect.flatMap(persistence, (s) => s.rehashIfCurrent(input)),
+            readForSubject: (input) => Effect.flatMap(persistence, (s) => s.readForSubject(input)),
+            recoveryTarget: (input) => Effect.flatMap(persistence, (s) => s.recoveryTarget(input)),
+            addIfAbsent: (input, prepare) =>
+              Effect.flatMap(persistence, (s) => s.addIfAbsent(input, prepare)),
+            replaceIfCurrent: (input, prepare) =>
+              Effect.flatMap(persistence, (s) => s.replaceIfCurrent(input, prepare)),
+            checkReset: (input) => Effect.flatMap(persistence, (s) => s.checkReset(input)),
+            resetWithProof: (input, prepare) =>
+              Effect.flatMap(persistence, (s) => s.resetWithProof(input, prepare)),
+          });
+        }
+        for (const [name, strategy] of Object.entries(auth.strategies)) {
+          if (strategy.persistence?.kind !== "password" || !strategy.persistence.management)
+            continue;
+          const key = strategy.RegistrationAuthority;
+
+          if (key === undefined)
+            return yield* configError(`Missing subject provisioning for ${name}`);
+
+          // The heterogeneous strategy table erases the registration input type;
+          // its decoded value is forwarded unchanged to the same authority key.
+          const registration = service(
+            key as Context.Key<unknown, PasswordRegistrationAuthority<unknown>>,
+            () => PasswordUnavailable.make({}),
+          );
+
+          context = Context.add(context, key, {
+            register: (input, prepare) =>
+              Effect.flatMap(registration, (s) => s.register(input, prepare)),
+          } satisfies PasswordRegistrationAuthority<unknown>);
+        }
+        if (email) {
+          const persistence = service(EmailAddressPersistence, () => EmailUnavailable.make({}));
+
+          context = Context.add(context, EmailAddressPersistence, {
+            target: (input) => Effect.flatMap(persistence, (s) => s.target(input)),
+            checkCompletion: (input) =>
+              Effect.flatMap(persistence, (s) => s.checkCompletion(input)),
+            verifyWithProof: (input, prepare) =>
+              Effect.flatMap(persistence, (s) => s.verifyWithProof(input, prepare)),
+            changeWithProof: (input, prepare) =>
+              Effect.flatMap(persistence, (s) => s.changeWithProof(input, prepare)),
+            cleanup: (input, prepare) =>
+              Effect.flatMap(persistence, (s) => s.cleanup(input, prepare)),
+          });
+        }
+        if (phone) {
+          const unavailable = () => PhoneOtpUnavailable.make({});
+          const admission = service(PhoneAdmission, unavailable);
+          const targets = service(PhoneSignInTargets, unavailable);
+
+          context = context.pipe(
+            Context.add(PhoneAdmission, {
+              admit: (input) => Effect.flatMap(admission, (s) => s.admit(input)),
+              cleanup: (input) => Effect.flatMap(admission, (s) => s.cleanup(input)),
+            }),
+            Context.add(PhoneSignInTargets, {
+              lookup: (input) => Effect.flatMap(targets, (s) => s.lookup(input)),
+            }),
+          );
+        }
+        if (passkeys.length > 0) {
+          const unavailable = () => PasskeyUnavailable.make({});
+          const credentials = service(PasskeyCredentials, unavailable);
+          const persistence = service(PasskeyPersistence, unavailable);
+
+          context = context.pipe(
+            Context.add(PasskeyCredentials, {
+              lookup: (input) => Effect.flatMap(credentials, (s) => s.lookup(input)),
+            }),
+            Context.add(PasskeyPersistence, {
+              issue: (input, prepare) =>
+                Effect.flatMap(persistence, (s) => s.issue(input, prepare)),
+              context: (input) => Effect.flatMap(persistence, (s) => s.context(input)),
+              claim: (input, prepare) =>
+                Effect.flatMap(persistence, (s) => s.claim(input, prepare)),
+              settle: (input, prepare) =>
+                Effect.flatMap(persistence, (s) => s.settle(input, prepare)),
+              cleanup: (input, prepare) =>
+                Effect.flatMap(persistence, (s) => s.cleanup(input, prepare)),
+            }),
+          );
+          if (passkeys.some((feature) => feature.management)) {
+            const manager = service(PasskeyManagementPersistence, unavailable);
+            const enrollment = service(PasskeyEnrollmentContext, unavailable);
+
+            context = context.pipe(
+              Context.add(PasskeyEnrollmentContext, {
+                capture: (input) => Effect.flatMap(enrollment, (s) => s.capture(input)),
+              }),
+              Context.add(PasskeyManagementPersistence, {
+                list: (input) => Effect.flatMap(manager, (s) => s.list(input)),
+                issueEnrollment: (input, prepare) =>
+                  Effect.flatMap(manager, (s) => s.issueEnrollment(input, prepare)),
+                completeEnrollment: (input, prepare) =>
+                  Effect.flatMap(manager, (s) => s.completeEnrollment(input, prepare)),
+                inspectRemove: (input) => Effect.flatMap(manager, (s) => s.inspectRemove(input)),
+                remove: (input, prepare) =>
+                  Effect.flatMap(manager, (s) => s.remove(input, prepare)),
+                rename: (input, prepare) =>
+                  Effect.flatMap(manager, (s) => s.rename(input, prepare)),
+              }),
+            );
+          }
+        }
+
+        // Match the same capability-selected service keys as the acquired graph.
+        return context as Context.Context<Ports<C, Id, A>>;
+      }),
+    );
+
     return {
       Config,
       Provisioning: ProvisioningKey,
-      layer: services,
+      layer,
       managed: <N, Instant = number>(options: {
         readonly subjects: SubjectOptions<T, N>;
         readonly tables?: Partial<Record<Roles<C, Id, A>, T>>;

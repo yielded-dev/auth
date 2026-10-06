@@ -114,8 +114,9 @@ export const storage = Persistence.map({
 });
 ```
 
-The library still runs every query and transaction. Before serving auth, the
-persistence Layer checks each mapped column and unique key against the database.
+The library still runs every query and transaction. On its first storage operation,
+the composed persistence Layer checks each mapped column and unique key against the
+database. Cookie-cached and anonymous session reads skip this initialization.
 
 The same `Persistence.map` works without Drizzle. Import `AuthPersistence` from
 `@yielded/auth-persistence`, describe the tables for Effect SQL, and write the DDL
