@@ -368,6 +368,9 @@ password mutation transaction
 ```
 
 Use the adapter's coordinator when combining authentication with application writes.
+Coordinated password mutations, including a reset's proof completion, are checked again
+after your writes; changing their account, credential, or proof rows in the same commit
+rolls both back.
 Do not put standalone services inside an untracked raw Drizzle transaction.
 Attempt state and receipts remain durable in persistence, independently of limiter storage.
 

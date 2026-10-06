@@ -1,4 +1,9 @@
-import type { NativeDatabase } from "@yielded/auth-persistence/Adapter";
+import {
+  CurrentPasswordPreparedTransaction,
+  type NativeDatabase,
+  type PasswordPreparedPostcondition,
+  PasswordPreparedPostconditions,
+} from "@yielded/auth-persistence/Adapter";
 import {
   coordinateCommit,
   hasCommitScope,
@@ -7,7 +12,7 @@ import {
 } from "@yielded/auth/Hooks";
 import { PasswordUnavailable, PasswordPersistence } from "@yielded/auth/Password";
 /* oxlint-disable no-explicit-any -- public driver wrappers restore concrete Drizzle generics. */
-import { type Context, Effect, Layer } from "effect";
+import { Cause, type Context, Effect, Layer } from "effect";
 import type * as SqlError from "effect/sql/SqlError";
 
 import {
@@ -154,7 +159,10 @@ export const coordinateTargetPasswordPersistence = <Transaction, A, E, R>(
       () =>
         database.transaction((transaction) =>
           Effect.gen(function* () {
-            return yield* owner(transaction, {
+            const postconditions: Array<PasswordPreparedPostcondition> = [];
+            let acceptingPostconditions = true;
+
+            const value = yield* owner(transaction, {
               passwordPersistence: yield* makeSqlPasswordPersistence(
                 mapping,
                 passwordOptions(configuration, proofMapping, true),
@@ -164,7 +172,36 @@ export const coordinateTargetPasswordPersistence = <Transaction, A, E, R>(
                   transaction as unknown as PasswordSqlDatabase,
                 ),
               ),
-            });
+            }).pipe(
+              Effect.provideService(PasswordPreparedPostconditions, {
+                register: (check) => {
+                  if (!acceptingPostconditions) return false;
+                  postconditions.push(check);
+
+                  return true;
+                },
+              }),
+              Effect.ensuring(
+                Effect.sync(() => {
+                  acceptingPostconditions = false;
+                }),
+              ),
+            );
+
+            // Application work in this transaction must not change what the
+            // password mutations committed to; a failure here rolls back both.
+            for (const check of postconditions)
+              yield* check.pipe(
+                Effect.provideService(
+                  CurrentPasswordPreparedTransaction,
+                  transaction as unknown as PasswordSqlDatabase,
+                ),
+                Effect.catchCause((cause) =>
+                  Effect.failCause(Cause.map(cause, () => PasswordUnavailable.make({}))),
+                ),
+              );
+
+            return value;
           }),
         ),
       { mode: configuration.mode },

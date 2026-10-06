@@ -45,6 +45,10 @@ import {
   samePasswordCredentialSnapshot as sameCredentialSnapshot,
 } from "./password-attempts";
 import {
+  CurrentPasswordPreparedTransaction,
+  PasswordPreparedPostconditions,
+} from "./PasswordPreparedPostconditions";
+import {
   CurrentProofSql,
   type ProofSqlConfiguration,
   type ProofSqlDatabase,
@@ -467,6 +471,25 @@ export const makePasswordKernel = <
       : run;
   };
 
+  // A coordinator that accepts postconditions re-runs this check against its
+  // current transaction after application work, before commit.
+  const registerFinal = Effect.fnUntraced(function* <E>(
+    check: Effect.Effect<boolean, E, CurrentPasswordSql>,
+  ) {
+    const postconditions = yield* Effect.serviceOption(PasswordPreparedPostconditions);
+
+    if (Option.isNone(postconditions)) return;
+
+    const postcondition = Effect.gen(function* () {
+      const transaction = yield* CurrentPasswordPreparedTransaction;
+
+      if (!(yield* check.pipe(Effect.provideService(CurrentPasswordSql, transaction))))
+        return yield* unavailable();
+    }).pipe(translateFailure);
+
+    if (!postconditions.value.register(postcondition)) return yield* unavailable();
+  });
+
   const safeRead = <A, E, R>(
     database: Database,
     configuration: PasswordSqlConfiguration,
@@ -884,55 +907,16 @@ export const makePasswordKernel = <
       );
     yield* insertCommand(mapping, input, "add-password", commandNow ?? authority.now);
 
-    const inserted = (yield* readPasswordCredential(
+    const applied = checkMutationApplied(
       mapping,
-      input.moduleId,
+      input,
       authority.nativeSubjectId,
-      false,
-    ))[0];
+      revisions,
+      commandNow ?? authority.now,
+    );
 
-    const authorityInserted = (yield* database
-      .select()
-      .from(mapping.authorityCredential.table)
-      .where(
-        and(
-          eq(authorityCredentialColumns(mapping).subjectId, authority.nativeSubjectId),
-          eq(authorityCredentialColumns(mapping).credentialId, credentialId),
-          eq(authorityCredentialColumns(mapping).revision, credentialRevision),
-        ),
-      )
-      .limit(1))[0];
-
-    const subjectUpdated = (yield* database
-      .select()
-      .from(mapping.subject.table)
-      .where(
-        and(
-          eq(subjectColumns(mapping).id, authority.nativeSubjectId),
-          eq(subjectColumns(mapping).securityRevision, nextSecurityRevision),
-        ),
-      )
-      .limit(1))[0];
-
-    if (
-      inserted === undefined ||
-      inserted[mapping.credential.credentialId] !== credentialId ||
-      inserted[mapping.credential.credentialRevision] !== credentialRevision ||
-      inserted[mapping.credential.verifierVersion] !== verifierVersion ||
-      inserted[mapping.credential.verifier] !== Redacted.value(input.replacement.verifier) ||
-      inserted[mapping.credential.normalization] !== input.replacement.normalization ||
-      authorityInserted === undefined ||
-      subjectUpdated === undefined ||
-      !(yield* mutationPostconditions(
-        mapping,
-        input,
-        authority.nativeSubjectId,
-        subjectUpdated,
-        authorityInserted,
-        commandNow ?? authority.now,
-      ))
-    )
-      return yield* unavailable();
+    if (!(yield* applied)) return yield* unavailable();
+    yield* registerFinal(applied);
 
     return true;
   });
@@ -1260,13 +1244,30 @@ export const makePasswordKernel = <
                     configuration.proof!.configuration,
                     input.completion,
                     Effect.gen(function* () {
-                      return yield* writeReplacement(
+                      const revisions = {
+                        credentialRevision,
+                        verifierVersion,
+                        nextSecurityRevision,
+                      };
+
+                      const applied = yield* writeReplacement(
                         mapping,
                         input,
                         authority.nativeSubjectId,
-                        { credentialRevision, verifierVersion, nextSecurityRevision },
+                        revisions,
                         authority.now,
                       );
+
+                      if (applied)
+                        yield* registerReplacement(
+                          mapping,
+                          input,
+                          authority.nativeSubjectId,
+                          revisions,
+                          authority.now,
+                        );
+
+                      return applied;
                     }),
                     (decision) => {
                       passwordReceipt = prepare(
@@ -1437,8 +1438,14 @@ export const makePasswordKernel = <
       )
       .limit(1))[0];
 
+    // SQL equality follows column collation; compare the persisted values exactly.
     return (
       credential !== undefined &&
+      credential[mapping.credential.credentialId] === revisions.credentialId &&
+      credential[mapping.credential.credentialRevision] === revisions.credentialRevision &&
+      credential[mapping.credential.verifierVersion] === revisions.verifierVersion &&
+      credential[mapping.credential.verifier] === Redacted.value(input.replacement.verifier) &&
+      credential[mapping.credential.normalization] === input.replacement.normalization &&
       (yield* mutationPostconditions(
         mapping,
         input,
@@ -1519,6 +1526,27 @@ export const makePasswordKernel = <
     );
   });
 
+  const registerReplacement = (
+    mapping: Mapping,
+    input: PasswordMutationInput,
+    nativeSubjectId: unknown,
+    revisions: {
+      readonly credentialRevision: SecurityRevision;
+      readonly verifierVersion: SecurityRevision;
+      readonly nextSecurityRevision: SecurityRevision;
+    },
+    now: number,
+  ) =>
+    registerFinal(
+      checkMutationApplied(
+        mapping,
+        input,
+        nativeSubjectId,
+        { ...revisions, credentialId: input.credential!.credentialId },
+        now,
+      ),
+    );
+
   const replaceIn = Effect.fn("Drizzle.replaceIn")(function* <A>(
     mapping: Mapping,
     configuration: PasswordSqlConfiguration,
@@ -1552,6 +1580,7 @@ export const makePasswordKernel = <
       ))
     )
       return yield* unavailable();
+    yield* registerReplacement(mapping, input, authority.nativeSubjectId, revisions, authority.now);
 
     return prepared;
   });

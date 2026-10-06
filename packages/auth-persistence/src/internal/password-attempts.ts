@@ -20,6 +20,7 @@ import type { PersistenceMappingError } from "./mapping-error";
 import type { AnyPasswordPersistenceMapping } from "./models/password-model";
 import { sqlMapping, type SqlTable } from "./native-sql-table";
 import type { PasswordSqlConfiguration } from "./password-kernel";
+import { PasswordPreparedPostconditions } from "./PasswordPreparedPostconditions";
 import { NativeDatabase } from "./transaction-kernel";
 
 type Row = Readonly<Record<string, unknown>>;
@@ -412,23 +413,42 @@ export const makePasswordAttempts = Effect.fnUntraced(function* (
               };
             }
 
-            const final = yield* snapshot(
-              current.nativeId,
-              input.moduleId,
-              captured.identifier,
-              false,
-              input.attemptId,
-            );
+            const settled = expected;
+
+            const applied = Effect.gen(function* () {
+              const final = yield* snapshot(
+                current.nativeId,
+                input.moduleId,
+                captured.identifier,
+                false,
+                input.attemptId,
+              );
+
+              return (
+                final !== undefined &&
+                samePasswordCredentialSnapshot(final.captured, settled) &&
+                final.attempt !== undefined &&
+                final.attempt[mapping.attempt.state] === "verified" &&
+                attemptMatches(final.attempt, captured, current.nativeId) &&
+                (yield* mapping.decodeInstant(final.attempt[mapping.attempt.deadline])) ===
+                  deadline &&
+                deadline > (yield* nowMillis)
+              );
+            }).pipe(failure);
+
+            if (!(yield* applied)) return yield* unavailable();
+
+            // A coordinator that accepts postconditions repeats this check after
+            // application work, inside the same transaction.
+            const postconditions = yield* Effect.serviceOption(PasswordPreparedPostconditions);
 
             if (
-              final === undefined ||
-              !samePasswordCredentialSnapshot(final.captured, expected) ||
-              final.attempt === undefined ||
-              final.attempt[mapping.attempt.state] !== "verified" ||
-              !attemptMatches(final.attempt, captured, current.nativeId) ||
-              (yield* mapping.decodeInstant(final.attempt[mapping.attempt.deadline])) !==
-                deadline ||
-              deadline <= (yield* nowMillis)
+              Option.isSome(postconditions) &&
+              !postconditions.value.register(
+                Effect.flatMap(applied, (holds) =>
+                  holds ? Effect.void : Effect.fail(unavailable()),
+                ),
+              )
             )
               return yield* unavailable();
           }
