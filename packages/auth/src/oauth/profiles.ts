@@ -1,4 +1,4 @@
-import { Schema } from "effect";
+import { Schema, Struct } from "effect";
 
 import { OAuthDisplayProfile, OAuthVerifiedExternalIdentity } from "./signInModels";
 
@@ -11,6 +11,9 @@ export type ProfileOptions<Profiles extends OAuthProviderProfiles> = {
   readonly profiles?: Profiles;
 } & (OAuthProviderProfiles extends Profiles ? {} : { readonly profiles: Profiles });
 
+// Protocol identity fields are already decoded; provider data is decoded below.
+const decodedIdentity = OAuthVerifiedExternalIdentity.mapFields(Struct.map(Schema.toType));
+
 const providerSchema = <const Key extends string, S extends Schema.Codec<Schema.JsonObject>>(
   provider: Key,
   data: S,
@@ -18,7 +21,7 @@ const providerSchema = <const Key extends string, S extends Schema.Codec<Schema.
   Schema.Struct({
     provider: Schema.Literal(provider),
     identity: Schema.Struct({
-      ...OAuthVerifiedExternalIdentity.fields,
+      ...decodedIdentity.fields,
       profile: Schema.optionalKey(
         Schema.Struct({
           ...OAuthDisplayProfile.fields,
@@ -40,7 +43,7 @@ export const claimsIdentitySchema = <Profiles extends OAuthProviderProfiles>(
   profiles: Profiles | undefined,
 ): Schema.Codec<OAuthClaimsIdentity<Profiles>, unknown> => {
   if (profiles === undefined)
-    return Schema.Struct({ provider: Schema.String, identity: OAuthVerifiedExternalIdentity });
+    return Schema.Struct({ provider: Schema.String, identity: decodedIdentity });
 
   return Schema.Union(
     Object.entries(profiles).map(([provider, data]) => providerSchema(provider, data)),
