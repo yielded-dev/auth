@@ -1,10 +1,4 @@
-import {
-  Auth,
-  OAuth,
-  type Operations,
-  type Schema as AuthSchema,
-  type Sessions,
-} from "@yielded/auth";
+import { Auth, OAuth, type Operations, type Schema as AuthSchema, Sessions } from "@yielded/auth";
 import * as GitHub from "@yielded/auth/GitHub";
 import { Context, Effect, Layer, Schema, Stream } from "effect";
 import type { HttpClientResponse } from "effect/http";
@@ -94,8 +88,8 @@ export const githubSignInLayer = (input: {
     OAuth.OAuthTransactionProtector.layer(input.transactionKeys),
     OAuth.OAuthReturnTargets.exactRoutes(["/account"]),
     claimsLayer,
-    githubSessions.statelessLayer(
-      {
+    githubSessions
+      .statelessLayer({
         issuer: "example",
         audience: "example",
         generation: 1,
@@ -105,9 +99,8 @@ export const githubSignInLayer = (input: {
         maximumIssuedAbsoluteLifetimeMillis: 300_000,
         maximumTokenBytes: 16_384,
         requireImmediateInvalidation: false,
-      },
-      input.sessionKeys,
-    ),
+      })
+      .pipe(Layer.provide(Layer.succeed(Sessions.SessionSigningKeys, input.sessionKeys))),
   );
 
   const completion = githubSessions

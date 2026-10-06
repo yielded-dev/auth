@@ -115,12 +115,15 @@ export interface SessionRepository {
   >;
 }
 
-/** Explicitly state-assisted signed sessions. No positive validity cache is permitted.
+/** Authoritative validity for state-assisted signed sessions. The validity store never
+ * caches approvals; a separately enabled cookie cache can bypass ordinary request reads.
  * Tombstones MUST be keyed by (subjectId, sessionId), or the authority must prove
  * target ownership before any global sessionId mutation. The caller session alone
  * does not prove ownership of an arbitrary management target.
  */
 export interface SignedSessionValidity {
+  /** Visibility of completed revocations. Eventual reads require explicit policy opt-in. */
+  readonly consistency: "strong" | "eventual";
   readonly verify: (
     session: SessionMetadata,
     now: DateTime.Utc,

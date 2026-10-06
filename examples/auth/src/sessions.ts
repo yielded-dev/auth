@@ -31,7 +31,9 @@ const stateful = staffSessions
   .statefulLayer(policy)
   .pipe(Layer.provide(authority), Layer.provide(base));
 
-const stateless = staffSessions.statelessLayer(policy, keyring).pipe(Layer.provide(base));
+const stateless = staffSessions
+  .statelessLayer(policy)
+  .pipe(Layer.provide(Layer.succeed(Sessions.SessionSigningKeys, keyring)), Layer.provide(base));
 
 const application = (strategy: typeof stateless) => {
   const capabilities = Layer.mergeAll(strategy, authority);

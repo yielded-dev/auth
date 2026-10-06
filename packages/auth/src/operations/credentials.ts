@@ -5,6 +5,7 @@ import type { AuthRevealCommand, AuthRevealCommandCollector } from "./reveals";
 
 export type CredentialSlot =
   | "session"
+  | "session-cache"
   | "pending-proof"
   | "proof-continuation"
   | "registration"
@@ -56,6 +57,7 @@ export interface AuthResolvedCall {
 
 const slot = Schema.Literals([
   "session",
+  "session-cache",
   "pending-proof",
   "proof-continuation",
   "registration",
@@ -85,7 +87,7 @@ export const snapshotCredentialCommands = (
     if (!Array.isArray(commands)) throw new globalThis.Error();
     const length = commands.length;
 
-    if (!Number.isInteger(length) || length < 0 || length > 8) throw new globalThis.Error();
+    if (!Number.isInteger(length) || length < 0 || length > 9) throw new globalThis.Error();
     const slots = new Set<CredentialSlot>();
     const captured: AuthCredentialCommand[] = [];
 

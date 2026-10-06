@@ -513,7 +513,8 @@ export const makePasswordPrepared = <
         yield* passwordNoAmbient();
         if (
           policy.requireImmediateInvalidation &&
-          strategy.capabilities.subjectInvalidation !== "immediate"
+          (strategy.capabilities.subjectInvalidation !== "immediate" ||
+            strategy.capabilities.positiveCacheMillis > 0)
         )
           return yield* PasswordMethodUnsupported.make({});
         if (action !== "reset-password" && invocation._tag !== "Authenticated")

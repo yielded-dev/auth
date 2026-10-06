@@ -14,7 +14,10 @@ import { AuthAtomLifetime, type AuthSubjectLifetime } from "./AuthAtomLifetime";
 import type { ReactivityKeys } from "./operations";
 import { type AccountBinding, makeScopedRuntime } from "./scoped-runtime";
 
-type ActionsWithSession = AuthActions & { readonly getSession: AnyAuthAction };
+type ActionsWithSession = AuthActions & {
+  readonly getSession: AnyAuthAction;
+  readonly getSessionFresh: AnyAuthAction;
+};
 type DecoderServices<Actions extends AuthActions> = ActionDecodeServices<Actions[keyof Actions]>;
 
 export interface AuthAtomOptions<
@@ -64,6 +67,8 @@ export type AuthAtoms<
   readonly [Name in keyof Actions]: AuthActionAtom<Actions[Name], E>;
 } & {
   readonly session: QueryAtom<Actions["getSession"], E>;
+  /** Authoritative server reads; shares auth mutation invalidation with session. */
+  readonly freshSession: QueryAtom<Actions["getSessionFresh"], E>;
   readonly client: ClientDefinition<Id, Actions, R>;
   /** Account-scoped queries, effects, state and workflows. Named auth mutations
    * use the host lifetime so their own successful account change can settle. */
@@ -127,7 +132,9 @@ export const make = <
 
     if (
       actions.getSession.mode !== "query" ||
-      ["session", "runtime", "client"].some((name) => Object.hasOwn(actions, name)) ||
+      ["session", "freshSession", "runtime", "client"].some((name) =>
+        Object.hasOwn(actions, name),
+      ) ||
       Object.values(actions).some(
         ({ mode, route }) =>
           mode === "query" &&
@@ -386,9 +393,11 @@ export const make = <
   );
 
   // Action mode and encoded payload choose each named atom's exact public form.
-  return Object.freeze({ ...atoms, session: atoms.getSession, client, runtime }) as AuthAtoms<
-    Id,
-    Actions,
-    E
-  >;
+  return Object.freeze({
+    ...atoms,
+    session: atoms.getSession,
+    freshSession: atoms.getSessionFresh,
+    client,
+    runtime,
+  }) as AuthAtoms<Id, Actions, E>;
 };

@@ -1,6 +1,6 @@
 ---
 title: Sessions
-description: Configure session lifetimes, read a session, and sign out.
+description: Configure session lifetimes, cookie caching, fresh reads, and sign-out.
 ---
 
 import { Trace } from "@yielded/starlight-theme/components";
@@ -32,14 +32,52 @@ storage Layer. It does not require authentication or provisioning authority.
 Adding an authentication strategy also selects the default completion authority;
 your account Layer supplies `AuthenticationAuthority` for issuing sessions.
 
-| Configuration                                  | How it verifies                               | Sign-out                                                      |
-| ---------------------------------------------- | --------------------------------------------- | ------------------------------------------------------------- |
-| `Sessions.stateful(options)`                   | Checks the stored session.                    | Revokes through persistence.                                  |
-| `Sessions.stateless({ keys, ...options })`     | Verifies a signed token.                      | Clears this client only; existing tokens retain their expiry. |
-| `Sessions.stateAssisted({ keys, ...options })` | Verifies a signed token and current validity. | Uses `SignedSessionValidity` for immediate invalidation.      |
+Choose `Sessions.stateful()`, `Sessions.stateless()`, or `Sessions.stateAssisted()`.
+Cookie caching is optional for stateful and state-assisted sessions. Per-request
+verification costs and revocation visibility are:
 
-Signed modes require an explicit keyring. Stateless sessions default to a
-fifteen-minute maximum age because sign-out cannot revoke an issued token. Their
+| Mode                                         | Cache hit | Miss / uncached | Fresh read  | Revocation lag                       |
+| -------------------------------------------- | --------- | --------------- | ----------- | ------------------------------------ |
+| Stateful, interactive SQL                    | —         | 1 SQL call      | 1 SQL call  | Immediate                            |
+| Stateful, interactive SQL + `cacheFor`       | 0         | 1 SQL call      | 1 SQL call  | Up to `cacheFor`                     |
+| Stateless                                    | —         | 0               | 0           | Until token expiry                   |
+| State-assisted, interactive SQL              | —         | 4 SQL calls     | 4 SQL calls | Immediate                            |
+| State-assisted, interactive SQL + `cacheFor` | 0         | 4 SQL calls     | 4 SQL calls | Up to `cacheFor`                     |
+| State-assisted, KV                           | —         | 1 KV get        | 1 KV get    | Immediate with strong storage        |
+| State-assisted, KV + `cacheFor`              | 0         | 1 KV get        | 1 KV get    | Up to `cacheFor` with strong storage |
+
+SQL counts cover direct Effect SQL and interactive Drizzle on PGlite/SQLite.
+Stateful verification uses **2 calls** when custom or differently encoded owner
+IDs require a decoded-owner lookup. SQL-assisted verification uses two reads plus
+begin/commit. D1 has a separate path; these measured interactive counts do not
+describe it. See [storage read details](../reference/adapters#session-reads).
+
+KV with eventual consistency requires `allowEventualRevocation: true` and has no
+fixed revocation bound, cached or uncached. Fresh reads bypass the cookie but
+retain backend consistency. Costs exclude application profile lookups, issuance,
+and mutations. Token and cookie claims remain snapshots; a fresh validity check
+does not refresh signed claims or load profile data.
+
+Signed modes acquire their keys from `Sessions.SessionSigningKeys`. Supply the
+service once, alongside your [crypto Layer](../reference/crypto#use-with-auth):
+
+```ts title="apps/server/session-keys.ts"
+import { Sessions } from "@yielded/auth";
+import { Layer } from "effect";
+
+import { sessionKeyring } from "./secrets";
+
+export const SessionKeysLive = Layer.succeed(Sessions.SessionSigningKeys, sessionKeyring);
+```
+
+`sessionKeyring` has the `Sessions.SessionSigningKeyring` data shape: an
+`activeKeyId` and `keys` with `id` and redacted base64url `material`. Each key needs
+at least 32 random bytes. Provide `SessionKeysLive` to the Auth Layer; constructors
+take policy options, not keys. Keep retired verification keys until their tokens
+expire, and install key changes in every runtime.
+
+Stateless sessions default to a fifteen-minute maximum age because sign-out
+cannot revoke an issued token. Their
 idle timeout and renewal interval are bounded by that lifetime. Stateful and
 state-assisted sessions default to a thirty-day maximum age, seven-day idle
 timeout, and renewal after one day. Explicit options select application policy;
@@ -50,6 +88,43 @@ and the token limit to `4096` bytes. The shorter stateless default rejects older
 tokens issued with a longer lifetime. Keep an explicit `maxAge` to retain that
 policy, or set `maximumIssuedAge` to the previous limit until those tokens expire
 while issuing new shorter-lived tokens.
+
+### Cache ordinary session reads
+
+Cookie caching is off by default. Opt in on either authoritative session mode:
+
+```ts
+Sessions.stateful({ cacheFor: "5 minutes" });
+Sessions.stateAssisted({ cacheFor: "5 minutes" });
+```
+
+The `cacheFor` window starts before the authoritative read, so storage or response
+delays cannot extend it.
+Features with `requireImmediateInvalidation: true` reject positive caching;
+explicitly relax those feature policies only when accepting the delay (TOTP defaults to `true`).
+
+The bound `AppAuth.sessions.SessionCookieCache` has a default signed-cookie
+implementation. It requires `SessionSigningKeys` and HMAC support even for
+stateful sessions. A hit verifies the snapshot locally with no SQL or server KV
+lookup. The snapshot is bound to the exact session credential and expires no later
+than the session. `maximumTokenBytes` defaults to `4096`; a snapshot that cannot
+fit falls back to authoritative reads. The cookie is signed, not encrypted.
+
+Cached claims are snapshots. Revocation, password changes, account disablement,
+and claim changes visible to authoritative session reads may remain unseen for
+up to `cacheFor`. This is an explicit delay in ordinary `getSession()` and
+`requireSession()` reads. Signing out clears this browser's credential and
+snapshot; auth mutations also clear its snapshot. Other clients may retain theirs
+until expiry. Replace the bound cache service to customize caching behavior.
+Invalidation reports `existingSessions: "cache-expiry"` with the configured
+`maximumExposureMillis`.
+
+State-assisted sessions require a `SignedSessionValidity` service. SQL services
+declare `consistency: "strong"`; the [KV authority](../reference/adapters#key-value-session-authority)
+inherits its root store's consistency. Eventual validity requires
+`Sessions.stateAssisted({ allowEventualRevocation: true })`. Its revocation delay
+has no fixed upper bound (`maximumExposureMillis: null`), even without cookie
+caching. A fresh read bypasses the cookie, not the backend's consistency model.
 
 ## Read the current session
 
@@ -76,12 +151,28 @@ An anonymous request fails with `AuthenticationRequired`. The
 [HTTP guide](./http-and-client#protect-an-httpapi-group) shows how to require a
 session for an entire HttpApi group.
 
+To bypass the cookie snapshot:
+
+```ts
+const session = yield* auth.getSessionFresh();
+```
+
+Over HTTP, use `GET /auth/getSessionFresh` or send
+`x-effect-auth-session-fresh: 1` on a session read. The client exposes
+`client.auth.getSessionFresh()` and the query atom `auth.freshSession`; see the
+[client guide](./client#read-a-session-and-sign-out). A fresh read checks current
+validity; it does not regenerate signed-token claims or load application profile
+data automatically.
+
 Outside a request, verify an explicit credential:
 
 ```ts
 const auth = yield* AppAuth;
 const session = yield* auth.verifySession(redactedCredential);
 ```
+
+Explicit verification, management inspection, and step-up inspection always use
+the authoritative strategy, bypassing the cookie cache.
 
 ## Sign out
 
@@ -93,7 +184,7 @@ const result = yield* auth.signOut();
 ```
 
 Sign-out reads the incoming credential without first verifying it and clears the
-client cookie through private delivery. Its result reports `revoked`,
+client credential and cached snapshot through private delivery. Its result reports `revoked`,
 `already-invalid`, `client-only`, or `SessionSignOutUnavailable`. Local clearing
 is not proof of server revocation; do not report global sign-out after a storage
 failure. [Mounting the auth routes](./http-and-client#configure-the-server) supplies
@@ -124,8 +215,11 @@ Renewal delivers a replacement credential through the request boundary.
 ## Custom completion and additional factors
 
 Omit `sessions` from `Auth.make` when supplying custom session/completion Layers.
-The lower-level `AppAuth.sessions.statefulLayer`, `statelessLayer`, and
-`stateAssistedLayer` constructors remain available for runtime-selected policy.
+The lower-level `AppAuth.sessions.statefulLayer(policy)`, `statelessLayer(policy)`,
+and `stateAssistedLayer(policy)` constructors remain available for runtime-selected
+policy. Signed layers acquire `SessionSigningKeys` from their environment too.
+For custom composition with caching, provide `AppAuth.sessions.cookieCacheLayer`
+over the selected strategy Layer; `Auth.make` installs that default automatically.
 
 Configure `completionLayer({ pendingLifetimeMillis, attemptLimit })` with
 `PendingAuthentication` persistence to support a second factor. A pending proof

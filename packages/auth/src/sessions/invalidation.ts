@@ -17,8 +17,14 @@ export type SessionInvalidationTrigger = typeof SessionInvalidationTrigger.Type;
 
 export const SessionInvalidationWindow = Schema.Struct({
   trigger: SessionInvalidationTrigger,
-  existingSessions: Schema.Literals(["immediate", "original-absolute-expiry"]),
-  maximumExposureMillis: Schema.Natural,
+  existingSessions: Schema.Literals([
+    "immediate",
+    "cache-expiry",
+    "eventual",
+    "original-absolute-expiry",
+  ]),
+  /** null means the backend has no bounded revocation-propagation guarantee. */
+  maximumExposureMillis: Schema.NullOr(Schema.Natural),
   oldAuthenticationEvidence: Schema.Literal("rejected"),
 });
 
@@ -37,10 +43,18 @@ export const sessionInvalidationWindow = (
 ): SessionInvalidationWindow => ({
   trigger,
   existingSessions:
-    capabilities.subjectInvalidation === "immediate" ? "immediate" : "original-absolute-expiry",
+    capabilities.subjectInvalidation === "immediate"
+      ? capabilities.positiveCacheMillis === 0
+        ? "immediate"
+        : "cache-expiry"
+      : capabilities.subjectInvalidation === "eventual"
+        ? "eventual"
+        : "original-absolute-expiry",
   maximumExposureMillis:
     capabilities.subjectInvalidation === "immediate"
-      ? 0
-      : policy.maximumIssuedAbsoluteLifetimeMillis,
+      ? capabilities.positiveCacheMillis
+      : capabilities.subjectInvalidation === "eventual"
+        ? null
+        : policy.maximumIssuedAbsoluteLifetimeMillis,
   oldAuthenticationEvidence: "rejected",
 });

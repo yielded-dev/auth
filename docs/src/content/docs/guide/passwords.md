@@ -163,22 +163,25 @@ When full, the store reclaims buckets idle for a complete refill window, includi
 time since their last rejected check. Active buckets are never evicted and no
 background cleanup fiber runs. Before increasing budgets, provide a store sized
 for the resulting active keys. Multi-instance deployments require a shared Effect
-`RateLimiterStore`, such as Redis, or a replacement `PasswordAttemptLimiter`:
+`RateLimiterStore`, such as Redis, or a replacement `PasswordAttemptLimiter`.
+Provide the shared [root storage Layer](./storage#shared-key-value-storage)
+after your feature Layers:
 
 ```ts
-import { Layer } from "effect";
-import { RateLimiter } from "effect/persistence";
-import { Password } from "@yielded/auth";
-import { RedisLive } from "./redis";
+import { RootStorage } from "./storage";
 
-const PasswordLimits = Password.PasswordAttemptLimiter.layer.pipe(
-  Layer.provide(RateLimiter.layerStoreRedis().pipe(Layer.provide(RedisLive))),
+export const AuthLive = AppAuth.layer.pipe(
+  Layer.provide(PasswordLive),
+  Layer.provide(AuthDependencies),
+  Layer.provide(RootStorage),
 );
 ```
 
-Provide `PasswordLimits` to your Auth Layer. `RedisLive` supplies Effect's `Redis`
-service using your platform client. The password attempt policy controls bucket
-sizes; KDF concurrency remains a separate service.
+This replaces the `AuthLive` composition above. The root provider supplies the
+same `RateLimiterStore` to password limits and HTTP ingress, alongside KV and
+atomic session authority storage. Do not allocate another Redis connection or
+store for each feature. The password attempt policy controls bucket sizes;
+KDF concurrency remains a separate service.
 
 Sign-in reads the credential and captures authority before hashing, then checks
 current account status, credential revisions, and factor policy again when issuing

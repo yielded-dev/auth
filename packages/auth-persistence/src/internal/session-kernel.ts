@@ -1175,40 +1175,74 @@ export const makeSessionKernel = (
             return receipt;
           }).pipe(normalizeMutation(mapping)),
         ),
-      verify: (input: any) =>
+      verify: (input: Parameters<StatefulSessionPersistence<Claims>["verify"]>[0]) =>
         safeTransaction(
-          inTransaction(
-            database,
-            Effect.gen(function* () {
-              const read = yield* CurrentSessionSql;
+          Effect.gen(function* () {
+            const sql = root.$client.withoutTransforms();
 
-              const rows = yield* read
-                .select()
-                .from(mapping.session.table)
-                .where(eq(c.digest, input.digest))
-                .limit(1);
+            const { session, subject, canJoinOwner } = yield* sqlMapping(() => {
+              const session = tables(mapping.session.table).as("auth_session");
+              const subject = tables(mapping.subject.table).as("auth_subject");
 
-              const row = rows[0];
+              return {
+                session,
+                subject,
+                canJoinOwner:
+                  session.isUnencodedText(mapping.session.subjectId) &&
+                  subject.isUnencodedText(mapping.subject.id),
+              };
+            });
 
-              if (row === undefined) return yield* invalidSession();
-              const record = yield* mapping.session.decode(row);
-              const nativeSubjectId = yield* mapping.subjectId.toNative(record.subjectId);
-              const subjects = yield* readSubject(mapping, nativeSubjectId, false);
-              const subject = subjects[0];
-              const now = yield* freshNow;
+            // A digest carries no owner. Custom codecs require decoding that
+            // native ID first; never compare differently encoded ID columns.
+            const owner = canJoinOwner
+              ? undefined
+              : (yield* database
+                  .select({ subjectId: c.subjectId })
+                  .from(mapping.session.table)
+                  .where(eq(c.digest, input.digest))
+                  .limit(1))[0];
 
-              if (
-                subject === undefined ||
-                !mapping.subject.isActiveStatus(subject[mapping.subject.status]) ||
-                subject[mapping.subject.securityRevision] !== record.securityRevision ||
-                DateTime.toEpochMillis(now) >= DateTime.toEpochMillis(record.expiresAt) ||
-                DateTime.toEpochMillis(now) >= DateTime.toEpochMillis(record.absoluteExpiresAt)
-              )
-                return yield* invalidSession();
+            if (!canJoinOwner && owner === undefined) return yield* invalidSession();
 
-              return record;
-            }),
-          ),
+            // The final statement reads both rows even after owner discovery,
+            // so deletion, rotation or owner changes cannot reuse the first read.
+            const rows = yield* sqlMapping(
+              () => sql<
+                Record<string, unknown>
+              >`select ${session.fields("v_")}, ${subject.fields("s_")}
+              from ${session.name} inner join ${subject.name} on
+                ${subject.column(mapping.subject.id)} = ${
+                  owner === undefined
+                    ? session.column(mapping.session.subjectId)
+                    : subject.value(mapping.subject.id, owner.subjectId)
+                }
+              where ${session.column(mapping.session.digest)} = ${session.value(mapping.session.digest, input.digest)}
+                ${owner === undefined ? sql.literal("") : sql`and ${session.column(mapping.session.subjectId)} = ${session.value(mapping.session.subjectId, owner.subjectId)}`}
+              limit 1`,
+            ).pipe(Effect.flatten);
+
+            const row = rows[0];
+
+            if (row === undefined) return yield* invalidSession();
+            const sessionRow = yield* sqlMapping(() => session.decode(row, "v_"));
+            const subjectRow = yield* sqlMapping(() => subject.decode(row, "s_"));
+            const record = yield* mapping.session.decode(sessionRow);
+            const nativeSubjectId = yield* mapping.subjectId.toNative(record.subjectId);
+            const now = yield* freshNow;
+
+            if (
+              !mapping.subjectId.equals(nativeSubjectId, sessionRow[mapping.session.subjectId]) ||
+              !mapping.subjectId.equals(nativeSubjectId, subjectRow[mapping.subject.id]) ||
+              !mapping.subject.isActiveStatus(subjectRow[mapping.subject.status]) ||
+              subjectRow[mapping.subject.securityRevision] !== record.securityRevision ||
+              DateTime.toEpochMillis(now) >= DateTime.toEpochMillis(record.expiresAt) ||
+              DateTime.toEpochMillis(now) >= DateTime.toEpochMillis(record.absoluteExpiresAt)
+            )
+              return yield* invalidSession();
+
+            return record;
+          }),
         ),
       rotate: <A>(
         input: Parameters<StatefulSessionPersistence<Claims>["rotate"]>[0],
@@ -1521,6 +1555,7 @@ export const makeSessionKernel = (
     };
 
     const service = {
+      consistency: "strong" as const,
       verify: (session: SessionMetadata, _now: DateTime.Utc) =>
         safeTransaction(
           inTransaction(
@@ -1688,6 +1723,7 @@ export const makeSessionKernel = (
     };
 
     return {
+      consistency: service.consistency,
       verify: (session, now) =>
         service.verify(session, now).pipe(Effect.provideService(LifecycleHooks, hooks)),
       revoke: (input, prepare) =>

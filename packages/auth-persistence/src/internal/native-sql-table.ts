@@ -19,6 +19,9 @@ export interface SqlTable {
   /** Alias reads only; writes continue to target the original physical table. */
   readonly as: (alias: string) => SqlTable;
   readonly column: (key: string) => Statement.Fragment;
+  /** True only when stored text is the native value, without column or dialect
+   * codecs. Only two such columns may be compared without binding native IDs. */
+  readonly isUnencodedText: (key: string) => boolean;
   /** Project every column under an ordinal alias, using a distinct prefix per table. */
   readonly fields: (prefix: string) => Statement.Fragment;
   readonly decode: (
@@ -98,6 +101,7 @@ const directTable = (client: SqlClient, physical: object): SqlTable => {
       name: alias === undefined ? name : client`${name} AS ${reference}`,
       as: bind,
       column,
+      isUnencodedText: (key) => getColumn(key).options.type === "text",
       value,
       fields: (prefix) =>
         client.join(

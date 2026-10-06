@@ -231,7 +231,8 @@ export const makeEmailAddresses = <
         if (
           !(action === "verify-address" && captured.targetIdentifierRevision !== undefined) &&
           policy.requireImmediateInvalidation &&
-          strategy.capabilities.subjectInvalidation !== "immediate"
+          (strategy.capabilities.subjectInvalidation !== "immediate" ||
+            strategy.capabilities.positiveCacheMillis > 0)
         )
           return yield* EmailMethodUnsupported.make({});
 

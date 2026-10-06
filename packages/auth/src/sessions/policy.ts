@@ -15,6 +15,9 @@ export const SessionPolicy = Schema.Struct({
   /** Deployment-wide upper bound including tokens issued under older policy versions. */
   maximumIssuedAbsoluteLifetimeMillis: PositiveMillis,
   maximumTokenBytes: Schema.Int.check(Schema.isBetween({ minimum: 256, maximum: 1048576 })),
+  /** Opt-in cookie cache. Revocation and claim changes may lag by this duration. */
+  positiveCacheMillis: Schema.optionalKey(Schema.Natural),
+  allowEventualRevocation: Schema.optionalKey(Schema.Boolean),
   requireImmediateInvalidation: Schema.Boolean,
 });
 
@@ -34,7 +37,15 @@ export const validateSessionPolicy = Effect.fn("validateSessionPolicy")(function
     policy.absoluteLifetimeMillis > policy.maximumIssuedAbsoluteLifetimeMillis
   )
     return yield* SessionConfigurationError.make({ reason: "policy" });
-  if (policy.requireImmediateInvalidation && capabilities.subjectInvalidation !== "immediate") {
+  if (
+    (capabilities.mode === "stateless" && (policy.positiveCacheMillis ?? 0) > 0) ||
+    (capabilities.subjectInvalidation === "eventual" && policy.allowEventualRevocation !== true)
+  )
+    return yield* SessionConfigurationError.make({ reason: "capability" });
+  if (
+    policy.requireImmediateInvalidation &&
+    (capabilities.subjectInvalidation !== "immediate" || (policy.positiveCacheMillis ?? 0) > 0)
+  ) {
     return yield* SessionConfigurationError.make({ reason: "capability" });
   }
 

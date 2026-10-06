@@ -20,7 +20,8 @@
   "sideEffects": [],
   "exports": {
     ".": "./src/index.ts",
-    "./Adapter": "./src/Adapter.ts"
+    "./Adapter": "./src/Adapter.ts",
+    "./KeyValue": "./src/KeyValue.ts"
   },
   "publishConfig": {
     "access": "public"

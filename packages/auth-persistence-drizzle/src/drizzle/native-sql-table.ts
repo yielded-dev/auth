@@ -69,7 +69,10 @@ const capture = (
   if (
     Predicate.hasProperty(dialect, "codecs") &&
     dialect.codecs !== undefined &&
-    (!Predicate.hasProperty(dialect.codecs, "apply") || typeof dialect.codecs.apply !== "function")
+    (!Predicate.hasProperty(dialect.codecs, "apply") ||
+      typeof dialect.codecs.apply !== "function" ||
+      !Predicate.hasProperty(dialect.codecs, "get") ||
+      typeof dialect.codecs.get !== "function")
   )
     return invalid("Expected Drizzle dialect codecs");
 
@@ -180,6 +183,23 @@ export const makeDrizzleSqlTables = (
         ),
         as: bind,
         column: (key) => compile(reference(key)),
+        isUnencodedText: (key) => {
+          const column = getColumn(key);
+
+          return (
+            ["PgText", "PgVarchar", "SQLiteText", "MySqlText", "MySqlVarChar"].includes(
+              column.columnType,
+            ) &&
+            Predicate.hasProperty(column.mapToDriverValue, "isNoop") &&
+            column.mapToDriverValue.isNoop === true &&
+            Predicate.hasProperty(column.mapFromDriverValue, "isNoop") &&
+            column.mapFromDriverValue.isNoop === true &&
+            (dialect.codecs === undefined ||
+              (["cast", "normalize", "castParam", "normalizeParam"] as const).every(
+                (kind) => dialect.codecs?.get(column, kind) === undefined,
+              ))
+          );
+        },
         fields: (prefix) =>
           compile(
             sql.join(

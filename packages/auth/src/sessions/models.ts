@@ -137,10 +137,10 @@ export const SessionCapabilities = Schema.Struct({
   mode: Schema.Literals(["stateful", "stateless", "state-assisted"]),
   listing: Schema.Boolean,
   perSessionRevocation: Schema.Boolean,
-  subjectInvalidation: Schema.Literals(["immediate", "absolute-expiry"]),
+  subjectInvalidation: Schema.Literals(["immediate", "eventual", "absolute-expiry"]),
   renewal: Schema.Literals(["single-winner", "replayable"]),
-  /** Default authoritative checks never reuse positive authorization caches. */
-  positiveCacheMillis: Schema.Literal(0),
+  /** Maximum lifetime of an explicitly enabled session cookie snapshot; zero by default. */
+  positiveCacheMillis: Schema.Natural,
 });
 
 export type SessionCapabilities = typeof SessionCapabilities.Type;

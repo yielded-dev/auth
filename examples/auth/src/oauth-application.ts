@@ -29,7 +29,7 @@ export const makeExample = <E, R>(config: {
   readonly returnTarget?: string;
 }) => {
   const AppAuth = Auth.make(OAuthApi, {
-    sessions: Sessions.stateless({ keys: config.sessionKeys }),
+    sessions: Sessions.stateless(),
     strategies: { oauth: OAuth.make({ access: config.profile }) },
     defaultStrategy: "oauth",
   });
@@ -56,6 +56,7 @@ export const makeExample = <E, R>(config: {
   });
 
   const dependencies = Layer.mergeAll(
+    Layer.succeed(Sessions.SessionSigningKeys, config.sessionKeys),
     storage,
     Layer.succeed(oauth.SessionClaims, {
       resolve: () => Effect.succeed({ role: "owner" as const }),

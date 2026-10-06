@@ -136,9 +136,15 @@ const build = Effect.fn("Auth.make")(function* <
     const names = new Set([...methodsByStrategy.values()].flatMap((api) => Object.keys(api)));
 
     if (
-      ["then", "getSession", "requireSession", "verifySession", "signOut", "renewSession"].some(
-        (name) => names.has(name),
-      )
+      [
+        "then",
+        "getSession",
+        "getSessionFresh",
+        "requireSession",
+        "verifySession",
+        "signOut",
+        "renewSession",
+      ].some((name) => names.has(name))
     )
       return yield* AuthConfigurationError.make({ reason: "method" });
 

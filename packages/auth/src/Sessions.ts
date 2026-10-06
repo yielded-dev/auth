@@ -69,9 +69,14 @@ export {
 
 export {
   type SessionSigningKeyring,
+  SessionSigningKeys,
   makeSessionSecrets,
   makeSessionSigningCodec,
 } from "./sessions/crypto";
+
+export type { SessionCookieCache, SessionCacheCommand } from "./sessions/cookieCache";
+
+export { KeyValueSessionSubject, type KeyValueSessionAuthority } from "./sessions/keyValue";
 
 export {
   type SessionStepUpCompletionPlan,

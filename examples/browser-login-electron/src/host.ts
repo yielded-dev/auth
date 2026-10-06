@@ -9,6 +9,7 @@ import { Action, DesktopError, Reply } from "./public";
 
 const headers = (prefix: string): Readonly<Record<Operations.CredentialSlot, string>> => ({
   session: `${prefix}session`,
+  "session-cache": `${prefix}session-cache`,
   "pending-proof": `${prefix}pending-proof`,
   "proof-continuation": `${prefix}proof-continuation`,
   registration: `${prefix}registration`,

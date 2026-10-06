@@ -60,7 +60,7 @@ const contract = AuthContract.make("strava-test", {
 const profile = Strava.accessProfile({ clientId: "1234", scopes: ["activity:read_all"] });
 
 const AppAuth = Auth.make(contract, {
-  sessions: Sessions.stateless({ keys: keys(1) }),
+  sessions: Sessions.stateless(),
   strategies: { oauth: OAuth.make({ access: profile }) },
   defaultStrategy: "oauth",
 });
@@ -259,6 +259,7 @@ const harness = (
   );
 
   const live = Layer.mergeAll(AppAuth.layer, oauth.access.accessLayer, oauth.access.layer).pipe(
+    Layer.provide(Layer.succeed(Sessions.SessionSigningKeys, keys(1))),
     Layer.provide(LifecycleHooks.empty),
     Layer.provide(oauth.access.binding.layer),
     Layer.provide(

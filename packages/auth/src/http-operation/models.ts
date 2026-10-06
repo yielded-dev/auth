@@ -5,6 +5,7 @@ import type { OperationHttpError } from "./errors";
 
 export const credentialSlots = [
   "session",
+  "session-cache",
   "pending-proof",
   "proof-continuation",
   "registration",

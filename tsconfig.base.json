@@ -29,6 +29,7 @@
           "effect/http-api",
           "effect/persistence/KeyValueStore",
           "effect/persistence/RateLimiter",
+          "effect/persistence/Redis",
           "effect/process",
           "effect/reactivity",
           "effect/rpc",

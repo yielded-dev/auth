@@ -1,5 +1,5 @@
 import { Hmac, type Key } from "@yielded/crypto/Hmac";
-import { Crypto, Effect, Redacted, Result, Schema } from "effect";
+import { Context, Crypto, Effect, Redacted, Result, Schema } from "effect";
 import { Base64Url } from "effect/encoding";
 
 import { TokenDigest } from "../Schema";
@@ -13,6 +13,12 @@ export interface SessionSigningKeyring {
     readonly material: Redacted.Redacted<string>;
   }>;
 }
+
+/** Application-owned signing keys, shared by signed sessions and their cookie cache. */
+export class SessionSigningKeys extends Context.Service<
+  SessionSigningKeys,
+  SessionSigningKeyring
+>()("effect-auth/sessions/SessionSigningKeys") {}
 
 const opaqueCredential = Schema.String.check(Schema.isPattern(/^[A-Za-z0-9_-]{43}$/));
 const keyIdSchema = Schema.String.check(Schema.isPattern(/^[A-Za-z0-9_-]{1,64}$/));

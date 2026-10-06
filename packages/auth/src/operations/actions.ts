@@ -143,6 +143,7 @@ const bindAction = <
       "constructor",
       "prototype",
       "session",
+      "freshSession",
       "lifetime",
       "runtime",
       "client",
@@ -243,6 +244,13 @@ const sessionActions = <
   session: S,
 ) => ({
   getSession: action({
+    payload: Schema.Void,
+    success: Schema.NullOr(session),
+    error: Schema.Never,
+    mode: "query",
+    subject: { fromSuccess: (value) => value?.subjectId ?? null },
+  }),
+  getSessionFresh: action({
     payload: Schema.Void,
     success: Schema.NullOr(session),
     error: Schema.Never,

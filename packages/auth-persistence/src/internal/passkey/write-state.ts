@@ -427,10 +427,27 @@ export const makePasskeyWriteStateKernel = (
     mapping: any,
     supplied: SessionInvalidationWindow,
     policy: PasskeyManagementPolicy,
-  ) =>
-    jsonStorage(SessionInvalidationWindow).encode(supplied) ===
-      jsonStorage(SessionInvalidationWindow).encode(mapping.invalidation.window) &&
-    (!policy.requireImmediateInvalidation || supplied.existingSessions === "immediate");
+  ) => {
+    if (
+      supplied.existingSessions === "cache-expiry" &&
+      (supplied.maximumExposureMillis === null || supplied.maximumExposureMillis === 0)
+    )
+      return false;
+
+    // Cookie-cache exposure does not weaken the mapping's authoritative
+    // revision bump. Compare that immediate guarantee independently of the TTL.
+    const authoritative: SessionInvalidationWindow =
+      supplied.existingSessions === "cache-expiry" &&
+      mapping.invalidation.window.existingSessions === "immediate"
+        ? { ...supplied, existingSessions: "immediate", maximumExposureMillis: 0 }
+        : supplied;
+
+    return (
+      jsonStorage(SessionInvalidationWindow).encode(authoritative) ===
+        jsonStorage(SessionInvalidationWindow).encode(mapping.invalidation.window) &&
+      (!policy.requireImmediateInvalidation || supplied.existingSessions === "immediate")
+    );
+  };
 
   const invalidate = Effect.fn("passkey.invalidateCredentialChange")(function* (
     mapping: any,

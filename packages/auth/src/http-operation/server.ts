@@ -259,7 +259,12 @@ const applyCommands = Effect.fn("OperationHttp.applyCommands")(function* (
 ) {
   const now = DateTime.toEpochMillis(yield* DateTime.now);
 
-  for (const command of commands) {
+  const delivered: ReadonlyArray<AuthCredentialCommand> =
+    !native && commands.some((command) => command.slot === "session")
+      ? [...commands, { _tag: "Clear", slot: "session-cache" }]
+      : commands;
+
+  for (const command of delivered) {
     if (native) {
       headers.set(
         config.native!.responseHeaders[command.slot],
@@ -361,7 +366,10 @@ export const make = <
             url.search !== "" ||
             request.headers.get("access-control-request-method") !== route.method ||
             requestedHeaders.some(
-              (header) => header !== "content-type" && header !== config.csrfHeader,
+              (header) =>
+                header !== "content-type" &&
+                header !== config.csrfHeader &&
+                header !== "x-effect-auth-session-fresh",
             )
           )
             return yield* OperationHttpError.make({ reason: "csrf" });
@@ -370,7 +378,10 @@ export const make = <
           headers.set("access-control-allow-origin", origin);
           headers.set("access-control-allow-credentials", "true");
           headers.set("access-control-allow-methods", route.method);
-          headers.set("access-control-allow-headers", `content-type, ${config.csrfHeader}`);
+          headers.set(
+            "access-control-allow-headers",
+            `content-type, ${config.csrfHeader}, x-effect-auth-session-fresh`,
+          );
           headers.set(
             "vary",
             "Origin, Access-Control-Request-Method, Access-Control-Request-Headers",
@@ -403,7 +414,12 @@ export const make = <
 
         const payload = yield* inject(route, raw, security.credentials);
         const trusted = yield* invocation.resolve(request, security.credentials);
-        const commands: AuthCredentialCommand[] = [];
+
+        const commands: AuthCredentialCommand[] =
+          !security.native && route.operation.replay !== "read-only"
+            ? [{ _tag: "Clear", slot: "session-cache" }]
+            : [];
+
         const reveals: AuthRevealCommand[] = [];
 
         const sink = (values: ReadonlyArray<AuthCredentialCommand>) =>
@@ -455,6 +471,17 @@ export const make = <
               ? {}
               : { resolveInvocation: invocation.request(request, security.credentials) }),
             credentials: security.credentials,
+            freshSession:
+              route.operation.replay !== "read-only" ||
+              request.headers.get("x-effect-auth-session-fresh") === "1",
+            ...(security.native
+              ? {}
+              : {
+                  sessionCacheCommandSink: (command) =>
+                    Effect.sync(() => {
+                      commands.push(command);
+                    }),
+                }),
             beforeMutation:
               route.method === "GET" ? HookDenied.make({ reason: "policy" }) : Effect.void,
             credentialCommandSink: sink,
@@ -475,6 +502,15 @@ export const make = <
           headers.set("access-control-allow-credentials", "true");
         }
         if (resolved._tag === "Failure") {
+          yield* applyCommands(
+            headers,
+            commands.filter(
+              (command) => command.slot === "session-cache" && command._tag === "Clear",
+            ),
+            config,
+            security.native,
+          );
+
           const encoded = yield* Schema.encodeEffect(errorSchema)(resolved.failure).pipe(
             Effect.provide(requestServices),
             Effect.mapError(() => OperationHttpError.make({ reason: "response" })),

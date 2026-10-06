@@ -1,4 +1,4 @@
-import { Context, Effect, Layer, Redacted, type Schema, Scope } from "effect";
+import { Context, DateTime, Effect, Layer, Option, Redacted, type Schema, Scope } from "effect";
 
 import type { HookDenied } from "../hooks/models";
 import { guest } from "../operations/context";
@@ -26,6 +26,8 @@ export interface SessionApi<Session, R = never> {
   ) => Effect.Effect<Session, SessionApiError>;
   /** Missing or invalid credentials are anonymous; availability failures remain failures. */
   readonly getSession: () => Effect.Effect<Session | null, SessionApiError, AuthRequest | R>;
+  /** Authoritative read even when cookie caching is enabled. */
+  readonly getSessionFresh: () => Effect.Effect<Session | null, SessionApiError, AuthRequest | R>;
   readonly requireSession: () => Effect.Effect<Session, SessionApiError, AuthRequest | R>;
   /** Does not preverify. Local clearing and server invalidation have distinct outcomes. */
   readonly signOut: () => Effect.Effect<
@@ -45,6 +47,7 @@ export const makeSessionApi = <
 ) =>
   Effect.gen(function* () {
     const strategy = yield* sessions.SessionStrategy;
+    const cache = yield* Effect.serviceOption(sessions.SessionCookieCache);
 
     // Handler installation captures its input context. Supply only its shared
     // dependency, so constructing auth inside a request cannot retain that request.
@@ -81,16 +84,66 @@ export const makeSessionApi = <
       );
     });
 
-    const getSession = Effect.fn("Auth.getSession")(function* () {
+    const readSession = Effect.fn("Auth.getSession")(function* (fresh: boolean) {
       const request = yield* AuthRequest;
       const credential = request.credentials.session;
+      const cached = request.credentials["session-cache"];
+      const cacheEnabled = strategy.capabilities.positiveCacheMillis > 0 && Option.isSome(cache);
 
-      if (credential === undefined) return null;
+      if (
+        cacheEnabled &&
+        credential !== undefined &&
+        cached !== undefined &&
+        !fresh &&
+        request.freshSession !== true &&
+        request.actionMode !== "mutation"
+      ) {
+        const snapshot = yield* cache.value
+          .read(credential, cached)
+          .pipe(
+            Effect.catchTag(["SessionInvalid", "SessionUnavailable"], () => Effect.succeed(null)),
+          );
 
-      return yield* verifySession(credential).pipe(
-        Effect.catchTag("SessionInvalid", () => Effect.succeed(null)),
-      );
+        if (snapshot !== null) return snapshot;
+      }
+
+      // Anchor cache freshness before storage: a delayed response must not start
+      // a new revocation window after the authoritative snapshot was observed.
+      const checkedAt = yield* DateTime.now;
+
+      const session =
+        credential === undefined
+          ? null
+          : yield* verifySession(credential).pipe(
+              Effect.catchTag("SessionInvalid", () => Effect.succeed(null)),
+            );
+
+      if (request.sessionCacheCommandSink !== undefined) {
+        if (
+          cacheEnabled &&
+          session !== null &&
+          credential !== undefined &&
+          request.actionMode !== "mutation"
+        ) {
+          const command = yield* cache.value
+            .write(credential, session, checkedAt)
+            .pipe(
+              Effect.catchTag("SessionUnavailable", () =>
+                Effect.succeed({ _tag: "Clear" as const, slot: "session-cache" as const }),
+              ),
+            );
+
+          yield* request.sessionCacheCommandSink(command);
+        } else if (cached !== undefined) {
+          yield* request.sessionCacheCommandSink({ _tag: "Clear", slot: "session-cache" });
+        }
+      }
+
+      return session;
     });
+
+    const getSession = () => readSession(false);
+    const getSessionFresh = () => readSession(true);
 
     const requireSession = Effect.fn("Auth.requireSession")(function* () {
       const session = yield* getSession();
@@ -139,6 +192,7 @@ export const makeSessionApi = <
     return {
       verifySession,
       getSession,
+      getSessionFresh,
       requireSession,
       signOut,
       renewSession,

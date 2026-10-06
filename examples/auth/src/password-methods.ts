@@ -1,5 +1,14 @@
 import { BunRuntime } from "@effect/platform-bun";
-import { Auth, EmailDelivery, Hooks, Operations, Password, Proofs, WebCrypto } from "@yielded/auth";
+import {
+  Auth,
+  EmailDelivery,
+  Hooks,
+  Operations,
+  Password,
+  Proofs,
+  Sessions,
+  WebCrypto,
+} from "@yielded/auth";
 import { DateTime, Effect, Layer, Redacted } from "effect";
 import { Base64Url } from "effect/encoding";
 
@@ -44,16 +53,21 @@ const program = Effect.gen(function* () {
   };
 
   const strategy = sessions
-    .statelessLayer(sessionPolicy, {
-      activeKeyId: "example",
-      keys: [
-        {
-          id: "example",
-          // Demo-only key material. Production requires independently generated random keys.
-          material: Redacted.make(Base64Url.encode(new Uint8Array(32).fill(42))),
-        },
-      ],
-    })
+    .statelessLayer(sessionPolicy)
+    .pipe(
+      Layer.provide(
+        Layer.succeed(Sessions.SessionSigningKeys, {
+          activeKeyId: "example",
+          keys: [
+            {
+              id: "example",
+              // Demo-only key material. Production requires independently generated random keys.
+              material: Redacted.make(Base64Url.encode(new Uint8Array(32).fill(42))),
+            },
+          ],
+        }),
+      ),
+    )
     .pipe(Layer.provide(base));
 
   const completion = sessions

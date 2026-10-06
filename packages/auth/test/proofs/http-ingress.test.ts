@@ -167,6 +167,7 @@ export const makeHttp = (seen: string[]) => {
   const layer = Layer.succeed(HttpAuth, {
     verifySession: unusedSession,
     getSession: unusedSession,
+    getSessionFresh: unusedSession,
     requireSession: unusedSession,
     signOut: unusedSession,
     renewSession: unusedSession,
