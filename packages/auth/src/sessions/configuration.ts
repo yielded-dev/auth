@@ -1,9 +1,10 @@
 import type { Hmac } from "@yielded/crypto/Hmac";
 import { Context, type Crypto, Duration, Effect, Layer, type Schema, type Scope } from "effect";
 
+import type { AuthConfigurationError } from "../auth/AuthConfigurationError";
 import { hooksLayer } from "../auth/defaults";
 import { makeSessionCookieCache, sessionCookieCache } from "./cookieCache";
-import type { SessionSigningKeys } from "./crypto";
+import { sessionSigningKeysLayer } from "./crypto";
 import { SessionConfigurationError } from "./errors";
 import type { makeSessionModule, ModuleService } from "./module";
 import type { SessionPolicy } from "./policy";
@@ -80,7 +81,7 @@ const policy = (options: SessionOptions, immediate: boolean, cacheFor?: Duration
 
 /** Authoritative sessions by default. cacheFor delays revocation and claim changes
  * by at most five minutes or renewAfter, whichever is shorter. Enabling it also
- * requires SessionSigningKeys and Hmac at the composition root. */
+ * requires Hmac and defaults signing keys from AuthConfig / AUTH_SECRET. */
 export const stateful = <const CacheFor extends Duration.Input | undefined = undefined>(
   options: SessionOptions & { readonly cacheFor?: CacheFor } = {},
 ): StatefulConfiguration<CacheFor> =>
@@ -104,8 +105,8 @@ export type SessionRequirements<C, Id extends string, Claims extends Schema.Top>
   | (C extends StatefulConfiguration<infer CacheFor>
       ? Exclude<CacheFor, undefined> extends never
         ? never
-        : Hmac | SessionSigningKeys
-      : Hmac | SessionSigningKeys)
+        : Hmac
+      : Hmac)
   | Exclude<Claims["DecodingServices"] | Claims["EncodingServices"], Scope.Scope>
   | (C extends StatefulConfiguration<Duration.Input | undefined>
       ?
@@ -124,7 +125,7 @@ export const configuredLayer = <
   configuration: C,
 ): Layer.Layer<
   ModuleService<Id, "strategy", Claims["Type"]>,
-  SessionConfigurationError,
+  SessionConfigurationError | AuthConfigurationError,
   SessionRequirements<C, Id, Claims>
 > => {
   const configured = configuration.policy(sessions.moduleId);
@@ -147,7 +148,13 @@ export const configuredLayer = <
           cache,
         );
       }),
-    ).pipe(Layer.provideMerge(layer), Layer.provide(hooksLayer));
+    ).pipe(
+      Layer.provideMerge(layer),
+      Layer.provide(hooksLayer),
+      Layer.provide(
+        (configured.positiveCacheMillis ?? 0) > 0 ? sessionSigningKeysLayer : Layer.empty,
+      ),
+    );
 
   const layer =
     configuration.mode === "stateful"
@@ -159,7 +166,7 @@ export const configuredLayer = <
   // The selected mode determines exactly which persistence port the layer acquires.
   return layer as Layer.Layer<
     ModuleService<Id, "strategy", Claims["Type"]>,
-    SessionConfigurationError,
+    SessionConfigurationError | AuthConfigurationError,
     SessionRequirements<C, Id, Claims>
   >;
 };

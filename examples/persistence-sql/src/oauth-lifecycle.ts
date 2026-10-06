@@ -1,6 +1,6 @@
 import { BunRuntime, BunServices } from "@effect/platform-bun";
-import { Auth, Hooks, OAuth, Sessions } from "@yielded/auth";
-import { Console, Effect, Layer } from "effect";
+import { Auth, Hooks, OAuth } from "@yielded/auth";
+import { Console, Effect, Layer, Redacted } from "effect";
 
 import { CryptoLive } from "../../shared/crypto";
 import { DatabaseLive } from "./data";
@@ -17,7 +17,10 @@ const live = Layer.mergeAll(AppAuth.layer, AppAuth.strategies.oauth.access.acces
   Layer.provide(DemoProviderLive),
   Layer.provide(
     Layer.mergeAll(
-      Layer.succeed(Sessions.SessionSigningKeys, keys(1)),
+      Auth.AuthConfig.layer({
+        // Public demo secret, stable across this disposable example's runtimes.
+        secret: Redacted.make("public-sql-oauth-example-application-secret"),
+      }),
       Auth.RequestBindingConfig.layer({ generation: 1, lifetimeMillis: 600_000, keyring: keys(2) }),
       OAuth.OAuthTransactionProtector.layer(keys(2)),
       OAuth.OAuthLinkTransactionProtector.layer(keys(2)),

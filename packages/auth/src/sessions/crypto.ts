@@ -1,7 +1,9 @@
 import { Hmac, type Key } from "@yielded/crypto/Hmac";
-import { Context, Crypto, Effect, Redacted, Result, Schema } from "effect";
+import { Context, Crypto, Effect, Layer, Redacted, Result, Schema } from "effect";
 import { Base64Url } from "effect/encoding";
 
+import { AuthConfig } from "../auth/AuthConfig";
+import { defaultLayer } from "../auth/defaults";
 import { reportAuthFailure } from "../internal/diagnostics";
 import { TokenDigest } from "../Schema";
 import { SessionConfigurationError, SessionInvalid, SessionUnavailable } from "./errors";
@@ -15,11 +17,24 @@ export interface SessionSigningKeyring {
   }>;
 }
 
-/** Application-owned signing keys, shared by signed sessions and their cookie cache. */
+/** Override the application-secret default to manage signing-key IDs and rotation. */
 export class SessionSigningKeys extends Context.Service<
   SessionSigningKeys,
   SessionSigningKeyring
->()("effect-auth/sessions/SessionSigningKeys") {}
+>()("effect-auth/sessions/SessionSigningKeys") {
+  static readonly layer = Layer.effect(
+    SessionSigningKeys,
+    Effect.map(AuthConfig, ({ secret }) => ({
+      activeKeyId: "default",
+      keys: [{ id: "default", material: Redacted.make(Base64Url.encode(Redacted.value(secret))) }],
+    })),
+  );
+}
+
+export const sessionSigningKeysLayer = defaultLayer(
+  SessionSigningKeys,
+  SessionSigningKeys.layer.pipe(Layer.provide(defaultLayer(AuthConfig, AuthConfig.layer()))),
+);
 
 const opaqueCredential = Schema.String.check(Schema.isPattern(/^[A-Za-z0-9_-]{43}$/));
 const keyIdSchema = Schema.String.check(Schema.isPattern(/^[A-Za-z0-9_-]{1,64}$/));

@@ -79,7 +79,10 @@ const program = Effect.gen(function* () {
         .statefulLayer(sessionPolicy)
         .pipe(Layer.provide(model.layer), Layer.provide(base));
 
-      const strategy = mode === "stateless" ? stateless : stateful;
+      const strategy: Layer.Layer<
+        Layer.Success<typeof stateless>,
+        Layer.Error<typeof stateless | typeof stateful>
+      > = mode === "stateless" ? stateless : stateful;
 
       const completion = sessions
         .completionLayer()

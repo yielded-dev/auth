@@ -46,6 +46,10 @@ supplies empty lifecycle hooks; your application selects crypto and the remainin
 | Password hashing                              | [`Password.PasswordHashing.layer()`](./passwords#supply-the-services)                 |
 | Proof and request-binding keys                | Your secrets; see [Layer wiring](../reference/adapters#compose-the-application-layer) |
 
+Signed sessions and opt-in session cookie caching also use an application secret.
+Set `AUTH_SECRET` through Effect Config or supply `Auth.AuthConfig` at the root;
+Auth installs the default signing-key service. See [application secrets](./sessions#application-secret).
+
 Provide them to `AuthRoutes` and merge it with your router:
 
 ```ts title="apps/server/routes.ts"

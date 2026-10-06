@@ -37,7 +37,12 @@ import {
 } from "./assurance";
 import { AuthenticationAuthority } from "./AuthenticationAuthority";
 import { makeSessionContract } from "./contract";
-import { makeSessionSecrets, makeSessionSigningCodec, SessionSigningKeys } from "./crypto";
+import {
+  makeSessionSecrets,
+  makeSessionSigningCodec,
+  SessionSigningKeys,
+  sessionSigningKeysLayer,
+} from "./crypto";
 import type { SessionError } from "./errors";
 import {
   SessionCapabilityUnsupported,
@@ -1109,13 +1114,15 @@ export const makeSessionModule = <
       }),
     );
 
+    const provided = layer.pipe(Layer.provide(sessionSigningKeysLayer));
+
     // Mode is the literal selected by the two public constructors below.
     // @effect-diagnostics-next-line unsafeEffectTypeAssertion:off
-    return layer as Layer.Layer<
-      Layer.Success<typeof layer>,
-      Layer.Error<typeof layer>,
+    return provided as Layer.Layer<
+      Layer.Success<typeof provided>,
+      Layer.Error<typeof provided>,
       | Exclude<
-          Layer.Services<typeof layer>,
+          Layer.Services<typeof provided>,
           Context.Service.Identifier<typeof SignedSessionValidity>
         >
       | (Mode extends "state-assisted"
