@@ -41,7 +41,7 @@ export const SessionsLive = Layer.effectContext(
               )
                 return yield* Sessions.StaleAuthentication.make({});
 
-              return revision(state, account, ids);
+              return { revision: revision(state, account, ids), requirement };
             }),
           )
           .pipe(Effect.catchTag("StoreUnavailable", () => Sessions.SessionUnavailable.make({}))),
@@ -113,9 +113,10 @@ export const SessionsLive = Layer.effectContext(
               )
                 return yield* Sessions.StaleAuthentication.make({});
               if (
-                state.flows.some(
-                  (row) => row.id === input.evidence.flowId && row.expiresAt > now,
-                ) ||
+                ((input.fresh !== true || input.handoffSourceSessionId !== undefined) &&
+                  state.flows.some(
+                    (row) => row.id === input.evidence.flowId && row.expiresAt > now,
+                  )) ||
                 state.sessions.some((row) => row.digest === input.session.digest)
               )
                 return yield* Sessions.SessionConflict.make({});
@@ -142,13 +143,14 @@ export const SessionsLive = Layer.effectContext(
                     ),
               );
               state.sessions = [...state.sessions, row];
-              state.flows = [
-                ...state.flows.filter((flow) => flow.expiresAt > now),
-                {
-                  id: input.evidence.flowId,
-                  expiresAt: DateTime.toEpochMillis(row.absoluteExpiresAt),
-                },
-              ];
+              if (input.fresh !== true || input.handoffSourceSessionId !== undefined)
+                state.flows = [
+                  ...state.flows.filter((flow) => flow.expiresAt > now),
+                  {
+                    id: input.evidence.flowId,
+                    expiresAt: DateTime.toEpochMillis(row.absoluteExpiresAt),
+                  },
+                ];
 
               return receipt;
             }),

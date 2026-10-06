@@ -8,6 +8,7 @@ import { reportPersistenceFailure } from "@yielded/auth/Persistence";
 import type { SubjectId, TokenDigest } from "@yielded/auth/Schema";
 import {
   assessAuthentication,
+  AuthenticationCapture,
   snapshotSessionAuthenticationProvenance,
   PendingAuthenticationInvalid,
   SessionConflict,
@@ -664,7 +665,16 @@ export const makeSessionKernel = (
     const service = {
       capture: (subjectId: SubjectId, credentialIds: ReadonlyArray<string>) =>
         safeTransaction(
-          readSnapshot(subjectId, credentialIds).pipe(Effect.map((value) => value.revision)),
+          readSnapshot(subjectId, credentialIds).pipe(
+            Effect.flatMap((value) =>
+              Effect.flatMap(mapping.subject.decodeRequirement(value.subject), (requirement) =>
+                Schema.decodeEffect(AuthenticationCapture)({
+                  revision: value.revision,
+                  requirement,
+                }),
+              ),
+            ),
+          ),
         ),
       requirements: (evidence: AuthenticationEvidence) =>
         safeTransaction(
@@ -1072,14 +1082,15 @@ export const makeSessionKernel = (
             let flowInsert: unknown | undefined;
             let pendingExpiresAt: DateTime.Utc | undefined;
 
-            if (input.pending === undefined)
-              flowInsert = yield* ensureDirectFlowAvailable(
-                mapping,
-                input.evidence,
-                nativeSubjectId,
-                input.session.absoluteExpiresAt,
-              );
-            else {
+            if (input.pending === undefined) {
+              if (input.fresh !== true || input.handoffSourceSessionId !== undefined)
+                flowInsert = yield* ensureDirectFlowAvailable(
+                  mapping,
+                  input.evidence,
+                  nativeSubjectId,
+                  input.session.absoluteExpiresAt,
+                );
+            } else {
               if (mapping.pending === undefined) return yield* invalidPending();
               const pending = yield* validatePending(mapping, input.pending);
 
@@ -1137,7 +1148,7 @@ export const makeSessionKernel = (
 
             if (flowInsert !== undefined)
               yield* transaction.insert(mapping.flow.table).values(flowInsert);
-            else
+            else if (input.pending !== undefined)
               yield* consumePending(
                 { ...mapping, pending: mapping.pending! },
                 input.pending!,

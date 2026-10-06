@@ -41,9 +41,9 @@ import {
 } from "./models/password-model";
 import { makeNativeSqlTables, sqlMapping, type NativeSqlTables } from "./native-sql-table";
 import {
-  makePasswordAttempts,
+  makePasswordCredentials,
   samePasswordCredentialSnapshot as sameCredentialSnapshot,
-} from "./password-attempts";
+} from "./password-credentials";
 import {
   CurrentPasswordPreparedTransaction,
   PasswordPreparedPostconditions,
@@ -119,7 +119,7 @@ export const makePasswordKernel = <
 ) => {
   type Mapping = AnyPasswordPersistenceMapping<Fragment>;
 
-  const { and, eq, inArray, lte, column, updateValues } = operations;
+  const { and, eq, inArray, column, updateValues } = operations;
   const { completeProofPlanIn } = proofs;
   const unavailable = () => PasswordUnavailable.make({});
 
@@ -176,27 +176,6 @@ export const makePasswordKernel = <
       mapping.authorityCredential.credentialId,
     ),
     revision: column(mapping.authorityCredential.table, mapping.authorityCredential.revision),
-  });
-
-  const attemptColumns = (mapping: Mapping) => ({
-    moduleId: column(mapping.attempt.table, mapping.attempt.moduleId),
-    action: column(mapping.attempt.table, mapping.attempt.action),
-    attemptId: column(mapping.attempt.table, mapping.attempt.attemptId),
-    identifierNamespace: column(mapping.attempt.table, mapping.attempt.identifierNamespace),
-    identifierValue: column(mapping.attempt.table, mapping.attempt.identifierValue),
-    subjectId: column(mapping.attempt.table, mapping.attempt.subjectId),
-    credentialId: column(mapping.attempt.table, mapping.attempt.credentialId),
-    securityRevision: column(mapping.attempt.table, mapping.attempt.securityRevision),
-    credentialRevision: column(mapping.attempt.table, mapping.attempt.credentialRevision),
-    verifierVersion: column(mapping.attempt.table, mapping.attempt.verifierVersion),
-    identifierBindingRevision: column(
-      mapping.attempt.table,
-      mapping.attempt.identifierBindingRevision,
-    ),
-    admittedAt: column(mapping.attempt.table, mapping.attempt.admittedAt),
-    deadline: column(mapping.attempt.table, mapping.attempt.deadline),
-    retentionUntil: column(mapping.attempt.table, mapping.attempt.retentionUntil),
-    state: column(mapping.attempt.table, mapping.attempt.state),
   });
 
   const commandColumns = (mapping: Mapping) => ({
@@ -943,7 +922,7 @@ export const makePasswordKernel = <
     if (!validConstraints(mapping)) return yield* unavailable();
     const root = yield* NativeDatabase;
 
-    const attempts = yield* makePasswordAttempts(
+    const credentials = yield* makePasswordCredentials(
       yield* sqlMapping(() => nativeTables(root.$client.withoutTransforms(), root)).pipe(
         translateFailure,
       ),
@@ -952,7 +931,7 @@ export const makePasswordKernel = <
     );
 
     return PasswordPersistence.of({
-      ...attempts,
+      ...credentials,
       readForSubject: (input) =>
         safeRead(
           database,
@@ -1283,78 +1262,6 @@ export const makePasswordKernel = <
                 }),
               );
             })
-        ).pipe(
-          Effect.provideService(CurrentPasswordSql, database),
-          Effect.provideService(LifecycleHooks, hooks),
-          translateFailure,
-        ),
-      cleanupAttempts: (input, prepare) =>
-        owned(
-          database,
-          mapping,
-          configuration,
-          Effect.gen(function* () {
-            const transaction = yield* CurrentPasswordSql;
-            const journal = yield* CurrentCommitJournal;
-
-            const now = yield* nowMillis;
-            const nativeNow = mapping.encodeInstant(now);
-            const a = attemptColumns(mapping);
-
-            const attempts = yield* selectRows(
-              transaction
-                .select({ attemptId: a.attemptId })
-                .from(mapping.attempt.table)
-                .where(and(eq(a.moduleId, input.moduleId), lte(a.retentionUntil, nativeNow)))
-                .limit(input.limit + 1),
-              false,
-            );
-
-            const hasMore = attempts.length > input.limit;
-            const attemptCandidates = attempts.slice(0, input.limit);
-            const selectedAttempts: typeof attemptCandidates = [];
-
-            for (const candidate of attemptCandidates) {
-              const locked = yield* selectRows(
-                transaction
-                  .select({ attemptId: a.attemptId })
-                  .from(mapping.attempt.table)
-                  .where(
-                    and(
-                      eq(a.moduleId, input.moduleId),
-                      eq(a.attemptId, candidate.attemptId),
-                      lte(a.retentionUntil, nativeNow),
-                    ),
-                  )
-                  .limit(1),
-                configuration.locking,
-              );
-
-              if (locked[0] !== undefined) selectedAttempts.push(locked[0] as any);
-            }
-
-            const prepared = prepare(
-              {
-                removed: selectedAttempts.length,
-                hasMore,
-              },
-              journal,
-            );
-
-            if (selectedAttempts.length > 0)
-              yield* transaction.delete(mapping.attempt.table).where(
-                and(
-                  eq(a.moduleId, input.moduleId),
-                  inArray(
-                    a.attemptId,
-                    selectedAttempts.map((row: any) => row.attemptId),
-                  ),
-                  lte(a.retentionUntil, nativeNow),
-                ),
-              );
-
-            return prepared;
-          }),
         ).pipe(
           Effect.provideService(CurrentPasswordSql, database),
           Effect.provideService(LifecycleHooks, hooks),

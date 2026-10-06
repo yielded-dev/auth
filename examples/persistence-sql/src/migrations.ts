@@ -366,6 +366,10 @@ export const MigrationsLive = Layer.effectDiscard(
         yield* sql`drop table app_password_charges`;
         yield* sql`drop table app_password_scopes`;
       }),
+      "0006_remove_password_attempts": Effect.flatMap(
+        SqlClient.SqlClient,
+        (sql) => sql`drop table app_password_attempts`,
+      ),
     }),
   }),
 );

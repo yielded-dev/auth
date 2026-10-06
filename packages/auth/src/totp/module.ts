@@ -297,9 +297,10 @@ export const makeTotpModule = <
       )
         return yield* TotpRejected.make({});
 
-      const revision = yield* authority
-        .capture(record.subjectId, [record.credentialId])
-        .pipe(Effect.mapError(mapFailure));
+      const revision = yield* authority.capture(record.subjectId, [record.credentialId]).pipe(
+        Effect.map((capture) => capture.revision),
+        Effect.mapError(mapFailure),
+      );
 
       if (
         revision.securityRevision !== target.revision.securityRevision ||

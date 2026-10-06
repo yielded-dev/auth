@@ -49,28 +49,6 @@ export const passwords = sqliteTable(
   ],
 );
 
-export const passwordAttempts = sqliteTable(
-  "app_password_attempts",
-  {
-    moduleId: text("c_module_id").notNull(),
-    action: text("c_action").notNull(),
-    attemptId: text("c_attempt_id").notNull(),
-    identifierNamespace: text("c_identifier_namespace").notNull(),
-    identifierValue: text("c_identifier_value").notNull(),
-    subjectId: text("c_subject_id"),
-    credentialId: text("c_credential_id"),
-    securityRevision: text("c_security_revision"),
-    credentialRevision: text("c_credential_revision"),
-    verifierVersion: text("c_verifier_version"),
-    identifierBindingRevision: text("c_identifier_binding_revision"),
-    admittedAt: integer("c_admitted_at").notNull(),
-    deadline: integer("c_deadline").notNull(),
-    retentionUntil: integer("c_retention_until").notNull(),
-    state: text("c_state").notNull(),
-  },
-  (table) => [uniqueIndex("app_password_attempts_key_0").on(table.moduleId, table.attemptId)],
-);
-
 export const passwordCommands = sqliteTable(
   "app_password_commands",
   {

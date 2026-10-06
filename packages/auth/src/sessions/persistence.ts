@@ -32,7 +32,8 @@ export interface StatefulSessionRecord<Claims> extends SessionMetadata {
 export interface StatefulSessionPersistence<Claims> {
   /**
    * Insert only if the subject is active and the SAME revision captured before
-   * credential verification still matches. Duplicate evidence.flowId before absoluteExpiresAt MUST fail SessionConflict.
+   * credential verification still matches. Except for fresh password authentication,
+   * duplicate evidence.flowId before absoluteExpiresAt MUST fail SessionConflict.
    * Interactive owners reject it before prepare. Ordered-batch owners may prepare
    * a speculative value during a concurrent race, but MUST discard its receipt
    * and events when the guarded batch loses. Never return an existing row: its digest cannot
@@ -49,6 +50,9 @@ export interface StatefulSessionPersistence<Claims> {
        * requirements/freshness at commit. The initial expiry already caps source
        * liveness; do not extend it or couple subsequent renewal/revocation. */
       readonly handoffSourceSessionId?: SessionId;
+      /** Each call verifies a password anew. Skip flow deduplication only without
+       * pending consumption or a handoff source; those always retain their guards. */
+      readonly fresh?: true;
       readonly pending?: PendingConsumption;
       readonly now: DateTime.Utc;
     },

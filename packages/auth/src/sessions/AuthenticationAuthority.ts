@@ -10,8 +10,8 @@ import type {
 } from "./errors";
 import type {
   AuthenticationEvidence,
+  AuthenticationCapture,
   AuthenticationRequirement,
-  AuthenticationRevision,
   PendingConsumption,
 } from "./models";
 
@@ -19,11 +19,13 @@ import type {
 export class AuthenticationAuthority extends Context.Service<
   AuthenticationAuthority,
   {
-    /** Before verification, read active subject + these independently resolved credential IDs. */
+    /** Before verification, read active subject, factor policy and these independently
+     * resolved credential IDs together. The captured requirement is planning data;
+     * approve/establish must still check current policy under the committing authority. */
     readonly capture: (
       subjectId: SubjectId,
       credentialIds: ReadonlyArray<string>,
-    ) => Effect.Effect<AuthenticationRevision, StaleAuthentication | SessionUnavailable>;
+    ) => Effect.Effect<AuthenticationCapture, StaleAuthentication | SessionUnavailable>;
     /** Reject unless the captured revision is still current; never refresh old evidence's revision. */
     readonly requirements: (
       evidence: AuthenticationEvidence,

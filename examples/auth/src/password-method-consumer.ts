@@ -27,7 +27,6 @@ export const passwordAuth = Auth.make("example/password-auth", {
           identifier: budget,
           subject: budget,
           action: budget,
-          attemptLifetimeMillis: 60_000,
         },
       },
       reset: {
@@ -107,15 +106,6 @@ interface Continuation {
 interface State {
   registrations: Set<string>;
   subjects: Map<string, Subject>;
-  attempts: Map<
-    string,
-    {
-      moduleId: string;
-      action: "sign-in" | "change";
-      captured?: Password.PasswordCredentialSnapshot;
-      expires: number;
-    }
-  >;
   windows: Map<string, number[]>;
   requests: Map<string, { fingerprint: string; receipt: Proofs.ProofRequestReceipt }>;
   proofs: Map<string, Proof>;
@@ -125,7 +115,6 @@ interface State {
 const clone = (state: State): State => ({
   registrations: new Set(state.registrations),
   subjects: new Map([...state.subjects].map(([id, row]) => [id, { ...row }])),
-  attempts: new Map(state.attempts),
   windows: new Map([...state.windows].map(([id, times]) => [id, [...times]])),
   requests: new Map(state.requests),
   proofs: new Map([...state.proofs].map(([id, row]) => [id, { ...row }])),
@@ -142,7 +131,6 @@ export const makePasswordConsumer = Effect.gen(function* () {
   let state: State = {
     registrations: new Set(),
     subjects: new Map(),
-    attempts: new Map(),
     windows: new Map(),
     requests: new Map(),
     proofs: new Map(),
@@ -292,12 +280,11 @@ export const makePasswordConsumer = Effect.gen(function* () {
   };
 
   const store = Password.PasswordPersistence.of({
-    prepareAttempt: (input) =>
+    findCredential: (input) =>
       Effect.gen(function* () {
         if (yield* Hooks.hasCommitScope) return yield* Password.PasswordUnavailable.make({});
         if (input.moduleId !== "example/password")
           return yield* Password.PasswordUnavailable.make({});
-        const { moduleId, action, attemptLifetimeMillis } = input;
         const row = state.subjects.get(input.identifier.value);
 
         const candidate =
@@ -306,85 +293,29 @@ export const makePasswordConsumer = Effect.gen(function* () {
             ? row.password
             : undefined;
 
-        const captured =
-          candidate === undefined
-            ? undefined
-            : yield* Password.snapshotPasswordCredential(candidate);
-
-        let used = false;
-
-        return Object.freeze({
-          ...(captured === undefined ? {} : { credential: captured }),
-          admit: <A>(
-            prepare: Password.PreparePasswordCommit<Password.PasswordAttemptAdmission, A>,
-          ) =>
-            Effect.gen(function* () {
-              if (yield* Hooks.hasCommitScope) return yield* Password.PasswordUnavailable.make({});
-              if (used) return yield* Password.PasswordUnavailable.make({});
-              used = true;
-
-              return yield* own((s, journal, now) => {
-                const attemptId = Password.PasswordAttemptId.make(String(++sequence));
-
-                s.attempts.set(attemptId, {
-                  moduleId,
-                  action,
-                  ...(captured === undefined ? {} : { captured }),
-                  expires: now + attemptLifetimeMillis,
-                });
-
-                return prepare(
-                  {
-                    _tag: "Admitted",
-                    attemptId,
-                    ...(captured === undefined ? {} : { credential: captured }),
-                  },
-                  journal,
-                );
-              });
-            }),
-        });
+        return candidate === undefined
+          ? Option.none()
+          : Option.some(yield* Password.snapshotPasswordCredential(candidate));
       }),
-    settleAttempt: (input, prepare) =>
-      own((s, journal, now) => {
-        const admission = s.attempts.get(input.attemptId);
+    rehashIfCurrent: (input) =>
+      own((s, journal) => {
+        const row = find(s, input.credential.revision.subjectId);
 
-        if (admission?.moduleId === input.moduleId) s.attempts.delete(input.attemptId);
+        if (
+          row?.password !== undefined &&
+          credentialKey(row.password) === credentialKey(input.credential)
+        )
+          row.password = {
+            ...row.password,
+            verifier: input.nextVerifier,
+            verifierVersion: Sessions.SecurityRevision.make(String(++sequence)),
+          };
 
-        const actual =
-          input.captured === undefined
-            ? undefined
-            : find(s, input.captured.revision.subjectId)?.password;
-
-        const valid =
-          input.outcome === "verified" &&
-          admission !== undefined &&
-          admission.moduleId === input.moduleId &&
-          admission.expires > now &&
-          input.captured !== undefined &&
-          admission.captured !== undefined &&
-          actual !== undefined &&
-          credentialKey(admission.captured) === credentialKey(input.captured) &&
-          credentialKey(actual) === credentialKey(input.captured) &&
-          current(s, input.captured.revision);
-
-        if (valid && input.rehash) {
-          const row = find(s, input.captured!.revision.subjectId);
-
-          if (
-            row?.password &&
-            row.password.verifierVersion === input.rehash.expectedVersion &&
-            Redacted.value(row.password.verifier) === Redacted.value(input.rehash.expectedVerifier)
-          )
-            row.password = {
-              ...row.password,
-              verifier: input.rehash.nextVerifier,
-              verifierVersion: Sessions.SecurityRevision.make(String(++sequence)),
-            };
-        }
-
-        return prepare(valid ? "verified" : "rejected", journal);
-      }),
+        return journal.prepare(undefined);
+      }).pipe(
+        Effect.flatMap((receipt) => receipt.read),
+        Effect.mapError(() => Password.PasswordUnavailable.make({})),
+      ),
     readForSubject: (input) =>
       Effect.sync(() => Option.fromUndefinedOr(find(state, input.subjectId)?.password)),
     recoveryTarget: (input) =>
@@ -439,17 +370,6 @@ export const makePasswordConsumer = Effect.gen(function* () {
         }
 
         return result;
-      }),
-    cleanupAttempts: (input, prepare) =>
-      own((s, journal, now) => {
-        const expired = [...s.attempts].filter(([, row]) => row.expires <= now);
-
-        for (const [id] of expired.slice(0, input.limit)) s.attempts.delete(id);
-
-        return prepare(
-          { removed: Math.min(expired.length, input.limit), hasMore: expired.length > input.limit },
-          journal,
-        );
       }),
   });
 
@@ -644,7 +564,7 @@ export const makePasswordConsumer = Effect.gen(function* () {
         };
 
         return current(state, revision)
-          ? Effect.succeed(revision)
+          ? Effect.succeed({ revision, requirement: currentRequirement(id) })
           : Effect.fail(Sessions.StaleAuthentication.make({}));
       }),
     requirements: (evidence) =>

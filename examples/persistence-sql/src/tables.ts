@@ -53,32 +53,6 @@ export const passwords = AuthPersistence.table({
   ],
 });
 
-export const passwordAttempts = AuthPersistence.table({
-  name: "app_password_attempts",
-  columns: {
-    moduleId: { name: "c_module_id", type: "text" },
-    action: { name: "c_action", type: "text" },
-    attemptId: { name: "c_attempt_id", type: "text" },
-    identifierNamespace: { name: "c_identifier_namespace", type: "text" },
-    identifierValue: { name: "c_identifier_value", type: "text" },
-    subjectId: { name: "c_subject_id", type: "text", nullable: true },
-    credentialId: { name: "c_credential_id", type: "text", nullable: true },
-    securityRevision: { name: "c_security_revision", type: "text", nullable: true },
-    credentialRevision: { name: "c_credential_revision", type: "text", nullable: true },
-    verifierVersion: { name: "c_verifier_version", type: "text", nullable: true },
-    identifierBindingRevision: {
-      name: "c_identifier_binding_revision",
-      type: "text",
-      nullable: true,
-    },
-    admittedAt: { name: "c_admitted_at", type: "integer" },
-    deadline: { name: "c_deadline", type: "integer" },
-    retentionUntil: { name: "c_retention_until", type: "integer" },
-    state: { name: "c_state", type: "text" },
-  },
-  unique: [["moduleId", "attemptId"]],
-});
-
 export const passwordCommands = AuthPersistence.table({
   name: "app_password_commands",
   columns: {

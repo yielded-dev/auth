@@ -99,14 +99,10 @@ export {
 } from "./internal/models/passkey-write-model";
 
 export {
-  type PasswordAttemptAction,
-  type PasswordAttemptState,
   type PasswordSubjectTable,
   type PasswordIdentifierTable,
   type PasswordAuthorityCredentialTable,
   type PasswordCredentialTable,
-  type PasswordAttemptRecord,
-  type PasswordAttemptTable,
   type PasswordCommandTable,
   type RequiredPasswordConstraints,
   requiredPasswordConstraints,
@@ -308,4 +304,4 @@ export {
   type SqlTable,
 } from "./internal/native-sql-table";
 
-export { samePasswordCredentialSnapshot } from "./internal/password-attempts";
+export { samePasswordCredentialSnapshot } from "./internal/password-credentials";

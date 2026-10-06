@@ -869,9 +869,9 @@ export const makeStorage = (options: StorageOptions) => {
               }),
             );
 
-          const revision = yield* Schema.decodeEffect(OAuth.OAuthAccountRevision)(current).pipe(
-            Effect.mapError(() => OAuth.OAuthUnavailable.make({})),
-          );
+          const revision = yield* Schema.decodeEffect(OAuth.OAuthAccountRevision)(
+            current.revision,
+          ).pipe(Effect.mapError(() => OAuth.OAuthUnavailable.make({})));
 
           return {
             moduleId,

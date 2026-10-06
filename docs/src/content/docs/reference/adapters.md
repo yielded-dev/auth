@@ -184,28 +184,36 @@ export const PasswordPersistenceLive = Layer.effect(
 );
 ```
 
-`passwordMapping` maps your account, identifier, credential, revision, attempt,
-and receipt tables. It is a `PasswordPersistenceMapping` from `@yielded/auth-persistence-drizzle`.
+`passwordMapping` maps your account, identifier, credential, revision, and receipt
+tables. It is a `PasswordPersistenceMapping` from `@yielded/auth-persistence-drizzle`.
 Supply `LifecycleHooks` and your other account/session Layers at the composition root.
 Driver factories and transaction coordinators declare `Database` and Effect
 `Crypto` requirements at acquisition. Provide your platform's Crypto Layer to
 the persistence Layer itself and to Auth at your composition root. SHA digests and
 entropy use Effect Crypto and may suspend.
 
-Password attempts use the same native Effect SQL implementation for direct SQL
-and interactive Drizzle drivers. Drizzle supplies table representations, codecs,
-defaults, and update hooks; its captured SQL client owns execution. Preflight
-authority reads use a single snapshot statement. Settlement and session creation
-still revalidate current authority in their committing transaction.
+Password lookup and rehash use the same native Effect SQL implementation for direct
+SQL and interactive Drizzle drivers. Drizzle supplies table representations,
+codecs, defaults, and update hooks; its captured SQL client owns execution.
+Identifier lookup and candidate snapshot use separate statements so each mapped
+ID column can retain its own physical encoding.
 
-A replacement `PasswordPersistence` implements `prepareAttempt`: read a coherent
-candidate and return its optional credential plus an `admit` operation. Keep native
-account IDs private in that operation. Auth consumes its separate subject limit
-before calling `admit`, which durably records the inspected candidate without
-holding a transaction across password hashing. Settlement must compare the original
-attempt, credential, identifier binding, revisions, and deadline with current state.
-The attempt grants no session authority. D1 performs its revalidation through a
-fixed guarded batch; it cannot execute an interactive SQL transaction.
+A replacement `PasswordPersistence` supplies `findCredential`, returning an optional
+coherent credential snapshot without writes or a transaction held across hashing.
+`rehashIfCurrent` conditionally updates only the verifier and its version when hash
+parameters change; a lost comparison is a no-op. Rate limits belong to
+`PasswordAttemptLimiter`, so no password attempt table or cleanup operation is needed.
+
+`AuthenticationAuthority.capture` returns `{ revision, requirement }` from the same
+subject read. Password sign-in reuses that requirement to choose a session or a
+pending second factor. The committing session or password-mutation authority must
+still check current status, policy, and the original revisions. Credential replacement
+updates both the password and authority credential revisions; identifier removal,
+rebinding, or eligibility changes must atomically bump the subject security revision.
+
+Fresh password sign-in sets `fresh: true` when establishing a session and needs no
+session flow record. Pending-factor completion, handoffs, and other methods retain
+flow deduplication. D1 checks authority through its fixed guarded batch.
 
 Use `databaseLayer` to acquire `Database` from the platform SQL client. Most drivers
 also accept a native database through `Layer.succeed(Database, db)`. Durable Object
@@ -355,7 +363,7 @@ Use `makePasswordPersistenceServices` for verification and mutation storage;
 also needs a proof mapping.
 
 Password verification consumes token-bucket budgets through `PasswordAttemptLimiter`
-before durable attempt admission. Its default store is process-local, resets on
+before credential verification. Its default store is process-local, resets on
 restart, and has a fixed 10,000-key capacity. Multiple instances need a shared
 Effect `RateLimiterStore`; see [password limits](../guide/passwords#supply-the-services)
 for composition and capacity constraints. Consumed tokens are never refunded.
@@ -495,7 +503,7 @@ shows the application-owned schema and authority.
 
 D1 uses a preplanned conditional batch, not an interactive transaction. Allocate
 registration IDs before the batch. Do not replay a caller-owned mutation after an
-ambiguous response. Password settlement guards run after its own writes. A
+ambiguous response. Password mutation guards run after their own writes. A
 caller-owned batch must not change that captured authority in later application
 statements; those statements run after the password guards.
 
