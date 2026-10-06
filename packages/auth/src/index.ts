@@ -34,3 +34,4 @@ export * as BrowserLoginContract from "./BrowserLoginContract.ts";
 
 export * as OpenIdConnect from "./OpenIdConnect.ts";
 export * as GitHub from "./GitHub.ts";
+export * as Slack from "./Slack.ts";

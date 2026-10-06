@@ -23,6 +23,7 @@ export default defineConfig({
       "src/OAuth.ts",
       "src/OpenIdConnect.ts",
       "src/GitHub.ts",
+      "src/Slack.ts",
       "src/OAuthServer.ts",
       "src/Strava.ts",
       "src/Operations.ts",

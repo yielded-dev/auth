@@ -40,6 +40,12 @@ Open `/login` and configure the provider callback at `/auth/{provider}/callback`
 See [OAuth setup](../../docs/src/content/docs/reference/oauth.md#runnable-examples)
 for environment variables and the development-state reset.
 
+`example:slack` runs sign-in without retained API access. It reuses the Atom client
+and SQL identity storage, allows one configured Slack subject, and checks the
+verified workspace claim before issuing a session. See the
+[Slack guide](../../docs/src/content/docs/guide/slack.md) for app configuration,
+credentials, HTTPS forwarding, and the isolated development-state reset.
+
 The examples allow sign-in and current-owner grant metadata/use. Management requires
 an application-owned exact-action verifier and is denied until one is installed.
 Run cohort revocation maintenance through an application-owned scheduler if enabling
