@@ -450,26 +450,6 @@ export const makeSessionKernel = (
     return { nativeSubjectId, requirement };
   });
 
-  // With row locks, lock the subject before its credentials in separate reads: a
-  // joined FOR UPDATE does not fix that order, for example on partitioned tables,
-  // and a coordinated application may already hold the subject lock. Without row
-  // locks one native snapshot is already serialized.
-  const committedAuthority = (
-    mapping: AnyAuthorityMapping,
-    options: SessionSqlOptions,
-    readSnapshot: ReturnType<typeof makeAuthoritySnapshot>,
-    evidence: AuthenticationEvidence,
-  ) =>
-    options.locking
-      ? validateEvidenceIn(mapping, evidence, true)
-      : Effect.flatMap(
-          readSnapshot(
-            evidence.revision.subjectId,
-            evidence.revision.credentials.map((item) => item.credentialId),
-          ),
-          (captured) => validateCapturedEvidence(mapping, evidence, captured),
-        );
-
   const flowColumns = (mapping: any) => ({
     flowId: column(mapping.flow.table, mapping.flow.flowId),
     subjectId: column(mapping.flow.table, mapping.flow.subjectId),
@@ -707,12 +687,19 @@ export const makeSessionKernel = (
           Effect.gen(function* () {
             const journal = yield* CurrentCommitJournal;
 
-            const { requirement } = yield* committedAuthority(
-              mapping,
-              options,
-              readSnapshot,
-              input.evidence,
-            );
+            // With row locks, lock the subject before its credentials in separate
+            // reads: a joined FOR UPDATE does not fix that order on every table
+            // layout, and a coordinated application may already hold the subject
+            // lock. Without row locks one native snapshot is already serialized.
+            const { requirement } = yield* options.locking
+              ? validateEvidenceIn(mapping, input.evidence, true)
+              : Effect.flatMap(
+                  readSnapshot(
+                    input.evidence.revision.subjectId,
+                    input.evidence.revision.credentials.map((item) => item.credentialId),
+                  ),
+                  (captured) => validateCapturedEvidence(mapping, input.evidence, captured),
+                );
 
             if (input.pending === undefined) {
               const assessed = yield* assessAuthentication(input.evidence, requirement).pipe(
@@ -1071,12 +1058,16 @@ export const makeSessionKernel = (
             const transaction = yield* CurrentSessionSql;
             const journal = yield* CurrentCommitJournal;
 
-            const { nativeSubjectId, requirement } = yield* committedAuthority(
-              mapping,
-              options,
-              readSnapshot,
-              input.evidence,
-            );
+            // Ordered locks with row locks; one serialized snapshot without (see approve).
+            const { nativeSubjectId, requirement } = yield* options.locking
+              ? validateEvidenceIn(mapping, input.evidence, true)
+              : Effect.flatMap(
+                  readSnapshot(
+                    input.evidence.revision.subjectId,
+                    input.evidence.revision.credentials.map((item) => item.credentialId),
+                  ),
+                  (captured) => validateCapturedEvidence(mapping, input.evidence, captured),
+                );
 
             let flowInsert: unknown | undefined;
             let pendingExpiresAt: DateTime.Utc | undefined;
