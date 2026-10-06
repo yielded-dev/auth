@@ -15,12 +15,12 @@ import {
 } from "@yielded/auth/Password";
 import { reportPersistenceFailure } from "@yielded/auth/Persistence";
 import { DateTime, Effect, Option, Redacted, Schema } from "effect";
-import type { SqlClient } from "effect/sql/SqlClient";
 
 import type { PersistenceMappingError } from "./mapping-error";
 import type { AnyPasswordPersistenceMapping } from "./models/password-model";
 import { sqlMapping, type SqlTable } from "./native-sql-table";
 import type { PasswordSqlConfiguration } from "./password-kernel";
+import { NativeDatabase } from "./transaction-kernel";
 
 type Row = Readonly<Record<string, unknown>>;
 type Mapping = AnyPasswordPersistenceMapping;
@@ -60,15 +60,15 @@ export const samePasswordCredentialSnapshot = (
  * Table adapters supply representation only; admission and settlement policy live here.
  */
 export const makePasswordAttempts = Effect.fnUntraced(function* (
-  sql: SqlClient,
   table: (table: object) => SqlTable,
   mapping: Mapping,
   options: PasswordSqlConfiguration,
 ): Effect.fn.Return<
   Pick<PasswordPersistence["Service"], "prepareAttempt" | "settleAttempt">,
   PasswordUnavailable,
-  LifecycleHooks
+  LifecycleHooks | NativeDatabase
 > {
+  const sql = (yield* NativeDatabase).$client.withoutTransforms();
   const hooks = yield* LifecycleHooks;
   const parent = yield* Effect.serviceOption(CurrentCommitJournal);
 

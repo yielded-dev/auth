@@ -659,7 +659,7 @@ export const makeSessionKernel = (
       Effect.mapError(unavailable),
     );
 
-    const readSnapshot = makeAuthoritySnapshot(sqlClient, tables, mapping);
+    const readSnapshot = makeAuthoritySnapshot(tables, mapping);
 
     const service = {
       capture: (subjectId: SubjectId, credentialIds: ReadonlyArray<string>) =>
@@ -739,9 +739,17 @@ export const makeSessionKernel = (
       capture: (subjectId, credentialIds) =>
         service
           .capture(subjectId, credentialIds)
-          .pipe(Effect.provideService(LifecycleHooks, hooks)),
+          .pipe(
+            Effect.provideService(NativeDatabase, root),
+            Effect.provideService(LifecycleHooks, hooks),
+          ),
       requirements: (evidence) =>
-        service.requirements(evidence).pipe(Effect.provideService(LifecycleHooks, hooks)),
+        service
+          .requirements(evidence)
+          .pipe(
+            Effect.provideService(NativeDatabase, root),
+            Effect.provideService(LifecycleHooks, hooks),
+          ),
       approve: (input, prepare) =>
         service.approve(input, prepare).pipe(Effect.provideService(LifecycleHooks, hooks)),
     } satisfies AuthenticationAuthority["Service"];

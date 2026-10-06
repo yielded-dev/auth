@@ -1,7 +1,8 @@
-import { Clock, Context, Duration, Effect, Layer, Schema, Semaphore } from "effect";
+import { Cause, Clock, Context, Duration, Effect, Layer, Schema, Semaphore } from "effect";
 import * as RateLimiter from "effect/persistence/RateLimiter";
 
 import { defaultLayer } from "../../auth/defaults";
+import { reportAuthFailure } from "../../internal/diagnostics";
 import { PasswordRejected, PasswordUnavailable } from "./errors";
 import { PasswordAttemptPolicy } from "./policy";
 
@@ -132,6 +133,18 @@ export class PasswordAttemptLimiter extends Context.Service<
               onExceeded: "fail",
             })
             .pipe(
+              Effect.tapCause((cause) =>
+                reportAuthFailure(
+                  "password-limiting",
+                  Cause.fromReasons(
+                    cause.reasons.filter(
+                      (reason) =>
+                        Cause.isFailReason(reason) &&
+                        reason.error.reason._tag === "RateLimitStoreError",
+                    ),
+                  ),
+                ),
+              ),
               Effect.mapError((error) =>
                 error.reason._tag === "RateLimitExceeded"
                   ? PasswordRejected.make({})

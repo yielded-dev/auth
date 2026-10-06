@@ -1,21 +1,22 @@
 import type { SubjectId } from "@yielded/auth/Schema";
 import { AuthenticationRevision, StaleAuthentication } from "@yielded/auth/Sessions";
 import { Effect, Schema } from "effect";
-import type { SqlClient } from "effect/sql/SqlClient";
 
 import type { SessionAuthorityTables } from "./models/session-model";
 import { sqlMapping, type NativeSqlTables } from "./native-sql-table";
 import type { AnyTableModel } from "./query-operations";
+import { NativeDatabase } from "./transaction-kernel";
 
 /** One statement gives preflight a coherent view without opening a transaction.
  * Commit-time authority checks still lock and revalidate in the persistence owner.
  */
 export const makeAuthoritySnapshot = (
-  sql: SqlClient,
   tables: NativeSqlTables,
   mapping: SessionAuthorityTables<AnyTableModel, AnyTableModel, unknown>,
 ) =>
   Effect.fnUntraced(function* (subjectId: SubjectId, credentialIds: ReadonlyArray<string>) {
+    const sql = (yield* NativeDatabase).$client.withoutTransforms();
+
     if (new Set(credentialIds).size !== credentialIds.length)
       return yield* StaleAuthentication.make({});
 

@@ -19,6 +19,7 @@ type FailureStage =
   | "session-sign-out"
   | "password-screening"
   | "password-hashing"
+  | "password-limiting"
   | "auth-persistence"
   | "passkey-core"
   | "passkey-react-native"

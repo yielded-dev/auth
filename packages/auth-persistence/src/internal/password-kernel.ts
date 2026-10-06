@@ -960,7 +960,6 @@ export const makePasswordKernel = <
     const root = yield* NativeDatabase;
 
     const attempts = yield* makePasswordAttempts(
-      root.$client.withoutTransforms(),
       yield* sqlMapping(() => nativeTables(root.$client.withoutTransforms(), root)).pipe(
         translateFailure,
       ),
