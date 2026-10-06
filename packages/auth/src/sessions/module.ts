@@ -1215,12 +1215,14 @@ export const makeSessionModule = <
           if (assessed.satisfied) {
             // Issuance assesses this same evidence before any hook runs; reuse the
             // requirement just read. Commit-time authority checks are unchanged.
+            // Delegate each method: a supplied authority may define them on its prototype.
             const assessedAuthority = AuthenticationAuthority.of({
-              ...authority,
+              capture: (subjectId, credentialIds) => authority.capture(subjectId, credentialIds),
               requirements: (evidence) =>
                 sameEvidence(evidence, input.evidence)
                   ? Effect.succeed(requirement)
                   : authority.requirements(evidence),
+              approve: (approval, prepare) => authority.approve(approval, prepare),
             });
 
             return completed(

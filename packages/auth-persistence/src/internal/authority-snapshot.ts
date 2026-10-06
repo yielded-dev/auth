@@ -7,19 +7,15 @@ import { sqlMapping, type NativeSqlTables } from "./native-sql-table";
 import type { AnyTableModel } from "./query-operations";
 import { NativeDatabase } from "./transaction-kernel";
 
-/** One statement reads the subject and requested credentials. Preflight reads run
- * unlocked outside a transaction; a commit owner passes `lock` inside its own
- * transaction to lock the subject, then those credentials, before revalidating.
+/** One unlocked statement reads the subject and requested credentials: a coherent
+ * preflight view, or a commit owner's view where writers are already serialized.
+ * Row-locking commit owners lock and revalidate through their ordered reads.
  */
 export const makeAuthoritySnapshot = (
   tables: NativeSqlTables,
   mapping: SessionAuthorityTables<AnyTableModel, AnyTableModel, unknown>,
 ) =>
-  Effect.fnUntraced(function* (
-    subjectId: SubjectId,
-    credentialIds: ReadonlyArray<string>,
-    lock = false,
-  ) {
+  Effect.fnUntraced(function* (subjectId: SubjectId, credentialIds: ReadonlyArray<string>) {
     const sql = (yield* NativeDatabase).$client.withoutTransforms();
 
     if (new Set(credentialIds).size !== credentialIds.length)
@@ -47,7 +43,7 @@ export const makeAuthoritySnapshot = (
         ${c.column(mapping.credential.subjectId)} = ${c.value(mapping.credential.subjectId, nativeId)}
         and ${sql.or(requested.map((id) => sql`${c.column(mapping.credential.credentialId)} = ${c.value(mapping.credential.credentialId, id)}`))}`
       }
-      where ${s.column(mapping.subject.id)} = ${s.value(mapping.subject.id, nativeId)}${lock ? sql.literal(" FOR UPDATE") : sql.literal("")}`,
+      where ${s.column(mapping.subject.id)} = ${s.value(mapping.subject.id, nativeId)}`,
     ).pipe(Effect.flatten);
 
     const first = rows[0];
