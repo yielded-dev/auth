@@ -686,7 +686,16 @@ export const makeSessionKernel = (
           mapping.isConstraintConflict,
           Effect.gen(function* () {
             const journal = yield* CurrentCommitJournal;
-            const { requirement } = yield* validateEvidenceIn(mapping, input.evidence, true);
+
+            const { requirement } = yield* validateCapturedEvidence(
+              mapping,
+              input.evidence,
+              yield* readSnapshot(
+                input.evidence.revision.subjectId,
+                input.evidence.revision.credentials.map((item) => item.credentialId),
+                options.locking,
+              ),
+            );
 
             if (input.pending === undefined) {
               const assessed = yield* assessAuthentication(input.evidence, requirement).pipe(
@@ -751,7 +760,12 @@ export const makeSessionKernel = (
             Effect.provideService(LifecycleHooks, hooks),
           ),
       approve: (input, prepare) =>
-        service.approve(input, prepare).pipe(Effect.provideService(LifecycleHooks, hooks)),
+        service
+          .approve(input, prepare)
+          .pipe(
+            Effect.provideService(NativeDatabase, root),
+            Effect.provideService(LifecycleHooks, hooks),
+          ),
     } satisfies AuthenticationAuthority["Service"];
   });
 
@@ -1018,6 +1032,13 @@ export const makeSessionKernel = (
       );
     const hooks = yield* LifecycleHooks;
 
+    const root = yield* NativeDatabase;
+
+    const tables = yield* sqlMapping(() =>
+      nativeTables(root.$client.withoutTransforms(), root),
+    ).pipe(Effect.mapError(unavailable));
+
+    const readSnapshot = makeAuthoritySnapshot(tables, mapping);
     const c = sessionColumns(mapping);
 
     const persistence = {
@@ -1033,10 +1054,14 @@ export const makeSessionKernel = (
             const transaction = yield* CurrentSessionSql;
             const journal = yield* CurrentCommitJournal;
 
-            const { nativeSubjectId, requirement } = yield* validateEvidenceIn(
+            const { nativeSubjectId, requirement } = yield* validateCapturedEvidence(
               mapping,
               input.evidence,
-              true,
+              yield* readSnapshot(
+                input.evidence.revision.subjectId,
+                input.evidence.revision.credentials.map((item) => item.credentialId),
+                options.locking,
+              ),
             );
 
             let flowInsert: unknown | undefined;
@@ -1430,7 +1455,12 @@ export const makeSessionKernel = (
     return {
       statefulSessionPersistence: {
         establish: (input, prepare) =>
-          persistence.establish(input, prepare).pipe(Effect.provideService(LifecycleHooks, hooks)),
+          persistence
+            .establish(input, prepare)
+            .pipe(
+              Effect.provideService(NativeDatabase, root),
+              Effect.provideService(LifecycleHooks, hooks),
+            ),
         verify: (input) =>
           persistence.verify(input).pipe(Effect.provideService(LifecycleHooks, hooks)),
         rotate: (input, prepare) =>
