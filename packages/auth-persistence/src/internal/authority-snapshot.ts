@@ -7,8 +7,9 @@ import { sqlMapping, type NativeSqlTables } from "./native-sql-table";
 import type { AnyTableModel } from "./query-operations";
 import { NativeDatabase } from "./transaction-kernel";
 
-/** One statement gives preflight a coherent view without opening a transaction.
- * Commit-time authority checks still lock and revalidate in the persistence owner.
+/** One unlocked statement reads the subject and requested credentials: a coherent
+ * preflight view, or a commit owner's view where writers are already serialized.
+ * Row-locking commit owners lock and revalidate through their ordered reads.
  */
 export const makeAuthoritySnapshot = (
   tables: NativeSqlTables,

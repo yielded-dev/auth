@@ -50,7 +50,7 @@ import {
 } from "./errors";
 import { sessionInvalidationWindow } from "./invalidation";
 import {
-  type AuthenticationEvidence,
+  AuthenticationEvidence,
   type PendingConsumption,
   type SessionMetadata,
   AuthenticationFlowId,
@@ -96,6 +96,8 @@ export interface ModuleService<Id extends string, Kind extends string, Claims> {
   readonly kind: Kind;
   readonly claims: Types.Invariant<Claims>;
 }
+
+const sameEvidence = Schema.toEquivalence(AuthenticationEvidence);
 
 const reportSignOutFailure = <A, E extends { readonly _tag: string }, R>(
   effect: Effect.Effect<A, E, R>,
@@ -1210,12 +1212,25 @@ export const makeSessionModule = <
             Effect.mapError(() => SessionInvalid.make({})),
           );
 
-          if (assessed.satisfied)
+          if (assessed.satisfied) {
+            // Issuance assesses this same evidence before any hook runs; reuse the
+            // requirement just read. Commit-time authority checks are unchanged.
+            // Delegate each method: a supplied authority may define them on its prototype.
+            const assessedAuthority = AuthenticationAuthority.of({
+              capture: (subjectId, credentialIds) => authority.capture(subjectId, credentialIds),
+              requirements: (evidence) =>
+                sameEvidence(evidence, input.evidence)
+                  ? Effect.succeed(requirement)
+                  : authority.requirements(evidence),
+              approve: (approval, prepare) => authority.approve(approval, prepare),
+            });
+
             return completed(
               yield* strategy
                 .prepareEstablish({ ...input, claims: checkedClaims })
-                .pipe(Effect.provideService(AuthenticationAuthority, authority)),
+                .pipe(Effect.provideService(AuthenticationAuthority, assessedAuthority)),
             );
+          }
           if (
             input.pending !== undefined ||
             configuration === undefined ||

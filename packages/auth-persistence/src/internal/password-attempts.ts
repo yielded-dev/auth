@@ -344,7 +344,9 @@ export const makePasswordAttempts = Effect.fnUntraced(function* (
           if (discovered === undefined || discovered[mapping.attempt.state] !== "pending")
             return prepare("rejected", journal);
 
-          // Lock subject/identifier/password before the attempt, matching mutation order.
+          // Lock the subject before the attempt: a coordinated application
+          // transaction may already hold the subject lock. Without row locks
+          // the discovery read is already serialized, so it is not repeated.
           const current =
             input.outcome !== "verified" || captured === undefined
               ? undefined
@@ -355,7 +357,9 @@ export const makePasswordAttempts = Effect.fnUntraced(function* (
                   true,
                 );
 
-          const row = yield* attemptRow(input.moduleId, input.attemptId, true);
+          const row = options.locking
+            ? yield* attemptRow(input.moduleId, input.attemptId, true)
+            : discovered;
 
           if (row === undefined || row[mapping.attempt.state] !== "pending")
             return prepare("rejected", journal);
