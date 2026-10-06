@@ -1,5 +1,16 @@
 # @yielded/auth-persistence-drizzle
 
+## 0.1.0-beta.23
+
+### Patch Changes
+
+- [#134](https://github.com/yielded-dev/auth/pull/134) [`d7e48cd`](https://github.com/yielded-dev/auth/commit/d7e48cd2593e93b5af23456f00ed48688aa5a509) Thanks [@danieljvdm](https://github.com/danieljvdm)! - Check coordinated password mutations and password-reset proof completion again after application work, in interactive transactions and D1 batches, and compare a written password's persisted values exactly.
+
+- [#129](https://github.com/yielded-dev/auth/pull/129) [`0fb0a5d`](https://github.com/yielded-dev/auth/commit/0fb0a5da1e395c579ac67d6fc9389dc5267cb0ea) Thanks [@danieljvdm](https://github.com/danieljvdm)! - Share password attempt persistence through native Effect SQL and use bounded process-local password rate limits with replaceable shared storage. BEHAVIOR CHANGE: supply a shared `RateLimiterStore` for multi-instance limits, replace custom `admitAttempt` implementations with `prepareAttempt`, and remove password rate-table mappings and the password `maximumPending` setting.
+- Updated dependencies [[`2742351`](https://github.com/yielded-dev/auth/commit/27423515058032699f392712391321406cf2aa0e), [`d7e48cd`](https://github.com/yielded-dev/auth/commit/d7e48cd2593e93b5af23456f00ed48688aa5a509), [`aa8ba53`](https://github.com/yielded-dev/auth/commit/aa8ba53ff87b9905eb62e2663a4f888bbabfbb56), [`0fb0a5d`](https://github.com/yielded-dev/auth/commit/0fb0a5da1e395c579ac67d6fc9389dc5267cb0ea)]:
+  - @yielded/auth@0.1.0-beta.23
+  - @yielded/auth-persistence@0.1.0-beta.23
+
 ## 0.1.0-beta.22
 
 ### Patch Changes

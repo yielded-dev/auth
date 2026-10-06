@@ -1,5 +1,19 @@
 # @yielded/auth
 
+## 0.1.0-beta.23
+
+### Patch Changes
+
+- [#133](https://github.com/yielded-dev/auth/pull/133) [`2742351`](https://github.com/yielded-dev/auth/commit/27423515058032699f392712391321406cf2aa0e) Thanks [@danieljvdm](https://github.com/danieljvdm)! - Bound the default proof request limiter to 10,000 network keys per process, evicting the least recently checked key when full instead of retaining every address.
+
+- [#135](https://github.com/yielded-dev/auth/pull/135) [`aa8ba53`](https://github.com/yielded-dev/auth/commit/aa8ba53ff87b9905eb62e2663a4f888bbabfbb56) Thanks [@danieljvdm](https://github.com/danieljvdm)! - Reduce a complete password sign-in to 22 database calls on PostgreSQL and 20 on SQLite by reusing the authority requirement that completion already read, and, without row locks, by reading the attempt and session authority once.
+
+- [#129](https://github.com/yielded-dev/auth/pull/129) [`0fb0a5d`](https://github.com/yielded-dev/auth/commit/0fb0a5da1e395c579ac67d6fc9389dc5267cb0ea) Thanks [@danieljvdm](https://github.com/danieljvdm)! - Share password attempt persistence through native Effect SQL and use bounded process-local password rate limits with replaceable shared storage. BEHAVIOR CHANGE: supply a shared `RateLimiterStore` for multi-instance limits, replace custom `admitAttempt` implementations with `prepareAttempt`, and remove password rate-table mappings and the password `maximumPending` setting.
+- Updated dependencies []:
+  - @yielded/crypto@0.1.0-beta.23
+  - @yielded/jose@0.1.0-beta.23
+  - @yielded/oauth@0.1.0-beta.23
+
 ## 0.1.0-beta.22
 
 ### Patch Changes
