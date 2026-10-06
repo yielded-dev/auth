@@ -217,9 +217,6 @@ export const makePhoneLifecycle = <
 
   const noAmbient = Effect.gen(function* () {
     if (yield* hasCommitScope) return yield* PhoneOtpUnavailable.make({});
-    yield* Schema.decodeEffect(PhoneLifecyclePolicy)(policy).pipe(
-      Effect.mapError(() => PhoneConfigurationError.make({})),
-    );
   });
 
   const capture = Effect.fn("PhoneLifecycle.capture")(function* (
@@ -324,6 +321,22 @@ export const makePhoneLifecycle = <
     return { ...dispatch.receipt, flowId: input.flowId, actionChallenge: current.challenge };
   });
 
+  const configurationLayer = Layer.effectDiscard(
+    Effect.gen(function* () {
+      yield* Schema.decodeEffect(PhoneLifecyclePolicy)(policy).pipe(
+        Effect.mapError(() => PhoneConfigurationError.make({})),
+      );
+      const strategy = yield* sessions.SessionStrategy;
+
+      if (
+        policy.requireImmediateInvalidation &&
+        (strategy.capabilities.subjectInvalidation !== "immediate" ||
+          strategy.capabilities.positiveCacheMillis > 0)
+      )
+        return yield* PhoneConfigurationError.make({});
+    }),
+  );
+
   const handlersLayer = Layer.mergeAll(
     Begin.credentialHandlerLayer(
       Effect.fn("PhoneLifecycle.begin")(function* (input, invocation) {
@@ -357,12 +370,6 @@ export const makePhoneLifecycle = <
       Effect.fn("PhoneLifecycle.complete")(function* (input, invocation) {
         const current = yield* capture(input, invocation);
         const strategy = yield* sessions.SessionStrategy;
-
-        if (
-          policy.requireImmediateInvalidation &&
-          strategy.capabilities.subjectInvalidation !== "immediate"
-        )
-          return yield* PhoneConfigurationError.make({});
 
         const proofs = yield* proof.Proofs,
           attempted = yield* proofs
@@ -573,7 +580,7 @@ export const makePhoneLifecycle = <
         return { proofs: proofResult, admission };
       }),
     ),
-  );
+  ).pipe(Layer.provide(configurationLayer));
 
   const layer = handlersLayer.pipe(
     Layer.provide(defaultLayer(binding.RequestBinding, binding.layer)),

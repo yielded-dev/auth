@@ -716,7 +716,8 @@ export const makePasswordKernel = <
       )
         return undefined;
       if (
-        input.invalidation.existingSessions === "immediate" &&
+        (input.invalidation.existingSessions === "immediate" ||
+          input.invalidation.existingSessions === "cache-expiry") &&
         mapping.sessionInvalidation !== "same-authority-immediate"
       )
         return undefined;

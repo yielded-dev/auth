@@ -133,14 +133,21 @@ export const SessionSignOut = Schema.Struct({
 
 export type SessionSignOut = typeof SessionSignOut.Type;
 
+export const SessionReadOptions = Schema.Struct({
+  /** Bypass the cookie cache and verify against authoritative state. */
+  fresh: Schema.optionalKey(Schema.Boolean),
+});
+
+export type SessionReadOptions = typeof SessionReadOptions.Type;
+
 export const SessionCapabilities = Schema.Struct({
   mode: Schema.Literals(["stateful", "stateless", "state-assisted"]),
   listing: Schema.Boolean,
   perSessionRevocation: Schema.Boolean,
   subjectInvalidation: Schema.Literals(["immediate", "absolute-expiry"]),
   renewal: Schema.Literals(["single-winner", "replayable"]),
-  /** Default authoritative checks never reuse positive authorization caches. */
-  positiveCacheMillis: Schema.Literal(0),
+  /** Maximum lifetime of an explicitly enabled session cookie snapshot; zero by default. */
+  positiveCacheMillis: Schema.Natural,
 });
 
 export type SessionCapabilities = typeof SessionCapabilities.Type;

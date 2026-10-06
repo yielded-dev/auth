@@ -11,7 +11,8 @@ and the [Effect Atom client](../guide/client) to call it. Both use the same
 
 | Actions                             | HTTP method | Default path                                          |
 | ----------------------------------- | ----------- | ----------------------------------------------------- |
-| `getSession`, `requireSession`      | GET         | `/auth/getSession`, `/auth/requireSession`            |
+| `requireSession`                    | GET         | `/auth/requireSession`                                |
+| `getSession`                        | POST        | `/auth/getSession`                                    |
 | `signIn`, `signOut`, `renewSession` | POST        | `/auth/signIn`, `/auth/signOut`, `/auth/renewSession` |
 
 No-input queries use GET. Queries with payloads use POST so their inputs stay out
@@ -30,6 +31,9 @@ http.handlers(Api, { name: "account" });
 ```
 
 Configure paths through `basePath` rather than prefixing the generated endpoints.
+
+`getSession` accepts `{}` or `{ "payload": { "fresh": true } }` as its JSON body.
+The fresh option bypasses the cookie cache; the call remains a read-only query.
 
 ## Cookies and request policy
 
@@ -59,8 +63,9 @@ See [shared-session setup and security](../guide/http-and-client#sharing-session
 
 POST auth actions require an admitted Origin, JSON content type, and
 `x-effect-auth-csrf: 1` by default. GET actions have no body or CSRF header and
-reject an explicitly untrusted Origin. Duplicate credential cookies are rejected,
-and session responses are not cacheable. If you override `csrf` on the server,
+reject an explicitly untrusted Origin. Duplicate authority credentials are rejected;
+invalid or duplicate optional cache cookies are ignored. Session responses are
+not cacheable. If you override `csrf` on the server,
 pass matching settings to `Client.make`.
 
 Named mutations enforce Origin and CSRF before side effects, including local
@@ -69,6 +74,30 @@ For a custom credential-producing workflow, call `http.protect(effect)` inside
 the request boundary; it applies mutation policy and supplies private collectors
 without imposing a body format. Custom hosts still own webhook validation and
 ordinary application mutation policy.
+
+### Session cache cookies
+
+Enable caching with [`Sessions.stateful({ cacheFor })`](../guide/sessions#cache-ordinary-session-reads).
+Both cookies follow the configured auth cookie policy:
+
+| Cookie                                 | Content and lifetime                                                                                                       |
+| -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `session-cache`                        | Signed public snapshot bound to the credential and browser generation; expires within `cacheFor` and the session lifetime. |
+| `${sessionCacheCookieName}-generation` | HttpOnly mutation generation; lasts `maximumIssuedAge`.                                                                    |
+
+Browser caching requires a response command sink and a valid generation. Missing,
+malformed, or duplicate generations disable it until an admitted mutation. No
+cache cookies are sent when caching is off.
+
+Admitted mutations clear the snapshot and rotate the generation. Reads never
+rotate it, so delayed reads cannot restore a usable snapshot after a mutation
+response. Other clients, replayed cookie pairs, and lost responses retain the
+fixed `cacheFor` exposure window. Credential changes also clear the snapshot.
+
+Snapshot values are capped at `min(maximumTokenBytes, 3072)` bytes; the complete
+serialized cookie, including name and attributes, must fit 4,096 bytes. Oversize,
+encoding, and backend failures report sanitized diagnostics and fall back to
+authoritative reads. Invalid, expired, or duplicate snapshots fall back silently.
 
 ## Proof request rate limits
 
@@ -151,9 +180,11 @@ example and [TOTP](../guide/totp#expose-private-reveals-over-http) for private r
 ## Lower-level transports
 
 `http.withRequest` wraps a custom Effect returning `HttpServerResponse`.
-`http.operationLayer` supplies browser policy and caller resolution to existing
-`OperationHttpServer` contracts. Those descriptors continue to own private payload
-injection and explicitly selected reveals.
+Raw strategy calls retain mutation admission, including inside GET handlers;
+declare a named query action to expose a read.
+`http.operationLayer` supplies browser policy, caller resolution and configured
+session-cache invalidation to existing `OperationHttpServer` contracts. Those
+descriptors continue to own private payload injection and explicitly selected reveals.
 Encode expected response failures before leaving the request wrapper.
 
 `OperationHttpServer.make` retains configuration and caller resolution. Supply

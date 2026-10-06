@@ -46,6 +46,9 @@ supplies empty lifecycle hooks; your application selects crypto and the remainin
 | Password hashing                              | [`Password.PasswordHashing.layer()`](./passwords#supply-the-services)                 |
 | Proof and request-binding keys                | Your secrets; see [Layer wiring](../reference/adapters#compose-the-application-layer) |
 
+For signed sessions or cookie caching, set `AUTH_SECRET` or provide
+[`Auth.AuthConfig`](./sessions#application-secret). Signing keys default from it.
+
 Provide them to `AuthRoutes` and merge it with your router:
 
 ```ts title="apps/server/routes.ts"

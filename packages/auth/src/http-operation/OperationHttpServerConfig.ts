@@ -6,6 +6,7 @@ import type { CredentialSlot } from "../operations/credentials";
 import { headerName } from "./configuration-schema";
 import { OperationHttpConfigurationError } from "./errors";
 import { credentialSlots, type OperationCookie, type OperationHttpConfiguration } from "./models";
+import { cookieFits, generationCookieConfiguration, makeCacheCookie } from "./session-cache-cookie";
 
 export class OperationHttpServerConfig extends Context.Service<
   OperationHttpServerConfig,
@@ -74,6 +75,16 @@ export const configurationLayer = (input: OperationHttpConfiguration) =>
         names.add(value.name);
         Object.freeze(value);
       }
+      const generation = generationCookieConfiguration(cookies["session-cache"]);
+      const generationProbe = makeCacheCookie(generation, "a".repeat(43), Number.MAX_SAFE_INTEGER);
+
+      if (
+        names.has(generation.name) ||
+        generationProbe._tag === "Failure" ||
+        !cookieFits(generationProbe.success)
+      )
+        return yield* OperationHttpConfigurationError.make({ reason: "cookies" });
+
       if (input.native !== undefined) {
         const native = input.native;
 

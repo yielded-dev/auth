@@ -21,6 +21,7 @@ import {
   type AuthCredentialCommand,
 } from "../operations/credentials";
 import type { AuthRevealCommand } from "../operations/reveals";
+import { sessionCacheTransport } from "../sessions/cookieCache";
 import {
   type AnyRoute,
   HttpRequestBody,
@@ -34,6 +35,7 @@ import { OperationHttpInvocation } from "./OperationHttpInvocation";
 import { OperationHttpServerConfig } from "./OperationHttpServerConfig";
 import { CredentialWire, RevealWire, credentialWire, revealWire } from "./private";
 import { requestSecurity } from "./security";
+import { rotationCookies, snapshotCookie } from "./session-cache-cookie";
 
 const responseSchema = Schema.Union([
   Schema.TaggedStruct("Success", {
@@ -256,10 +258,18 @@ const applyCommands = Effect.fn("OperationHttp.applyCommands")(function* (
   commands: ReadonlyArray<AuthCredentialCommand>,
   config: OperationHttpConfiguration,
   native: boolean,
+  cacheEnabled: boolean,
 ) {
   const now = DateTime.toEpochMillis(yield* DateTime.now);
 
   for (const command of commands) {
+    if (command.slot === "session-cache") {
+      if (native || !cacheEnabled) continue;
+      const cookie = yield* snapshotCookie(config.cookies["session-cache"], command, now);
+
+      if (cookie !== undefined) headers.append("set-cookie", Cookies.serializeCookie(cookie));
+      continue;
+    }
     if (native) {
       headers.set(
         config.native!.responseHeaders[command.slot],
@@ -305,6 +315,7 @@ export const make = <
     >;
     const config = yield* OperationHttpServerConfig;
     const invocation = yield* OperationHttpInvocation;
+    const cacheTransport = invocation[sessionCacheTransport];
 
     for (const route of Object.values(contract.routes)) {
       if (
@@ -330,8 +341,8 @@ export const make = <
       callbacks.set(callback.path, callback);
     }
 
-    const handle = Effect.fn("OperationHttp.handle")(
-      function* (request: Request) {
+    const handleRequest = Effect.fn("OperationHttp.handle")(
+      function* (request: Request, mutationCookies: Cookies.Cookie[]) {
         const services = yield* Effect.context<Requirements>();
 
         if (new TextEncoder().encode(request.url).byteLength > config.maximumUrlBytes)
@@ -402,8 +413,31 @@ export const make = <
               : yield* callbackPayload(callback, request, security.credentials, url);
 
         const payload = yield* inject(route, raw, security.credentials);
+
+        // POST admission (or callback binding) already ran above. Share one
+        // rotation with nested auth mutations, including payload-bearing queries.
+        const invalidateCache =
+          security.native || cacheTransport === undefined
+            ? Effect.void
+            : yield* Effect.cached(
+                Effect.gen(function* () {
+                  const generation = yield* cacheTransport.rotate;
+
+                  mutationCookies.push(
+                    ...(yield* rotationCookies(
+                      config.cookies["session-cache"],
+                      generation,
+                      cacheTransport.lifetimeMillis,
+                    )),
+                  );
+                }).pipe(Effect.mapError(() => OperationHttpError.make({ reason: "unavailable" }))),
+              );
+
+        if (route.operation.replay !== "read-only") yield* invalidateCache;
         const trusted = yield* invocation.resolve(request, security.credentials);
+
         const commands: AuthCredentialCommand[] = [];
+
         const reveals: AuthRevealCommand[] = [];
 
         const sink = (values: ReadonlyArray<AuthCredentialCommand>) =>
@@ -455,8 +489,24 @@ export const make = <
               ? {}
               : { resolveInvocation: invocation.request(request, security.credentials) }),
             credentials: security.credentials,
+            actionMode: route.operation.replay === "read-only" ? "query" : "mutation",
+            ...(security.sessionCacheGeneration === undefined
+              ? {}
+              : { sessionCacheGeneration: security.sessionCacheGeneration }),
+            ...(security.native || cacheTransport === undefined
+              ? {}
+              : {
+                  sessionCacheCommandSink: (command) =>
+                    Effect.sync(() => {
+                      commands.push(command);
+                    }),
+                }),
             beforeMutation:
-              route.method === "GET" ? HookDenied.make({ reason: "policy" }) : Effect.void,
+              route.method === "GET"
+                ? HookDenied.make({ reason: "policy" })
+                : invalidateCache.pipe(
+                    Effect.mapError(() => HookDenied.make({ reason: "unavailable" })),
+                  ),
             credentialCommandSink: sink,
             revealCommandCollector: collector,
           }),
@@ -475,6 +525,16 @@ export const make = <
           headers.set("access-control-allow-credentials", "true");
         }
         if (resolved._tag === "Failure") {
+          yield* applyCommands(
+            headers,
+            commands.filter(
+              (command) => command.slot === "session-cache" && command._tag === "Clear",
+            ),
+            config,
+            security.native,
+            cacheTransport !== undefined,
+          );
+
           const encoded = yield* Schema.encodeEffect(errorSchema)(resolved.failure).pipe(
             Effect.provide(requestServices),
             Effect.mapError(() => OperationHttpError.make({ reason: "response" })),
@@ -487,7 +547,10 @@ export const make = <
 
           return new Response(
             yield* encodeResponse({ _tag: "Failure", error }).pipe(Effect.orDie),
-            { status: 400, headers },
+            {
+              status: 400,
+              headers,
+            },
           );
         }
 
@@ -505,7 +568,13 @@ export const make = <
               );
 
         if (callback?.respond === undefined)
-          yield* applyCommands(headers, commands, config, security.native);
+          yield* applyCommands(
+            headers,
+            commands,
+            config,
+            security.native,
+            cacheTransport !== undefined,
+          );
         if (callback !== undefined) {
           if (callback.respond !== undefined) {
             // The callback retains its exact invocation requirements.
@@ -523,7 +592,13 @@ export const make = <
               callbackId: callback.callbackId,
             }).pipe(Effect.provide(requestServices));
 
-            yield* applyCommands(headers, commands, config, security.native);
+            yield* applyCommands(
+              headers,
+              commands,
+              config,
+              security.native,
+              cacheTransport !== undefined,
+            );
 
             const customHeaders = new Headers(response.headers);
 
@@ -572,22 +647,40 @@ export const make = <
         );
       },
       Effect.scoped,
-      Effect.catch((error) =>
-        failResponse(
-          Schema.is(OperationHttpError)(error)
-            ? error
-            : OperationHttpError.make({ reason: "unavailable" }),
-        ),
-      ),
-      Effect.catchCause((cause) =>
-        Cause.hasDies(cause)
-          ? reportAuthFailure("http", cause).pipe(
-              Effect.andThen(failResponse(OperationHttpError.make({ reason: "unavailable" }))),
-            )
-          : Effect.failCause(cause),
-      ),
       Effect.provideService(OperationHttpServerConfig, config),
     );
+
+    const handle = Effect.fnUntraced(function* (request: Request) {
+      // Mutation binding survives typed errors, defects and response projection
+      // failures. Only these invalidation cookies may cross a failed boundary.
+      const mutationCookies: Cookies.Cookie[] = [];
+
+      return yield* handleRequest(request, mutationCookies).pipe(
+        Effect.catch((error) =>
+          failResponse(
+            Schema.is(OperationHttpError)(error)
+              ? error
+              : OperationHttpError.make({ reason: "unavailable" }),
+          ),
+        ),
+        Effect.catchCause((cause) =>
+          Cause.hasDies(cause)
+            ? reportAuthFailure("http", cause).pipe(
+                Effect.andThen(failResponse(OperationHttpError.make({ reason: "unavailable" }))),
+              )
+            : Effect.failCause(cause),
+        ),
+        Effect.map((response) => {
+          if (mutationCookies.length === 0) return response;
+          const headers = new Headers(response.headers);
+
+          for (const cookie of mutationCookies)
+            headers.append("set-cookie", Cookies.serializeCookie(cookie));
+
+          return new Response(response.body, { status: response.status, headers });
+        }),
+      );
+    });
 
     return { handle };
   });

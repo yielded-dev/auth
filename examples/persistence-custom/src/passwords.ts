@@ -45,7 +45,8 @@ const mutationCurrent = Effect.fn("Customers.passwordMutationCurrent")(function*
     String(auth.evidence.flowId) === String(input.commandId) &&
     auth.evidence.bindingDigest === auth.challenge.bindingDigest &&
     auth.evidence.revision.subjectId === account.id &&
-    input.invalidation.existingSessions === "immediate" &&
+    (input.invalidation.existingSessions === "immediate" ||
+      input.invalidation.existingSessions === "cache-expiry") &&
     (yield* satisfies(state, auth.evidence, auth.requirement))
   );
 });

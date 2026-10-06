@@ -161,7 +161,8 @@ export const makePasskeyManagement = <
 
       if (
         policy.requireImmediateInvalidation &&
-        strategy.capabilities.subjectInvalidation !== "immediate"
+        (strategy.capabilities.subjectInvalidation !== "immediate" ||
+          strategy.capabilities.positiveCacheMillis > 0)
       )
         return yield* PasskeyConfigurationError.make({});
 

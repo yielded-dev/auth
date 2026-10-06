@@ -37,7 +37,12 @@ import {
 } from "./assurance";
 import { AuthenticationAuthority } from "./AuthenticationAuthority";
 import { makeSessionContract } from "./contract";
-import { makeSessionSecrets, makeSessionSigningCodec, type SessionSigningKeyring } from "./crypto";
+import {
+  makeSessionSecrets,
+  makeSessionSigningCodec,
+  SessionSigningKeys,
+  sessionSigningKeysLayer,
+} from "./crypto";
 import type { SessionError } from "./errors";
 import {
   SessionCapabilityUnsupported,
@@ -583,7 +588,10 @@ export const makeSessionModule = <
 
         const strategy = SessionStrategy.of({
           policy,
-          capabilities: statefulCapabilities,
+          capabilities: {
+            ...statefulCapabilities,
+            positiveCacheMillis: policy.positiveCacheMillis ?? 0,
+          },
           inspectForStepUp,
           inspect,
           verify,
@@ -756,7 +764,6 @@ export const makeSessionModule = <
 
   const signedLayer = <Mode extends "stateless" | "state-assisted">(
     configured: SessionPolicy,
-    keyring: SessionSigningKeyring,
     mode: Mode,
   ) => {
     const layer = Layer.effectContext(
@@ -766,9 +773,10 @@ export const makeSessionModule = <
             ? Option.some(yield* SignedSessionValidity)
             : Option.none<ValidityPort>();
 
-        const capabilities = Option.isSome(validity)
-          ? stateAssistedCapabilities
-          : statelessCapabilities;
+        const capabilities = {
+          ...(Option.isSome(validity) ? stateAssistedCapabilities : statelessCapabilities),
+          positiveCacheMillis: configured.positiveCacheMillis ?? 0,
+        };
 
         const policy = yield* validateSessionPolicy(configured, capabilities);
         const hooks = yield* LifecycleHooks;
@@ -789,7 +797,11 @@ export const makeSessionModule = <
           credentialVersion: SessionCredentialVersion,
         });
 
-        const signing = yield* makeSessionSigningCodec(Envelope, keyring, policy.maximumTokenBytes);
+        const signing = yield* makeSessionSigningCodec(
+          Envelope,
+          yield* SessionSigningKeys,
+          policy.maximumTokenBytes,
+        );
 
         const encode = (inspection: Inspection) =>
           signing.encode({
@@ -816,11 +828,16 @@ export const makeSessionModule = <
           if (Option.isSome(validity))
             yield* validity.value.verify(envelope.session, yield* DateTime.now);
 
-          return yield* inspectProvenance(
+          const inspection = yield* inspectProvenance(
             yield* projectSession(envelope.session),
             envelope.provenance,
             envelope.credentialVersion,
           );
+
+          // Validity reads and codec work may outlast a live token's expiry.
+          yield* validateSessionTimeline(inspection.session, policy);
+
+          return inspection;
         });
 
         const inspectForStepUp = Effect.fn("SignedSession.inspectForStepUp")(function* (
@@ -1097,13 +1114,15 @@ export const makeSessionModule = <
       }),
     );
 
+    const provided = layer.pipe(Layer.provide(sessionSigningKeysLayer));
+
     // Mode is the literal selected by the two public constructors below.
     // @effect-diagnostics-next-line unsafeEffectTypeAssertion:off
-    return layer as Layer.Layer<
-      Layer.Success<typeof layer>,
-      Layer.Error<typeof layer>,
+    return provided as Layer.Layer<
+      Layer.Success<typeof provided>,
+      Layer.Error<typeof provided>,
       | Exclude<
-          Layer.Services<typeof layer>,
+          Layer.Services<typeof provided>,
           Context.Service.Identifier<typeof SignedSessionValidity>
         >
       | (Mode extends "state-assisted"
@@ -1112,11 +1131,9 @@ export const makeSessionModule = <
     >;
   };
 
-  const statelessLayer = (policy: SessionPolicy, keyring: SessionSigningKeyring) =>
-    signedLayer(policy, keyring, "stateless");
+  const statelessLayer = (policy: SessionPolicy) => signedLayer(policy, "stateless");
 
-  const stateAssistedLayer = (policy: SessionPolicy, keyring: SessionSigningKeyring) =>
-    signedLayer(policy, keyring, "state-assisted");
+  const stateAssistedLayer = (policy: SessionPolicy) => signedLayer(policy, "state-assisted");
 
   const AuthenticationCompletion = Context.Service<
     ModuleService<Id, "completion", Claims["Type"]>,

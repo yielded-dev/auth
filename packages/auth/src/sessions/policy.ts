@@ -5,6 +5,8 @@ import type { SessionCapabilities, SessionMetadata } from "./models";
 
 const PositiveMillis = Schema.Int.check(Schema.isGreaterThan(0));
 
+export const maximumCacheMillis = 300_000;
+
 export const SessionPolicy = Schema.Struct({
   issuer: Schema.NonEmptyString,
   audience: Schema.NonEmptyString,
@@ -15,6 +17,8 @@ export const SessionPolicy = Schema.Struct({
   /** Deployment-wide upper bound including tokens issued under older policy versions. */
   maximumIssuedAbsoluteLifetimeMillis: PositiveMillis,
   maximumTokenBytes: Schema.Int.check(Schema.isBetween({ minimum: 256, maximum: 1048576 })),
+  /** Opt-in cookie cache. Revocation and claim changes may lag by this duration. */
+  positiveCacheMillis: Schema.optionalKey(Schema.Natural),
   requireImmediateInvalidation: Schema.Boolean,
 });
 
@@ -31,10 +35,16 @@ export const validateSessionPolicy = Effect.fn("validateSessionPolicy")(function
   if (
     policy.renewalIntervalMillis >= policy.idleLifetimeMillis ||
     policy.idleLifetimeMillis > policy.absoluteLifetimeMillis ||
-    policy.absoluteLifetimeMillis > policy.maximumIssuedAbsoluteLifetimeMillis
+    policy.absoluteLifetimeMillis > policy.maximumIssuedAbsoluteLifetimeMillis ||
+    (policy.positiveCacheMillis ?? 0) > Math.min(policy.renewalIntervalMillis, maximumCacheMillis)
   )
     return yield* SessionConfigurationError.make({ reason: "policy" });
-  if (policy.requireImmediateInvalidation && capabilities.subjectInvalidation !== "immediate") {
+  if (capabilities.mode !== "stateful" && (policy.positiveCacheMillis ?? 0) > 0)
+    return yield* SessionConfigurationError.make({ reason: "capability" });
+  if (
+    policy.requireImmediateInvalidation &&
+    (capabilities.subjectInvalidation !== "immediate" || (policy.positiveCacheMillis ?? 0) > 0)
+  ) {
     return yield* SessionConfigurationError.make({ reason: "capability" });
   }
 

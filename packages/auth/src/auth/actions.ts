@@ -60,7 +60,7 @@ export type LocalActionApi<
   Default,
 > = {
   readonly [Name in keyof Actions]: (
-    ...args: [ActionInput<Actions[Name]>] extends [void]
+    ...args: undefined extends ActionInput<Actions[Name]>
       ? [input?: ActionInput<Actions[Name]>]
       : [input: ActionInput<Actions[Name]>]
   ) => Effect.Effect<
@@ -153,7 +153,7 @@ export const makeActionApi = Effect.fn("Auth.makeActionApi")(function* <
       const value = yield* method(payload).pipe(
         Effect.provideService(AuthRequest, {
           ...request,
-          actionMode: action.mode,
+          actionMode: request.actionMode === "mutation" ? "mutation" : action.mode,
           credentialCommandSink: sink,
           revealCommandCollector: collector,
         }),

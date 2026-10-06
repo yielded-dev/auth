@@ -159,7 +159,9 @@ export const phoneConsumer = Effect.gen(function* () {
     }),
   );
 
-  const strategy = sessions.statelessLayer(sessionPolicy, keyring).pipe(Layer.provide(base));
+  const strategy = sessions
+    .statelessLayer(sessionPolicy)
+    .pipe(Layer.provide(Layer.succeed(Sessions.SessionSigningKeys, keyring)), Layer.provide(base));
 
   const completion = sessions
     .completionLayer()

@@ -89,10 +89,16 @@ middleware and finalizers must terminate for cleanup to finish.
 
 ## Atom options
 
-`AuthAtom.make(AppClient, options)` exposes each named action as an atom.
-`auth.session` aliases `auth.getSession`; queries expose `AsyncResult`, including
-setup failures. Write an input to execute a mutation; refreshing its result view
-does not repeat the request.
+`AuthAtom.make(AppClient, options)` exposes named queries and mutations. No-input
+queries are atoms; payload-bearing queries are atom families, including optional
+payloads. Define object-input queries outside React renders or use stable
+Effect `Equal`/`Hash` keys. Queries expose `AsyncResult`, including setup failures.
+Write an input to execute a mutation; refreshing its result does not repeat it.
+
+`auth.session` is the default `auth.getSession()` atom. Use
+`auth.getSession({ fresh: true })` to bypass the server cookie cache on each fetch.
+Custom contracts must expose a `getSession` query accepting no input; `session`,
+`runtime`, and `client` are reserved aliases.
 
 | Option           | Purpose                                                                                                                            |
 | ---------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
@@ -130,7 +136,8 @@ Default atoms render `Initial` without fetching. For session-aware rendering:
 3. Serialize only the public session. Hydrate a separate browser registry with
    the same seed; close each registry with its host Scope.
 
-The seed is display data, not authentication authority. Acquisition does not
+The seed belongs only to the default `getSession()` atom, never an option-bearing
+read. It is display data, not authentication authority. Acquisition does not
 fetch; browser query reads verify the live cookie. Confirmation of the same account
 replaces the seed without a loading gap. A failure or account replacement permanently
 retires the seed. Never share server clients, registries, or

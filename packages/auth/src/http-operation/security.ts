@@ -3,9 +3,11 @@ import { Cookies } from "effect/http";
 
 import { origin } from "../internal/origin";
 import type { CredentialSlot } from "../operations/credentials";
+import { SessionCacheGeneration } from "../sessions/cookieCache";
 import { OperationHttpError } from "./errors";
 import { credentialSlots } from "./models";
 import { OperationHttpServerConfig } from "./OperationHttpServerConfig";
+import { generationCookieConfiguration, optionalCookie } from "./session-cache-cookie";
 
 /** Browser mutation admission is independent of body encoding. */
 export const mutationSecurity = Effect.fn("OperationHttp.mutationSecurity")(function* (
@@ -63,15 +65,27 @@ export const requestSecurity = Effect.fn("OperationHttp.requestSecurity")(functi
   const rawCookie = request.headers.get("cookie") ?? "";
 
   if (rawCookie.length > 65536) return yield* OperationHttpError.make({ reason: "too-large" });
-  const parsed = Cookies.parseHeader(rawCookie);
+  const parts = rawCookie.split(";");
+  const cacheName = config.cookies["session-cache"].name;
+  const generationName = generationCookieConfiguration(config.cookies["session-cache"]).name;
+
+  const authoritativeCookie = parts
+    .filter((part) => ![cacheName, generationName].includes(part.trim().split("=", 1)[0]))
+    .join(";");
+
+  const parsed = Cookies.parseHeader(authoritativeCookie);
   const credentials: Partial<Record<CredentialSlot, Redacted.Redacted<string>>> = {};
 
   for (const slot of credentialSlots) {
     const configured = config.cookies[slot];
 
-    const cookies = rawCookie
-      .split(";")
-      .filter((part) => part.trim().split("=", 1)[0] === configured.name);
+    if (slot === "session-cache") {
+      const value = native ? undefined : optionalCookie(parts, cacheName);
+
+      if (value !== undefined) credentials[slot] = Redacted.make(value);
+      continue;
+    }
+    const cookies = parts.filter((part) => part.trim().split("=", 1)[0] === configured.name);
 
     if (cookies.length > 1) return yield* OperationHttpError.make({ reason: "credentials" });
 
@@ -89,5 +103,15 @@ export const requestSecurity = Effect.fn("OperationHttp.requestSecurity")(functi
     }
   }
 
-  return { native, credentials: Object.freeze(credentials), publicOrigin, requestOrigin };
+  const generation = native ? undefined : optionalCookie(parts, generationName);
+
+  return {
+    native,
+    credentials: Object.freeze(credentials),
+    publicOrigin,
+    requestOrigin,
+    ...(Schema.is(SessionCacheGeneration)(generation)
+      ? { sessionCacheGeneration: Redacted.make(generation) }
+      : {}),
+  };
 });

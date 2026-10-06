@@ -1,7 +1,6 @@
 import { BunRuntime } from "@effect/platform-bun";
-import { Hooks, Operations, Schema as AuthSchema, Sessions, WebCrypto } from "@yielded/auth";
+import { Auth, Hooks, Operations, Schema as AuthSchema, Sessions, WebCrypto } from "@yielded/auth";
 import { DateTime, Effect, Layer, Redacted, Schema } from "effect";
-import { Base64Url } from "effect/encoding";
 import { HttpRouter } from "effect/http";
 import { RpcSerialization, RpcServer } from "effect/rpc";
 
@@ -13,25 +12,22 @@ import {
   subjectId,
 } from "./session-consumer";
 
-const keyring = {
-  activeKeyId: "current",
-  keys: [
-    {
-      id: "current",
-      // Demo-only key material. Production requires independently generated random keys.
-      material: Redacted.make(Base64Url.encode(new Uint8Array(32).fill(42))),
-    },
-  ],
-};
+const base = Layer.mergeAll(
+  WebCrypto.layerWebCrypto,
+  Hooks.LifecycleHooks.empty,
+  Auth.AuthConfig.layer({
+    // Public demo secret. Production loads a stable, randomly generated secret.
+    secret: Redacted.make("public-session-example-application-secret"),
+  }),
+);
 
-const base = Layer.mergeAll(WebCrypto.layerWebCrypto, Hooks.LifecycleHooks.empty);
 const authority = Layer.unwrap(exampleAuthority).pipe(Layer.provide(base));
 
 const stateful = staffSessions
   .statefulLayer(policy)
   .pipe(Layer.provide(authority), Layer.provide(base));
 
-const stateless = staffSessions.statelessLayer(policy, keyring).pipe(Layer.provide(base));
+const stateless = staffSessions.statelessLayer(policy).pipe(Layer.provide(base));
 
 const application = (strategy: typeof stateless) => {
   const capabilities = Layer.mergeAll(strategy, authority);

@@ -15,6 +15,7 @@ export {
   SessionId,
   type SessionInspection,
   SessionMetadata,
+  SessionReadOptions,
   SessionSignOut,
 } from "./sessions/models";
 
@@ -69,6 +70,7 @@ export {
 
 export {
   type SessionSigningKeyring,
+  SessionSigningKeys,
   makeSessionSecrets,
   makeSessionSigningCodec,
 } from "./sessions/crypto";

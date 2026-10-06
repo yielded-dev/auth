@@ -462,7 +462,8 @@ const makePreparedPlans = (mapping: Mapping, proofMapping?: any) => {
               input.policy.admission.subject.windowMillis,
               input.policy.admission.identifier.windowMillis,
             ) ||
-          (input.invalidation.existingSessions === "immediate" &&
+          ((input.invalidation.existingSessions === "immediate" ||
+            input.invalidation.existingSessions === "cache-expiry") &&
             p.sessionInvalidation !== "same-authority-immediate")
         )
           return yield* unavailable();

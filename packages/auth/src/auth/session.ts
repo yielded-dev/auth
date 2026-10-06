@@ -1,4 +1,4 @@
-import { Context, Effect, Layer, Redacted, type Schema, Scope } from "effect";
+import { Context, DateTime, Effect, Layer, Option, Redacted, Schema, Scope } from "effect";
 
 import type { HookDenied } from "../hooks/models";
 import { guest } from "../operations/context";
@@ -8,24 +8,33 @@ import {
 } from "../operations/credentials";
 import { AuthenticationRequired, type OperationBoundaryError } from "../operations/errors";
 import {
+  SessionCacheGeneration,
+  type SessionCacheOwner,
+  sessionCacheTransport,
+  sessionCookieCache,
+} from "../sessions/cookieCache";
+import {
   SessionInvalid,
   type SessionError,
   type SessionSignOutUnavailable,
 } from "../sessions/errors";
-import type { SessionSignOut } from "../sessions/models";
+import type { SessionReadOptions, SessionSignOut } from "../sessions/models";
 import type { makeSessionModule } from "../sessions/module";
 import { AuthRequest } from "./AuthRequest";
 
 export type SessionApiError = SessionError | HookDenied | OperationBoundaryError;
 
 /** Session actions share implementations across HTTP, native and local callers. */
-export interface SessionApi<Session, R = never> {
+export type SessionApi<Session, R = never> = SessionCacheOwner & {
   /** Explicit credential verification; does not read a request or renew credentials. */
   readonly verifySession: (
     credential: Redacted.Redacted<string>,
   ) => Effect.Effect<Session, SessionApiError>;
-  /** Missing or invalid credentials are anonymous; availability failures remain failures. */
-  readonly getSession: () => Effect.Effect<Session | null, SessionApiError, AuthRequest | R>;
+  /** Missing or invalid credentials are anonymous; availability failures remain failures.
+   * Set fresh to bypass the cookie cache. */
+  readonly getSession: (
+    options?: SessionReadOptions,
+  ) => Effect.Effect<Session | null, SessionApiError, AuthRequest | R>;
   readonly requireSession: () => Effect.Effect<Session, SessionApiError, AuthRequest | R>;
   /** Does not preverify. Local clearing and server invalidation have distinct outcomes. */
   readonly signOut: () => Effect.Effect<
@@ -35,7 +44,7 @@ export interface SessionApi<Session, R = never> {
   >;
   /** Explicit renewal; ordinary session reads never rotate credentials. */
   readonly renewSession: () => Effect.Effect<Session, SessionApiError, AuthRequest | R>;
-}
+};
 
 export const makeSessionApi = <
   const Id extends string,
@@ -45,6 +54,10 @@ export const makeSessionApi = <
 ) =>
   Effect.gen(function* () {
     const strategy = yield* sessions.SessionStrategy;
+
+    const cache = yield* Effect.serviceOption(
+      sessionCookieCache<Id, typeof sessions.Session.Type>(sessions.moduleId),
+    );
 
     // Handler installation captures its input context. Supply only its shared
     // dependency, so constructing auth inside a request cannot retain that request.
@@ -81,15 +94,63 @@ export const makeSessionApi = <
       );
     });
 
-    const getSession = Effect.fn("Auth.getSession")(function* () {
+    const getSession = Effect.fn("Auth.getSession")(function* (options?: SessionReadOptions) {
       const request = yield* AuthRequest;
       const credential = request.credentials.session;
+      const cached = request.credentials["session-cache"];
+      const generation = request.sessionCacheGeneration;
+      const cacheEnabled = strategy.capabilities.positiveCacheMillis > 0 && Option.isSome(cache);
 
-      if (credential === undefined) return null;
+      const cacheable =
+        cacheEnabled &&
+        request.sessionCacheCommandSink !== undefined &&
+        request.actionMode === "query" &&
+        generation !== undefined &&
+        Schema.is(SessionCacheGeneration)(Redacted.value(generation));
 
-      return yield* verifySession(credential).pipe(
-        Effect.catchTag("SessionInvalid", () => Effect.succeed(null)),
-      );
+      if (
+        cacheable &&
+        credential !== undefined &&
+        cached !== undefined &&
+        options?.fresh !== true
+      ) {
+        const snapshot = yield* cache.value
+          .read(credential, cached, generation)
+          .pipe(
+            Effect.catchTag(["SessionInvalid", "SessionUnavailable"], () => Effect.succeed(null)),
+          );
+
+        if (snapshot !== null) return snapshot;
+      }
+
+      // Anchor cache freshness before storage: a delayed response must not start
+      // a new revocation window after the authoritative snapshot was observed.
+      const checkedAt = yield* DateTime.now;
+
+      const session =
+        credential === undefined
+          ? null
+          : yield* verifySession(credential).pipe(
+              Effect.catchTag("SessionInvalid", () => Effect.succeed(null)),
+            );
+
+      if (cacheEnabled && request.sessionCacheCommandSink !== undefined) {
+        if (cacheable && session !== null && credential !== undefined) {
+          const command = yield* cache.value
+            .write(credential, session, checkedAt, generation)
+            .pipe(
+              Effect.catchTag("SessionUnavailable", () =>
+                Effect.succeed({ _tag: "Clear" as const, slot: "session-cache" as const }),
+              ),
+            );
+
+          yield* request.sessionCacheCommandSink(command);
+        } else if (cached !== undefined) {
+          yield* request.sessionCacheCommandSink({ _tag: "Clear", slot: "session-cache" });
+        }
+      }
+
+      return session;
     });
 
     const requireSession = Effect.fn("Auth.requireSession")(function* () {
@@ -136,11 +197,14 @@ export const makeSessionApi = <
       );
     });
 
-    return {
+    const api: SessionApi<typeof sessions.Session.Type> = {
+      ...(Option.isSome(cache) ? { [sessionCacheTransport]: cache.value.transport } : {}),
       verifySession,
       getSession,
       requireSession,
       signOut,
       renewSession,
-    } satisfies SessionApi<typeof sessions.Session.Type>;
+    };
+
+    return api;
   });

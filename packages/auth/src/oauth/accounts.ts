@@ -237,6 +237,9 @@ export const makeOAuthAccounts = <
         sessionInvalidationWindow("credential-change", strategy.capabilities, strategy.policy),
       );
 
+      if (policy.requireImmediateInvalidation && invalidation.existingSessions !== "immediate")
+        return yield* OAuthConfigurationError.make({ reason: "policy" });
+
       const expectedInvalidation = Schema.encodeSync(invalidationJson)(invalidation);
 
       const available = Effect.fn("OAuthAccounts.available")(function* (
@@ -244,9 +247,6 @@ export const makeOAuthAccounts = <
       ) {
         yield* noAmbient();
         const caller = yield* requireAuthenticated(invocation);
-
-        if (policy.requireImmediateInvalidation && invalidation.existingSessions !== "immediate")
-          return yield* OAuthMethodUnsupported.make({});
 
         return yield* snapshotOAuth(invocationSchema, caller);
       });

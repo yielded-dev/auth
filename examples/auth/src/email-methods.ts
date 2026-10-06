@@ -1,5 +1,14 @@
 import { BunRuntime } from "@effect/platform-bun";
-import { Auth, EmailDelivery, Email, Hooks, Operations, Proofs, WebCrypto } from "@yielded/auth";
+import {
+  Auth,
+  EmailDelivery,
+  Email,
+  Hooks,
+  Operations,
+  Proofs,
+  Sessions,
+  WebCrypto,
+} from "@yielded/auth";
 import { Effect, Layer, Redacted } from "effect";
 import { Base64Url } from "effect/encoding";
 import { HttpRouter, HttpServerResponse } from "effect/http";
@@ -49,23 +58,31 @@ const program = Effect.gen(function* () {
       }).pipe(Layer.provide(base));
 
       const stateless = sessions
-        .statelessLayer(sessionPolicy, {
-          activeKeyId: "session",
-          keys: [
-            {
-              id: "session",
-              // Demo-only key material. Production requires independently generated random keys.
-              material: Redacted.make(Base64Url.encode(new Uint8Array(32).fill(42))),
-            },
-          ],
-        })
+        .statelessLayer(sessionPolicy)
+        .pipe(
+          Layer.provide(
+            Layer.succeed(Sessions.SessionSigningKeys, {
+              activeKeyId: "session",
+              keys: [
+                {
+                  id: "session",
+                  // Demo-only key material. Production requires independently generated random keys.
+                  material: Redacted.make(Base64Url.encode(new Uint8Array(32).fill(42))),
+                },
+              ],
+            }),
+          ),
+        )
         .pipe(Layer.provide(base));
 
       const stateful = sessions
         .statefulLayer(sessionPolicy)
         .pipe(Layer.provide(model.layer), Layer.provide(base));
 
-      const strategy = mode === "stateless" ? stateless : stateful;
+      const strategy: Layer.Layer<
+        Layer.Success<typeof stateless>,
+        Layer.Error<typeof stateless | typeof stateful>
+      > = mode === "stateless" ? stateless : stateful;
 
       const completion = sessions
         .completionLayer()

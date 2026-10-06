@@ -5,7 +5,7 @@ import type { Rpc } from "effect/rpc";
 import { HookDenied } from "../hooks/models";
 import { makeSessionContract } from "../sessions/contract";
 import { SessionError, SessionSignOutUnavailable } from "../sessions/errors";
-import { SessionSignOut } from "../sessions/models";
+import { SessionReadOptions, SessionSignOut } from "../sessions/models";
 import type { AuthInvocation } from "./context";
 import type { CredentialSlot } from "./credentials";
 import { OperationConfigurationError } from "./errors";
@@ -243,7 +243,7 @@ const sessionActions = <
   session: S,
 ) => ({
   getSession: action({
-    payload: Schema.Void,
+    payload: Schema.UndefinedOr(SessionReadOptions),
     success: Schema.NullOr(session),
     error: Schema.Never,
     mode: "query",

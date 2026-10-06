@@ -19,7 +19,7 @@ export const keys = (byte: number) => ({
 
 export const AppAuth = Auth.make("sql-oauth-lifecycle", {
   claims: Schema.Struct({ role: Schema.Literal("member") }),
-  sessions: Sessions.stateless({ keys: keys(1) }),
+  sessions: Sessions.stateless(),
   strategies: {
     oauth: OAuth.make({ namespace: moduleId, access: profile }),
     registration: OAuth.makeRegistration({

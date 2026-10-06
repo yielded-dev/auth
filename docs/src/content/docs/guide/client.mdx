@@ -96,6 +96,18 @@ Reuse an existing provider if you have one. React renders and dispatches; put
 multi-step logic in [workflow atoms](#compose-a-passkey-workflow). Successful
 auth mutations refresh the session, so the UI follows the new account state.
 
+When the server enables [cookie caching](./sessions#cache-ordinary-session-reads),
+`auth.session` may return a snapshot until `cacheFor` expires. To bypass the cookie,
+define an atom alongside your other queries, then pass it to `useAtomValue`:
+
+```ts
+export const currentSession = auth.getSession({ fresh: true });
+```
+
+Auth mutations refresh both queries. “Fresh” applies to each server fetch;
+normal Atom retention still applies between fetches. Outside Atom, use
+`yield* client.auth.getSession({ fresh: true })`.
+
 ## Dispatch a sign-in
 
 The password action takes the same input as its server method. In a component

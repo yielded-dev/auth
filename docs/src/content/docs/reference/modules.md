@@ -47,7 +47,7 @@ Import application services and authentication methods from the root:
 
 | Modules                                      | Purpose                                                                  |
 | -------------------------------------------- | ------------------------------------------------------------------------ |
-| `Auth`                                       | Application service, strategies, and request boundaries.                 |
+| `Auth`                                       | Application services, configuration, and request boundaries.             |
 | `Identity`, `Schema`                         | Subject identifiers, claims, and shared schemas.                         |
 | `Operations`, `Hooks`                        | Operation contracts and lifecycle hooks.                                 |
 | `Sessions`                                   | Session strategies, persistence ports, and lifecycle operations.         |
