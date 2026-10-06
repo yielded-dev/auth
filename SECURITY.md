@@ -68,11 +68,18 @@ outside them.
   per-subject, and per-action token buckets. Their default store is bounded to
   10,000 keys per runtime, is local to one process, and resets on restart.
   Multi-instance deployments must supply a shared Effect `RateLimiterStore` or
-  replace `PasswordAttemptLimiter`. Consumption precedes attempt writes, is never
+  replace `PasswordAttemptLimiter`. Consumption precedes credential verification, is never
   refunded, and store failures deny the request. The fixed cap does not grow with
   policy budgets; at capacity, requests needing new keys fail with
   `PasswordUnavailable`. Active buckets are never evicted. Hosts also own network admission
   and the trusted network keys used by phone admission.
+- Password hashing holds no database transaction. Session issuance rechecks the
+  original subject and credential revisions and current factor policy under the
+  committing authority. Credential replacement must atomically update the password
+  and authority credential revisions; identifier rebinding or eligibility changes
+  must bump the subject security revision. Conditional rehashing changes only the
+  verifier and its version. Fresh password sign-ins are independent attempts;
+  pending-factor completion and handoffs retain their replay guards.
 - Identity selection, account provisioning, transaction authority, and
   authorization policy belong to the application. Provider claims and email
   addresses never select a subject on their own.

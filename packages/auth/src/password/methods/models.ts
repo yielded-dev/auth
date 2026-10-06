@@ -13,12 +13,6 @@ export const PasswordCommandId = Schema.NonEmptyString.check(Schema.isMaxLength(
 
 export type PasswordCommandId = typeof PasswordCommandId.Type;
 
-export const PasswordAttemptId = Schema.NonEmptyString.check(Schema.isMaxLength(256)).pipe(
-  Schema.brand("effect-auth/PasswordAttemptId"),
-);
-
-export type PasswordAttemptId = typeof PasswordAttemptId.Type;
-
 export const PasswordReplacement = Schema.Struct({
   verifier: Schema.RedactedFromValue(EncodedPasswordHash),
   normalization: PasswordNormalization,
@@ -68,13 +62,4 @@ export interface PasswordActionAuthorization {
   readonly requirement: AuthenticationRequirement;
 }
 
-export type PasswordAttemptAdmission =
-  | {
-      readonly _tag: "Admitted";
-      readonly attemptId: PasswordAttemptId;
-      readonly credential?: PasswordCredentialSnapshot;
-    }
-  | { readonly _tag: "Denied" };
-
-export type PasswordAttemptDecision = "verified" | "rejected";
 export type PasswordMutationDecision = "changed" | "rejected";

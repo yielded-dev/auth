@@ -15,8 +15,7 @@ import {
   passwordUnexpected as unexpected,
 } from "./verification";
 
-/** Shared private preparation. Current-password verification always commits admission
- * and settlement, and captures its proof instant before later KDF work. */
+/** Shared preparation preserves the current-password proof instant before new-password hashing. */
 export const makePasswordPreparation = ({
   moduleId,
   policy,

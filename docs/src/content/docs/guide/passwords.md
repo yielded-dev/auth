@@ -148,8 +148,8 @@ ordering guarantee; applications still need ingress rate limits.
 
 Password verification also consumes action, identifier, and known-subject budgets
 through `Password.PasswordAttemptLimiter`. These token buckets allow an initial
-burst and refill at `limit / windowMillis`. Consumption happens before writing an
-attempt and is never refunded, even if verification is interrupted or fails.
+burst and refill at `limit / windowMillis`. Consumption happens before verification
+and is never refunded, even if verification is interrupted or fails.
 A store failure denies the request.
 
 The default store is process-local and resets on restart. Its fixed capacity is
@@ -178,9 +178,14 @@ const PasswordLimits = Password.PasswordAttemptLimiter.layer.pipe(
 
 Provide `PasswordLimits` to your Auth Layer. `RedisLive` supplies Effect's `Redis`
 service using your platform client. The password attempt policy controls bucket
-sizes and attempt lifetime; KDF concurrency remains a separate service. Pending
-attempts expire under that lifetime, so there is no separate `maximumPending`
-password setting.
+sizes; KDF concurrency remains a separate service.
+
+Sign-in reads the credential and captures authority before hashing, then checks
+current account status, credential revisions, and factor policy again when issuing
+a session. No password attempt row or direct sign-in flow row is stored. Rehashing
+writes only when hash parameters change, with a comparison that cannot overwrite a
+newer password. Pending second factors and password-change receipts retain their
+own durable state.
 
 Compromised-password screening fails closed. `PasswordPolicy.screeningTimeoutMillis`
 defaults to 10,000 ms (allowed range: 1–30,000); a timed-out check returns

@@ -50,7 +50,7 @@ import {
 } from "./errors";
 import { sessionInvalidationWindow } from "./invalidation";
 import {
-  AuthenticationEvidence,
+  type AuthenticationEvidence,
   type PendingConsumption,
   type SessionMetadata,
   AuthenticationFlowId,
@@ -96,8 +96,6 @@ export interface ModuleService<Id extends string, Kind extends string, Claims> {
   readonly kind: Kind;
   readonly claims: Types.Invariant<Claims>;
 }
-
-const sameEvidence = Schema.toEquivalence(AuthenticationEvidence);
 
 const reportSignOutFailure = <A, E extends { readonly _tag: string }, R>(
   effect: Effect.Effect<A, E, R>,
@@ -160,6 +158,10 @@ export const makeSessionModule = <
     readonly evidence: AuthenticationEvidence;
     readonly claims: Claims["Type"];
     readonly pending?: PendingConsumption;
+    /** A new password authentication on every call, with no reusable completion identity. */
+    readonly fresh?: true;
+    /** Trusted capture from the method authority; commit still rechecks current policy. */
+    readonly requirement?: AuthenticationRequirement;
   };
   type Inspection = SessionInspection<Claims["Type"]>;
   type Strategy = {
@@ -407,7 +409,7 @@ export const makeSessionModule = <
   ) {
     const evidence = yield* snapshotAuthenticationEvidence(input.evidence);
     const authority = yield* AuthenticationAuthority;
-    const requirement = yield* authority.requirements(evidence);
+    const requirement = input.requirement ?? (yield* authority.requirements(evidence));
 
     const assessed = yield* assessAuthentication(evidence, requirement).pipe(
       Effect.mapError(() => SessionInvalid.make({})),
@@ -567,6 +569,7 @@ export const makeSessionModule = <
               evidence: planned.evidence,
               ...(source === undefined ? {} : { handoffSourceSessionId: source.sessionId }),
               ...(input.pending === undefined ? {} : { pending: input.pending }),
+              ...(input.fresh === undefined ? {} : { fresh: input.fresh }),
               now: commitNow,
             },
             (record, journal) => {
@@ -1206,29 +1209,23 @@ export const makeSessionModule = <
         )(function* (input: Issuance) {
           input = { ...input, evidence: yield* snapshotAuthenticationEvidence(input.evidence) };
           const checkedClaims = yield* projectClaims(input.claims);
-          const requirement = yield* authority.requirements(input.evidence);
+
+          const requirement =
+            input.requirement === undefined
+              ? yield* authority.requirements(input.evidence)
+              : yield* Schema.decodeEffect(AuthenticationRequirement)(input.requirement).pipe(
+                  Effect.mapError(() => SessionInvalid.make({})),
+                );
 
           const assessed = yield* assessAuthentication(input.evidence, requirement).pipe(
             Effect.mapError(() => SessionInvalid.make({})),
           );
 
           if (assessed.satisfied) {
-            // Issuance assesses this same evidence before any hook runs; reuse the
-            // requirement just read. Commit-time authority checks are unchanged.
-            // Delegate each method: a supplied authority may define them on its prototype.
-            const assessedAuthority = AuthenticationAuthority.of({
-              capture: (subjectId, credentialIds) => authority.capture(subjectId, credentialIds),
-              requirements: (evidence) =>
-                sameEvidence(evidence, input.evidence)
-                  ? Effect.succeed(requirement)
-                  : authority.requirements(evidence),
-              approve: (approval, prepare) => authority.approve(approval, prepare),
-            });
-
             return completed(
               yield* strategy
-                .prepareEstablish({ ...input, claims: checkedClaims })
-                .pipe(Effect.provideService(AuthenticationAuthority, assessedAuthority)),
+                .prepareEstablish({ ...input, requirement, claims: checkedClaims })
+                .pipe(Effect.provideService(AuthenticationAuthority, authority)),
             );
           }
           if (

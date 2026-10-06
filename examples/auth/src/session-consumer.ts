@@ -83,9 +83,12 @@ export const exampleAuthority = Effect.gen(function* () {
       id !== subjectId || credentialIds.some((id) => id !== "device-1")
         ? Effect.fail(Sessions.StaleAuthentication.make({}))
         : Effect.succeed({
-            subjectId,
-            securityRevision: revision,
-            credentials: credentialIds.map((credentialId) => ({ credentialId, revision })),
+            revision: {
+              subjectId,
+              securityRevision: revision,
+              credentials: credentialIds.map((credentialId) => ({ credentialId, revision })),
+            },
+            requirement,
           }),
     requirements: (evidence) => checkEvidence(evidence).pipe(Effect.as(requirement)),
     approve: (input, prepare) =>
@@ -110,7 +113,10 @@ export const exampleAuthority = Effect.gen(function* () {
           yield* checkEvidence(input.evidence);
           const now = DateTime.toEpochMillis(yield* DateTime.now);
 
-          if ((flows.get(input.evidence.flowId) ?? 0) > now)
+          if (
+            (input.fresh !== true || input.handoffSourceSessionId !== undefined) &&
+            (flows.get(input.evidence.flowId) ?? 0) > now
+          )
             return yield* Sessions.SessionConflict.make({});
           if (input.pending !== undefined || now >= DateTime.toEpochMillis(input.session.expiresAt))
             return yield* Sessions.StaleAuthentication.make({});
@@ -124,7 +130,8 @@ export const exampleAuthority = Effect.gen(function* () {
           const receipt = prepare(row, journal);
 
           rows.set(row.sessionId, row);
-          flows.set(input.evidence.flowId, DateTime.toEpochMillis(row.absoluteExpiresAt));
+          if (input.fresh !== true || input.handoffSourceSessionId !== undefined)
+            flows.set(input.evidence.flowId, DateTime.toEpochMillis(row.absoluteExpiresAt));
 
           return receipt;
         }),

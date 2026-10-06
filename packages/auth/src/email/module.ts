@@ -241,7 +241,7 @@ export const makeEmailSignInModule = <
             const current = yield* authority
               .capture(snapshot.revision.subjectId, [snapshot.credentialId])
               .pipe(
-                Effect.map(Option.some),
+                Effect.map((capture) => Option.some(capture.revision)),
                 Effect.catchTag("StaleAuthentication", () => Effect.succeed(Option.none())),
                 Effect.mapError(() => EmailUnavailable.make({})),
               );

@@ -473,7 +473,7 @@ export const makeEmailConsumer = Effect.gen(function* () {
         const r = revision(state, id, ids);
 
         return current(state, r)
-          ? Effect.succeed(r)
+          ? Effect.succeed({ revision: r, requirement: subjectRequirement(id) })
           : Effect.fail(Sessions.StaleAuthentication.make({}));
       }),
     requirements: (evidence) =>
@@ -673,7 +673,8 @@ export const makeEmailConsumer = Effect.gen(function* () {
             if (
               !assessed.satisfied ||
               input.pending ||
-              s.flows.has(input.evidence.flowId) ||
+              ((input.fresh !== true || input.handoffSourceSessionId !== undefined) &&
+                s.flows.has(input.evidence.flowId)) ||
               !current(s, input.evidence.revision) ||
               now >= DateTime.toEpochMillis(input.session.expiresAt)
             )
@@ -688,7 +689,8 @@ export const makeEmailConsumer = Effect.gen(function* () {
             const result = prepare(row, journal);
 
             s.sessions.set(row.sessionId, row);
-            s.flows.add(input.evidence.flowId);
+            if (input.fresh !== true || input.handoffSourceSessionId !== undefined)
+              s.flows.add(input.evidence.flowId);
 
             return result;
           }),

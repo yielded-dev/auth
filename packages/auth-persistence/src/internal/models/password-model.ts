@@ -1,7 +1,6 @@
 import { type RecoveryReference, type LoginIdentifier } from "@yielded/auth/Identity";
 import type {
   PasswordAction,
-  PasswordAttemptId,
   PasswordCredentialSnapshot,
   PasswordReplacement,
   PasswordRegistrationDecision,
@@ -14,10 +13,6 @@ import type { AnyTableModel, TableModel as Table, SqlExpression } from "../query
 import type { PersistenceMappingError, SubjectIdCodec } from "./common";
 
 type ColumnKey<T extends Table> = T["column"];
-
-export type PasswordAttemptAction = "sign-in" | "change";
-
-export type PasswordAttemptState = "pending" | "verified" | "rejected";
 
 export interface PasswordSubjectTable<Subject extends Table, _NativeSubjectId> {
   readonly table: Subject["table"];
@@ -121,48 +116,6 @@ export interface PasswordCredentialTable<
   }) => Effect.Effect<PasswordCredentialSnapshot, PersistenceMappingError>;
 }
 
-export interface PasswordAttemptRecord {
-  readonly moduleId: string;
-  readonly action: PasswordAttemptAction;
-  readonly attemptId: PasswordAttemptId;
-  readonly identifier: LoginIdentifier;
-  readonly subjectId?: string;
-  readonly credentialId?: string;
-  readonly securityRevision?: SecurityRevision;
-  readonly credentialRevision?: SecurityRevision;
-  readonly verifierVersion?: SecurityRevision;
-  readonly identifierBindingRevision?: SecurityRevision;
-  readonly admittedAtMillis: number;
-  readonly deadlineMillis: number;
-  readonly retentionUntilMillis: number;
-}
-
-export interface PasswordAttemptTable<Attempt extends Table, NativeSubjectId> {
-  readonly table: Attempt["table"];
-  readonly moduleId: ColumnKey<Attempt>;
-  readonly action: ColumnKey<Attempt>;
-  readonly attemptId: ColumnKey<Attempt>;
-  readonly identifierNamespace: ColumnKey<Attempt>;
-  readonly identifierValue: ColumnKey<Attempt>;
-  readonly subjectId: ColumnKey<Attempt>;
-  readonly credentialId: ColumnKey<Attempt>;
-  readonly securityRevision: ColumnKey<Attempt>;
-  readonly credentialRevision: ColumnKey<Attempt>;
-  readonly verifierVersion: ColumnKey<Attempt>;
-  readonly identifierBindingRevision: ColumnKey<Attempt>;
-  readonly admittedAt: ColumnKey<Attempt>;
-  readonly deadline: ColumnKey<Attempt>;
-  readonly retentionUntil: ColumnKey<Attempt>;
-  readonly state: ColumnKey<Attempt>;
-  readonly encodeInsert: (
-    record: PasswordAttemptRecord,
-    input: {
-      readonly nativeSubjectId?: NativeSubjectId;
-      readonly state: "pending";
-    },
-  ) => Attempt["insert"];
-}
-
 export interface PasswordCommandTable<Command extends Table> {
   readonly table: Command["table"];
   readonly moduleId: ColumnKey<Command>;
@@ -186,7 +139,6 @@ export interface RequiredPasswordConstraints {
   readonly authorityCredential: "unique(authorityCredential.subjectId,authorityCredential.credentialId)";
   readonly credentialSubject: "unique(credential.moduleId,credential.subjectId)";
   readonly credentialId: "unique(credential.moduleId,credential.credentialId)";
-  readonly attempt: "unique(attempt.moduleId,attempt.attemptId)";
   readonly command: "unique(command.moduleId,command.commandId)";
 }
 
@@ -195,7 +147,6 @@ export const requiredPasswordConstraints: RequiredPasswordConstraints = {
   authorityCredential: "unique(authorityCredential.subjectId,authorityCredential.credentialId)",
   credentialSubject: "unique(credential.moduleId,credential.subjectId)",
   credentialId: "unique(credential.moduleId,credential.credentialId)",
-  attempt: "unique(attempt.moduleId,attempt.attemptId)",
   command: "unique(command.moduleId,command.commandId)",
 };
 
@@ -216,7 +167,6 @@ export interface PasswordPersistenceMapping<
   Identifier extends Table,
   Credential extends Table,
   AuthorityCredential extends Table,
-  Attempt extends Table,
   Command extends Table,
   NativeSubjectId,
   Expression extends SqlExpression = SqlExpression,
@@ -229,14 +179,11 @@ export interface PasswordPersistenceMapping<
     AuthorityCredential,
     NativeSubjectId
   >;
-  readonly attempt: PasswordAttemptTable<Attempt, NativeSubjectId>;
   readonly command: PasswordCommandTable<Command>;
   readonly subjectId: SubjectIdCodec<NativeSubjectId>;
   readonly constraints: RequiredPasswordConstraints;
   readonly encodeInstant: (epochMillis: number) => unknown;
   readonly decodeInstant: (native: unknown) => Effect.Effect<number, PersistenceMappingError>;
-  readonly allocateAttemptId?: Effect.Effect<PasswordAttemptId, PersistenceMappingError>;
-  readonly allocateAttemptIdSync?: () => PasswordAttemptId;
   readonly allocateCredentialId?: Effect.Effect<string, PersistenceMappingError>;
   readonly allocateCredentialIdSync?: () => string;
   readonly allocateRevision?: Effect.Effect<SecurityRevision, PersistenceMappingError>;
@@ -252,7 +199,6 @@ export type D1PasswordPersistenceMapping<
   Identifier extends Table,
   Credential extends Table,
   AuthorityCredential extends Table,
-  Attempt extends Table,
   Command extends Table,
   NativeSubjectId,
   Expression extends SqlExpression = SqlExpression,
@@ -261,7 +207,6 @@ export type D1PasswordPersistenceMapping<
   Identifier,
   Credential,
   AuthorityCredential,
-  Attempt,
   Command,
   NativeSubjectId,
   Expression
@@ -424,7 +369,6 @@ export type PasswordRegistrationMapping<
 
 export type AnyPasswordPersistenceMapping<Expression extends SqlExpression = SqlExpression> =
   PasswordPersistenceMapping<
-    AnyTableModel,
     AnyTableModel,
     AnyTableModel,
     AnyTableModel,

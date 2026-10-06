@@ -76,7 +76,6 @@ type Mapping = D1PasswordPreparedPersistenceMapping<
   Table,
   Table,
   Table,
-  Table,
   unknown
 >;
 interface Planned<A> {
@@ -977,7 +976,6 @@ export const makeD1PasswordPreparedPersistenceServices = Effect.fnUntraced(funct
   I extends AnySQLiteTable,
   C extends AnySQLiteTable,
   AC extends AnySQLiteTable,
-  At extends AnySQLiteTable,
   M extends AnySQLiteTable,
   T extends AnySQLiteTable,
   B extends AnySQLiteTable,
@@ -990,7 +988,7 @@ export const makeD1PasswordPreparedPersistenceServices = Effect.fnUntraced(funct
   PCr extends AnySQLiteTable = AnySQLiteTable,
   PNativeId = unknown,
 >(
-  mapping: D1PasswordPreparedPersistenceMapping<S, I, C, AC, At, M, T, B, NativeId>,
+  mapping: D1PasswordPreparedPersistenceMapping<S, I, C, AC, M, T, B, NativeId>,
   proofMapping?: D1PasswordPreparedProofMapping<PS, PC, PM, PSub, PI, PCr, PNativeId>,
 ) {
   const database = yield* DatabaseService;
@@ -1043,7 +1041,6 @@ export function coordinateD1PasswordPreparedPersistence<
   I extends AnySQLiteTable,
   C extends AnySQLiteTable,
   AC extends AnySQLiteTable,
-  At extends AnySQLiteTable,
   M extends AnySQLiteTable,
   T extends AnySQLiteTable,
   B extends AnySQLiteTable,
@@ -1063,7 +1060,7 @@ export function coordinateD1PasswordPreparedPersistence<
 >(
   acquire: Effect.Effect<Database, DatabaseError, DatabaseRequirements>,
   options: {
-    readonly mapping: D1PasswordPreparedPersistenceMapping<S, I, C, AC, At, M, T, B, NativeId>;
+    readonly mapping: D1PasswordPreparedPersistenceMapping<S, I, C, AC, M, T, B, NativeId>;
     readonly proofMapping?:
       | D1PasswordPreparedProofMapping<PS, PC, PM, PSub, PI, PCr, PNativeId>
       | undefined;

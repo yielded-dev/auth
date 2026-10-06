@@ -17,6 +17,7 @@ import { reportPersistenceFailure } from "@yielded/auth/Persistence";
 import type { SubjectId, TokenDigest } from "@yielded/auth/Schema";
 import {
   assessAuthentication,
+  AuthenticationCapture,
   snapshotSessionAuthenticationProvenance,
   AuthenticationAuthority,
   PendingAuthenticationInvalid,
@@ -557,13 +558,18 @@ const capture = Effect.fn("DrizzleD1Session.capture")(function* (
   subjectId: SubjectId,
   credentialIds: ReadonlyArray<string>,
 ): Effect.fn.Return<
-  AuthenticationRevision,
+  AuthenticationCapture,
   StaleAuthentication | D1AdapterFailure,
   CurrentD1PlanningDatabase
 > {
   const details = yield* captureDetails(mapping, subjectId, credentialIds);
 
-  return details.revision;
+  const requirement = yield* mapping.subject.decodeRequirement(details.subject);
+
+  return yield* Schema.decodeEffect(AuthenticationCapture)({
+    revision: details.revision,
+    requirement,
+  });
 });
 
 const requirement = Effect.fn("DrizzleD1Session.requirement")(function* (
@@ -1122,7 +1128,11 @@ export const makeD1StatefulSessions = <Claims>(
             input.evidence.revision.subjectId,
           );
 
-          if (input.pending === undefined && (yield* hasActiveFlow(mapping, input.evidence.flowId)))
+          if (
+            input.pending === undefined &&
+            (input.fresh !== true || input.handoffSourceSessionId !== undefined) &&
+            (yield* hasActiveFlow(mapping, input.evidence.flowId))
+          )
             return yield* SessionConflict.make({});
 
           const nativeSessionId = yield* allocate(
@@ -1169,7 +1179,10 @@ export const makeD1StatefulSessions = <Claims>(
           let condition = commitCondition;
           const statements: Statement<any>[] = [];
 
-          if (input.pending === undefined) {
+          if (
+            input.pending === undefined &&
+            (input.fresh !== true || input.handoffSourceSessionId !== undefined)
+          ) {
             const f = flowColumns(mapping);
 
             condition = and(
@@ -1205,7 +1218,7 @@ export const makeD1StatefulSessions = <Claims>(
                 ),
               ),
             );
-          } else {
+          } else if (input.pending !== undefined) {
             if (mapping.pending === undefined) return yield* invalidPending();
             const stored = yield* readPending(mapping, input.pending.digest);
 
@@ -1244,7 +1257,9 @@ export const makeD1StatefulSessions = <Claims>(
           CurrentD1PlanningDatabase
         >(() =>
           input.pending === undefined
-            ? recoverFlowOrStale(mapping, input.evidence.flowId)
+            ? input.fresh === true && input.handoffSourceSessionId === undefined
+              ? Effect.fail(stale())
+              : recoverFlowOrStale(mapping, input.evidence.flowId)
             : recoverPendingOrStale(mapping, input.pending, input.evidence.revision.subjectId),
         ),
       ),

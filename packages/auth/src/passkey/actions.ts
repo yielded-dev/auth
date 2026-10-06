@@ -659,15 +659,14 @@ export const makePasskeyCeremony = <const Id extends string, const Purpose exten
 
           const revision = yield* snapshotPasskey(
             PasskeyRevision,
-            yield* (yield* AuthenticationAuthority)
-              .capture(original.subjectId, ids)
-              .pipe(
-                Effect.mapError((error) =>
-                  error._tag === "SessionUnavailable"
-                    ? PasskeyUnavailable.make({})
-                    : PasskeyRejected.make({}),
-                ),
+            yield* (yield* AuthenticationAuthority).capture(original.subjectId, ids).pipe(
+              Effect.map((capture) => capture.revision),
+              Effect.mapError((error) =>
+                error._tag === "SessionUnavailable"
+                  ? PasskeyUnavailable.make({})
+                  : PasskeyRejected.make({}),
               ),
+            ),
           );
 
           if (
@@ -891,7 +890,10 @@ export const makePasskeyActions = <const Id extends string>(
                 fixed.revision.subjectId,
                 fixed.revision.credentials.map((item) => item.credentialId),
               )
-              .pipe(Effect.mapError(() => PasskeyActionRequired.make({})));
+              .pipe(
+                Effect.map((capture) => capture.revision),
+                Effect.mapError(() => PasskeyActionRequired.make({})),
+              );
 
             if (
               !(yield* samePasskey(PasskeyRevision, current, fixed.revision)) ||

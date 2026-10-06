@@ -29,7 +29,6 @@ export const makeMySqlPasswordPreparedPersistenceServices = <
   I extends AnyMySqlTable,
   C extends AnyMySqlTable,
   AC extends AnyMySqlTable,
-  A extends AnyMySqlTable,
   M extends AnyMySqlTable,
   T extends AnyMySqlTable,
   B extends AnyMySqlTable,
@@ -42,7 +41,7 @@ export const makeMySqlPasswordPreparedPersistenceServices = <
   PCr extends AnyMySqlTable = AnyMySqlTable,
   PNativeId = unknown,
 >(
-  mapping: PasswordPreparedPersistenceMapping<S, I, C, AC, A, M, T, B, NativeId>,
+  mapping: PasswordPreparedPersistenceMapping<S, I, C, AC, M, T, B, NativeId>,
   proofMapping?: PasswordPreparedProofMapping<PS, PC, PM, PSub, PI, PCr, PNativeId>,
 ) =>
   Effect.flatMap(
@@ -61,7 +60,6 @@ export function coordinateMySqlPasswordPreparedPersistence<
   I extends AnyMySqlTable,
   C extends AnyMySqlTable,
   AC extends AnyMySqlTable,
-  A extends AnyMySqlTable,
   M extends AnyMySqlTable,
   T extends AnyMySqlTable,
   B extends AnyMySqlTable,
@@ -81,7 +79,7 @@ export function coordinateMySqlPasswordPreparedPersistence<
 >(
   acquire: Effect.Effect<D, DatabaseError, DatabaseRequirements>,
   options: {
-    readonly mapping: PasswordPreparedPersistenceMapping<S, I, C, AC, A, M, T, B, NativeId>;
+    readonly mapping: PasswordPreparedPersistenceMapping<S, I, C, AC, M, T, B, NativeId>;
     readonly proofMapping?:
       | PasswordPreparedProofMapping<PS, PC, PM, PSub, PI, PCr, PNativeId>
       | undefined;
@@ -102,7 +100,6 @@ export function coordinateMySqlPasswordPreparedPersistence<
   I extends AnyMySqlTable,
   C extends AnyMySqlTable,
   AC extends AnyMySqlTable,
-  A extends AnyMySqlTable,
   M extends AnyMySqlTable,
   T extends AnyMySqlTable,
   B extends AnyMySqlTable,
@@ -124,7 +121,7 @@ export function coordinateMySqlPasswordPreparedPersistence<
 >(
   acquire: Effect.Effect<D, DatabaseError, DatabaseRequirements>,
   options: {
-    readonly mapping: PasswordPreparedPersistenceMapping<S, I, C, AC, A, M, T, B, NativeId>;
+    readonly mapping: PasswordPreparedPersistenceMapping<S, I, C, AC, M, T, B, NativeId>;
     readonly proofMapping?:
       | PasswordPreparedProofMapping<PS, PC, PM, PSub, PI, PCr, PNativeId>
       | undefined;
@@ -145,7 +142,6 @@ export function coordinateMySqlPasswordPreparedPersistence<
   I extends AnyMySqlTable,
   C extends AnyMySqlTable,
   AC extends AnyMySqlTable,
-  A extends AnyMySqlTable,
   M extends AnyMySqlTable,
   T extends AnyMySqlTable,
   B extends AnyMySqlTable,
@@ -167,7 +163,7 @@ export function coordinateMySqlPasswordPreparedPersistence<
 >(
   acquire: Effect.Effect<D, DatabaseError, DatabaseRequirements>,
   options: {
-    readonly mapping: PasswordPreparedPersistenceMapping<S, I, C, AC, A, M, T, B, NativeId>;
+    readonly mapping: PasswordPreparedPersistenceMapping<S, I, C, AC, M, T, B, NativeId>;
     readonly proofMapping?:
       | PasswordPreparedProofMapping<PS, PC, PM, PSub, PI, PCr, PNativeId>
       | undefined;

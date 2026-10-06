@@ -102,7 +102,6 @@ export type PasswordRegistrationDecision =
 
 const MutationResult = Schema.Struct({ invalidation: SessionInvalidationWindow });
 const Status = Schema.Struct({ hasPassword: Schema.Boolean });
-const Cleanup = Schema.Struct({ removed: Schema.Natural, hasMore: Schema.Boolean });
 
 const noAmbient = Effect.fn("Passwords.noAmbient")(function* () {
   if (yield* hasCommitScope) return yield* PasswordMethodUnsupported.make({});
@@ -288,7 +287,6 @@ const makePasswordWithManagement = <
         input: typeof CompleteResetInput.Type,
       ) => Effect.Effect<Plan<MutationValue>, Failure>;
       readonly status: (invocation: AuthInvocation) => Effect.Effect<typeof Status.Type, Failure>;
-      readonly cleanup: (limit: number) => Effect.Effect<typeof Cleanup.Type, Failure>;
     }
   >(`effect-auth/password/${moduleId}/Method`);
 
@@ -588,10 +586,13 @@ const makePasswordWithManagement = <
             credential,
           });
 
-          // Settlement is already committed. No physical owner surrounds async session
-          // planning; final authority compares the SAME original semantic revisions.
           return yield* completion
-            .prepare({ evidence: verified.evidence, claims: values })
+            .prepare({
+              evidence: verified.evidence,
+              requirement: verified.requirement,
+              fresh: true,
+              claims: values,
+            })
             .pipe(Effect.flatMap(read), Effect.mapError(passwordCompletionFailure));
         }),
         planAdd: Effect.fn("Passwords.planAdd")(function* (invocation, request) {
@@ -603,9 +604,10 @@ const makePasswordWithManagement = <
           if (Option.isSome(existing)) return yield* PasswordRejected.make({});
 
           const revision = snapshotPasswordRevision(
-            yield* authority
-              .capture(caller.subjectId, [])
-              .pipe(Effect.mapError(passwordCompletionFailure)),
+            yield* authority.capture(caller.subjectId, []).pipe(
+              Effect.map((capture) => capture.revision),
+              Effect.mapError(passwordCompletionFailure),
+            ),
           );
 
           const plan = yield* planMutation("add-password", invocation, request, revision);
@@ -736,18 +738,6 @@ const makePasswordWithManagement = <
             ),
           };
         }),
-        cleanup: Effect.fn("Passwords.cleanup")(function* (limit) {
-          yield* noAmbient();
-          yield* Schema.decodeEffect(
-            Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 1000 })),
-          )(limit).pipe(Effect.mapError(() => PasswordRejected.make({})));
-
-          return yield* read(
-            yield* store.cleanupAttempts({ moduleId, limit }, (result, journal) =>
-              journal.prepare(result),
-            ),
-          );
-        }),
       });
     }),
   ).pipe(Layer.provide(defaultPasswordAttemptLimiterLayer));
@@ -831,16 +821,6 @@ const makePasswordWithManagement = <
     replay: "read-only",
   });
 
-  const CleanupAttempts = makeOperation(`${moduleId}/cleanup`, {
-    payload: Schema.Struct({
-      limit: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 1000 })),
-    }),
-    success: Cleanup,
-    error: Failure,
-    access: "system",
-    replay: "idempotent",
-  });
-
   const mutationResult = (
     result: MutationValue,
   ): Effect.Effect<AuthOperationResult<typeof MutationResult.Type>, PasswordRejected> =>
@@ -895,11 +875,6 @@ const makePasswordWithManagement = <
         return yield* (yield* Passwords).status(invocation);
       }),
     ),
-    CleanupAttempts.handlerLayer(
-      Effect.fn("PasswordOperation.cleanup")(function* (request) {
-        return yield* (yield* Passwords).cleanup(request.limit);
-      }),
-    ),
   );
 
   const operations = {
@@ -911,7 +886,6 @@ const makePasswordWithManagement = <
     VerifyReset,
     CompleteReset,
     PasswordStatus,
-    CleanupAttempts,
   };
 
   return Object.freeze({
