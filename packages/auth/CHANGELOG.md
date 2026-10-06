@@ -1,5 +1,15 @@
 # @yielded/auth
 
+## 0.1.0-beta.22
+
+### Patch Changes
+
+- [#130](https://github.com/yielded-dev/auth/pull/130) [`1d4c0db`](https://github.com/yielded-dev/auth/commit/1d4c0db87517455eb1d7eef10e802b61650189dc) Thanks [@danieljvdm](https://github.com/danieljvdm)! - Keep the initial server-rendered session visible while live verification confirms the same account. Continue clearing it on failures and explicit account replacement.
+- Updated dependencies []:
+  - @yielded/crypto@0.1.0-beta.22
+  - @yielded/jose@0.1.0-beta.22
+  - @yielded/oauth@0.1.0-beta.22
+
 ## 0.1.0-beta.21
 
 ### Minor Changes
