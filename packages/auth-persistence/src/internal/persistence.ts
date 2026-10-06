@@ -141,7 +141,7 @@ export const createPersistence = <T extends object, R>(
 
     const roles: StorageRole[] = ["identifiers", "credentials", "sessions", "sessionFlows"];
 
-    if (password) roles.push("passwords", "passwordAttempts", "passwordCommands");
+    if (password) roles.push("passwords", "passwordCommands");
     if (management) roles.push("passwordRegistrations");
     if (email) roles.push("emailCredentials", "emailCommands");
     if (phone) roles.push("phoneState");

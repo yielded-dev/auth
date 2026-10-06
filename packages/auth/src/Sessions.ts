@@ -4,6 +4,7 @@ export {
   AuthenticationFlowId,
   AuthenticationProof,
   AuthenticationRequirement,
+  AuthenticationCapture,
   AuthenticationRevision,
   CredentialRevision,
   PendingConsumption,

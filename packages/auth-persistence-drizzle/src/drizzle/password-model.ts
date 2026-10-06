@@ -4,9 +4,6 @@ import type { SQL, Table } from "drizzle-orm";
 import type { DrizzleTableModel } from "./table-model";
 
 export {
-  type PasswordAttemptAction,
-  type PasswordAttemptState,
-  type PasswordAttemptRecord,
   type RequiredPasswordConstraints,
   requiredPasswordConstraints,
   type PasswordConstraintClassifier,
@@ -44,11 +41,6 @@ export type PasswordCredentialTable<
   NativeSubjectId
 >;
 
-export type PasswordAttemptTable<
-  Attempt extends Table,
-  NativeSubjectId,
-> = Shared.PasswordAttemptTable<DrizzleTableModel<Attempt>, NativeSubjectId>;
-
 export type PasswordCommandTable<Command extends Table> = Shared.PasswordCommandTable<
   DrizzleTableModel<Command>
 >;
@@ -60,7 +52,6 @@ export type PasswordPersistenceMapping<
   Identifier extends Table,
   Credential extends Table,
   AuthorityCredential extends Table,
-  Attempt extends Table,
   Command extends Table,
   NativeSubjectId,
 > = Shared.PasswordPersistenceMapping<
@@ -68,7 +59,6 @@ export type PasswordPersistenceMapping<
   DrizzleTableModel<Identifier>,
   DrizzleTableModel<Credential>,
   DrizzleTableModel<AuthorityCredential>,
-  DrizzleTableModel<Attempt>,
   DrizzleTableModel<Command>,
   NativeSubjectId,
   SQL
@@ -79,7 +69,6 @@ export type D1PasswordPersistenceMapping<
   Identifier extends Table,
   Credential extends Table,
   AuthorityCredential extends Table,
-  Attempt extends Table,
   Command extends Table,
   NativeSubjectId,
 > = Shared.D1PasswordPersistenceMapping<
@@ -87,7 +76,6 @@ export type D1PasswordPersistenceMapping<
   DrizzleTableModel<Identifier>,
   DrizzleTableModel<Credential>,
   DrizzleTableModel<AuthorityCredential>,
-  DrizzleTableModel<Attempt>,
   DrizzleTableModel<Command>,
   NativeSubjectId,
   SQL
@@ -129,7 +117,6 @@ export type PasswordRegistrationMapping<
 >;
 
 export type AnyPasswordPersistenceMapping = PasswordPersistenceMapping<
-  Table,
   Table,
   Table,
   Table,

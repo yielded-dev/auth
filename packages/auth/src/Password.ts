@@ -22,9 +22,6 @@ export {
   PasswordAction,
   type PasswordActionAuthorization,
   PasswordActionChallenge,
-  type PasswordAttemptAdmission,
-  type PasswordAttemptDecision,
-  PasswordAttemptId,
   PasswordCommandId,
   PasswordCredentialSnapshot,
   type PasswordMutationDecision,
@@ -61,7 +58,6 @@ export { PasswordKdfAdmission } from "./password/PasswordKdfAdmission";
 
 export {
   type PasswordMutationInput,
-  type PasswordAttemptPreparation,
   PasswordPersistence,
   type PreparePasswordCommit,
 } from "./password/methods/PasswordPersistence";

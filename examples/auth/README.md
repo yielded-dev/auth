@@ -51,6 +51,46 @@ an application-owned exact-action verifier and is denied until one is installed.
 Run cohort revocation maintenance through an application-owned scheduler if enabling
 management for a provider that supports remote revocation.
 
+## Shared GitHub callback host
+
+`example:oauth-proxy` runs a callback server and two independent apps. Register
+`https://auth.example.com/oauth-proxy/github/callback` on one GitHub OAuth App.
+The [composition](src/oauth-proxy-application.ts) registers localhost and the
+configured preview, and gives each app its own SQLite storage and sessions.
+
+Publish the callback server and preview over HTTPS, forwarding to Bun on
+`127.0.0.1` ports 4000 and 3001. Follow the
+[hosting requirements](../../docs/src/content/docs/reference/oauth.md#hosting-and-recovery)
+for forwarded headers, private upstream access, and callback logging.
+
+Set these environment variables for each process:
+
+| Process         | Configuration                                                                                                    |
+| --------------- | ---------------------------------------------------------------------------------------------------------------- |
+| Callback server | `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, `PROXY_ENCRYPTION_KEY`, `LOCAL_PROXY_SECRET`, `PREVIEW_PROXY_SECRET` |
+| Each app        | `PROXY_SECRET`, `SESSION_KEY`, `OAUTH_TRANSACTION_KEY`, `GITHUB_USER_ID`                                         |
+
+Generate independent keys and environment secrets from 32 random bytes encoded as
+unpadded base64url. Each app's `PROXY_SECRET` matches its registration on the server.
+Keep keys stable across restarts. Only the allowlisted `GITHUB_USER_ID` can sign in.
+
+Run these in separate terminals from the repository root:
+
+```sh
+MODE=proxy APP_ORIGIN=https://auth.example.com PREVIEW_ORIGIN=https://preview.example.com \
+  vp run @yielded/example-auth#example:oauth-proxy
+
+MODE=local PROXY_URL=https://auth.example.com/oauth-proxy \
+  vp run @yielded/example-auth#example:oauth-proxy
+
+MODE=preview APP_ORIGIN=https://preview.example.com PROXY_URL=https://auth.example.com/oauth-proxy \
+  vp run @yielded/example-auth#example:oauth-proxy
+```
+
+Open `http://localhost:3000/login` or `https://preview.example.com/login`.
+After sign-in, `/account` shows that app's session. The example does not retain
+provider API access.
+
 For a later clean-start cutover, reset old accounts, auth/session/proof state,
 per-account trips/conversations/settings/encrypted API keys, and browser caches.
 Retire associated generated sites and build/address records. Allocate new subjects

@@ -58,26 +58,6 @@ export const storageTables = {
       ["moduleId", "credentialId"],
     ],
   ),
-  passwordAttempts: spec(
-    {
-      moduleId: text,
-      action: text,
-      attemptId: text,
-      identifierNamespace: text,
-      identifierValue: text,
-      subjectId: optionalText,
-      credentialId: optionalText,
-      securityRevision: optionalText,
-      credentialRevision: optionalText,
-      verifierVersion: optionalText,
-      identifierBindingRevision: optionalText,
-      admittedAt: integer,
-      deadline: integer,
-      retentionUntil: integer,
-      state: text,
-    },
-    [["moduleId", "attemptId"]],
-  ),
   passwordCommands: spec(
     {
       moduleId: text,

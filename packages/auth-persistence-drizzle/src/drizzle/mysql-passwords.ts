@@ -55,21 +55,19 @@ type Mapping<
   I extends AnyMySqlTable,
   C extends AnyMySqlTable,
   AC extends AnyMySqlTable,
-  A extends AnyMySqlTable,
   M extends AnyMySqlTable,
   NativeId,
-> = PasswordPersistenceMapping<S, I, C, AC, A, M, NativeId>;
+> = PasswordPersistenceMapping<S, I, C, AC, M, NativeId>;
 
 export const makeMysqlPasswordPersistenceServices = <
   S extends AnyMySqlTable,
   I extends AnyMySqlTable,
   C extends AnyMySqlTable,
   AC extends AnyMySqlTable,
-  A extends AnyMySqlTable,
   M extends AnyMySqlTable,
   NativeId,
 >(
-  mapping: Mapping<S, I, C, AC, A, M, NativeId>,
+  mapping: Mapping<S, I, C, AC, M, NativeId>,
   proofMapping?: ProofPersistenceMapping<
     any,
     any,
@@ -99,7 +97,6 @@ export function coordinateMysqlPasswordPersistence<
   I extends AnyMySqlTable,
   C extends AnyMySqlTable,
   AC extends AnyMySqlTable,
-  A extends AnyMySqlTable,
   M extends AnyMySqlTable,
   NativeId,
   PM extends
@@ -113,7 +110,7 @@ export function coordinateMysqlPasswordPersistence<
 >(
   acquire: Effect.Effect<D, DatabaseError, DatabaseRequirements>,
   options: {
-    readonly mapping: Mapping<S, I, C, AC, A, M, NativeId>;
+    readonly mapping: Mapping<S, I, C, AC, M, NativeId>;
     readonly proofMapping?: PM;
     readonly transaction?: never;
   },
@@ -130,7 +127,6 @@ export function coordinateMysqlPasswordPersistence<
   I extends AnyMySqlTable,
   C extends AnyMySqlTable,
   AC extends AnyMySqlTable,
-  A extends AnyMySqlTable,
   M extends AnyMySqlTable,
   NativeId,
   PM extends
@@ -146,7 +142,7 @@ export function coordinateMysqlPasswordPersistence<
 >(
   acquire: Effect.Effect<D, DatabaseError, DatabaseRequirements>,
   options: {
-    readonly mapping: Mapping<S, I, C, AC, A, M, NativeId>;
+    readonly mapping: Mapping<S, I, C, AC, M, NativeId>;
     readonly proofMapping?: PM;
     readonly transaction: SuppliedService<TxId, NoInfer<TransactionOf<D>>, TxShape>;
   },
@@ -163,7 +159,6 @@ export function coordinateMysqlPasswordPersistence<
   I extends AnyMySqlTable,
   C extends AnyMySqlTable,
   AC extends AnyMySqlTable,
-  A extends AnyMySqlTable,
   M extends AnyMySqlTable,
   NativeId,
   PM extends
@@ -179,7 +174,7 @@ export function coordinateMysqlPasswordPersistence<
 >(
   acquire: Effect.Effect<D, DatabaseError, DatabaseRequirements>,
   options: {
-    readonly mapping: Mapping<S, I, C, AC, A, M, NativeId>;
+    readonly mapping: Mapping<S, I, C, AC, M, NativeId>;
     readonly proofMapping?: PM;
     readonly transaction?: SuppliedService<TxId, NoInfer<TransactionOf<D>>, TxShape>;
   },

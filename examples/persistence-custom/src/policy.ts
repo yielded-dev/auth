@@ -117,10 +117,12 @@ const PasswordActions = Layer.effect(
 
           if (email === undefined) return yield* Password.PasswordActionRequired.make({});
 
-          const revision = yield* authority.capture(challenge.revision.subjectId, [
-            ...challenge.revision.credentials.map((item) => item.credentialId),
-            email.id,
-          ]);
+          const revision = yield* authority
+            .capture(challenge.revision.subjectId, [
+              ...challenge.revision.credentials.map((item) => item.credentialId),
+              email.id,
+            ])
+            .pipe(Effect.map((capture) => capture.revision));
 
           if (revision.securityRevision !== challenge.revision.securityRevision)
             return yield* Password.PasswordActionRequired.make({});

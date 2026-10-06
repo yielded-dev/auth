@@ -6,14 +6,11 @@ import type { ProofCompletionPlan } from "../../proofs/completion";
 import type { ProofCompletionInput } from "../../proofs/ProofPersistence";
 import type { SubjectId } from "../../Schema";
 import type { SessionInvalidationWindow } from "../../sessions/invalidation";
-import type { AuthenticationRevision, SecurityRevision } from "../../sessions/models";
+import type { AuthenticationRevision } from "../../sessions/models";
 import type { EncodedPasswordHash } from "../models";
 import type { PasswordUnavailable } from "./errors";
 import type {
   PasswordActionAuthorization,
-  PasswordAttemptAdmission,
-  PasswordAttemptDecision,
-  PasswordAttemptId,
   PasswordCommandId,
   PasswordCredentialSnapshot,
   PasswordMutationDecision,
@@ -24,17 +21,6 @@ export type PreparePasswordCommit<Value, A> = (
   value: Value,
   journal: CommitJournal,
 ) => PreparedCommit<A>;
-
-/** A captured candidate, before rate admission or credential verification.
- * The persistence owner retains native identifiers privately. Admission records
- * this snapshot; settlement must revalidate it before accepting the proof.
- */
-export interface PasswordAttemptPreparation {
-  readonly credential?: PasswordCredentialSnapshot;
-  readonly admit: <A>(
-    prepare: PreparePasswordCommit<PasswordAttemptAdmission, A>,
-  ) => Effect.Effect<PreparedCommit<A>, PasswordUnavailable>;
-}
 
 export interface PasswordMutationInput {
   readonly moduleId: string;
@@ -56,41 +42,26 @@ export class PasswordPersistence extends Context.Service<
   PasswordPersistence,
   {
     /** Read a coherent candidate without writing or holding a transaction open.
-     * The strategy consumes action/identifier limits before this lookup and the
-     * subject limit before admit. Unknown/disabled/missing return no verifier.
-     * admit can execute once, records a single-use attempt, and resolves only after
-     * owned commit. Failure or an unknown outcome does not authorize plan reuse.
-     * Abandoned attempts expire; limit consumption is never refunded.
+     * Unknown, disabled, missing, or ineligible identifiers return None.
+     * Session issuance and password mutation recheck the captured authority.
+     * Identifier removal, rebinding, or eligibility changes MUST bump the subject
+     * security revision atomically: identifierBindingRevision is not part of
+     * AuthenticationRevision. Native identifiers stay inside the adapter.
      */
-    readonly prepareAttempt: (input: {
+    readonly findCredential: (input: {
       readonly moduleId: string;
-      readonly action: "sign-in" | "change";
       readonly identifier: LoginIdentifier;
       readonly subjectId?: SubjectId;
-      readonly attemptLifetimeMillis: number;
-    }) => Effect.Effect<PasswordAttemptPreparation, PasswordUnavailable>;
-    /** Single-use settlement. verified requires SAME captured semantic revisions and
-     * attempt ownership. Rehash CAS includes old verifier/version, changes verifierVersion
-     * only and never semantic/security revisions or a newer credential's counters.
-     * A CAS miss cannot become unconditional replacement. This does NOT issue auth.
-     * Later session approval compares this same subject securityRevision. Identifier
-     * remove/rebind/verification changes that invalidate login MUST bump it atomically;
-     * identifierBindingRevision alone is not represented in AuthenticationRevision.
+    }) => Effect.Effect<Option.Option<PasswordCredentialSnapshot>, PasswordUnavailable>;
+    /** Conditional maintenance only when hash parameters change. Compare the exact
+     * credential identity, semantic revision, verifier and verifierVersion; change
+     * only verifier/version. A lost CAS is a no-op, never unconditional replacement.
+     * This write grants no authority and must not advance semantic/security revisions.
      */
-    readonly settleAttempt: <A>(
-      input: {
-        readonly moduleId: string;
-        readonly attemptId: PasswordAttemptId;
-        readonly captured?: PasswordCredentialSnapshot;
-        readonly outcome: PasswordAttemptDecision;
-        readonly rehash?: {
-          readonly expectedVersion: SecurityRevision;
-          readonly expectedVerifier: Redacted.Redacted<EncodedPasswordHash>;
-          readonly nextVerifier: Redacted.Redacted<EncodedPasswordHash>;
-        };
-      },
-      prepare: PreparePasswordCommit<PasswordAttemptDecision, A>,
-    ) => Effect.Effect<PreparedCommit<A>, PasswordUnavailable>;
+    readonly rehashIfCurrent: (input: {
+      readonly credential: PasswordCredentialSnapshot;
+      readonly nextVerifier: Redacted.Redacted<EncodedPasswordHash>;
+    }) => Effect.Effect<void, PasswordUnavailable>;
     readonly readForSubject: (input: {
       readonly moduleId: string;
       readonly subjectId: SubjectId;
@@ -126,10 +97,6 @@ export class PasswordPersistence extends Context.Service<
     readonly resetWithProof: <A>(
       input: PasswordMutationInput & { readonly completion: ProofCompletionPlan },
       prepare: PreparePasswordCommit<PasswordMutationDecision, A>,
-    ) => Effect.Effect<PreparedCommit<A>, PasswordUnavailable>;
-    readonly cleanupAttempts: <A>(
-      input: { readonly moduleId: string; readonly limit: number },
-      prepare: PreparePasswordCommit<{ readonly removed: number; readonly hasMore: boolean }, A>,
     ) => Effect.Effect<PreparedCommit<A>, PasswordUnavailable>;
   }
 >()("effect-auth/PasswordPersistence") {}

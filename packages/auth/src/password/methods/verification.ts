@@ -1,4 +1,4 @@
-import { Cause, Crypto, DateTime, Effect, Redacted, Schema } from "effect";
+import { Cause, Crypto, DateTime, Effect, Option, Redacted, Schema } from "effect";
 import { Base64Url } from "effect/encoding";
 
 import { hasCommitScope, type PreparedCommit } from "../../hooks/commit";
@@ -19,7 +19,6 @@ import {
   SessionInvalid,
   SessionConflict,
   PendingAuthenticationInvalid,
-  SessionUnavailable,
   StaleAuthentication,
 } from "../../sessions/errors";
 import { type AuthenticationFlowId, type AuthenticationEvidence } from "../../sessions/models";
@@ -30,7 +29,11 @@ import type { PasswordCredentialSnapshot } from "./models";
 import { PasswordAttemptLimiter } from "./PasswordAttemptLimiter";
 import { PasswordPersistence } from "./PasswordPersistence";
 import type { PasswordMethodPolicy } from "./policy";
-import { snapshotPasswordCredential, snapshotPasswordRevision } from "./snapshot";
+import {
+  snapshotPasswordCredential,
+  snapshotPasswordRequirement,
+  snapshotPasswordRevision,
+} from "./snapshot";
 
 export const passwordNoAmbient = Effect.fn("Passwords.noAmbient")(function* () {
   if (yield* hasCommitScope) return yield* PasswordMethodUnsupported.make({});
@@ -65,8 +68,7 @@ export const passwordCompletionFailure = (
   return PasswordUnavailable.make({});
 };
 
-const noAmbient = passwordNoAmbient,
-  read = readPasswordCommit;
+const noAmbient = passwordNoAmbient;
 
 export const passwordUnexpected = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   effect.pipe(Effect.mapError(() => PasswordUnavailable.make({})));
@@ -75,15 +77,6 @@ const unexpected = passwordUnexpected;
 
 const hashingInfrastructureFailure = Schema.is(
   Schema.Union([PasswordHashingUnavailable, PasswordKdfBusy]),
-);
-
-const verificationInfrastructureFailure = Schema.is(
-  Schema.Union([
-    PasswordHashingUnavailable,
-    PasswordKdfBusy,
-    PasswordUnavailable,
-    SessionUnavailable,
-  ]),
 );
 
 /** Report infrastructure recovery without recording passwords or verifier data. */
@@ -101,7 +94,7 @@ export const passwordHashingDiagnostics = <A, E, R>(effect: Effect.Effect<A, E, 
     ),
   );
 
-/** Verification owns attempt admission, settlement and the original proof instant. */
+/** Rate limits precede verification; the committing operation rechecks authority. */
 export const makePasswordVerification = ({
   moduleId,
   policy,
@@ -183,49 +176,49 @@ export const makePasswordVerification = ({
         budget: policy.attempts.identifier,
       });
 
-      const attempt = yield* store.prepareAttempt({
+      const candidate = yield* store.findCredential({
         moduleId,
-        action,
         identifier: identifier(request.email),
         ...(subjectId === undefined ? {} : { subjectId }),
-        attemptLifetimeMillis: policy.attempts.attemptLifetimeMillis,
       });
 
-      if (attempt.credential !== undefined)
+      if (Option.isSome(candidate))
         yield* limiter.check({
           moduleId,
           action,
           scope: "subject",
-          key: attempt.credential.revision.subjectId,
+          key: candidate.value.revision.subjectId,
           budget: policy.attempts.subject,
         });
 
-      return yield* read(yield* attempt.admit((decision, journal) => journal.prepare(decision)));
-    }).pipe(Effect.catchTag("PasswordRejected", () => Effect.succeed({ _tag: "Denied" as const })));
+      return candidate;
+    }).pipe(Effect.catchTag("PasswordRejected", () => Effect.succeed(undefined)));
 
     // All denied branches do one bounded dummy attempt too. Local admission can
     // reject it; no claim of exact network timing is made.
-    if (admitted._tag === "Denied") {
+    if (admitted === undefined) {
       yield* hasher.dummy(request.password).pipe(passwordHashingDiagnostics, Effect.ignore);
 
       return yield* PasswordRejected.make({});
     }
 
-    const candidate =
-      admitted.credential === undefined
-        ? undefined
-        : yield* snapshotPasswordCredential(admitted.credential);
+    const candidate = Option.isNone(admitted)
+      ? undefined
+      : yield* snapshotPasswordCredential(admitted.value);
 
-    const checked = yield* Effect.gen(function* () {
+    return yield* Effect.gen(function* () {
       if (candidate === undefined) {
         yield* hasher.dummy(request.password).pipe(passwordHashingDiagnostics);
 
         return yield* PasswordRejected.make({});
       }
 
-      const original = snapshotPasswordRevision(
-        yield* authority.capture(candidate.revision.subjectId, [candidate.credentialId]),
-      );
+      const capture = yield* authority.capture(candidate.revision.subjectId, [
+        candidate.credentialId,
+      ]);
+
+      const original = snapshotPasswordRevision(capture.revision);
+      const requirement = yield* snapshotPasswordRequirement(capture.requirement);
 
       if (
         !sameCredential(candidate, original) ||
@@ -260,14 +253,11 @@ export const makePasswordVerification = ({
       if (!verified.matches) return yield* PasswordRejected.make({});
       const verifiedAt = yield* DateTime.now;
 
-      const rehash =
-        action === "sign-in" && verified.needsRehash
-          ? {
-              expectedVersion: candidate.verifierVersion,
-              expectedVerifier: candidate.verifier,
-              nextVerifier: yield* hasher.hash(password).pipe(passwordHashingDiagnostics),
-            }
-          : undefined;
+      if (action === "sign-in" && verified.needsRehash)
+        yield* store.rehashIfCurrent({
+          credential: candidate,
+          nextVerifier: yield* hasher.hash(password).pipe(passwordHashingDiagnostics),
+        });
 
       const evidence: AuthenticationEvidence = {
         revision: original,
@@ -290,40 +280,16 @@ export const makePasswordVerification = ({
         ],
       };
 
-      return { credential: candidate, evidence, rehash };
-    }).pipe(Effect.result);
-
-    // Only definite credential/policy failures may settle as rejected. An outage
-    // leaves the admission charged until expiry, just like interrupted work.
-    if (
-      checked._tag === "Failure" &&
-      checked.failure._tag !== "PasswordRejected" &&
-      checked.failure._tag !== "PasswordInputInvalid" &&
-      checked.failure._tag !== "StaleAuthentication"
-    )
-      return yield* PasswordUnavailable.make({});
-
-    const decision = yield* read(
-      yield* store.settleAttempt(
-        {
-          moduleId,
-          attemptId: admitted.attemptId,
-          ...(candidate === undefined ? {} : { captured: candidate }),
-          outcome: checked._tag === "Success" ? "verified" : "rejected",
-          ...(checked._tag === "Success" && checked.success.rehash !== undefined
-            ? { rehash: checked.success.rehash }
-            : {}),
-        },
-        (value, journal) => journal.prepare(value),
+      return { credential: candidate, evidence, requirement };
+    }).pipe(
+      Effect.mapError((error) =>
+        error._tag === "PasswordRejected" ||
+        error._tag === "PasswordInputInvalid" ||
+        error._tag === "StaleAuthentication"
+          ? PasswordRejected.make({})
+          : PasswordUnavailable.make({}),
       ),
     );
-
-    if (checked._tag === "Failure" && verificationInfrastructureFailure(checked.failure))
-      return yield* PasswordUnavailable.make({});
-    if (decision !== "verified" || checked._tag !== "Success")
-      return yield* PasswordRejected.make({});
-
-    return checked.success;
   });
 
   return { digest, identifier, verifyPassword };

@@ -119,10 +119,12 @@ const PasswordActions = Layer.effect(
           if (rows.length !== 1) return yield* Password.PasswordActionRequired.make({});
           const email = yield* Schema.decodeUnknownEffect(RecoveryCredential)(rows[0]);
 
-          const revision = yield* authority.capture(challenge.revision.subjectId, [
-            ...challenge.revision.credentials.map((item) => item.credentialId),
-            email.credentialId,
-          ]);
+          const revision = yield* authority
+            .capture(challenge.revision.subjectId, [
+              ...challenge.revision.credentials.map((item) => item.credentialId),
+              email.credentialId,
+            ])
+            .pipe(Effect.map((capture) => capture.revision));
 
           if (revision.securityRevision !== challenge.revision.securityRevision)
             return yield* Password.PasswordActionRequired.make({});

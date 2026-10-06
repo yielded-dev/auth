@@ -45,16 +45,6 @@ export const Session = Schema.Struct({
 
 export type Session = typeof Session.Type;
 
-const Attempt = Schema.Struct({
-  id: AuthPassword.PasswordAttemptId,
-  moduleId: Schema.NonEmptyString,
-  action: Schema.Literals(["sign-in", "change"]),
-  captured: Schema.optionalKey(AuthPassword.PasswordCredentialSnapshot),
-  pending: Schema.Boolean,
-  deadline: Schema.Int,
-  retentionUntil: Schema.Int,
-});
-
 export const ProofRecord = Schema.Struct({
   moduleId: Schema.NonEmptyString,
   purpose: Proofs.ProofPurpose,
@@ -115,7 +105,6 @@ export const Database = Schema.Struct({
   passwords: Schema.Array(Password),
   sessions: Schema.Array(Session),
   flows: Schema.Array(Schema.Struct({ id: Schema.String, expiresAt: Schema.Int })),
-  attempts: Schema.Array(Attempt),
   registrations: Schema.Array(
     Schema.Struct({
       requestId: Schema.String,
@@ -185,7 +174,6 @@ export const emptyDatabase = (): State => ({
   passwords: [],
   sessions: [],
   flows: [],
-  attempts: [],
   registrations: [],
   charges: [],
   proofRequests: [],

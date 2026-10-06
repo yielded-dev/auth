@@ -10,7 +10,7 @@ import {
 import { AuthenticationRequired } from "@yielded/auth/Operations";
 import { Schema } from "effect";
 
-/** Shared sign-in surface used by the Atom client, including sign-in-only apps. */
+/** Browser sign-in contract shared by direct and proxied providers. */
 export const OAuthSignInApi = AuthContract.make("example/oauth", {
   claims: Schema.Struct({ role: Schema.Literal("owner") }),
   actions: (sessions) => ({

@@ -21,6 +21,7 @@ export default defineConfig({
       "src/Hooks.ts",
       "src/Identity.ts",
       "src/OAuth.ts",
+      "src/OAuthProxy.ts",
       "src/OpenIdConnect.ts",
       "src/GitHub.ts",
       "src/Slack.ts",

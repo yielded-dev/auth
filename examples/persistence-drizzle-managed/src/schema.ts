@@ -49,7 +49,6 @@ export const {
   identifiers,
   credentials,
   passwords,
-  passwordAttempts,
   passwordCommands,
   proofRequests,
   proofSeries,

@@ -110,6 +110,7 @@ export const makePhoneOtp = <
       const current = yield* (yield* AuthenticationAuthority)
         .capture(snapshot.revision.subjectId, [snapshot.credentialId])
         .pipe(
+          Effect.map((capture) => capture.revision),
           Effect.map(Option.some),
           Effect.catchTag("StaleAuthentication", () => Effect.succeed(Option.none())),
           Effect.mapError(phoneFailure),

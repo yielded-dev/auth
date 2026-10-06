@@ -1,5 +1,5 @@
 import { Hooks, Password, Schema as AuthSchema, Sessions } from "@yielded/auth";
-import { Context, Effect, Layer, Option, Redacted, Schema } from "effect";
+import { Context, Effect, Layer, Option, Schema } from "effect";
 
 import {
   claims,
@@ -69,15 +69,14 @@ export const PasswordsLive = Layer.effectContext(
     const store = yield* AccountStore;
 
     const passwords = Password.PasswordPersistence.of({
-      prepareAttempt: (input) =>
+      findCredential: (input) =>
         Effect.gen(function* () {
           if (yield* Hooks.hasCommitScope) return yield* Password.PasswordUnavailable.make({});
           if (input.moduleId !== moduleId) return yield* Password.PasswordUnavailable.make({});
-          const { action, attemptLifetimeMillis } = input;
           const identifier = { ...input.identifier };
           const requestedSubject = input.subjectId;
 
-          const captured = yield* store.read((state) =>
+          return yield* store.read((state) =>
             Effect.gen(function* () {
               const account = state.customers.find(
                 (item) =>
@@ -92,113 +91,41 @@ export const PasswordsLive = Layer.effectContext(
                 account === undefined ? undefined : passwordCredential(state, account);
 
               return candidate === undefined
-                ? undefined
-                : yield* Password.snapshotPasswordCredential(candidate);
+                ? Option.none()
+                : Option.some(yield* Password.snapshotPasswordCredential(candidate));
             }),
           );
-
-          let used = false;
-
-          return Object.freeze({
-            ...(captured === undefined ? {} : { credential: captured }),
-            admit: <A>(
-              prepare: Password.PreparePasswordCommit<Password.PasswordAttemptAdmission, A>,
-            ) =>
-              Effect.gen(function* () {
-                if (yield* Hooks.hasCommitScope)
-                  return yield* Password.PasswordUnavailable.make({});
-                if (used) return yield* Password.PasswordUnavailable.make({});
-                used = true;
-
-                return yield* store.transaction((state, journal, now) =>
-                  Effect.sync(() => {
-                    const attemptId = Password.PasswordAttemptId.make(nextId(state, "attempt"));
-                    const deadline = now + attemptLifetimeMillis;
-
-                    const receipt = prepare(
-                      {
-                        _tag: "Admitted",
-                        attemptId,
-                        ...(captured === undefined ? {} : { credential: captured }),
-                      },
-                      journal,
-                    );
-
-                    state.attempts = [
-                      ...state.attempts,
-                      {
-                        id: attemptId,
-                        moduleId,
-                        action,
-                        ...(captured === undefined ? {} : { captured }),
-                        pending: true,
-                        deadline,
-                        retentionUntil: deadline,
-                      },
-                    ];
-
-                    return receipt;
-                  }),
-                );
-              }).pipe(
-                Effect.catchTag("StoreUnavailable", () => Password.PasswordUnavailable.make({})),
-              ),
-          });
         }).pipe(Effect.catchTag("StoreUnavailable", () => Password.PasswordUnavailable.make({}))),
-      settleAttempt: (input, prepare) =>
+      rehashIfCurrent: (input) =>
         store
-          .transaction((state, journal, now) =>
+          .transaction((state, journal) =>
             Effect.sync(() => {
-              const attempt = state.attempts.find(
-                (item) => item.id === input.attemptId && item.moduleId === input.moduleId,
-              );
-
-              const captured = input.captured;
-
-              const account =
-                captured === undefined ? undefined : customer(state, captured.revision.subjectId);
-
+              const captured = input.credential;
+              const account = customer(state, captured.revision.subjectId);
               const actual = account === undefined ? undefined : passwordCredential(state, account);
 
-              const verified =
-                input.moduleId === moduleId &&
-                input.outcome === "verified" &&
-                attempt?.pending === true &&
-                attempt.deadline > now &&
-                captured !== undefined &&
-                attempt.captured !== undefined &&
+              if (
+                captured.moduleId === moduleId &&
                 actual !== undefined &&
-                encodeCredential(captured) === encodeCredential(attempt.captured) &&
-                current(state, captured.revision) &&
-                encodeCredential(captured) === encodeCredential(actual);
-
-              const receipt = prepare(verified ? "verified" : "rejected", journal);
-
-              if (verified && attempt !== undefined)
-                journal.beforeCommit((time) => time >= now && time < attempt.deadline);
-              state.attempts = state.attempts.map((item) =>
-                item === attempt ? { ...item, pending: false } : item,
-              );
-              const rehash = input.rehash;
-
-              if (verified && rehash !== undefined)
+                encodeCredential(actual) === encodeCredential(captured)
+              )
                 state.passwords = state.passwords.map((item) =>
-                  item.credentialId === captured?.credentialId &&
-                  item.verifierVersion === rehash.expectedVersion &&
-                  Redacted.value(item.replacement.verifier) ===
-                    Redacted.value(rehash.expectedVerifier)
+                  item.credentialId === captured.credentialId
                     ? {
                         ...item,
-                        replacement: { ...item.replacement, verifier: rehash.nextVerifier },
+                        replacement: { ...item.replacement, verifier: input.nextVerifier },
                         verifierVersion: Sessions.SecurityRevision.make(nextId(state, "verifier")),
                       }
                     : item,
                 );
 
-              return receipt;
+              return journal.prepare(undefined);
             }),
           )
-          .pipe(Effect.catchTag("StoreUnavailable", () => Password.PasswordUnavailable.make({}))),
+          .pipe(
+            Effect.flatMap((receipt) => receipt.read),
+            Effect.mapError(() => Password.PasswordUnavailable.make({})),
+          ),
       readForSubject: (input) =>
         store
           .read((state) =>
@@ -329,27 +256,6 @@ export const PasswordsLive = Layer.effectContext(
             }),
           )
           .pipe(Effect.mapError(() => Password.PasswordUnavailable.make({}))),
-      cleanupAttempts: (input, prepare) =>
-        store
-          .transaction((state, journal, now) =>
-            Effect.sync(() => {
-              const expired = state.attempts.filter(
-                (row) => row.moduleId === input.moduleId && row.retentionUntil <= now,
-              );
-
-              const removed = expired.slice(0, input.limit);
-
-              const receipt = prepare(
-                { removed: removed.length, hasMore: expired.length > removed.length },
-                journal,
-              );
-
-              state.attempts = state.attempts.filter((row) => !removed.includes(row));
-
-              return receipt;
-            }),
-          )
-          .pipe(Effect.catchTag("StoreUnavailable", () => Password.PasswordUnavailable.make({}))),
     });
 
     return Context.make(Password.PasswordPersistence, passwords).pipe(

@@ -1,3 +1,5 @@
+export type { OAuthProxyColumns } from "./drizzle/oauth-proxy";
+
 export {
   type AnyEmailAddressMapping,
   type AnyEmailRegistrationMapping,
@@ -35,10 +37,6 @@ export {
   type AnyPasswordPersistenceMapping,
   type AnyPasswordRegistrationMapping,
   type D1PasswordPersistenceMapping,
-  type PasswordAttemptAction,
-  type PasswordAttemptRecord,
-  type PasswordAttemptState,
-  type PasswordAttemptTable,
   type PasswordAuthorityCredentialTable,
   type PasswordCommandTable,
   type PasswordConstraintClassifier,

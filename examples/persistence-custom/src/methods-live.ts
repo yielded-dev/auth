@@ -1,5 +1,5 @@
 import { Hooks, Identity, Password, Schema as AuthSchema, Sessions } from "@yielded/auth";
-import { Crypto, DateTime, Effect, Layer, Redacted, Schema } from "effect";
+import { Crypto, DateTime, Effect, Layer, Option, Redacted, Schema } from "effect";
 import { Base64Url } from "effect/encoding";
 
 import { AppAuth } from "./auth";
@@ -76,44 +76,31 @@ export const AccountMethodsLive = Layer.effect(
             budget: attempts.identifier,
           });
 
-          const attempt = yield* persistence.prepareAttempt({
-            moduleId,
-            action: "sign-in",
-            identifier,
-            attemptLifetimeMillis: attempts.attemptLifetimeMillis,
-          });
+          const candidate = yield* persistence.findCredential({ moduleId, identifier });
 
-          if (attempt.credential !== undefined)
+          if (Option.isSome(candidate))
             yield* limiter.check({
               moduleId,
               action: "sign-in",
               scope: "subject",
-              key: attempt.credential.revision.subjectId,
+              key: candidate.value.revision.subjectId,
               budget: attempts.subject,
             });
 
-          return yield* attempt
-            .admit((value, journal) => journal.prepare(value))
-            .pipe(
-              Effect.flatMap((receipt) => receipt.read),
-              Effect.mapError(() => Password.PasswordUnavailable.make({})),
-            );
-        }).pipe(
-          Effect.catchTag("PasswordRejected", () => Effect.succeed({ _tag: "Denied" as const })),
-        );
+          return candidate;
+        }).pipe(Effect.catchTag("PasswordRejected", () => Effect.succeed(undefined)));
 
-        if (admission._tag === "Denied") {
+        if (admission === undefined) {
           yield* hasher.dummy(input.password).pipe(Effect.ignore);
 
           return yield* Password.PasswordRejected.make({});
         }
 
-        const captured =
-          admission.credential === undefined
-            ? undefined
-            : yield* Schema.decodeEffect(Schema.toType(Password.PasswordCredentialSnapshot))(
-                admission.credential,
-              ).pipe(Effect.mapError(() => Password.PasswordUnavailable.make({})));
+        const captured = Option.isNone(admission)
+          ? undefined
+          : yield* Schema.decodeEffect(Schema.toType(Password.PasswordCredentialSnapshot))(
+              admission.value,
+            ).pipe(Effect.mapError(() => Password.PasswordUnavailable.make({})));
 
         const checked = yield* Effect.gen(function* () {
           if (captured === undefined) {
@@ -124,7 +111,7 @@ export const AccountMethodsLive = Layer.effect(
             return yield* Password.PasswordRejected.make({});
           }
 
-          const original = yield* authority
+          const capture = yield* authority
             .capture(captured.revision.subjectId, [captured.credentialId])
             .pipe(
               Effect.mapError((error) =>
@@ -133,6 +120,9 @@ export const AccountMethodsLive = Layer.effect(
                   : Password.PasswordUnavailable.make({}),
               ),
             );
+
+          const original = Password.snapshotPasswordRevision(capture.revision);
+          const requirement = yield* Password.snapshotPasswordRequirement(capture.requirement);
 
           if (
             original.securityRevision !== captured.revision.securityRevision ||
@@ -168,15 +158,13 @@ export const AccountMethodsLive = Layer.effect(
           if (!result.matches) return yield* Password.PasswordRejected.make({});
           const verifiedAt = yield* DateTime.now;
 
-          const rehash = result.needsRehash
-            ? {
-                expectedVersion: captured.verifierVersion,
-                expectedVerifier: captured.verifier,
-                nextVerifier: yield* hasher
-                  .hash(password)
-                  .pipe(Effect.mapError(() => Password.PasswordUnavailable.make({}))),
-              }
-            : undefined;
+          if (result.needsRehash)
+            yield* persistence.rehashIfCurrent({
+              credential: captured,
+              nextVerifier: yield* hasher
+                .hash(password)
+                .pipe(Effect.mapError(() => Password.PasswordUnavailable.make({}))),
+            });
 
           const binding = yield* Schema.encodeEffect(
             Schema.fromJsonString(Schema.Array(Schema.String)),
@@ -204,34 +192,10 @@ export const AccountMethodsLive = Layer.effect(
             ],
           };
 
-          return { evidence, credential: captured, rehash };
+          return { evidence, credential: captured, requirement };
         }).pipe(Effect.result);
 
-        // Infrastructure failures never refund rate limits or settle as credential rejection.
-        if (checked._tag === "Failure" && checked.failure._tag !== "PasswordRejected")
-          return yield* checked.failure;
-
-        // Definite credential rejection settles once; abandoned attempts expire.
-        const decision = yield* persistence
-          .settleAttempt(
-            {
-              moduleId,
-              attemptId: admission.attemptId,
-              ...(captured === undefined ? {} : { captured }),
-              outcome: checked._tag === "Success" ? "verified" : "rejected",
-              ...(checked._tag === "Success" && checked.success.rehash !== undefined
-                ? { rehash: checked.success.rehash }
-                : {}),
-            },
-            (value, journal) => journal.prepare(value),
-          )
-          .pipe(
-            Effect.flatMap((receipt) => receipt.read),
-            Effect.mapError(() => Password.PasswordUnavailable.make({})),
-          );
-
         if (checked._tag === "Failure") return yield* checked.failure;
-        if (decision !== "verified") return yield* Password.PasswordRejected.make({});
 
         const values = yield* claims.resolve({
           subjectId: checked.success.credential.revision.subjectId,
@@ -239,7 +203,12 @@ export const AccountMethodsLive = Layer.effect(
         });
 
         return yield* completion
-          .prepare({ evidence: checked.success.evidence, claims: values })
+          .prepare({
+            evidence: checked.success.evidence,
+            requirement: checked.success.requirement,
+            fresh: true,
+            claims: values,
+          })
           .pipe(
             Effect.flatMap((receipt) => receipt.read),
             Effect.mapError((error) =>

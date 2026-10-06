@@ -7,6 +7,11 @@ export default defineConfig({
   },
   run: {
     tasks: {
+      "example:oauth-proxy": {
+        command: "bun src/oauth-proxy.ts",
+        cache: false,
+        dependsOn: ["build"],
+      },
       "example:slack": {
         command: "bun src/slack-app.ts",
         cache: false,

@@ -91,6 +91,14 @@ export const AuthenticationRequirement = Schema.Struct({
 
 export type AuthenticationRequirement = typeof AuthenticationRequirement.Type;
 
+/** One authority read before verification; issuance rechecks current policy and revisions. */
+export const AuthenticationCapture = Schema.Struct({
+  revision: AuthenticationRevision,
+  requirement: AuthenticationRequirement,
+});
+
+export type AuthenticationCapture = typeof AuthenticationCapture.Type;
+
 export const SessionMetadata = Schema.Struct({
   sessionId: SessionId,
   subjectId: SubjectId,

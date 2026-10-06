@@ -54,7 +54,6 @@ export const makeSqlitePasswordPreparedTarget = <
     I extends AnySQLiteTable,
     C extends AnySQLiteTable,
     AC extends AnySQLiteTable,
-    A extends AnySQLiteTable,
     M extends AnySQLiteTable,
     T extends AnySQLiteTable,
     B extends AnySQLiteTable,
@@ -74,7 +73,7 @@ export const makeSqlitePasswordPreparedTarget = <
   >(
     acquire: Effect.Effect<Database, DatabaseError, DatabaseRequirements>,
     options: {
-      readonly mapping: PasswordPreparedPersistenceMapping<S, I, C, AC, A, M, T, B, NativeId>;
+      readonly mapping: PasswordPreparedPersistenceMapping<S, I, C, AC, M, T, B, NativeId>;
       readonly proofMapping?:
         | PasswordPreparedProofMapping<PS, PC, PM, PSub, PI, PCr, PNativeId>
         | undefined;
@@ -96,7 +95,6 @@ export const makeSqlitePasswordPreparedTarget = <
     I extends AnySQLiteTable,
     C extends AnySQLiteTable,
     AC extends AnySQLiteTable,
-    A extends AnySQLiteTable,
     M extends AnySQLiteTable,
     T extends AnySQLiteTable,
     B extends AnySQLiteTable,
@@ -118,7 +116,7 @@ export const makeSqlitePasswordPreparedTarget = <
   >(
     acquire: Effect.Effect<Database, DatabaseError, DatabaseRequirements>,
     options: {
-      readonly mapping: PasswordPreparedPersistenceMapping<S, I, C, AC, A, M, T, B, NativeId>;
+      readonly mapping: PasswordPreparedPersistenceMapping<S, I, C, AC, M, T, B, NativeId>;
       readonly proofMapping?:
         | PasswordPreparedProofMapping<PS, PC, PM, PSub, PI, PCr, PNativeId>
         | undefined;
@@ -140,7 +138,6 @@ export const makeSqlitePasswordPreparedTarget = <
     I extends AnySQLiteTable,
     C extends AnySQLiteTable,
     AC extends AnySQLiteTable,
-    A extends AnySQLiteTable,
     M extends AnySQLiteTable,
     T extends AnySQLiteTable,
     B extends AnySQLiteTable,
@@ -162,7 +159,7 @@ export const makeSqlitePasswordPreparedTarget = <
   >(
     acquire: Effect.Effect<Database, DatabaseError, DatabaseRequirements>,
     options: {
-      readonly mapping: PasswordPreparedPersistenceMapping<S, I, C, AC, A, M, T, B, NativeId>;
+      readonly mapping: PasswordPreparedPersistenceMapping<S, I, C, AC, M, T, B, NativeId>;
       readonly proofMapping?:
         | PasswordPreparedProofMapping<PS, PC, PM, PSub, PI, PCr, PNativeId>
         | undefined;
@@ -207,7 +204,6 @@ export const makeSqlitePasswordPreparedTarget = <
       I extends AnySQLiteTable,
       C extends AnySQLiteTable,
       AC extends AnySQLiteTable,
-      A extends AnySQLiteTable,
       M extends AnySQLiteTable,
       T extends AnySQLiteTable,
       B extends AnySQLiteTable,
@@ -220,7 +216,7 @@ export const makeSqlitePasswordPreparedTarget = <
       PCr extends AnySQLiteTable = AnySQLiteTable,
       PNativeId = unknown,
     >(
-      mapping: PasswordPreparedPersistenceMapping<S, I, C, AC, A, M, T, B, NativeId>,
+      mapping: PasswordPreparedPersistenceMapping<S, I, C, AC, M, T, B, NativeId>,
       proofMapping?: PasswordPreparedProofMapping<PS, PC, PM, PSub, PI, PCr, PNativeId>,
     ) =>
       Effect.flatMap(standaloneConfiguration, (configuration) =>

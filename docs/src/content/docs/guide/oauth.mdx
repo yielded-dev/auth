@@ -130,6 +130,37 @@ upgrade session assurance. Provider tokens never enter browser results or sessio
 depends on the profile; cohort revocation needs the shared maintenance worker.
 See [retained access](../reference/oauth#retained-access) for dependencies and recovery.
 
+## Local and preview environments
+
+`OAuthProxy` lets localhost and preview deployments share one registered OAuth
+callback. A trusted callback server holds the provider credentials and verifies
+identity. Each app keeps its own accounts, cookies, and sessions.
+
+Register the callback server with your provider, then register each app's exact
+completion URL and a separate secret on that server. In each app, use
+`OAuthProxy.provider` in place of the native provider:
+
+```ts title="apps/server/oauth.ts"
+import { OAuthProxy } from "@yielded/auth";
+import { proxySecret } from "./config";
+
+export const github = OAuthProxy.provider({
+  url: "https://auth.example.com/oauth-proxy",
+  environment: "local",
+  secret: proxySecret,
+  issuer: "https://github.com/login/oauth",
+});
+```
+
+Pass `github` to `Http.layer` as `oauth.providers.github`. Use `OAuth.make()` for
+sign-in or `OAuth.makeRegistration(...)` for registration; the proxy does not
+support account linking or retained provider access.
+
+The [runnable GitHub example](https://github.com/yielded-dev/auth/tree/main/examples/auth#shared-github-callback-host)
+includes the callback server, localhost app, and HTTPS preview. See the
+[callback proxy reference](../reference/oauth#callback-proxy) for configuration
+and hosting requirements.
+
 ## Authorize MCP clients
 
 `OAuthServer` lets a signed-in user grant an MCP client access to your

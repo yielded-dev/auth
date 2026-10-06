@@ -16,6 +16,7 @@ import {
 } from "@yielded/auth/Hooks";
 import type { LoginIdentifier } from "@yielded/auth/Identity";
 import {
+  EncodedPasswordHash,
   PasswordUnavailable,
   PasswordPersistence,
   type PasswordMutationInput,
@@ -24,11 +25,7 @@ import {
   snapshotPasswordRequirement,
   snapshotPasswordRevision,
   type PasswordAction,
-  type PasswordAttemptDecision,
-  type PasswordCredentialSnapshot,
   type PasswordMutationDecision,
-  type PasswordAttemptPreparation,
-  type PasswordAttemptAdmission,
 } from "@yielded/auth/Password";
 import { reportPersistenceFailure } from "@yielded/auth/Persistence";
 import {
@@ -43,7 +40,16 @@ import {
   AuthenticationRequirement,
   type SecurityRevision,
 } from "@yielded/auth/Sessions";
-import { and, eq, inArray, lte, sql, type AnyRelations, type SQL, type Table } from "drizzle-orm";
+import {
+  and,
+  eq,
+  getTableColumns,
+  inArray,
+  sql,
+  type AnyRelations,
+  type SQL,
+  type Table,
+} from "drizzle-orm";
 import type { EffectSQLiteD1Database } from "drizzle-orm/effect-d1";
 import type { AnySQLiteTable } from "drizzle-orm/sqlite-core";
 import { Cause, DateTime, Effect, Option, Predicate, Redacted, Schema, Context } from "effect";
@@ -59,7 +65,6 @@ import { nativeDatabase } from "./native-database";
 import {
   type AnyPasswordRegistrationMapping,
   type D1PasswordPersistenceMapping,
-  type PasswordAttemptRecord,
   type PasswordRegistrationMapping,
   requiredPasswordConstraints,
   requiredPasswordRegistrationConstraints,
@@ -75,7 +80,7 @@ type PlanPrepare<Method extends (...args: any[]) => any, A> = (
 ) => PreparedCommit<A>;
 
 type Database = EffectSQLiteD1Database<AnyRelations> & { readonly $client: D1Client };
-type Mapping = D1PasswordPersistenceMapping<Table, Table, Table, Table, Table, Table, unknown>;
+type Mapping = D1PasswordPersistenceMapping<Table, Table, Table, Table, Table, unknown>;
 type RegistrationMapping<Registration> = AnyPasswordRegistrationMapping<Registration>;
 
 interface Planned<A> {
@@ -189,11 +194,6 @@ const readEngineNowMillis = Effect.fn("Drizzle.readEngineNowMillis")(function* (
     );
 });
 
-const driverValues = (values: object, entries: ReadonlyArray<readonly [string, unknown]>) => ({
-  ...values,
-  ...Object.fromEntries(entries),
-});
-
 const allocate = <A>(
   asyncValue: Effect.Effect<A, PersistenceMappingError> | undefined,
   syncValue: (() => A) | undefined,
@@ -249,27 +249,6 @@ const authorityColumns = (mapping: Mapping) => ({
       : column(mapping.authorityCredential.table, mapping.authorityCredential.status),
 });
 
-const attemptColumns = (mapping: Mapping) => ({
-  moduleId: column(mapping.attempt.table, mapping.attempt.moduleId),
-  action: column(mapping.attempt.table, mapping.attempt.action),
-  attemptId: column(mapping.attempt.table, mapping.attempt.attemptId),
-  identifierNamespace: column(mapping.attempt.table, mapping.attempt.identifierNamespace),
-  identifierValue: column(mapping.attempt.table, mapping.attempt.identifierValue),
-  subjectId: column(mapping.attempt.table, mapping.attempt.subjectId),
-  credentialId: column(mapping.attempt.table, mapping.attempt.credentialId),
-  securityRevision: column(mapping.attempt.table, mapping.attempt.securityRevision),
-  credentialRevision: column(mapping.attempt.table, mapping.attempt.credentialRevision),
-  verifierVersion: column(mapping.attempt.table, mapping.attempt.verifierVersion),
-  identifierBindingRevision: column(
-    mapping.attempt.table,
-    mapping.attempt.identifierBindingRevision,
-  ),
-  admittedAt: column(mapping.attempt.table, mapping.attempt.admittedAt),
-  deadline: column(mapping.attempt.table, mapping.attempt.deadline),
-  retentionUntil: column(mapping.attempt.table, mapping.attempt.retentionUntil),
-  state: column(mapping.attempt.table, mapping.attempt.state),
-});
-
 const commandColumns = (mapping: Mapping) => ({
   moduleId: column(mapping.command.table, mapping.command.moduleId),
   commandId: column(mapping.command.table, mapping.command.commandId),
@@ -322,14 +301,6 @@ const readCredentialNative = Effect.fn("Drizzle.readCredentialNative")(function*
     .where(and(eq(c.moduleId, moduleId), eq(c.subjectId, nativeSubjectId)))
     .limit(1);
 });
-
-interface Resolved {
-  readonly nativeSubjectId: unknown;
-  readonly subject: any;
-  readonly identifier: any;
-  readonly credential?: any;
-  readonly snapshot?: PasswordCredentialSnapshot;
-}
 
 const resolveCredential = Effect.fn("DrizzleD1Password.resolveCredential")(function* (
   mapping: Mapping,
@@ -741,34 +712,6 @@ const credentialCurrentCondition = (
     : sql`exists(select 1 from ${mapping.credential.table} where ${c.moduleId} = ${sql.param(input.moduleId, c.moduleId)} and ${c.subjectId} = ${sql.param(nativeSubjectId, c.subjectId)} and ${c.credentialId} = ${sql.param(input.credential.credentialId, c.credentialId)} and ${c.credentialRevision} = ${sql.param(input.credential.credentialRevision, c.credentialRevision)} and ${c.verifierVersion} = ${sql.param(input.credential.verifierVersion, c.verifierVersion)} and ${c.verifier} = ${sql.param(Redacted.value(input.credential.verifier), c.verifier)} and ${c.normalization} = ${sql.param(input.credential.normalization, c.normalization)})`;
 };
 
-const admittedSnapshotCondition = (
-  mapping: Mapping,
-  resolved: Resolved | undefined,
-  moduleId: string,
-) => {
-  const snapshot = resolved?.snapshot;
-
-  if (snapshot === undefined || resolved === undefined) return sql`true`;
-  const s = subjectColumns(mapping);
-  const i = identifierColumns(mapping);
-  const c = credentialColumns(mapping);
-  const ac = authorityColumns(mapping);
-
-  return and(
-    sql`exists(select 1 from ${mapping.subject.table} where ${s.id} = ${sql.param(resolved.nativeSubjectId, s.id)} and ${s.status} = ${sql.param(mapping.subject.d1ActiveStatusValue, s.status)} and ${s.securityRevision} = ${sql.param(snapshot.revision.securityRevision, s.securityRevision)})`,
-    mapping.identifier.d1CurrentCondition({
-      identifier: snapshot.identifier,
-      nativeSubjectId: resolved.nativeSubjectId,
-    }),
-    sql`exists(select 1 from ${mapping.identifier.table} where ${i.namespace} = ${sql.param(snapshot.identifier.namespace, i.namespace)} and ${i.value} = ${sql.param(snapshot.identifier.value, i.value)} and ${i.subjectId} = ${sql.param(resolved.nativeSubjectId, i.subjectId)} and ${i.bindingRevision} = ${sql.param(snapshot.identifierBindingRevision, i.bindingRevision)} and ${Predicate.isNullish(resolved.identifier[mapping.identifier.verifiedAt]) ? sql`${i.verifiedAt} is null` : sql`${i.verifiedAt} = ${sql.param(resolved.identifier[mapping.identifier.verifiedAt], i.verifiedAt)}`})`,
-    sql`exists(select 1 from ${mapping.credential.table} where ${c.moduleId} = ${sql.param(moduleId, c.moduleId)} and ${c.subjectId} = ${sql.param(resolved.nativeSubjectId, c.subjectId)} and ${c.credentialId} = ${sql.param(snapshot.credentialId, c.credentialId)} and ${c.credentialRevision} = ${sql.param(snapshot.credentialRevision, c.credentialRevision)} and ${c.verifierVersion} = ${sql.param(snapshot.verifierVersion, c.verifierVersion)} and ${c.verifier} = ${sql.param(Redacted.value(snapshot.verifier), c.verifier)} and ${c.normalization} = ${sql.param(snapshot.normalization, c.normalization)})`,
-    ...snapshot.revision.credentials.map(
-      (item) =>
-        sql`exists(select 1 from ${mapping.authorityCredential.table} where ${ac.subjectId} = ${sql.param(resolved.nativeSubjectId, ac.subjectId)} and ${ac.credentialId} = ${sql.param(item.credentialId, ac.credentialId)} and ${ac.revision} = ${sql.param(item.revision, ac.revision)}${ac.status === undefined ? sql`` : sql` and ${ac.status} = ${sql.param(mapping.authorityCredential.d1ActiveStatusValue, ac.status)}`})`,
-    ),
-  )!;
-};
-
 const mutationStatements = Effect.fn(function* (
   mapping: Mapping,
   input: PasswordMutationInput,
@@ -993,312 +936,121 @@ const makePasswordPlans = (
     });
 
   return {
-    prepareAttempt: (uncaptured: Parameters<PasswordPersistence["Service"]["prepareAttempt"]>[0]) =>
+    findCredential: (uncaptured: Parameters<PasswordPersistence["Service"]["findCredential"]>[0]) =>
       Effect.gen(function* () {
         if (!validConstraints(mapping)) return yield* unavailable();
+        const input = { ...uncaptured, identifier: { ...uncaptured.identifier } };
+        const database = yield* CurrentD1PlanningDatabase;
+        const identifierRow = (yield* readIdentifier(mapping, input.identifier))[0];
 
-        const input = Object.freeze({
-          ...uncaptured,
-          identifier: Object.freeze({ ...uncaptured.identifier }),
-        });
+        if (identifierRow === undefined || !mapping.identifier.isCurrent(identifierRow))
+          return Option.none();
+        const nativeId = identifierRow[mapping.identifier.subjectId];
 
-        const resolved = yield* resolveCredential(
-          mapping,
-          input.moduleId,
-          input.identifier,
-          input.subjectId,
-        );
+        const sc = subjectColumns(mapping),
+          ic = identifierColumns(mapping),
+          cc = credentialColumns(mapping);
 
-        const snapshot = resolved?.snapshot;
-        const attemptId = yield* allocate(mapping.allocateAttemptId, mapping.allocateAttemptIdSync);
-        let used = false;
+        // Bind the same native ID through each column's codec, then inspect one coherent snapshot.
+        const rows = yield* database
+          .select({
+            subject: getTableColumns(mapping.subject.table),
+            identifier: getTableColumns(mapping.identifier.table),
+            credential: getTableColumns(mapping.credential.table),
+          })
+          .from(mapping.subject.table)
+          .innerJoin(
+            mapping.identifier.table,
+            and(
+              eq(ic.namespace, input.identifier.namespace),
+              eq(ic.value, input.identifier.value),
+              eq(ic.subjectId, nativeId),
+            ),
+          )
+          .innerJoin(
+            mapping.credential.table,
+            and(eq(cc.moduleId, input.moduleId), eq(cc.subjectId, nativeId)),
+          )
+          .where(eq(sc.id, nativeId));
 
-        return Object.freeze({
-          ...(snapshot === undefined ? {} : { credential: snapshot }),
-          // Claim outside execution: a definite batch rollback may replan other
-          // operations, but a prepared admission never consumes its limits twice.
-          claim: Effect.suspend(() => {
-            if (used) return Effect.fail(unavailable());
-            used = true;
+        if (rows.length !== 1) return Option.none();
+        const row = rows[0]!;
 
-            return Effect.void;
-          }),
-          admit: <A>(prepare: PreparePasswordCommit<PasswordAttemptAdmission, A>) =>
-            run(
-              Effect.gen(function* () {
-                const database = yield* CurrentD1PlanningDatabase;
-                const journal = yield* CurrentCommitJournal;
-                const now = yield* readEngineNowMillis(mapping);
-                const marker = `effect-auth-password-guard:admit:${attemptId}`;
-                const a = attemptColumns(mapping);
-                const key = and(eq(a.moduleId, input.moduleId), eq(a.attemptId, attemptId))!;
-                const current = admittedSnapshotCondition(mapping, resolved, input.moduleId);
+        if (
+          !mapping.subject.isActiveStatus(row.subject[mapping.subject.status]) ||
+          !mapping.identifier.isCurrent(row.identifier) ||
+          !mapping.subjectId.equals(nativeId, row.subject[mapping.subject.id]) ||
+          !mapping.subjectId.equals(nativeId, row.identifier[mapping.identifier.subjectId]) ||
+          !mapping.subjectId.equals(nativeId, row.credential[mapping.credential.subjectId])
+        )
+          return Option.none();
 
-                const record: PasswordAttemptRecord = {
-                  moduleId: input.moduleId,
-                  action: input.action,
-                  attemptId,
-                  identifier: input.identifier,
-                  ...(snapshot === undefined
-                    ? {}
-                    : {
-                        subjectId: snapshot.revision.subjectId,
-                        credentialId: snapshot.credentialId,
-                        securityRevision: snapshot.revision.securityRevision,
-                        credentialRevision: snapshot.credentialRevision,
-                        verifierVersion: snapshot.verifierVersion,
-                        identifierBindingRevision: snapshot.identifierBindingRevision,
-                      }),
-                  admittedAtMillis: now,
-                  deadlineMillis: now + input.attemptLifetimeMillis,
-                  retentionUntilMillis: now + input.attemptLifetimeMillis,
-                };
+        const credential = yield* mapping.credential
+          .decode({ moduleId: input.moduleId, ...row })
+          .pipe(Effect.flatMap(snapshotPasswordCredential));
 
-                const receipt = prepare(
-                  {
-                    _tag: "Admitted",
-                    attemptId,
-                    ...(snapshot === undefined ? {} : { credential: snapshot }),
-                  },
-                  journal,
-                );
+        return input.subjectId !== undefined && credential.revision.subjectId !== input.subjectId
+          ? Option.none()
+          : Option.some(credential);
+      }),
+    rehashIfCurrent: (input: Parameters<PasswordPersistence["Service"]["rehashIfCurrent"]>[0]) =>
+      run(
+        Effect.gen(function* () {
+          const nextVerifier = Redacted.make(
+            yield* Schema.decodeEffect(EncodedPasswordHash)(Redacted.value(input.nextVerifier)),
+          );
 
-                const admitted = and(
-                  current,
-                  sql`exists(select 1 from ${mapping.attempt.table} where ${key} and ${a.state} = ${"pending"} and ${a.deadline} > ${mapping.d1.engineNow})`,
-                )!;
+          const credential = yield* snapshotPasswordCredential(input.credential);
+          const database = yield* CurrentD1PlanningDatabase;
+          const nativeId = yield* mapping.subjectId.toNative(credential.revision.subjectId);
+          const version = yield* allocate(mapping.allocateRevision, mapping.allocateRevisionSync);
 
-                const statements: Statement<any>[] = [
-                  yield* assertion(
+          if (version === credential.verifierVersion) return yield* unavailable();
+          const encoded = mapping.credential.encodeVerifier(nextVerifier, version);
+
+          const values = {
+            [mapping.credential.verifier]: encoded[mapping.credential.verifier],
+            [mapping.credential.verifierVersion]: encoded[mapping.credential.verifierVersion],
+          };
+
+          if (Object.values(values).some((value) => value === undefined))
+            return yield* unavailable();
+          const c = credentialColumns(mapping);
+
+          return {
+            receipt: undefined,
+            statements: [
+              yield* statement(
+                database
+                  .update(mapping.credential.table)
+                  .set(values)
+                  .where(
                     and(
-                      current,
-                      sql`not exists(select 1 from ${mapping.attempt.table} where ${key})`,
-                    )!,
-                    marker,
-                  ),
-                  yield* statement(
-                    database.insert(mapping.attempt.table).values(
-                      driverValues(
-                        mapping.attempt.encodeInsert(record, {
-                          ...(resolved?.nativeSubjectId === undefined
-                            ? {}
-                            : { nativeSubjectId: resolved.nativeSubjectId }),
-                          state: "pending",
-                        }),
+                      eq(c.moduleId, credential.moduleId),
+                      eq(c.subjectId, nativeId),
+                      eq(c.credentialId, credential.credentialId),
+                      ...(
                         [
-                          [mapping.attempt.admittedAt, mapping.d1.engineNow],
-                          [
-                            mapping.attempt.deadline,
-                            mapping.d1.engineInstantPlus(input.attemptLifetimeMillis),
-                          ],
-                          [
-                            mapping.attempt.retentionUntil,
-                            mapping.d1.engineInstantPlus(input.attemptLifetimeMillis),
-                          ],
-                        ],
+                          [c.moduleId, credential.moduleId],
+                          [c.subjectId, nativeId],
+                          [c.credentialId, credential.credentialId],
+                          [c.credentialRevision, credential.credentialRevision],
+                          [c.verifierVersion, credential.verifierVersion],
+                          [c.verifier, Redacted.value(credential.verifier)],
+                          [c.normalization, credential.normalization],
+                        ] as const
+                      ).map(([column, value]) =>
+                        typeof value === "string"
+                          ? sql`cast(${column} as blob) = cast(${sql.param(value, column)} as blob)`
+                          : eq(column, value),
                       ),
                     ),
                   ),
-                  yield* assertion(and(sql`changes() = 1`, admitted)!, marker),
-                ];
-
-                // A failed captured-snapshot guard cannot authorize refreshing the
-                // candidate after the strategy has consumed that subject's limit.
-                return {
-                  receipt,
-                  statements,
-                  postconditions: [yield* assertion(admitted, marker)],
-                };
-              }),
-            ),
-        });
-      }),
-    settleAttempt: <A>(
-      uncaptured: Parameters<PasswordPersistence["Service"]["settleAttempt"]>[0],
-      prepare: PlanPrepare<PasswordPersistence["Service"]["settleAttempt"], A>,
-    ) =>
-      Effect.gen(function* () {
-        const database = yield* CurrentD1PlanningDatabase;
-
-        const captured =
-          uncaptured.captured === undefined
-            ? undefined
-            : yield* snapshotPasswordCredential(uncaptured.captured);
-
-        const input = { ...uncaptured, ...(captured === undefined ? {} : { captured }) };
-
-        return yield* run(
-          Effect.gen(function* () {
-            const journal = yield* CurrentCommitJournal;
-
-            const a = attemptColumns(mapping);
-
-            const rows = yield* database
-              .select()
-              .from(mapping.attempt.table)
-              .where(and(eq(a.moduleId, input.moduleId), eq(a.attemptId, input.attemptId)))
-              .limit(1);
-
-            const row = rows[0];
-            const engineNow = yield* readEngineNowMillis(mapping);
-
-            const deadline =
-              row === undefined
-                ? undefined
-                : yield* mapping.decodeInstant(row[mapping.attempt.deadline]);
-
-            let resolved: Resolved | undefined;
-            let verified = false;
-
-            if (
-              row !== undefined &&
-              row[mapping.attempt.state] === "pending" &&
-              input.outcome === "verified" &&
-              input.captured !== undefined &&
-              deadline !== undefined &&
-              deadline > engineNow
-            ) {
-              resolved = yield* resolveCredential(
-                mapping,
-                input.moduleId,
-                input.captured.identifier,
-                input.captured.revision.subjectId,
-              );
-              verified =
-                input.captured.moduleId === input.moduleId &&
-                resolved?.snapshot !== undefined &&
-                sameSnapshot(resolved.snapshot, input.captured) &&
-                mapping.subjectId.equals(
-                  row[mapping.attempt.subjectId],
-                  resolved.nativeSubjectId,
-                ) &&
-                row[mapping.attempt.identifierNamespace] === input.captured.identifier.namespace &&
-                row[mapping.attempt.identifierValue] === input.captured.identifier.value &&
-                row[mapping.attempt.credentialId] === input.captured.credentialId &&
-                row[mapping.attempt.securityRevision] ===
-                  input.captured.revision.securityRevision &&
-                row[mapping.attempt.credentialRevision] === input.captured.credentialRevision &&
-                row[mapping.attempt.verifierVersion] === input.captured.verifierVersion &&
-                row[mapping.attempt.identifierBindingRevision] ===
-                  input.captured.identifierBindingRevision;
-            }
-            const decision: PasswordAttemptDecision = verified ? "verified" : "rejected";
-            const receipt = prepare(decision, journal);
-
-            if (row === undefined || row[mapping.attempt.state] !== "pending")
-              return { receipt, statements: [] };
-            const marker = `effect-auth-password-guard:settle:${input.attemptId}`;
-
-            const base = and(
-              eq(a.moduleId, input.moduleId),
-              eq(a.attemptId, input.attemptId),
-              eq(a.state, "pending"),
-            )!;
-
-            const attemptSnapshot =
-              verified && resolved?.snapshot !== undefined
-                ? and(
-                    eq(a.action, row[mapping.attempt.action]),
-                    eq(a.subjectId, resolved.nativeSubjectId),
-                    eq(a.identifierNamespace, input.captured!.identifier.namespace),
-                    eq(a.identifierValue, input.captured!.identifier.value),
-                    eq(a.credentialId, input.captured!.credentialId),
-                    eq(a.securityRevision, input.captured!.revision.securityRevision),
-                    eq(a.credentialRevision, input.captured!.credentialRevision),
-                    eq(a.verifierVersion, input.captured!.verifierVersion),
-                    eq(a.identifierBindingRevision, input.captured!.identifierBindingRevision),
-                    eq(a.deadline, row[mapping.attempt.deadline]),
-                  )!
-                : sql`true`;
-
-            const condition = verified
-              ? and(base, attemptSnapshot, sql`${a.deadline} > ${mapping.d1.engineNow}`)!
-              : base;
-
-            const statements: Statement<any>[] = [
-              yield* assertion(
-                sql`exists(select 1 from ${mapping.attempt.table} where ${condition})`,
-                marker,
               ),
-              yield* statement(
-                database
-                  .update(mapping.attempt.table)
-                  .set(updateValues([[mapping.attempt.state, decision]]))
-                  .where(condition),
-              ),
-            ];
-
-            let finalAuthority = sql`true`;
-
-            if (verified && resolved?.snapshot !== undefined) {
-              const captured = input.captured!;
-              const c = credentialColumns(mapping);
-
-              finalAuthority = admittedSnapshotCondition(mapping, resolved, input.moduleId);
-
-              statements.splice(1, 0, yield* assertion(finalAuthority, marker));
-              if (
-                input.rehash !== undefined &&
-                input.rehash.expectedVersion === captured.verifierVersion &&
-                Redacted.value(input.rehash.expectedVerifier) === Redacted.value(captured.verifier)
-              ) {
-                const nextVersion = yield* allocate(
-                  mapping.allocateRevision,
-                  mapping.allocateRevisionSync,
-                );
-
-                statements.push(
-                  yield* assertion(sql`changes() = 1`, marker),
-                  yield* statement(
-                    database
-                      .update(mapping.credential.table)
-                      .set(
-                        mapping.credential.encodeVerifier(input.rehash.nextVerifier, nextVersion),
-                      )
-                      .where(
-                        and(
-                          eq(c.moduleId, input.moduleId),
-                          eq(c.subjectId, resolved.nativeSubjectId),
-                          eq(c.credentialId, captured.credentialId),
-                          eq(c.credentialRevision, captured.credentialRevision),
-                          eq(c.verifierVersion, input.rehash.expectedVersion),
-                          eq(c.verifier, Redacted.value(input.rehash.expectedVerifier)),
-                        ),
-                      ),
-                  ),
-                );
-                finalAuthority = admittedSnapshotCondition(
-                  mapping,
-                  {
-                    ...resolved,
-                    snapshot: {
-                      ...resolved.snapshot,
-                      verifierVersion: nextVersion,
-                      verifier: input.rehash.nextVerifier,
-                    },
-                  },
-                  input.moduleId,
-                );
-              }
-            }
-
-            const settled = and(
-              finalAuthority,
-              sql`exists(select 1 from ${mapping.attempt.table} where ${a.moduleId} = ${sql.param(input.moduleId, a.moduleId)} and ${a.attemptId} = ${sql.param(input.attemptId, a.attemptId)} and ${a.state} = ${sql.param(decision, a.state)} and ${attemptSnapshot}${verified ? sql` and ${a.deadline} > ${mapping.d1.engineNow}` : sql``})`,
-            )!;
-
-            // Run after attempt/rehash triggers, before the batch can publish its journal.
-            statements.push(yield* assertion(and(sql`changes() = 1`, settled)!, marker));
-
-            return {
-              receipt,
-              statements,
-              postconditions: [yield* assertion(settled, marker)],
-              retryable: (cause: unknown) => isGuardFailure(cause, marker),
-            };
-          }),
-        );
-      }),
+            ],
+          };
+        }),
+      ),
     readForSubject: (input: Parameters<PasswordPersistence["Service"]["readForSubject"]>[0]) =>
       Effect.gen(function* () {
         const database = yield* CurrentD1PlanningDatabase;
@@ -1456,15 +1208,6 @@ const makePasswordPlans = (
               "reset-password",
             ),
           ),
-    cleanupAttempts: <A>(
-      input: Parameters<PasswordPersistence["Service"]["cleanupAttempts"]>[0],
-      prepare: PlanPrepare<PasswordPersistence["Service"]["cleanupAttempts"], A>,
-    ) =>
-      run(
-        Effect.gen(function* () {
-          return yield* cleanupPlan(mapping, input, prepare);
-        }),
-      ),
   };
 };
 
@@ -1623,68 +1366,15 @@ const replacementPlan = Effect.fn("Drizzle.replacementPlan")(function* <A>(
   };
 });
 
-const cleanupPlan = Effect.fn("Drizzle.cleanupPlan")(function* <A>(
-  mapping: Mapping,
-  input: { readonly moduleId: string; readonly limit: number },
-  prepare: PreparePasswordCommit<{ readonly removed: number; readonly hasMore: boolean }, A>,
-) {
-  const database = yield* CurrentD1PlanningDatabase;
-  const journal = yield* CurrentCommitJournal;
-
-  const now = yield* readEngineNowMillis(mapping);
-  const nativeNow = mapping.encodeInstant(now);
-  const a = attemptColumns(mapping);
-
-  const attempts = yield* database
-    .select({ attemptId: a.attemptId })
-    .from(mapping.attempt.table)
-    .where(and(eq(a.moduleId, input.moduleId), lte(a.retentionUntil, nativeNow)))
-    .limit(input.limit + 1);
-
-  const selectedAttempts = attempts.slice(0, input.limit);
-  const hasMore = attempts.length > selectedAttempts.length;
-  const marker = `effect-auth-password-guard:cleanup:${input.moduleId}:${now}`;
-  const statements: Statement<any>[] = [];
-
-  for (const row of selectedAttempts) {
-    const condition = and(
-      eq(a.moduleId, input.moduleId),
-      eq(a.attemptId, row.attemptId),
-      lte(a.retentionUntil, mapping.d1.engineNow),
-    )!;
-
-    statements.push(
-      yield* assertion(
-        sql`exists(select 1 from ${mapping.attempt.table} where ${condition})`,
-        marker,
-      ),
-      yield* statement(database.delete(mapping.attempt.table).where(condition)),
-    );
-  }
-
-  return {
-    receipt: prepare(
-      {
-        removed: selectedAttempts.length,
-        hasMore,
-      },
-      journal,
-    ),
-    statements,
-    retryable: (cause: unknown) => isGuardFailure(cause, marker),
-  };
-});
-
 export const makeD1PasswordPersistenceServices = Effect.fnUntraced(function* <
   S extends AnySQLiteTable,
   I extends AnySQLiteTable,
   C extends AnySQLiteTable,
   AC extends AnySQLiteTable,
-  A extends AnySQLiteTable,
   M extends AnySQLiteTable,
   NativeId,
 >(
-  mapping: D1PasswordPersistenceMapping<S, I, C, AC, A, M, NativeId>,
+  mapping: D1PasswordPersistenceMapping<S, I, C, AC, M, NativeId>,
   proofMapping?: D1ProofPersistenceMapping<
     any,
     any,
@@ -1726,21 +1416,13 @@ export const makeD1PasswordPersistenceServices = Effect.fnUntraced(function* <
     );
 
   const service: PasswordPersistence["Service"] = {
-    prepareAttempt: (input) =>
+    findCredential: (input) =>
       standalone.pipe(
-        Effect.andThen(plans.prepareAttempt(input)),
-        Effect.map((planned): PasswordAttemptPreparation =>
-          Object.freeze({
-            ...(planned.credential === undefined ? {} : { credential: planned.credential }),
-            admit: <A>(prepare: PreparePasswordCommit<PasswordAttemptAdmission, A>) =>
-              planned.claim.pipe(Effect.andThen(run(planned.admit(prepare))), translateFailure),
-          }),
-        ),
+        Effect.andThen(plans.findCredential(input)),
         Effect.provideService(CurrentD1PlanningDatabase, database),
         translateFailure,
       ),
-    settleAttempt: (input, prepare) =>
-      run(plans.settleAttempt(input, prepare)).pipe(translateFailure),
+    rehashIfCurrent: (input) => run(plans.rehashIfCurrent(input)).pipe(translateFailure),
     readForSubject: (input) =>
       plans
         .readForSubject(input)
@@ -1770,8 +1452,6 @@ export const makeD1PasswordPersistenceServices = Effect.fnUntraced(function* <
         ),
     resetWithProof: (input, prepare) =>
       run(plans.resetWithProof(input, prepare)).pipe(translateFailure),
-    cleanupAttempts: (input, prepare) =>
-      run(plans.cleanupAttempts(input, prepare)).pipe(translateFailure),
   };
 
   return { passwordPersistence: service };
@@ -1789,7 +1469,6 @@ export function coordinateD1PasswordPersistence<
   I extends AnySQLiteTable,
   C extends AnySQLiteTable,
   AC extends AnySQLiteTable,
-  At extends AnySQLiteTable,
   M extends AnySQLiteTable,
   NativeId,
   A,
@@ -1800,7 +1479,7 @@ export function coordinateD1PasswordPersistence<
 >(
   acquire: Effect.Effect<Database, DatabaseError, DatabaseRequirements>,
   options: {
-    readonly mapping: D1PasswordPersistenceMapping<S, I, C, AC, At, M, NativeId>;
+    readonly mapping: D1PasswordPersistenceMapping<S, I, C, AC, M, NativeId>;
     readonly proofMapping?:
       | D1ProofPersistenceMapping<any, any, any, any, any, any, any, any, any, any, any, any>
       | undefined;
@@ -1864,29 +1543,17 @@ export function coordinateD1PasswordPersistence<
               );
 
             const service: PasswordPersistence["Service"] = {
-              prepareAttempt: (input) =>
+              findCredential: (input) =>
                 owner.run(
-                  plans.prepareAttempt(input).pipe(
-                    Effect.map((planned): PasswordAttemptPreparation =>
-                      Object.freeze({
-                        ...(planned.credential === undefined
-                          ? {}
-                          : { credential: planned.credential }),
-                        admit: <A>(prepare: PreparePasswordCommit<PasswordAttemptAdmission, A>) =>
-                          owner.run(
-                            planned.claim.pipe(
-                              Effect.andThen(run(planned.admit(prepare))),
-                              translateFailure,
-                            ),
-                          ),
-                      }),
+                  plans
+                    .findCredential(input)
+                    .pipe(
+                      Effect.provideService(CurrentD1PlanningDatabase, database),
+                      translateFailure,
                     ),
-                    Effect.provideService(CurrentD1PlanningDatabase, database),
-                    translateFailure,
-                  ),
                 ),
-              settleAttempt: (input, prepare) =>
-                owner.run(run(plans.settleAttempt(input, prepare)).pipe(translateFailure)),
+              rehashIfCurrent: (input) =>
+                owner.run(run(plans.rehashIfCurrent(input)).pipe(translateFailure)),
               readForSubject: (input) =>
                 owner.run(
                   plans
@@ -1923,8 +1590,6 @@ export function coordinateD1PasswordPersistence<
                 ),
               resetWithProof: (input, prepare) =>
                 owner.run(run(plans.resetWithProof(input, prepare)).pipe(translateFailure)),
-              cleanupAttempts: (input, prepare) =>
-                owner.run(run(plans.cleanupAttempts(input, prepare)).pipe(translateFailure)),
             };
 
             const provided = Context.make(PasswordPersistence, service).pipe(

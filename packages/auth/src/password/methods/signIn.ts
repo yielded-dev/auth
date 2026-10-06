@@ -106,7 +106,12 @@ export const makePasswordSignIn = <
           });
 
           return yield* (yield* sessions.AuthenticationCompletion)
-            .prepare({ evidence: verified.evidence, claims })
+            .prepare({
+              evidence: verified.evidence,
+              requirement: verified.requirement,
+              fresh: true,
+              claims,
+            })
             .pipe(Effect.flatMap(readPasswordCommit), Effect.mapError(passwordCompletionFailure));
         }),
       );

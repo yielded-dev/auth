@@ -404,6 +404,90 @@ It returns `Effect<Response, OperationHttpError, R>`; cookie delivery remains ma
 Custom completion actions need `oauthCallback: true` and the single-use request-binding
 mapping. See the [registration example](https://github.com/yielded-dev/auth/blob/main/examples/auth/src/login-server.ts).
 
+## Callback proxy
+
+Use `OAuthProxy` for sign-in or registration from explicitly registered local and
+preview environments. The [setup guide](../guide/oauth#local-and-preview-environments)
+explains how the callback server fits into an app.
+Account linking, retained grants, and connected-account workflows are unsupported;
+omit `access` from the OAuth strategy.
+
+### Callback server
+
+`OAuthProxy.layer(options)` installs `OAuthProxy.Server`:
+
+| Option         | Value                                                                    |
+| -------------- | ------------------------------------------------------------------------ |
+| `origin`       | Public HTTPS origin, such as `https://auth.example.com`                  |
+| `path`         | Route prefix; defaults to `/oauth-proxy`                                 |
+| `providers`    | Native provider declarations, such as `{ github: GitHub.provider(...) }` |
+| `environments` | Registrations decoded with `OAuthProxy.Environment`                      |
+
+Each environment is `{ id, secret, callbacks: [{ provider, callbackId, redirectUri }] }`.
+Give it a distinct redacted secret containing 32 random bytes encoded as unpadded
+base64url. Completion URLs must match exactly, with no wildcard, query, or fragment.
+Only loopback completions may use HTTP; set `cookie: { secure: false }` in those apps.
+
+Mount `OAuthProxy.routes` and register `{origin}{path}/{provider}/callback` with the
+provider. Supply `OAuthProxy.protectorLayer(keys)` with a separate transaction keyring
+and `OAuthProxyPersistence.layer` from `@yielded/auth-persistence` with a SQLite/D1 or
+PostgreSQL Effect SQL client. Apply its `migration` once. Server replicas share storage
+and protector keys. See the [complete composition](https://github.com/yielded-dev/auth/blob/main/examples/auth/src/oauth-proxy-application.ts)
+for the Layers, including [HTTP and crypto services](#supply-the-services).
+
+For Drizzle, import `OAuthProxyPersistence` from your SQLite/D1 or PostgreSQL
+driver module:
+
+```ts
+import { OAuthProxyPersistence } from "@yielded/auth-persistence-drizzle/SqliteBun";
+
+export const proxyAttempts = OAuthProxyPersistence.table("oauth_proxy_attempts");
+export const ProxyStorage = OAuthProxyPersistence.layer(proxyAttempts);
+```
+
+Export the table to Drizzle Kit and apply the generated migration before providing
+`ProxyStorage` to the server. The Layer requires the driver's Effect SQL client.
+For an existing table, pass column-key overrides as the second argument to `layer`.
+Mapped columns use plain text and integer milliseconds; Drizzle value codecs and
+write hooks do not run for these columns.
+
+### App provider
+
+Pass these options to `OAuthProxy.provider` in each app:
+
+| Option        | Value                                                                        |
+| ------------- | ---------------------------------------------------------------------------- |
+| `url`         | Callback server's HTTPS base, such as `https://auth.example.com/oauth-proxy` |
+| `environment` | Registered environment ID                                                    |
+| `secret`      | That environment's redacted secret; keep it in server configuration          |
+| `issuer`      | Expected provider issuer, such as `https://github.com/login/oauth`           |
+
+The app keeps its normal [auth services](#supply-the-services). Supply an `HttpClient`
+without retries, redirects, or cookie middleware.
+
+### Hosting and recovery
+
+When TLS terminates upstream, the trusted reverse proxy must preserve the public
+`Host` and replace client-supplied `X-Forwarded-Proto` with `https`. `OAuthProxy.routes`
+uses these to check the public origin. Restrict access to the upstream listener
+to that proxy. Custom hosts calling
+`Server.handle` directly must supply the public HTTPS request URL themselves.
+
+Exclude authorization and callback query strings from logs and traces, including
+at reverse proxies. The app checks the initiating browser when sign-in completes;
+the callback server sets no browser cookie, and leaked state can consume an attempt.
+
+| Behavior                        | Limit or action                                                                               |
+| ------------------------------- | --------------------------------------------------------------------------------------------- |
+| Sign-in attempt                 | Expires after five minutes                                                                    |
+| Return to the app               | Single-use handoff; expires after sixty seconds or the attempt deadline, whichever is earlier |
+| Timeout or lost response        | Start a new sign-in; exchange and redemption are not retried                                  |
+| Removed environment or callback | Outstanding flows cannot complete with the new configuration                                  |
+| Storage cleanup                 | Delete expired attempts only; retain encryption keys while attempts reference them            |
+
+Persistence operations require standalone commits. Applications own cleanup and
+ingress rate limits.
+
 ## Providers
 
 | Integration             | Configure                                                                                                         |
