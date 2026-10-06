@@ -416,7 +416,7 @@ export const make = <
 
         // POST admission (or callback binding) already ran above. Share one
         // rotation with nested auth mutations, including payload-bearing queries.
-        const invalidateCache =
+        const rotateCache =
           security.native || cacheTransport === undefined
             ? Effect.void
             : yield* Effect.cached(
@@ -430,8 +430,12 @@ export const make = <
                       cacheTransport.lifetimeMillis,
                     )),
                   );
-                }).pipe(Effect.mapError(() => OperationHttpError.make({ reason: "unavailable" }))),
+                }),
               );
+
+        const invalidateCache = rotateCache.pipe(
+          Effect.mapError(() => OperationHttpError.make({ reason: "unavailable" })),
+        );
 
         if (route.operation.replay !== "read-only") yield* invalidateCache;
         const trusted = yield* invocation.resolve(request, security.credentials);
@@ -496,6 +500,7 @@ export const make = <
             ...(security.native || cacheTransport === undefined
               ? {}
               : {
+                  initializeSessionCache: rotateCache,
                   sessionCacheCommandSink: (command) =>
                     Effect.sync(() => {
                       commands.push(command);

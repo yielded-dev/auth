@@ -372,23 +372,28 @@ export const make = <
       const cacheTransport = security.native ? undefined : api[sessionCacheTransport];
       let mutationAdmitted = false;
 
+      const rotateCache = yield* Effect.cached(
+        Effect.gen(function* () {
+          if (cacheTransport === undefined) return;
+          const generation = yield* cacheTransport.rotate;
+
+          mutationCookies.push(
+            ...(yield* rotationCookies(
+              config.cookies["session-cache"],
+              generation,
+              cacheTransport.lifetimeMillis,
+            )),
+          );
+        }),
+      );
+
       const beforeMutation = yield* Effect.cached(
         mutationSecurity(request).pipe(
           Effect.provideService(OperationHttpServerConfig, config),
           Effect.mapError(() => HookDenied.make({ reason: "policy" })),
           Effect.andThen(
             Effect.gen(function* () {
-              if (cacheTransport !== undefined) {
-                const generation = yield* cacheTransport.rotate;
-
-                mutationCookies.push(
-                  ...(yield* rotationCookies(
-                    config.cookies["session-cache"],
-                    generation,
-                    cacheTransport.lifetimeMillis,
-                  )),
-                );
-              }
+              yield* rotateCache;
               mutationAdmitted = true;
             }).pipe(Effect.mapError(() => HookDenied.make({ reason: "unavailable" }))),
           ),
@@ -423,6 +428,7 @@ export const make = <
             ...(cacheTransport === undefined
               ? {}
               : {
+                  initializeSessionCache: rotateCache,
                   sessionCacheCommandSink: (command) =>
                     Effect.sync(() => {
                       commands.push(command);

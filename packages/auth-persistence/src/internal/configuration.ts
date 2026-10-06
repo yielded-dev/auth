@@ -241,6 +241,10 @@ export interface BoundPersistence<
    * Do not perform external side effects or open an independent transaction here.
    */
   readonly Provisioning: Context.Service<ProvisioningRequirement<A>, Provisioning<A>>;
+  /** Capture dependencies at acquisition; validate SQL metadata and configure storage
+   * once on the first service operation. Initialization failures become that port's
+   * unavailable error. Failure or interruption remains cached until layer reacquisition.
+   */
   readonly layer: Layer.Layer<
     Ports<C, Id, A>,
     PersistenceConfigurationError,

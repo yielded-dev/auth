@@ -85,13 +85,17 @@ Both cookies follow the configured auth cookie policy:
 | `session-cache`                        | Signed public snapshot bound to the credential and browser generation; expires within `cacheFor` and the session lifetime. |
 | `${sessionCacheCookieName}-generation` | HttpOnly mutation generation; lasts `maximumIssuedAge`.                                                                    |
 
-Browser caching requires a response command sink and a valid generation. Missing,
-malformed, or duplicate generations disable it until an admitted mutation. No
-cache cookies are sent when caching is off.
+Browser caching requires a response command sink and a valid incoming generation.
+After a successful authoritative read, a missing, malformed, or duplicate generation
+is replaced without issuing a snapshot. The next read populates the snapshot;
+subsequent reads can use it. Existing logins therefore start caching without signing
+in again. Anonymous reads do not initialize a binding; no cache cookies are sent when
+caching is off.
 
-Admitted mutations clear the snapshot and rotate the generation. Reads never
-rotate it, so delayed reads cannot restore a usable snapshot after a mutation
-response. Other clients, replayed cookie pairs, and lost responses retain the
+Admitted mutations clear the snapshot and rotate the generation. Reads preserve
+valid generations and never issue a snapshot alongside a new generation, so delayed
+reads cannot restore a usable snapshot after a mutation response.
+Other clients, replayed cookie pairs, and lost responses retain the
 fixed `cacheFor` exposure window. Credential changes also clear the snapshot.
 
 Snapshot values are capped at `min(maximumTokenBytes, 3072)` bytes; the complete
