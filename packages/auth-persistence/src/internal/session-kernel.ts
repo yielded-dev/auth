@@ -72,13 +72,14 @@ const decodeRevocationFlag = Schema.decodeUnknownEffect(Schema.Literals([0, 1]))
 
 /** Reads need no transaction of their own. A caller-owned transaction still
  * needs a savepoint so catching an SQL failure does not leave it aborted. */
-const withVerificationSavepoint = <A, E, R>(
-  client: SqlClient,
+const withVerificationSavepoint = Effect.fnUntraced(function* <A, E, R>(
   effect: Effect.Effect<A, E, R>,
-): Effect.Effect<A, E | SqlError.SqlError, R> =>
-  Effect.flatMap(Effect.serviceOption(client.transactionService), (transaction) =>
-    Option.isSome(transaction) ? client.withTransaction(effect) : effect,
-  );
+): Effect.fn.Return<A, E | SqlError.SqlError, R | NativeDatabase> {
+  const { $client } = yield* NativeDatabase;
+  const transaction = yield* Effect.serviceOption($client.transactionService);
+
+  return yield* Option.isSome(transaction) ? $client.withTransaction(effect) : effect;
+});
 
 type CommitMode = "interactive" | "synchronous";
 
@@ -1080,11 +1081,7 @@ export const makeSessionKernel = (
           subject.unencodedTextColumn?.(mapping.subject.id),
         ]);
 
-        const canJoinOwner = yield* canJoinTextColumns(
-          root.$client.withoutTransforms(),
-          sessionOwner,
-          subjectOwner,
-        );
+        const canJoinOwner = yield* canJoinTextColumns(sessionOwner, subjectOwner);
 
         return { session, subject, canJoinOwner };
       }),
@@ -1213,7 +1210,6 @@ export const makeSessionKernel = (
       verify: (input: Parameters<StatefulSessionPersistence<Claims>["verify"]>[0]) =>
         safeTransaction(
           withVerificationSavepoint(
-            root.$client,
             Effect.gen(function* () {
               const sql = root.$client.withoutTransforms();
               const { session, subject, canJoinOwner } = verification;
@@ -1537,7 +1533,12 @@ export const makeSessionKernel = (
               Effect.provideService(LifecycleHooks, hooks),
             ),
         verify: (input) =>
-          persistence.verify(input).pipe(Effect.provideService(LifecycleHooks, hooks)),
+          persistence
+            .verify(input)
+            .pipe(
+              Effect.provideService(NativeDatabase, root),
+              Effect.provideService(LifecycleHooks, hooks),
+            ),
         rotate: (input, prepare) =>
           persistence.rotate(input, prepare).pipe(Effect.provideService(LifecycleHooks, hooks)),
         revokeDigest: (digest, prepare) =>
@@ -1589,7 +1590,6 @@ export const makeSessionKernel = (
       verify: (session: SessionMetadata, _now: DateTime.Utc) =>
         safeTransaction(
           withVerificationSavepoint(
-            root.$client,
             Effect.gen(function* () {
               const sql = root.$client.withoutTransforms();
               const nativeSubjectId = yield* mapping.subjectId.toNative(session.subjectId);
@@ -1761,7 +1761,12 @@ export const makeSessionKernel = (
 
     return {
       verify: (session, now) =>
-        service.verify(session, now).pipe(Effect.provideService(LifecycleHooks, hooks)),
+        service
+          .verify(session, now)
+          .pipe(
+            Effect.provideService(NativeDatabase, root),
+            Effect.provideService(LifecycleHooks, hooks),
+          ),
       revoke: (input, prepare) =>
         service.revoke(input, prepare).pipe(Effect.provideService(LifecycleHooks, hooks)),
       revokeAll: (input, prepare) =>

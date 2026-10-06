@@ -3,6 +3,7 @@ import { SqlClient } from "effect/sql/SqlClient";
 
 import { PersistenceConfigurationError } from "./configuration";
 import type { StorageTable } from "./storage-tables";
+import { NativeDatabase } from "./transaction-kernel";
 
 const Columns = Schema.Array(Schema.String);
 const Keys = Schema.Array(Columns);
@@ -51,11 +52,12 @@ const TextColumns = Schema.Array(Schema.Struct({ type: Schema.String, collation:
  * equality compatibility. SQLite's pragma omits column collations, so only
  * ordinary TEXT tables with no COLLATE declaration qualify (default BINARY). */
 export const canJoinTextColumns = Effect.fnUntraced(function* (
-  client: SqlClient,
   left: PhysicalTextColumn | undefined,
   right: PhysicalTextColumn | undefined,
 ) {
   if (left === undefined || right === undefined) return false;
+  const { $client } = yield* NativeDatabase;
+  const client = $client.withoutTransforms();
   const columns = [left, right];
 
   if (
