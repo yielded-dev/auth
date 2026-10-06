@@ -156,8 +156,9 @@ export const OAuthDisplayProfile = Schema.Struct({
   profileUrl: Schema.optionalKey(displayUrl),
   email: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(320))),
   emailVerified: Schema.optionalKey(Schema.Boolean),
-  /** Provider-specific fields. Use the provider's exported profile Schema to
-   * decode them. Availability follows the existing provider permissions. */
+  /** Provider-specific fields. Declare profile schemas on the OAuth strategy for
+   * typed SessionClaims, or decode with the provider's exported profile Schema.
+   * Availability follows the existing provider permissions. */
   providerData: Schema.optionalKey(
     Schema.JsonObject.check(
       Schema.makeFilter(

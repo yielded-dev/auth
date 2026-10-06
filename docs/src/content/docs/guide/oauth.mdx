@@ -264,3 +264,8 @@ See [provider configuration](../reference/oauth#providers).
 The [combined login example](https://github.com/yielded-dev/auth/blob/main/examples/auth/src/login-server.ts)
 shares sessions across email, GitHub, and Google. Provider display metadata never
 authorizes linking accounts by matching email addresses.
+
+Declare a `profiles` schema map on the OAuth strategy to get typed `providerData`
+in `SessionClaims.resolve`. The map uses your provider keys and works with the
+GitHub, OIDC, Slack, and Strava schemas, or a custom provider's schema.
+See [provider profiles](../reference/oauth#provider-profiles) for mixed-provider narrowing.

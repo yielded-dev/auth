@@ -1,6 +1,6 @@
 import { Auth, Http, OAuth, Sessions, Slack } from "@yielded/auth";
 import { LifecycleHooks } from "@yielded/auth/Hooks";
-import { Effect, FileSystem, Layer, Schema } from "effect";
+import { Effect, FileSystem, Layer } from "effect";
 import { FetchHttpClient, HttpRouter, HttpServerResponse } from "effect/http";
 
 import { CryptoLive } from "../../shared/crypto";
@@ -21,7 +21,7 @@ export const makeSlackExample = (config: {
 }) => {
   const AppAuth = Auth.make(OAuthSignInApi, {
     sessions: Sessions.stateless({ keys: config.sessionKeys }),
-    strategies: { oauth: OAuth.make() },
+    strategies: { oauth: OAuth.make({ profiles: { slack: Slack.SlackUserProfile } }) },
     defaultStrategy: "oauth",
   });
 
@@ -51,11 +51,7 @@ export const makeSlackExample = (config: {
     }),
     Layer.succeed(AppAuth.strategies.oauth.SessionClaims, {
       resolve: Effect.fnUntraced(function* ({ identity }) {
-        const profile = yield* Schema.decodeUnknownEffect(Slack.SlackUserProfile)(
-          identity.profile?.providerData,
-        ).pipe(Effect.mapError(() => OAuth.OAuthUnavailable.make({})));
-
-        if (profile["https://slack.com/team_id"] !== config.teamId)
+        if (identity.profile?.providerData?.["https://slack.com/team_id"] !== config.teamId)
           return yield* OAuth.OAuthUnavailable.make({});
 
         return { role: "owner" as const };

@@ -56,8 +56,17 @@ Keep `sub` unchanged; neither the email address nor workspace name identifies a
 local account. Never link accounts merely because profile emails match, even when
 `email_verified` is true.
 
-`Slack.SlackUserProfile` decodes `identity.profile.providerData` in
-`SessionClaims.resolve`. It contains standard OIDC profile fields and the optional
+Declare `profiles` on the strategy to get typed `providerData` in
+`SessionClaims.resolve`:
+
+```ts
+const social = OAuth.make({ profiles: { slack: Slack.SlackUserProfile } });
+```
+
+The library validates the schema before calling your resolver, which can read
+`identity.profile?.providerData?.["https://slack.com/team_id"]` as
+`string | undefined` without decoding it again. The schema contains standard OIDC
+profile fields and the optional
 `https://slack.com/team_id` and `https://slack.com/user_id` claims from the verified
 ID token. Fields absent from that token stay absent; no UserInfo request is made.
 
