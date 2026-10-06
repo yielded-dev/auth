@@ -406,69 +406,69 @@ mapping. See the [registration example](https://github.com/yielded-dev/auth/blob
 
 Use `OAuthProxy` for sign-in or registration from explicitly registered local and
 preview environments. The [setup guide](../guide/oauth#local-and-preview-environments)
-composes the stable callback server and an environment's normal auth routes.
+explains how the callback server fits into an app.
 Account linking, retained grants, and connected-account workflows are unsupported;
 omit `access` from the OAuth strategy.
 
-| API                               | Configuration and ownership                                                                                                                                                                                    |
-| --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `OAuthProxy.layer(options)`       | Installs `Server`; requires HTTPS `origin`, native `providers`, and `environments`. `path` defaults to `/oauth-proxy`.                                                                                         |
-| `OAuthProxy.Environment`          | Schema for `{ id, secret, callbacks: [{ provider, callbackId, redirectUri }] }`. Each environment has its own redacted secret: 32 random bytes in unpadded base64url.                                          |
-| `OAuthProxy.provider(options)`    | Server-side provider for the local/preview app: `{ url, environment, secret, issuer }`. `url` is the exact HTTPS hub base; `issuer` is the expected upstream issuer, such as `https://github.com/login/oauth`. |
-| `OAuthProxy.routes`               | Mounts the hub routes using `Server`; `Server.handle(request)` is available for custom HTTP hosting.                                                                                                           |
-| `OAuthProxy.protectorLayer(keys)` | Supplies `Protector` using a hub-only transaction keyring, Effect `Crypto`, and `Aead`.                                                                                                                        |
-| `OAuthProxyPersistence.layer`     | Root export of `@yielded/auth-persistence`; supplies `Persistence` using an application-provided SQLite/D1 or PostgreSQL Effect SQL client.                                                                    |
+### Callback server
 
-Provider declarations retain their normal crypto and HTTP dependencies. Both hub
-providers and the environment's proxy provider belong to the application's Scope.
-Supply a nonretrying, nonredirecting `HttpClient` without cookie middleware.
-Keep environment secrets out of browser bundles, URLs, and telemetry.
+`OAuthProxy.layer(options)` installs `OAuthProxy.Server`:
 
-Register provider callback `https://auth.example.com/oauth-proxy/github/callback`
-with GitHub. Register each completion on the hub, for example
-`http://localhost:3000/auth/github/callback` and
-`https://pr-123.preview.example.com/auth/github/callback`. Completion URLs match
-exactly, including the port and path; no wildcard, query, or fragment is accepted.
-HTTP is allowed only for loopback completions. The local HTTP app must explicitly
-set `cookie: { secure: false }`; HTTPS previews keep Secure cookies.
+| Option         | Value                                                                    |
+| -------------- | ------------------------------------------------------------------------ |
+| `origin`       | Public HTTPS origin, such as `https://auth.example.com`                  |
+| `path`         | Route prefix; defaults to `/oauth-proxy`                                 |
+| `providers`    | Native provider declarations, such as `{ github: GitHub.provider(...) }` |
+| `environments` | Registrations decoded with `OAuthProxy.Environment`                      |
+
+Each environment is `{ id, secret, callbacks: [{ provider, callbackId, redirectUri }] }`.
+Give it a distinct redacted secret containing 32 random bytes encoded as unpadded
+base64url. Completion URLs must match exactly, with no wildcard, query, or fragment.
+Only loopback completions may use HTTP; set `cookie: { secure: false }` in those apps.
+
+Mount `OAuthProxy.routes` and register `{origin}{path}/{provider}/callback` with the
+provider. Supply `OAuthProxy.protectorLayer(keys)` with a separate transaction keyring
+and `OAuthProxyPersistence.layer` from `@yielded/auth-persistence` with a SQLite/D1 or
+PostgreSQL Effect SQL client. Apply its `migration` once. Server replicas share storage
+and protector keys. See the [complete composition](https://github.com/yielded-dev/auth/blob/main/examples/auth/src/oauth-proxy-application.ts)
+for the Layers, including [HTTP and crypto services](#supply-the-services).
+
+### App provider
+
+Pass these options to `OAuthProxy.provider` in each app:
+
+| Option        | Value                                                                        |
+| ------------- | ---------------------------------------------------------------------------- |
+| `url`         | Callback server's HTTPS base, such as `https://auth.example.com/oauth-proxy` |
+| `environment` | Registered environment ID                                                    |
+| `secret`      | That environment's redacted secret; keep it in server configuration          |
+| `issuer`      | Expected provider issuer, such as `https://github.com/login/oauth`           |
+
+The app keeps its normal [auth services](#supply-the-services). Supply an `HttpClient`
+without retries, redirects, or cookie middleware.
+
+### Hosting and recovery
 
 When TLS terminates upstream, the trusted reverse proxy must preserve the public
 `Host` and replace client-supplied `X-Forwarded-Proto` with `https`. `OAuthProxy.routes`
-reconstructs that public URL before checking the configured origin, including on
-Bun. Restrict access to the upstream listener to that proxy. Custom hosts calling
+uses these to check the public origin. Restrict access to the upstream listener
+to that proxy. Custom hosts calling
 `Server.handle` directly must supply the public HTTPS request URL themselves.
 
-| Default route                          | Behavior                                                                                                                         |
-| -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| `POST /oauth-proxy/prepare`            | Authenticates the environment and captures its registered completion and private verifier digest.                                |
-| `GET /oauth-proxy/{provider}/callback` | Validates the captured provider response, exchanges the code once, and redirects with an opaque handoff code, state, and issuer. |
-| `POST /oauth-proxy/redeem`             | Authenticates the environment, verifies the exact flow and handoff, and consumes it before returning verified identity.          |
+Exclude authorization and callback query strings from logs and traces, including
+at reverse proxies. The app checks the initiating browser when sign-in completes;
+the callback server sets no browser cookie, and leaked state can consume an attempt.
 
-The hub preserves upstream PKCE, state, OIDC nonce verification, identity issuer,
-and authentication time. Each environment retains its own browser binder, flow,
-account resolution, registration policy, and session authority. The hub is the
-trusted authority for provider verification; environment credentials authorize
-only initiation and redemption for their configured environment, not registration of destinations or
-identity signing. No shared signing keys or provider tokens are distributed to
-environments. The local binder is checked before redemption, alongside a separate
-private handoff verifier. The hub does not establish that its callback arrived in
-the initiating browser. Suppress authorization/callback query strings in logs and
-traces, including at reverse proxies; leaked state can burn an attempt. Responses
-set `Cache-Control: no-store` and `Referrer-Policy: no-referrer`.
+| Behavior                        | Limit or action                                                                               |
+| ------------------------------- | --------------------------------------------------------------------------------------------- |
+| Sign-in attempt                 | Expires after five minutes                                                                    |
+| Return to the app               | Single-use handoff; expires after sixty seconds or the attempt deadline, whichever is earlier |
+| Timeout or lost response        | Start a new sign-in; exchange and redemption are not retried                                  |
+| Removed environment or callback | Outstanding flows cannot complete with the new configuration                                  |
+| Storage cleanup                 | Delete expired attempts only; retain encryption keys while attempts reference them            |
 
-Attempts expire after five minutes. Handoffs expire after sixty seconds or at the
-attempt deadline, whichever comes first. Consumption precedes identity delivery;
-timeouts, lost responses, and unknown commit outcomes require a new sign-in.
-Neither provider exchange nor handoff redemption is retried.
-
-Apply `OAuthProxyPersistence.migration` once through application migrations. All
-hub replicas must share durable storage and protector keys. Custom `Persistence`
-services require standalone, linearizable inserts and conditional transitions,
-immutable flow context, and authority-time checks of both attempt and handoff
-expiry. Retain consumed and interrupted-attempt records until their original
-attempt expiry; expired rows may then be deleted. Applications own cleanup and
-ingress rate limits. Removing an environment or callback registration prevents
-completion of its outstanding flows on servers using that configuration.
+Persistence operations require standalone commits. Applications own cleanup and
+ingress rate limits.
 
 ## Providers
 
