@@ -311,3 +311,85 @@ export {
 } from "./internal/native-sql-table";
 
 export { samePasswordCredentialSnapshot } from "./internal/password-credentials";
+
+export { makeOAuthKernel, type OAuthKernel } from "./internal/oauth-kernel";
+
+export type {
+  OAuthTargetConfiguration,
+  OAuthCoordinatorError,
+  OAuthExecution,
+} from "./internal/oauth/target";
+
+export { storageKeyPlans } from "./internal/storage-plans";
+
+export {
+  type OAuthFlowState,
+  type OAuthTupleState,
+  type OAuthRegistrationState,
+  type OAuthAction,
+  type OAuthClock,
+  type OAuthSubjectReadTable,
+  type OAuthSubjectTable,
+  type OAuthOwnershipReadTable,
+  type OAuthOwnershipTable,
+  type OAuthCredentialReadTable,
+  type OAuthCredentialTable,
+  type OAuthAuthorityReadTable,
+  type OAuthAuthorityTable,
+  type OAuthFlowTable,
+  type OAuthTupleAuthorityTable,
+  type OAuthRegistrationIntentTable,
+  type OAuthRegistrationCommandTable,
+  type OAuthUnlinkCommandTable,
+  type OAuthEligibilityFact,
+  type OAuthEligibilityTable,
+  type OAuthMetadataPolicy,
+  type OAuthCleanupTable,
+  type OAuthRegistrationEligibility,
+  type OAuthD1Mapping,
+  requiredOAuthSignInConstraints,
+  requiredOAuthTupleConstraints,
+  requiredOAuthRegistrationConstraints,
+  requiredOAuthAccountsConstraints,
+  type OAuthSignInMapping,
+  type OAuthOwnershipMutation,
+  type OAuthRegistrationIntentMapping,
+  type OAuthRegistrationBase,
+  type OAuthRegistrationGuardTable,
+  type OAuthRegistrationGuardDescriptor,
+  oauthRegistrationGuardTable,
+  type OAuthRegistrationMapping,
+  type OAuthEligibilityDescriptor,
+  oauthEligibilityTable,
+  type OAuthCleanupDescriptor,
+  oauthCleanupTable,
+  type OAuthReferenceGuardTable,
+  type OAuthReferenceGuardDescriptor,
+  oauthReferenceGuardTable,
+  type OAuthAccountsMapping,
+  type OAuthRegistrationAuthority,
+} from "./internal/models/oauth-model";
+
+export {
+  type OAuthConnectedAction,
+  type OAuthConnectedSubjectTable,
+  type OAuthConnectedOrderCodec,
+  type OAuthConnectedFlowTable,
+  type OAuthConnectedGrantTable,
+  type OAuthConnectedClientRegistrationTable,
+  type OAuthConnectedCohortTable,
+  type OAuthConnectedAdmissionTable,
+  type OAuthConnectedCommandTable,
+  type OAuthConnectedRevocationJobTable,
+  type OAuthConnectedPolicyInput,
+  type OAuthConnectedPolicyGuardTable,
+  type OAuthConnectedPolicyGuard,
+  oauthConnectedPolicyGuard,
+  type OAuthConnectedSqlPolicy,
+  requiredOAuthConnectedConstraints,
+  requiredOAuthConnectedRevocationConstraints,
+  type OAuthConnectedOwnershipRead,
+  type OAuthConnectedAuthorityMapping,
+  type OAuthConnectedMapping,
+  type OAuthConnectedRevocationMapping,
+} from "./internal/models/oauth-connected-model";

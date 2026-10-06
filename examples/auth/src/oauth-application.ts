@@ -1,3 +1,4 @@
+import * as LibsqlClient from "@effect/sql-libsql/LibsqlClient";
 import { Auth, Http, Sessions } from "@yielded/auth";
 import { LifecycleHooks } from "@yielded/auth/Hooks";
 import {
@@ -11,8 +12,8 @@ import { Effect, FileSystem, Layer } from "effect";
 import { FetchHttpClient, HttpRouter, HttpServerResponse } from "effect/http";
 
 import { CryptoLive } from "../../shared/crypto";
+import { makeStorage } from "../../shared/oauth/storage";
 import { OAuthApi } from "./oauth-contract";
-import { makeStorage } from "./oauth-storage";
 
 /** Composition shared only by these runnable, single-owner consumer examples. */
 export const makeExample = <E, R>(config: {
@@ -52,8 +53,9 @@ export const makeExample = <E, R>(config: {
     issuer: config.issuer,
     externalSubject: config.externalSubject,
     subjectId: config.subjectId,
-    filename: config.filename,
-  });
+  }).pipe(
+    Layer.provideMerge(LibsqlClient.layer({ url: `file:${config.filename}`, intMode: "number" })),
+  );
 
   const dependencies = Layer.mergeAll(
     storage,

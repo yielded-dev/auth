@@ -46,7 +46,7 @@ const combine = (separator: string, values: ReadonlyArray<Fragment | undefined>)
       );
 };
 
-const and = (...values: ReadonlyArray<Fragment | undefined>) => combine(" AND ", values);
+export const and = (...values: ReadonlyArray<Fragment | undefined>) => combine(" AND ", values);
 const or = (...values: ReadonlyArray<Fragment | undefined>) => combine(" OR ", values);
 
 const operations = {
@@ -54,9 +54,11 @@ const operations = {
   or,
   asc: (value: unknown) => template`${value} ASC`,
   eq: (left: unknown, right: unknown) => template`${left} = ${right}`,
+  ne: (left: unknown, right: unknown) => template`${left} <> ${right}`,
   gt: (left: unknown, right: unknown) => template`${left} > ${right}`,
   gte: (left: unknown, right: unknown) => template`${left} >= ${right}`,
   lte: (left: unknown, right: unknown) => template`${left} <= ${right}`,
+  isNotNull: (value: unknown) => template`${value} IS NOT NULL`,
   isNull: (value: unknown) => template`${value} IS NULL`,
   notExists: (value: unknown) => template`NOT EXISTS (${value})`,
   inArray: (column: unknown, values: ReadonlyArray<unknown>) =>
@@ -299,3 +301,5 @@ export interface SqlDatabase {
 }
 
 export const sql = template;
+
+export const { eq } = operations;

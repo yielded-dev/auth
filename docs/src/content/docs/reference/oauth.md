@@ -216,7 +216,7 @@ The Drizzle connected mapping must include `signIn: { credential, flow }` pointi
 to the same tables as sign-in persistence, plus `flow.encodeSignIn`. Connected-flow
 `subjectId` must allow NULL while identity is unknown. Keep every required unique
 constraint and use the database engine's wall clock. See the
-[example storage](https://github.com/yielded-dev/auth/blob/main/examples/auth/src/oauth-storage.ts).
+[example storage](https://github.com/yielded-dev/auth/blob/main/examples/shared/oauth/storage.ts).
 
 The bound strategy exposes `access.ConnectedAccess`, `access.accessLayer`, and
 `access.maintenanceLayer`. Install the maintenance service and run its bounded

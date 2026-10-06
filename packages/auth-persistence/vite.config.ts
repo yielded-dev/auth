@@ -3,7 +3,7 @@ import { defineConfig } from "vite-plus";
 export default defineConfig({
   pack: {
     tsconfig: "tsconfig.build.json",
-    entry: ["src/index.ts", "src/Adapter.ts"],
+    entry: ["src/index.ts", "src/Adapter.ts", "src/OAuthPersistence.ts"],
     dts: true,
     unbundle: true,
     sourcemap: true,

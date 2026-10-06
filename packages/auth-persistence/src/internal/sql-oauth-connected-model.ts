@@ -1,7 +1,6 @@
-import * as Shared from "@yielded/auth-persistence/Adapter";
-import type { SQL, Table } from "drizzle-orm";
-
-import type { DrizzleTableModel } from "./table-model";
+import * as Shared from "./models/oauth-connected-model";
+import type { SqlTableModel } from "./sql-oauth-model";
+import type { Fragment as SQL, Table } from "./sql-table";
 
 export {
   type OAuthConnectedAction,
@@ -9,20 +8,20 @@ export {
   type OAuthConnectedPolicyInput,
   requiredOAuthConnectedConstraints,
   requiredOAuthConnectedRevocationConstraints,
-} from "@yielded/auth-persistence/Adapter";
+} from "./models/oauth-connected-model";
 
 export type OAuthConnectedSubjectTable<S extends Table> = Shared.OAuthConnectedSubjectTable<
-  DrizzleTableModel<S>,
+  SqlTableModel<S>,
   SQL
 >;
 
 export type OAuthConnectedFlowTable<F extends Table, N> = Shared.OAuthConnectedFlowTable<
-  DrizzleTableModel<F>,
+  SqlTableModel<F>,
   N
 >;
 
 export type OAuthConnectedGrantTable<G extends Table, N> = Shared.OAuthConnectedGrantTable<
-  DrizzleTableModel<G>,
+  SqlTableModel<G>,
   N
 >;
 
@@ -30,40 +29,40 @@ export type OAuthConnectedGrantTable<G extends Table, N> = Shared.OAuthConnected
  * ASCII characters. Empty clientRegistrationId is reserved for that anchor;
  * actual profile registrations are nonempty. Scope counter stays zero. */
 export type OAuthConnectedClientRegistrationTable<C extends Table> =
-  Shared.OAuthConnectedClientRegistrationTable<DrizzleTableModel<C>>;
+  Shared.OAuthConnectedClientRegistrationTable<SqlTableModel<C>>;
 
 /** Remote authority: no local-subject column or subject-scoped key. Retain this
  * anchor/cutoff when a legitimately released tuple gains a different local owner. */
 export type OAuthConnectedCohortTable<C extends Table> = Shared.OAuthConnectedCohortTable<
-  DrizzleTableModel<C>
+  SqlTableModel<C>
 >;
 
 export type OAuthConnectedAdmissionTable<A extends Table, N> = Shared.OAuthConnectedAdmissionTable<
-  DrizzleTableModel<A>,
+  SqlTableModel<A>,
   N
 >;
 
 export type OAuthConnectedCommandTable<C extends Table, N> = Shared.OAuthConnectedCommandTable<
-  DrizzleTableModel<C>,
+  SqlTableModel<C>,
   N
 >;
 
 export type OAuthConnectedRevocationJobTable<
   J extends Table,
   N,
-> = Shared.OAuthConnectedRevocationJobTable<DrizzleTableModel<J>, N>;
+> = Shared.OAuthConnectedRevocationJobTable<SqlTableModel<J>, N>;
 
 export type OAuthConnectedPolicyGuardTable<
   T extends Table,
   N,
-> = Shared.OAuthConnectedPolicyGuardTable<DrizzleTableModel<T>, N, SQL>;
+> = Shared.OAuthConnectedPolicyGuardTable<SqlTableModel<T>, N, SQL>;
 
 export type OAuthConnectedPolicyGuard<N> = Shared.OAuthConnectedPolicyGuard<N, SQL, Table>;
 
 export const oauthConnectedPolicyGuard = <T extends Table, N>(
   input: OAuthConnectedPolicyGuardTable<T, N>,
 ): OAuthConnectedPolicyGuard<N> =>
-  Shared.oauthConnectedPolicyGuard<DrizzleTableModel<T>, N, SQL>(input);
+  Shared.oauthConnectedPolicyGuard<SqlTableModel<T>, N, SQL>(input);
 
 export type OAuthConnectedSqlPolicy<N> = Shared.OAuthConnectedSqlPolicy<N, SQL, Table>;
 
@@ -72,7 +71,7 @@ export type OAuthConnectedOwnershipRead<
   T extends Table,
   O extends Table,
   N,
-> = Shared.OAuthConnectedOwnershipRead<DrizzleTableModel<T>, DrizzleTableModel<O>, N, SQL>;
+> = Shared.OAuthConnectedOwnershipRead<SqlTableModel<T>, SqlTableModel<O>, N, SQL>;
 
 export type OAuthConnectedAuthorityMapping<
   T extends Table,
@@ -83,12 +82,12 @@ export type OAuthConnectedAuthorityMapping<
   H extends Table,
   N,
 > = Shared.OAuthConnectedAuthorityMapping<
-  DrizzleTableModel<T>,
-  DrizzleTableModel<O>,
-  DrizzleTableModel<F>,
-  DrizzleTableModel<G>,
-  DrizzleTableModel<C>,
-  DrizzleTableModel<H>,
+  SqlTableModel<T>,
+  SqlTableModel<O>,
+  SqlTableModel<F>,
+  SqlTableModel<G>,
+  SqlTableModel<C>,
+  SqlTableModel<H>,
   N,
   SQL
 >;
@@ -107,21 +106,21 @@ export type OAuthConnectedMapping<
   N,
   J extends Table = never,
 > = Shared.OAuthConnectedMapping<
-  DrizzleTableModel<S>,
-  DrizzleTableModel<AC>,
-  DrizzleTableModel<T>,
-  DrizzleTableModel<O>,
-  DrizzleTableModel<F>,
-  DrizzleTableModel<G>,
-  DrizzleTableModel<C>,
-  DrizzleTableModel<H>,
-  DrizzleTableModel<A>,
-  DrizzleTableModel<D>,
+  SqlTableModel<S>,
+  SqlTableModel<AC>,
+  SqlTableModel<T>,
+  SqlTableModel<O>,
+  SqlTableModel<F>,
+  SqlTableModel<G>,
+  SqlTableModel<C>,
+  SqlTableModel<H>,
+  SqlTableModel<A>,
+  SqlTableModel<D>,
   N,
-  DrizzleTableModel<J>,
+  SqlTableModel<J>,
   SQL,
   Table,
-  DrizzleTableModel<Table>
+  SqlTableModel<Table>
 >;
 
 export type OAuthConnectedRevocationMapping<
@@ -134,13 +133,13 @@ export type OAuthConnectedRevocationMapping<
   J extends Table,
   N,
 > = Shared.OAuthConnectedRevocationMapping<
-  DrizzleTableModel<T>,
-  DrizzleTableModel<O>,
-  DrizzleTableModel<F>,
-  DrizzleTableModel<G>,
-  DrizzleTableModel<C>,
-  DrizzleTableModel<H>,
-  DrizzleTableModel<J>,
+  SqlTableModel<T>,
+  SqlTableModel<O>,
+  SqlTableModel<F>,
+  SqlTableModel<G>,
+  SqlTableModel<C>,
+  SqlTableModel<H>,
+  SqlTableModel<J>,
   N,
   SQL
 >;

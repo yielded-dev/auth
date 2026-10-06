@@ -60,10 +60,12 @@ export interface QueryOperations<
   readonly balancedD1And: Predicate<Fragment>;
   readonly asc: (value: unknown) => Fragment;
   readonly eq: Comparison<Fragment>;
+  readonly ne: Comparison<Fragment>;
   readonly gt: Comparison<Fragment>;
   readonly gte: Comparison<Fragment>;
   readonly lte: Comparison<Fragment>;
   readonly inArray: (value: unknown, values: ReadonlyArray<unknown>) => Fragment;
+  readonly isNotNull: (value: unknown) => Fragment;
   readonly isNull: (value: unknown) => Fragment;
   readonly notExists: (value: SqlExpression) => Fragment;
   readonly sql: {

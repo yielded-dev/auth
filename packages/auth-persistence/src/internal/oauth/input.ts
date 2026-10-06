@@ -25,7 +25,7 @@ import { SessionInvalidationWindow } from "@yielded/auth/Sessions";
 /* oxlint-disable no-explicit-any -- private adapter wraps only the Effect-valued semantic ports. */
 import { Effect, Schema } from "effect";
 
-import { invariant, unavailable } from "./oauth-state";
+import { invariant, unavailable } from "./state";
 
 const fields = OAuthSignInTransactionContext.fields;
 

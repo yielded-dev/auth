@@ -1,7 +1,10 @@
-import * as Shared from "@yielded/auth-persistence/Adapter";
-import type { SQL, Table } from "drizzle-orm";
+import * as Shared from "./models/oauth-model";
+import type { TableModel } from "./query-operations";
+import type { Fragment as SQL, Table } from "./sql-table";
 
-import type { DrizzleTableModel } from "./table-model";
+export interface SqlTableModel<T extends Table = Table> extends TableModel {
+  readonly table: T;
+}
 
 export {
   type OAuthFlowState,
@@ -15,52 +18,49 @@ export {
   requiredOAuthRegistrationConstraints,
   requiredOAuthAccountsConstraints,
   type OAuthRegistrationAuthority,
-} from "@yielded/auth-persistence/Adapter";
+} from "./models/oauth-model";
 
 /** The engine writes every critical column explicitly after applying the pure
  * consumer encoder. Native instant values must roundtrip without precision loss. */
 export type OAuthClock = Shared.OAuthClock<SQL>;
 
 export type OAuthSubjectReadTable<S extends Table> = Shared.OAuthSubjectReadTable<
-  DrizzleTableModel<S>,
+  SqlTableModel<S>,
   SQL
 >;
 
-export type OAuthSubjectTable<S extends Table> = Shared.OAuthSubjectTable<
-  DrizzleTableModel<S>,
-  SQL
->;
+export type OAuthSubjectTable<S extends Table> = Shared.OAuthSubjectTable<SqlTableModel<S>, SQL>;
 
 export type OAuthOwnershipReadTable<O extends Table, N> = Shared.OAuthOwnershipReadTable<
-  DrizzleTableModel<O>,
+  SqlTableModel<O>,
   N,
   SQL
 >;
 
 export type OAuthOwnershipTable<O extends Table, N> = Shared.OAuthOwnershipTable<
-  DrizzleTableModel<O>,
+  SqlTableModel<O>,
   N,
   SQL
 >;
 
 export type OAuthCredentialReadTable<C extends Table> = Shared.OAuthCredentialReadTable<
-  DrizzleTableModel<C>,
+  SqlTableModel<C>,
   SQL
 >;
 
 export type OAuthCredentialTable<C extends Table, N> = Shared.OAuthCredentialTable<
-  DrizzleTableModel<C>,
+  SqlTableModel<C>,
   N,
   SQL
 >;
 
 export type OAuthAuthorityReadTable<C extends Table> = Shared.OAuthAuthorityReadTable<
-  DrizzleTableModel<C>,
+  SqlTableModel<C>,
   SQL
 >;
 
 export type OAuthAuthorityTable<C extends Table, N> = Shared.OAuthAuthorityTable<
-  DrizzleTableModel<C>,
+  SqlTableModel<C>,
   N,
   SQL
 >;
@@ -68,24 +68,24 @@ export type OAuthAuthorityTable<C extends Table, N> = Shared.OAuthAuthorityTable
 /** Both purposes may use the same physical table. Shared tables share module/flow
  * and module/command uniqueness. The snapshot has the exact purpose-specific core
  * codec; terminal writes erase it, while identity, claim and retention columns remain. */
-export type OAuthFlowTable<F extends Table> = Shared.OAuthFlowTable<DrizzleTableModel<F>>;
+export type OAuthFlowTable<F extends Table> = Shared.OAuthFlowTable<SqlTableModel<F>>;
 
 export type OAuthTupleAuthorityTable<T extends Table, N> = Shared.OAuthTupleAuthorityTable<
-  DrizzleTableModel<T>,
+  SqlTableModel<T>,
   N
 >;
 
 export type OAuthRegistrationIntentTable<I extends Table> = Shared.OAuthRegistrationIntentTable<
-  DrizzleTableModel<I>
+  SqlTableModel<I>
 >;
 
 export type OAuthRegistrationCommandTable<
   R extends Table,
   Registration,
-> = Shared.OAuthRegistrationCommandTable<DrizzleTableModel<R>, Registration>;
+> = Shared.OAuthRegistrationCommandTable<SqlTableModel<R>, Registration>;
 
 export type OAuthUnlinkCommandTable<U extends Table> = Shared.OAuthUnlinkCommandTable<
-  DrizzleTableModel<U>
+  SqlTableModel<U>
 >;
 
 /** Each descriptor reads only its own subject-scoped method rows. The native row
@@ -94,7 +94,7 @@ export type OAuthUnlinkCommandTable<U extends Table> = Shared.OAuthUnlinkCommand
  * guards exact selected IDs/versions and absence/count assumptions, never just a
  * stale boolean. An over-limit graph fails closed rather than truncating. */
 export type OAuthEligibilityTable<T extends Table, N> = Shared.OAuthEligibilityTable<
-  DrizzleTableModel<T>,
+  SqlTableModel<T>,
   N,
   SQL
 >;
@@ -104,7 +104,7 @@ export type OAuthEligibilityTable<T extends Table, N> = Shared.OAuthEligibilityT
 export type OAuthMetadataPolicy<N> = Shared.OAuthMetadataPolicy<N, SQL>;
 
 export type OAuthCleanupTable<T extends Table, N> = Shared.OAuthCleanupTable<
-  DrizzleTableModel<T>,
+  SqlTableModel<T>,
   N,
   SQL
 >;
@@ -119,11 +119,11 @@ export type OAuthSignInMapping<
   F extends Table,
   N,
 > = Shared.OAuthSignInMapping<
-  DrizzleTableModel<S>,
-  DrizzleTableModel<O>,
-  DrizzleTableModel<C>,
-  DrizzleTableModel<AC>,
-  DrizzleTableModel<F>,
+  SqlTableModel<S>,
+  SqlTableModel<O>,
+  SqlTableModel<C>,
+  SqlTableModel<AC>,
+  SqlTableModel<F>,
   N,
   SQL
 >;
@@ -132,7 +132,7 @@ export type OAuthOwnershipMutation<
   T extends Table,
   O extends Table,
   N,
-> = Shared.OAuthOwnershipMutation<DrizzleTableModel<T>, DrizzleTableModel<O>, N, SQL>;
+> = Shared.OAuthOwnershipMutation<SqlTableModel<T>, SqlTableModel<O>, N, SQL>;
 
 export type OAuthRegistrationIntentMapping<
   S extends Table,
@@ -144,13 +144,13 @@ export type OAuthRegistrationIntentMapping<
   I extends Table,
   N,
 > = Shared.OAuthRegistrationIntentMapping<
-  DrizzleTableModel<S>,
-  DrizzleTableModel<O>,
-  DrizzleTableModel<C>,
-  DrizzleTableModel<AC>,
-  DrizzleTableModel<F>,
-  DrizzleTableModel<T>,
-  DrizzleTableModel<I>,
+  SqlTableModel<S>,
+  SqlTableModel<O>,
+  SqlTableModel<C>,
+  SqlTableModel<AC>,
+  SqlTableModel<F>,
+  SqlTableModel<T>,
+  SqlTableModel<I>,
   N,
   SQL
 >;
@@ -164,10 +164,10 @@ export type OAuthRegistrationBase<
   N,
 > = Shared.OAuthRegistrationBase<
   Registration,
-  DrizzleTableModel<T>,
-  DrizzleTableModel<O>,
-  DrizzleTableModel<I>,
-  DrizzleTableModel<R>,
+  SqlTableModel<T>,
+  SqlTableModel<O>,
+  SqlTableModel<I>,
+  SqlTableModel<R>,
   N,
   SQL,
   Table
@@ -177,7 +177,7 @@ export type OAuthRegistrationGuardTable<
   T extends Table,
   Registration,
   N,
-> = Shared.OAuthRegistrationGuardTable<DrizzleTableModel<T>, Registration, N, SQL>;
+> = Shared.OAuthRegistrationGuardTable<SqlTableModel<T>, Registration, N, SQL>;
 
 export type OAuthRegistrationGuardDescriptor<Registration, N> =
   Shared.OAuthRegistrationGuardDescriptor<Registration, N, SQL, Table>;
@@ -185,7 +185,7 @@ export type OAuthRegistrationGuardDescriptor<Registration, N> =
 export const oauthRegistrationGuardTable = <T extends Table, Registration, N>(
   input: OAuthRegistrationGuardTable<T, Registration, N>,
 ): OAuthRegistrationGuardDescriptor<Registration, N> =>
-  Shared.oauthRegistrationGuardTable<DrizzleTableModel<T>, Registration, N, SQL>(input);
+  Shared.oauthRegistrationGuardTable<SqlTableModel<T>, Registration, N, SQL>(input);
 
 export type OAuthRegistrationMapping<
   Registration,
@@ -199,13 +199,13 @@ export type OAuthRegistrationMapping<
   N,
 > = Shared.OAuthRegistrationMapping<
   Registration,
-  DrizzleTableModel<S>,
-  DrizzleTableModel<O>,
-  DrizzleTableModel<C>,
-  DrizzleTableModel<AC>,
-  DrizzleTableModel<T>,
-  DrizzleTableModel<I>,
-  DrizzleTableModel<R>,
+  SqlTableModel<S>,
+  SqlTableModel<O>,
+  SqlTableModel<C>,
+  SqlTableModel<AC>,
+  SqlTableModel<T>,
+  SqlTableModel<I>,
+  SqlTableModel<R>,
   N,
   SQL,
   Table
@@ -216,20 +216,19 @@ export type OAuthEligibilityDescriptor<N> = Shared.OAuthEligibilityDescriptor<N,
 
 export const oauthEligibilityTable = <T extends Table, N>(
   input: OAuthEligibilityTable<T, N>,
-): OAuthEligibilityDescriptor<N> =>
-  Shared.oauthEligibilityTable<DrizzleTableModel<T>, N, SQL>(input);
+): OAuthEligibilityDescriptor<N> => Shared.oauthEligibilityTable<SqlTableModel<T>, N, SQL>(input);
 
 export type OAuthCleanupDescriptor<N> = Shared.OAuthCleanupDescriptor<N, SQL, Table>;
 
 export const oauthCleanupTable = <T extends Table, N>(
   input: OAuthCleanupTable<T, N>,
-): OAuthCleanupDescriptor<N> => Shared.oauthCleanupTable<DrizzleTableModel<T>, N, SQL>(input);
+): OAuthCleanupDescriptor<N> => Shared.oauthCleanupTable<SqlTableModel<T>, N, SQL>(input);
 
 /** A stable application/reference lock acquired before an ownership target.
  * Missing rows retain ownership. Conditions use detached native IDs; every
  * writer of the guarded reference follows the same order. */
 export type OAuthReferenceGuardTable<T extends Table, N> = Shared.OAuthReferenceGuardTable<
-  DrizzleTableModel<T>,
+  SqlTableModel<T>,
   N,
   SQL
 >;
@@ -239,7 +238,7 @@ export type OAuthReferenceGuardDescriptor<N> = Shared.OAuthReferenceGuardDescrip
 export const oauthReferenceGuardTable = <T extends Table, N>(
   input: OAuthReferenceGuardTable<T, N>,
 ): OAuthReferenceGuardDescriptor<N> =>
-  Shared.oauthReferenceGuardTable<DrizzleTableModel<T>, N, SQL>(input);
+  Shared.oauthReferenceGuardTable<SqlTableModel<T>, N, SQL>(input);
 
 export type OAuthAccountsMapping<
   S extends Table,
@@ -251,13 +250,13 @@ export type OAuthAccountsMapping<
   U extends Table,
   N,
 > = Shared.OAuthAccountsMapping<
-  DrizzleTableModel<S>,
-  DrizzleTableModel<O>,
-  DrizzleTableModel<C>,
-  DrizzleTableModel<AC>,
-  DrizzleTableModel<F>,
-  DrizzleTableModel<T>,
-  DrizzleTableModel<U>,
+  SqlTableModel<S>,
+  SqlTableModel<O>,
+  SqlTableModel<C>,
+  SqlTableModel<AC>,
+  SqlTableModel<F>,
+  SqlTableModel<T>,
+  SqlTableModel<U>,
   N,
   SQL,
   Table

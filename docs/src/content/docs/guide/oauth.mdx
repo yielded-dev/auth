@@ -98,7 +98,11 @@ sign-in and connected persistence, account claims, and separate transaction/toke
 keyrings through Layers. The [runnable composition](https://github.com/yielded-dev/auth/blob/main/examples/auth/src/oauth-application.ts)
 shows the full setup; [GitHub](https://github.com/yielded-dev/auth/blob/main/examples/auth/src/github-app.ts)
 and [Strava](https://github.com/yielded-dev/auth/blob/main/examples/auth/src/strava-app.ts)
-provide concrete configuration and a single-account allowlist.
+provide concrete configuration and a single-account allowlist. For PostgreSQL or
+SQLite without Drizzle, supply the explicit
+[`OAuthPersistence` mappings](../reference/adapters#oauth) from `@yielded/auth-persistence`.
+The [Effect SQL consumer](https://github.com/yielded-dev/auth/tree/main/examples/persistence-sql)
+walks through registration and login-account management as well as retained grants.
 
 Retained sign-in currently requires an existing local account link. For new users,
 use registration first, then connect provider access after authentication.
