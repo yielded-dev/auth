@@ -81,6 +81,8 @@ type RegistrationMapping<Registration> = AnyPasswordRegistrationMapping<Registra
 interface Planned<A> {
   readonly receipt: A;
   readonly statements: ReadonlyArray<Statement<any>>;
+  /** Final-state guards without `changes()`, repeated after coordinated statements. */
+  readonly postconditions?: ReadonlyArray<Statement<any>>;
   readonly retryable?: (cause: unknown) => boolean;
   readonly journalGuard?: PreparedCommit<void>;
 }
@@ -961,6 +963,7 @@ const compileAddMutation = Effect.fn("DrizzleD1Password.compileAddMutation")(fun
   return {
     statements,
     appliedCondition,
+    marker,
     retryable: (cause: unknown) => isGuardFailure(cause, marker),
   };
 });
@@ -1060,6 +1063,11 @@ const makePasswordPlans = (
                   journal,
                 );
 
+                const admitted = and(
+                  current,
+                  sql`exists(select 1 from ${mapping.attempt.table} where ${key} and ${a.state} = ${"pending"} and ${a.deadline} > ${mapping.d1.engineNow})`,
+                )!;
+
                 const statements: Statement<any>[] = [
                   yield* assertion(
                     and(
@@ -1091,19 +1099,16 @@ const makePasswordPlans = (
                       ),
                     ),
                   ),
-                  yield* assertion(
-                    and(
-                      current,
-                      sql`changes() = 1`,
-                      sql`exists(select 1 from ${mapping.attempt.table} where ${key} and ${a.state} = ${"pending"} and ${a.deadline} > ${mapping.d1.engineNow})`,
-                    )!,
-                    marker,
-                  ),
+                  yield* assertion(and(sql`changes() = 1`, admitted)!, marker),
                 ];
 
                 // A failed captured-snapshot guard cannot authorize refreshing the
                 // candidate after the strategy has consumed that subject's limit.
-                return { receipt, statements };
+                return {
+                  receipt,
+                  statements,
+                  postconditions: [yield* assertion(admitted, marker)],
+                };
               }),
             ),
         });
@@ -1277,21 +1282,18 @@ const makePasswordPlans = (
               }
             }
 
+            const settled = and(
+              finalAuthority,
+              sql`exists(select 1 from ${mapping.attempt.table} where ${a.moduleId} = ${sql.param(input.moduleId, a.moduleId)} and ${a.attemptId} = ${sql.param(input.attemptId, a.attemptId)} and ${a.state} = ${sql.param(decision, a.state)} and ${attemptSnapshot}${verified ? sql` and ${a.deadline} > ${mapping.d1.engineNow}` : sql``})`,
+            )!;
+
             // Run after attempt/rehash triggers, before the batch can publish its journal.
-            statements.push(
-              yield* assertion(
-                and(
-                  sql`changes() = 1`,
-                  finalAuthority,
-                  sql`exists(select 1 from ${mapping.attempt.table} where ${a.moduleId} = ${sql.param(input.moduleId, a.moduleId)} and ${a.attemptId} = ${sql.param(input.attemptId, a.attemptId)} and ${a.state} = ${sql.param(decision, a.state)} and ${attemptSnapshot}${verified ? sql` and ${a.deadline} > ${mapping.d1.engineNow}` : sql``})`,
-                )!,
-                marker,
-              ),
-            );
+            statements.push(yield* assertion(and(sql`changes() = 1`, settled)!, marker));
 
             return {
               receipt,
               statements,
+              postconditions: [yield* assertion(settled, marker)],
               retryable: (cause: unknown) => isGuardFailure(cause, marker),
             };
           }),
@@ -1386,10 +1388,14 @@ const makePasswordPlans = (
               nextSecurityRevision,
             });
 
+            if (compiled === undefined)
+              return { receipt: prepare("rejected", journal), statements: [] };
+
             return {
-              receipt: prepare(compiled === undefined ? "rejected" : "changed", journal),
-              statements: compiled?.statements ?? [],
-              ...(compiled?.retryable === undefined ? {} : { retryable: compiled.retryable }),
+              receipt: prepare("changed", journal),
+              statements: compiled.statements,
+              postconditions: [yield* assertion(compiled.appliedCondition, compiled.marker)],
+              retryable: compiled.retryable,
             };
           }),
         );
@@ -1593,6 +1599,7 @@ const replacementPlan = Effect.fn("Drizzle.replacementPlan")(function* <A>(
     return {
       receipt: passwordReceipt ?? prepare("rejected", journal),
       statements: compiled.statements,
+      ...(compiled.postconditions === undefined ? {} : { postconditions: compiled.postconditions }),
       retryable: (cause: unknown) =>
         isGuardFailure(cause, marker) ||
         isGuardFailure(
@@ -1606,12 +1613,12 @@ const replacementPlan = Effect.fn("Drizzle.replacementPlan")(function* <A>(
     };
   }
 
+  const applied = yield* assertion(protectedMutation.appliedCondition, marker);
+
   return {
     receipt: prepare("changed", journal),
-    statements: [
-      ...protectedMutation.statements,
-      yield* assertion(protectedMutation.appliedCondition, marker),
-    ],
+    statements: [...protectedMutation.statements, applied],
+    postconditions: [applied],
     retryable: (cause: unknown) => isGuardFailure(cause, marker),
   };
 });
@@ -1932,16 +1939,19 @@ export function coordinateD1PasswordPersistence<
               if (status._tag === "Success" || status.failure._tag !== "CommitPending")
                 return yield* unavailable();
             }
-            yield* database.$client.batch(statements).pipe(
-              Effect.catchCause((cause) =>
-                Effect.failCause(
-                  Cause.map(cause, (error) =>
-                    everyFailureMatches(cause, mutation?.retryable) ? unavailable() : error,
+            // Re-assert the password's final state after application statements.
+            yield* database.$client
+              .batch([...statements, ...(mutation?.postconditions ?? [])])
+              .pipe(
+                Effect.catchCause((cause) =>
+                  Effect.failCause(
+                    Cause.map(cause, (error) =>
+                      everyFailureMatches(cause, mutation?.retryable) ? unavailable() : error,
+                    ),
                   ),
                 ),
-              ),
-              translateFailure,
-            );
+                translateFailure,
+              );
 
             return value;
           }),

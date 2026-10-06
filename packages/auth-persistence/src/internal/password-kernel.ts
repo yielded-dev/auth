@@ -86,11 +86,21 @@ export class CurrentPasswordSql extends Context.Service<CurrentPasswordSql, Pass
   "effect-auth/CurrentPasswordSql",
 ) {}
 
+/** Owned by an application transaction coordinator. It admits one password
+ * mutation per transaction and runs that mutation's final checks again after
+ * the application's work, before commit.
+ */
+export interface CoordinatedPasswordChecks {
+  readonly claim: Effect.Effect<void, PasswordUnavailable>;
+  readonly register: (check: Effect.Effect<boolean, PasswordUnavailable>) => Effect.Effect<void>;
+}
+
 export interface PasswordSqlConfiguration {
   readonly mode: "interactive" | "synchronous";
   readonly locking: boolean;
   readonly standaloneGuard: Effect.Effect<void, PasswordUnavailable>;
   readonly coordinated?: boolean;
+  readonly coordinatedChecks?: CoordinatedPasswordChecks;
   readonly insertIfAbsent: (
     query: PasswordSqlQuery,
     selfKey: string,
@@ -464,8 +474,21 @@ export const makePasswordKernel = <
 
           return yield* run;
         })
-      : run;
+      : Effect.andThen(configuration.coordinatedChecks?.claim ?? Effect.void, run);
   };
+
+  // A coordinated mutation's final state must also hold after application work.
+  const registerFinal = Effect.fnUntraced(function* <E>(
+    configuration: PasswordSqlConfiguration,
+    check: Effect.Effect<boolean, E, CurrentPasswordSql>,
+  ) {
+    if (configuration.coordinatedChecks === undefined) return;
+    const context = yield* Effect.context<CurrentPasswordSql>();
+
+    yield* configuration.coordinatedChecks.register(
+      translateFailure(Effect.provideContext(check, context)),
+    );
+  });
 
   const safeRead = <A, E, R>(
     database: Database,
@@ -884,55 +907,16 @@ export const makePasswordKernel = <
       );
     yield* insertCommand(mapping, input, "add-password", commandNow ?? authority.now);
 
-    const inserted = (yield* readPasswordCredential(
+    const applied = checkMutationApplied(
       mapping,
-      input.moduleId,
+      input,
       authority.nativeSubjectId,
-      false,
-    ))[0];
+      revisions,
+      commandNow ?? authority.now,
+    );
 
-    const authorityInserted = (yield* database
-      .select()
-      .from(mapping.authorityCredential.table)
-      .where(
-        and(
-          eq(authorityCredentialColumns(mapping).subjectId, authority.nativeSubjectId),
-          eq(authorityCredentialColumns(mapping).credentialId, credentialId),
-          eq(authorityCredentialColumns(mapping).revision, credentialRevision),
-        ),
-      )
-      .limit(1))[0];
-
-    const subjectUpdated = (yield* database
-      .select()
-      .from(mapping.subject.table)
-      .where(
-        and(
-          eq(subjectColumns(mapping).id, authority.nativeSubjectId),
-          eq(subjectColumns(mapping).securityRevision, nextSecurityRevision),
-        ),
-      )
-      .limit(1))[0];
-
-    if (
-      inserted === undefined ||
-      inserted[mapping.credential.credentialId] !== credentialId ||
-      inserted[mapping.credential.credentialRevision] !== credentialRevision ||
-      inserted[mapping.credential.verifierVersion] !== verifierVersion ||
-      inserted[mapping.credential.verifier] !== Redacted.value(input.replacement.verifier) ||
-      inserted[mapping.credential.normalization] !== input.replacement.normalization ||
-      authorityInserted === undefined ||
-      subjectUpdated === undefined ||
-      !(yield* mutationPostconditions(
-        mapping,
-        input,
-        authority.nativeSubjectId,
-        subjectUpdated,
-        authorityInserted,
-        commandNow ?? authority.now,
-      ))
-    )
-      return yield* unavailable();
+    if (!(yield* applied)) return yield* unavailable();
+    yield* registerFinal(configuration, applied);
 
     return true;
   });
@@ -1260,13 +1244,31 @@ export const makePasswordKernel = <
                     configuration.proof!.configuration,
                     input.completion,
                     Effect.gen(function* () {
-                      return yield* writeReplacement(
+                      const revisions = {
+                        credentialRevision,
+                        verifierVersion,
+                        nextSecurityRevision,
+                      };
+
+                      const applied = yield* writeReplacement(
                         mapping,
                         input,
                         authority.nativeSubjectId,
-                        { credentialRevision, verifierVersion, nextSecurityRevision },
+                        revisions,
                         authority.now,
                       );
+
+                      if (applied)
+                        yield* registerReplacement(
+                          mapping,
+                          configuration,
+                          input,
+                          authority.nativeSubjectId,
+                          revisions,
+                          authority.now,
+                        );
+
+                      return applied;
                     }),
                     (decision) => {
                       passwordReceipt = prepare(
@@ -1519,6 +1521,29 @@ export const makePasswordKernel = <
     );
   });
 
+  const registerReplacement = (
+    mapping: Mapping,
+    configuration: PasswordSqlConfiguration,
+    input: PasswordMutationInput,
+    nativeSubjectId: unknown,
+    revisions: {
+      readonly credentialRevision: SecurityRevision;
+      readonly verifierVersion: SecurityRevision;
+      readonly nextSecurityRevision: SecurityRevision;
+    },
+    now: number,
+  ) =>
+    registerFinal(
+      configuration,
+      checkMutationApplied(
+        mapping,
+        input,
+        nativeSubjectId,
+        { ...revisions, credentialId: input.credential!.credentialId },
+        now,
+      ),
+    );
+
   const replaceIn = Effect.fn("Drizzle.replaceIn")(function* <A>(
     mapping: Mapping,
     configuration: PasswordSqlConfiguration,
@@ -1552,6 +1577,14 @@ export const makePasswordKernel = <
       ))
     )
       return yield* unavailable();
+    yield* registerReplacement(
+      mapping,
+      configuration,
+      input,
+      authority.nativeSubjectId,
+      revisions,
+      authority.now,
+    );
 
     return prepared;
   });

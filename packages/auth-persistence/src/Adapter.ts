@@ -227,6 +227,7 @@ export {
 } from "./internal/PasswordPreparedPostconditions";
 
 export {
+  type CoordinatedPasswordChecks,
   CurrentPasswordSql,
   type PasswordSqlConfiguration,
   type PasswordSqlDatabase,

@@ -102,6 +102,7 @@ export const makePasswordAttempts = Effect.fnUntraced(function* (
 
   const owned = <A, E, R>(work: Effect.Effect<A, E, R>) =>
     standalone.pipe(
+      Effect.andThen(options.coordinatedChecks?.claim ?? Effect.void),
       Effect.andThen(coordinateCommit(() => sql.withTransaction(work), { mode: options.mode })),
       Effect.map((result) => result.value),
       Effect.provideService(LifecycleHooks, hooks),
@@ -412,25 +413,35 @@ export const makePasswordAttempts = Effect.fnUntraced(function* (
               };
             }
 
-            const final = yield* snapshot(
-              current.nativeId,
-              input.moduleId,
-              captured.identifier,
-              false,
-              input.attemptId,
-            );
+            const settled = expected;
 
-            if (
-              final === undefined ||
-              !samePasswordCredentialSnapshot(final.captured, expected) ||
-              final.attempt === undefined ||
-              final.attempt[mapping.attempt.state] !== "verified" ||
-              !attemptMatches(final.attempt, captured, current.nativeId) ||
-              (yield* mapping.decodeInstant(final.attempt[mapping.attempt.deadline])) !==
-                deadline ||
-              deadline <= (yield* nowMillis)
-            )
-              return yield* unavailable();
+            const applied = Effect.gen(function* () {
+              const final = yield* snapshot(
+                current.nativeId,
+                input.moduleId,
+                captured.identifier,
+                false,
+                input.attemptId,
+              );
+
+              return (
+                final !== undefined &&
+                samePasswordCredentialSnapshot(final.captured, settled) &&
+                final.attempt !== undefined &&
+                final.attempt[mapping.attempt.state] === "verified" &&
+                attemptMatches(final.attempt, captured, current.nativeId) &&
+                (yield* mapping.decodeInstant(final.attempt[mapping.attempt.deadline])) ===
+                  deadline &&
+                deadline > (yield* nowMillis)
+              );
+            }).pipe(failure);
+
+            if (!(yield* applied)) return yield* unavailable();
+            if (options.coordinatedChecks !== undefined) {
+              const context = yield* Effect.context<never>();
+
+              yield* options.coordinatedChecks.register(Effect.provideContext(applied, context));
+            }
           }
 
           return receipt;

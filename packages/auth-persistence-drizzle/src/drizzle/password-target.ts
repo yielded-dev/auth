@@ -16,6 +16,7 @@ import {
   type PasswordRegistrationConfiguration,
 } from "./password-registration";
 import {
+  type CoordinatedPasswordChecks,
   CurrentPasswordSql,
   makeSqlPasswordPersistence,
   type PasswordSqlConfiguration,
@@ -61,6 +62,7 @@ export const passwordOptions = (
   configuration: PasswordTargetConfiguration,
   proofMapping?: any,
   coordinated = false,
+  coordinatedChecks?: CoordinatedPasswordChecks,
 ): PasswordSqlConfiguration => ({
   mode: configuration.mode,
   locking: configuration.locking,
@@ -68,6 +70,7 @@ export const passwordOptions = (
   standaloneGuard: !coordinated ? configuration.standaloneGuard : Effect.void,
   insertIfAbsent: configuration.insertIfAbsent,
   coordinated,
+  ...(coordinatedChecks === undefined ? {} : { coordinatedChecks }),
   ...(proofMapping === undefined
     ? {}
     : {
@@ -154,10 +157,12 @@ export const coordinateTargetPasswordPersistence = <Transaction, A, E, R>(
       () =>
         database.transaction((transaction) =>
           Effect.gen(function* () {
-            return yield* owner(transaction, {
+            const checks = coordinatedPasswordChecks();
+
+            const value = yield* owner(transaction, {
               passwordPersistence: yield* makeSqlPasswordPersistence(
                 mapping,
-                passwordOptions(configuration, proofMapping, true),
+                passwordOptions(configuration, proofMapping, true, checks),
               ).pipe(
                 Effect.provideService(
                   CurrentPasswordSql,
@@ -165,6 +170,12 @@ export const coordinateTargetPasswordPersistence = <Transaction, A, E, R>(
                 ),
               ),
             });
+
+            // Application work in this transaction must not change what the
+            // password mutation committed to; a failure here rolls back both.
+            yield* checks.run;
+
+            return value;
           }),
         ),
       { mode: configuration.mode },
@@ -172,6 +183,36 @@ export const coordinateTargetPasswordPersistence = <Transaction, A, E, R>(
 
     return result.value;
   });
+
+const coordinatedPasswordChecks = () => {
+  const registered: Array<Effect.Effect<boolean, PasswordUnavailable>> = [];
+  let claimed = false;
+
+  return {
+    claim: Effect.suspend(() => {
+      if (claimed) return Effect.fail(PasswordUnavailable.make({}));
+      claimed = true;
+
+      return Effect.void;
+    }),
+    register: (check: Effect.Effect<boolean, PasswordUnavailable>) =>
+      Effect.sync(() => {
+        registered.push(check);
+      }),
+    run: Effect.suspend(() =>
+      Effect.forEach(
+        registered,
+        (check) =>
+          Effect.flatMap(check, (holds) =>
+            holds ? Effect.void : Effect.fail(PasswordUnavailable.make({})),
+          ),
+        { discard: true },
+      ),
+    ),
+  } satisfies CoordinatedPasswordChecks & {
+    readonly run: Effect.Effect<void, PasswordUnavailable>;
+  };
+};
 
 export const coordinateTargetPasswordRegistration = <Registration, Transaction, A, E, R>(
   database: TransactionOwner<Transaction>,

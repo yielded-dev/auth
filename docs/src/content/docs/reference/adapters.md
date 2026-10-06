@@ -368,6 +368,9 @@ password mutation transaction
 ```
 
 Use the adapter's coordinator when combining authentication with application writes.
+A coordinated transaction or D1 batch holds one password mutation, and that mutation's
+final state is checked again after your writes; changing its account or credential rows
+in the same commit rolls both back.
 Do not put standalone services inside an untracked raw Drizzle transaction.
 Attempt state and receipts remain durable in persistence, independently of limiter storage.
 
