@@ -95,7 +95,9 @@ const boundedMemoryStore = (whenFull: "reject" | "evict") =>
 export const boundedMemoryRateLimiter = (whenFull: "reject" | "evict") =>
   defaultLayer(
     RateLimiter.RateLimiter,
-    RateLimiter.layer.pipe(
+    // Not the shared `RateLimiter.layer`: Layers memoize by identity, so two
+    // defaults built in one graph would capture whichever store built first.
+    Layer.effect(RateLimiter.RateLimiter, RateLimiter.make).pipe(
       Layer.provide(defaultLayer(RateLimiter.RateLimiterStore, boundedMemoryStore(whenFull))),
     ),
   );
