@@ -3,4 +3,4 @@
 "@yielded/auth-persistence-drizzle": patch
 ---
 
-Check a coordinated password mutation's final state again after application work, in interactive transactions and D1 batches. BEHAVIOR CHANGE: a coordinated transaction now accepts one password mutation; a second fails with `PasswordUnavailable`.
+Check coordinated password mutations and password-reset proof completion again after application work, in interactive transactions and D1 batches, and compare a written password's persisted values exactly.

@@ -20,6 +20,7 @@ import type { PersistenceMappingError } from "./mapping-error";
 import type { AnyPasswordPersistenceMapping } from "./models/password-model";
 import { sqlMapping, type SqlTable } from "./native-sql-table";
 import type { PasswordSqlConfiguration } from "./password-kernel";
+import { PasswordPreparedPostconditions } from "./PasswordPreparedPostconditions";
 import { NativeDatabase } from "./transaction-kernel";
 
 type Row = Readonly<Record<string, unknown>>;
@@ -102,7 +103,6 @@ export const makePasswordAttempts = Effect.fnUntraced(function* (
 
   const owned = <A, E, R>(work: Effect.Effect<A, E, R>) =>
     standalone.pipe(
-      Effect.andThen(options.coordinatedChecks?.claim ?? Effect.void),
       Effect.andThen(coordinateCommit(() => sql.withTransaction(work), { mode: options.mode })),
       Effect.map((result) => result.value),
       Effect.provideService(LifecycleHooks, hooks),
@@ -437,11 +437,20 @@ export const makePasswordAttempts = Effect.fnUntraced(function* (
             }).pipe(failure);
 
             if (!(yield* applied)) return yield* unavailable();
-            if (options.coordinatedChecks !== undefined) {
-              const context = yield* Effect.context<never>();
 
-              yield* options.coordinatedChecks.register(Effect.provideContext(applied, context));
-            }
+            // A coordinator that accepts postconditions repeats this check after
+            // application work, inside the same transaction.
+            const postconditions = yield* Effect.serviceOption(PasswordPreparedPostconditions);
+
+            if (
+              Option.isSome(postconditions) &&
+              !postconditions.value.register(
+                Effect.flatMap(applied, (holds) =>
+                  holds ? Effect.void : Effect.fail(unavailable()),
+                ),
+              )
+            )
+              return yield* unavailable();
           }
 
           return receipt;

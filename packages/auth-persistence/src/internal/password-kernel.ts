@@ -45,6 +45,10 @@ import {
   samePasswordCredentialSnapshot as sameCredentialSnapshot,
 } from "./password-attempts";
 import {
+  CurrentPasswordPreparedTransaction,
+  PasswordPreparedPostconditions,
+} from "./PasswordPreparedPostconditions";
+import {
   CurrentProofSql,
   type ProofSqlConfiguration,
   type ProofSqlDatabase,
@@ -86,21 +90,11 @@ export class CurrentPasswordSql extends Context.Service<CurrentPasswordSql, Pass
   "effect-auth/CurrentPasswordSql",
 ) {}
 
-/** Owned by an application transaction coordinator. It admits one password
- * mutation per transaction and runs that mutation's final checks again after
- * the application's work, before commit.
- */
-export interface CoordinatedPasswordChecks {
-  readonly claim: Effect.Effect<void, PasswordUnavailable>;
-  readonly register: (check: Effect.Effect<boolean, PasswordUnavailable>) => Effect.Effect<void>;
-}
-
 export interface PasswordSqlConfiguration {
   readonly mode: "interactive" | "synchronous";
   readonly locking: boolean;
   readonly standaloneGuard: Effect.Effect<void, PasswordUnavailable>;
   readonly coordinated?: boolean;
-  readonly coordinatedChecks?: CoordinatedPasswordChecks;
   readonly insertIfAbsent: (
     query: PasswordSqlQuery,
     selfKey: string,
@@ -474,20 +468,26 @@ export const makePasswordKernel = <
 
           return yield* run;
         })
-      : Effect.andThen(configuration.coordinatedChecks?.claim ?? Effect.void, run);
+      : run;
   };
 
-  // A coordinated mutation's final state must also hold after application work.
+  // A coordinator that accepts postconditions re-runs this check against its
+  // current transaction after application work, before commit.
   const registerFinal = Effect.fnUntraced(function* <E>(
-    configuration: PasswordSqlConfiguration,
     check: Effect.Effect<boolean, E, CurrentPasswordSql>,
   ) {
-    if (configuration.coordinatedChecks === undefined) return;
-    const context = yield* Effect.context<CurrentPasswordSql>();
+    const postconditions = yield* Effect.serviceOption(PasswordPreparedPostconditions);
 
-    yield* configuration.coordinatedChecks.register(
-      translateFailure(Effect.provideContext(check, context)),
-    );
+    if (Option.isNone(postconditions)) return;
+
+    const postcondition = Effect.gen(function* () {
+      const transaction = yield* CurrentPasswordPreparedTransaction;
+
+      if (!(yield* check.pipe(Effect.provideService(CurrentPasswordSql, transaction))))
+        return yield* unavailable();
+    }).pipe(translateFailure);
+
+    if (!postconditions.value.register(postcondition)) return yield* unavailable();
   });
 
   const safeRead = <A, E, R>(
@@ -916,7 +916,7 @@ export const makePasswordKernel = <
     );
 
     if (!(yield* applied)) return yield* unavailable();
-    yield* registerFinal(configuration, applied);
+    yield* registerFinal(applied);
 
     return true;
   });
@@ -1261,7 +1261,6 @@ export const makePasswordKernel = <
                       if (applied)
                         yield* registerReplacement(
                           mapping,
-                          configuration,
                           input,
                           authority.nativeSubjectId,
                           revisions,
@@ -1439,8 +1438,14 @@ export const makePasswordKernel = <
       )
       .limit(1))[0];
 
+    // SQL equality follows column collation; compare the persisted values exactly.
     return (
       credential !== undefined &&
+      credential[mapping.credential.credentialId] === revisions.credentialId &&
+      credential[mapping.credential.credentialRevision] === revisions.credentialRevision &&
+      credential[mapping.credential.verifierVersion] === revisions.verifierVersion &&
+      credential[mapping.credential.verifier] === Redacted.value(input.replacement.verifier) &&
+      credential[mapping.credential.normalization] === input.replacement.normalization &&
       (yield* mutationPostconditions(
         mapping,
         input,
@@ -1523,7 +1528,6 @@ export const makePasswordKernel = <
 
   const registerReplacement = (
     mapping: Mapping,
-    configuration: PasswordSqlConfiguration,
     input: PasswordMutationInput,
     nativeSubjectId: unknown,
     revisions: {
@@ -1534,7 +1538,6 @@ export const makePasswordKernel = <
     now: number,
   ) =>
     registerFinal(
-      configuration,
       checkMutationApplied(
         mapping,
         input,
@@ -1577,14 +1580,7 @@ export const makePasswordKernel = <
       ))
     )
       return yield* unavailable();
-    yield* registerReplacement(
-      mapping,
-      configuration,
-      input,
-      authority.nativeSubjectId,
-      revisions,
-      authority.now,
-    );
+    yield* registerReplacement(mapping, input, authority.nativeSubjectId, revisions, authority.now);
 
     return prepared;
   });
