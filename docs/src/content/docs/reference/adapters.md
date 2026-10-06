@@ -356,6 +356,24 @@ Standalone libSQL operations reject any ambient libSQL transaction, including on
 belonging to another client. Use the explicit transaction coordinators when
 application writes and auth changes must share a commit.
 
+## SQL session verification
+
+Interactive SQL adapters read a stateful session and its subject in one statement
+when both owner columns use compatible physical text types and collations without
+codecs. Service construction checks that compatibility with one catalog read.
+Custom codecs, incompatible columns, and converters without this metadata use two
+reads: discover the owner, then read both rows together and validate their ownership.
+Rebuild persistence Layers after schema migrations.
+
+SQL state-assisted validity reads the subject's current security revision and its
+owner-scoped revocation tombstone in one statement. Each ID uses its own column
+codec. Both modes check current authority and fresh expiry times on every read;
+committed revocations retain immediate invalidation.
+
+Ordinary verification opens no transaction. Within a caller-owned Effect SQL
+transaction, verification uses a savepoint so a caught query failure leaves the
+transaction usable. Mutation transaction and receipt guarantees still apply.
+
 ## Passwords
 
 Use `makePasswordPersistenceServices` for verification and mutation storage;

@@ -65,7 +65,21 @@ import {
   validateStepUpPlan,
   stepUpRotationMatches,
 } from "./step-up-state";
+import { canJoinTextColumns } from "./storage-validation";
 import { NativeDatabase } from "./transaction-kernel";
+
+const decodeRevocationFlag = Schema.decodeUnknownEffect(Schema.Literals([0, 1]));
+
+/** Reads need no transaction of their own. A caller-owned transaction still
+ * needs a savepoint so catching an SQL failure does not leave it aborted. */
+const withVerificationSavepoint = Effect.fnUntraced(function* <A, E, R>(
+  effect: Effect.Effect<A, E, R>,
+): Effect.fn.Return<A, E | SqlError.SqlError, R | NativeDatabase> {
+  const { $client } = yield* NativeDatabase;
+  const transaction = yield* Effect.serviceOption($client.transactionService);
+
+  return yield* Option.isSome(transaction) ? $client.withTransaction(effect) : effect;
+});
 
 type CommitMode = "interactive" | "synchronous";
 
@@ -1055,6 +1069,24 @@ export const makeSessionKernel = (
     const readSnapshot = makeAuthoritySnapshot(tables, mapping);
     const c = sessionColumns(mapping);
 
+    const verification = yield* safeTransaction(
+      Effect.gen(function* () {
+        const { session, subject } = yield* sqlMapping(() => ({
+          session: tables(mapping.session.table).as("auth_session"),
+          subject: tables(mapping.subject.table).as("auth_subject"),
+        }));
+
+        const [sessionOwner, subjectOwner] = yield* sqlMapping(() => [
+          session.unencodedTextColumn?.(mapping.session.subjectId),
+          subject.unencodedTextColumn?.(mapping.subject.id),
+        ]);
+
+        const canJoinOwner = yield* canJoinTextColumns(sessionOwner, subjectOwner);
+
+        return { session, subject, canJoinOwner };
+      }),
+    );
+
     const persistence = {
       establish: <A>(
         input: Parameters<StatefulSessionPersistence<Claims>["establish"]>[0],
@@ -1175,32 +1207,55 @@ export const makeSessionKernel = (
             return receipt;
           }).pipe(normalizeMutation(mapping)),
         ),
-      verify: (input: any) =>
+      verify: (input: Parameters<StatefulSessionPersistence<Claims>["verify"]>[0]) =>
         safeTransaction(
-          inTransaction(
-            database,
+          withVerificationSavepoint(
             Effect.gen(function* () {
-              const read = yield* CurrentSessionSql;
+              const sql = root.$client.withoutTransforms();
+              const { session, subject, canJoinOwner } = verification;
 
-              const rows = yield* read
-                .select()
-                .from(mapping.session.table)
-                .where(eq(c.digest, input.digest))
-                .limit(1);
+              // A digest carries no owner. Custom codecs require decoding that
+              // native ID first; never compare differently encoded ID columns.
+              const owner = canJoinOwner
+                ? undefined
+                : (yield* database
+                    .select({ subjectId: c.subjectId })
+                    .from(mapping.session.table)
+                    .where(eq(c.digest, input.digest))
+                    .limit(1))[0];
+
+              if (!canJoinOwner && owner === undefined) return yield* invalidSession();
+
+              // The final statement reads both rows even after owner discovery,
+              // so deletion, rotation or owner changes cannot reuse the first read.
+              const rows = yield* sqlMapping(
+                () => sql<
+                  Record<string, unknown>
+                >`select ${session.fields("v_")}, ${subject.fields("s_")}
+              from ${session.name} inner join ${subject.name} on
+                ${subject.column(mapping.subject.id)} = ${
+                  owner === undefined
+                    ? session.column(mapping.session.subjectId)
+                    : subject.value(mapping.subject.id, owner.subjectId)
+                }
+              where ${session.column(mapping.session.digest)} = ${session.value(mapping.session.digest, input.digest)}
+              limit 1`,
+              ).pipe(Effect.flatten);
 
               const row = rows[0];
 
               if (row === undefined) return yield* invalidSession();
-              const record = yield* mapping.session.decode(row);
+              const sessionRow = yield* sqlMapping(() => session.decode(row, "v_"));
+              const subjectRow = yield* sqlMapping(() => subject.decode(row, "s_"));
+              const record = yield* mapping.session.decode(sessionRow);
               const nativeSubjectId = yield* mapping.subjectId.toNative(record.subjectId);
-              const subjects = yield* readSubject(mapping, nativeSubjectId, false);
-              const subject = subjects[0];
               const now = yield* freshNow;
 
               if (
-                subject === undefined ||
-                !mapping.subject.isActiveStatus(subject[mapping.subject.status]) ||
-                subject[mapping.subject.securityRevision] !== record.securityRevision ||
+                !mapping.subjectId.equals(nativeSubjectId, sessionRow[mapping.session.subjectId]) ||
+                !mapping.subjectId.equals(nativeSubjectId, subjectRow[mapping.subject.id]) ||
+                !mapping.subject.isActiveStatus(subjectRow[mapping.subject.status]) ||
+                subjectRow[mapping.subject.securityRevision] !== record.securityRevision ||
                 DateTime.toEpochMillis(now) >= DateTime.toEpochMillis(record.expiresAt) ||
                 DateTime.toEpochMillis(now) >= DateTime.toEpochMillis(record.absoluteExpiresAt)
               )
@@ -1478,7 +1533,12 @@ export const makeSessionKernel = (
               Effect.provideService(LifecycleHooks, hooks),
             ),
         verify: (input) =>
-          persistence.verify(input).pipe(Effect.provideService(LifecycleHooks, hooks)),
+          persistence
+            .verify(input)
+            .pipe(
+              Effect.provideService(NativeDatabase, root),
+              Effect.provideService(LifecycleHooks, hooks),
+            ),
         rotate: (input, prepare) =>
           persistence.rotate(input, prepare).pipe(Effect.provideService(LifecycleHooks, hooks)),
         revokeDigest: (digest, prepare) =>
@@ -1520,50 +1580,62 @@ export const makeSessionKernel = (
       absoluteExpiresAt: column(mapping.tombstone.table, mapping.tombstone.absoluteExpiresAt),
     };
 
+    const root = yield* NativeDatabase;
+
+    const tables = yield* sqlMapping(() =>
+      nativeTables(root.$client.withoutTransforms(), root),
+    ).pipe(Effect.mapError(unavailable));
+
     const service = {
       verify: (session: SessionMetadata, _now: DateTime.Utc) =>
         safeTransaction(
-          inTransaction(
-            database,
+          withVerificationSavepoint(
             Effect.gen(function* () {
-              const read = yield* CurrentSessionSql;
+              const sql = root.$client.withoutTransforms();
               const nativeSubjectId = yield* mapping.subjectId.toNative(session.subjectId);
               const nativeSessionId = yield* mapping.sessionId.toNative(session.sessionId);
-              const subjects = yield* readSubject(mapping, nativeSubjectId, false);
-              const row = subjects[0];
+              const readNow = yield* freshNow;
 
-              if (
-                row === undefined ||
-                !mapping.subject.isActiveStatus(row[mapping.subject.status]) ||
-                row[mapping.subject.securityRevision] !== session.securityRevision
-              )
-                return yield* invalidSession();
+              // Independent bound IDs preserve each column's physical type and
+              // codec. Both authority and revocation come from this statement.
+              const { subjectTable, rows } = yield* sqlMapping(() => {
+                const subjectTable = tables(mapping.subject.table).as("auth_subject");
+                const revoked = tables(mapping.tombstone.table).as("auth_revocation");
+
+                return {
+                  subjectTable,
+                  rows: sql<Record<string, unknown>>`
+                  select ${subjectTable.fields("s_")},
+                    case when exists (
+                      select 1 from ${revoked.name}
+                      where ${revoked.column(mapping.tombstone.subjectId)} = ${revoked.value(mapping.tombstone.subjectId, nativeSubjectId)}
+                        and ${revoked.column(mapping.tombstone.sessionId)} = ${revoked.value(mapping.tombstone.sessionId, nativeSessionId)}
+                        and ${revoked.column(mapping.tombstone.absoluteExpiresAt)} > ${revoked.value(mapping.tombstone.absoluteExpiresAt, mapping.tombstone.encodeInstant(readNow))}
+                    ) then 1 else 0 end as auth_revoked
+                  from ${subjectTable.name}
+                  where ${subjectTable.column(mapping.subject.id)} = ${subjectTable.value(mapping.subject.id, nativeSubjectId)}
+                  limit 1`,
+                };
+              });
+
+              const result = (yield* rows)[0];
+
+              if (result === undefined) return yield* invalidSession();
+              const row = yield* sqlMapping(() => subjectTable.decode(result, "s_"));
+              const revoked = yield* decodeRevocationFlag(result.auth_revoked);
               const authoritativeNow = yield* freshNow;
 
               if (
+                !mapping.subjectId.equals(nativeSubjectId, row[mapping.subject.id]) ||
+                !mapping.subject.isActiveStatus(row[mapping.subject.status]) ||
+                row[mapping.subject.securityRevision] !== session.securityRevision ||
+                revoked === 1 ||
                 DateTime.toEpochMillis(authoritativeNow) >=
                   DateTime.toEpochMillis(session.expiresAt) ||
                 DateTime.toEpochMillis(authoritativeNow) >=
                   DateTime.toEpochMillis(session.absoluteExpiresAt)
               )
                 return yield* invalidSession();
-
-              const revoked = yield* read
-                .select({ sessionId: tombstone.sessionId })
-                .from(mapping.tombstone.table)
-                .where(
-                  and(
-                    eq(tombstone.subjectId, nativeSubjectId),
-                    eq(tombstone.sessionId, nativeSessionId),
-                    gt(
-                      tombstone.absoluteExpiresAt,
-                      mapping.tombstone.encodeInstant(authoritativeNow),
-                    ),
-                  ),
-                )
-                .limit(1);
-
-              if (revoked.length > 0) return yield* invalidSession();
             }),
           ),
         ),
@@ -1689,7 +1761,12 @@ export const makeSessionKernel = (
 
     return {
       verify: (session, now) =>
-        service.verify(session, now).pipe(Effect.provideService(LifecycleHooks, hooks)),
+        service
+          .verify(session, now)
+          .pipe(
+            Effect.provideService(NativeDatabase, root),
+            Effect.provideService(LifecycleHooks, hooks),
+          ),
       revoke: (input, prepare) =>
         service.revoke(input, prepare).pipe(Effect.provideService(LifecycleHooks, hooks)),
       revokeAll: (input, prepare) =>

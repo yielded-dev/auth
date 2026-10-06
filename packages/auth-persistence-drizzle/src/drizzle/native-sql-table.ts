@@ -7,6 +7,7 @@ import {
 } from "@yielded/auth-persistence/Adapter";
 import {
   getTableColumns,
+  getTableName,
   is,
   Param,
   Placeholder,
@@ -16,6 +17,8 @@ import {
   type BuildQueryConfig,
   type SQLWrapper,
 } from "drizzle-orm";
+import { getTableConfig as getMysqlTableConfig, MySqlTable } from "drizzle-orm/mysql-core";
+import { getTableConfig as getPgTableConfig, PgTable } from "drizzle-orm/pg-core";
 import { Predicate } from "effect";
 import type { SqlClient } from "effect/sql/SqlClient";
 import * as Statement from "effect/sql/Statement";
@@ -157,6 +160,14 @@ export const makeDrizzleSqlTables = (
     const columns = getTableColumns(physical);
     const entries = Object.entries(columns);
 
+    const schema = is(physical, PgTable)
+      ? getPgTableConfig(physical).schema
+      : is(physical, MySqlTable)
+        ? getMysqlTableConfig(physical).schema
+        : undefined;
+
+    const table = { name: getTableName(physical), ...(schema === undefined ? {} : { schema }) };
+
     const getColumn = (key: string) => {
       const column = Object.hasOwn(columns, key) ? columns[key] : undefined;
 
@@ -180,6 +191,25 @@ export const makeDrizzleSqlTables = (
         ),
         as: bind,
         column: (key) => compile(reference(key)),
+        unencodedTextColumn: (key) => {
+          const column = getColumn(key);
+
+          return ["PgText", "PgVarchar", "SQLiteText", "MySqlText", "MySqlVarChar"].includes(
+            column.columnType,
+          ) &&
+            Predicate.hasProperty(column.mapToDriverValue, "isNoop") &&
+            column.mapToDriverValue.isNoop === true &&
+            Predicate.hasProperty(column.mapFromDriverValue, "isNoop") &&
+            column.mapFromDriverValue.isNoop === true &&
+            (dialect.codecs === undefined ||
+              (Predicate.hasProperty(dialect.codecs, "get") &&
+                typeof dialect.codecs.get === "function" &&
+                (["cast", "normalize", "castParam", "normalizeParam"] as const).every(
+                  (kind) => dialect.codecs?.get(column, kind) === undefined,
+                )))
+            ? { table, name: column.name }
+            : undefined;
+        },
         fields: (prefix) =>
           compile(
             sql.join(
