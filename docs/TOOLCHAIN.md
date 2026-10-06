@@ -159,6 +159,10 @@ public prerelease is installed as `@yielded/auth@beta`.
 
 ## CI and review
 
+Opening, reopening, updating, marking ready, or retargeting a PR runs CI. Title and
+description edits create only a skipped run; they do not cancel active CI or replace
+its required `ready` result.
+
 Every pull request reports the required `ready` check. Contributor docs, changesets,
 and auxiliary workflows need formatting and workflow validation; published docs
 and the root README also get a docs check/build. Source, dependencies, CI setup,
