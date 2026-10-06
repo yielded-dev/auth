@@ -50,8 +50,6 @@ export const {
   credentials,
   passwords,
   passwordAttempts,
-  passwordScopes,
-  passwordCharges,
   passwordCommands,
   proofRequests,
   proofSeries,

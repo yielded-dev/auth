@@ -2,6 +2,7 @@ import { Effect } from "effect";
 import { SqlClient } from "effect/sql";
 
 import { PersistenceConfigurationError, type PersistenceApi } from "./configuration";
+import { makeNativeSqlTables } from "./native-sql-table";
 import { makeComposedPasskeys } from "./passkeys";
 import { createPersistence } from "./persistence";
 import { makeSqlDatabase, sqlQueryOperations } from "./sql-query";
@@ -23,6 +24,7 @@ export const AuthPersistence: PersistenceApi<Table> & { readonly table: typeof t
       unique: table.unique,
     }),
     operations: sqlQueryOperations,
+    nativeTables: (client) => makeNativeSqlTables(client),
     passkeys: makeComposedPasskeys(sqlQueryOperations),
     acquire: Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;

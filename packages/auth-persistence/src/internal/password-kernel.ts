@@ -16,10 +16,7 @@ import {
   snapshotPasswordRequirement,
   snapshotPasswordRevision,
   type PasswordAction,
-  type PasswordAttemptDecision,
-  type PasswordCredentialSnapshot,
   type PasswordMutationDecision,
-  type PasswordAttemptPolicy,
 } from "@yielded/auth/Password";
 import { reportPersistenceFailure } from "@yielded/auth/Persistence";
 import {
@@ -34,16 +31,19 @@ import {
   type SecurityRevision,
 } from "@yielded/auth/Sessions";
 import { Cause, Context, DateTime, Effect, Option, Redacted, Schema } from "effect";
+import type { SqlClient } from "effect/sql/SqlClient";
 import type * as SqlError from "effect/sql/SqlError";
 
 import { PersistenceMappingError } from "./mapping-error";
 import {
   type AnyPasswordPersistenceMapping,
-  type PasswordAttemptAction,
-  type PasswordRateScopeKind,
-  type PasswordScopeKeys,
   requiredPasswordConstraints,
 } from "./models/password-model";
+import { makeNativeSqlTables, sqlMapping, type NativeSqlTables } from "./native-sql-table";
+import {
+  makePasswordAttempts,
+  samePasswordCredentialSnapshot as sameCredentialSnapshot,
+} from "./password-attempts";
 import {
   CurrentProofSql,
   type ProofSqlConfiguration,
@@ -53,7 +53,7 @@ import {
 /* oxlint-disable no-explicit-any -- existing storage kernels erase foreign table shapes; domain errors remain typed. */
 import type { QueryFailure } from "./query-operations";
 import type { QueryOperations, SqlFragment, SqlColumn } from "./query-operations";
-import type { NativeDatabase } from "./transaction-kernel";
+import { NativeDatabase } from "./transaction-kernel";
 
 type AdapterFailure = QueryFailure | PersistenceMappingError | SqlError.SqlError;
 
@@ -104,23 +104,18 @@ export interface PasswordSqlConfiguration {
 
 type Database = PasswordSqlDatabase;
 
-interface ScopeEntry {
-  readonly kind: PasswordRateScopeKind;
-  readonly key: string;
-  readonly limit: number;
-  readonly windowMillis: number;
-}
-
 export const makePasswordKernel = <
   Fragment extends SqlFragment = SqlFragment,
   Column extends SqlColumn = SqlColumn,
 >(
   operations: QueryOperations<Fragment, Column>,
   proofs: Pick<ReturnType<typeof makeProofKernel>, "completeProofPlanIn">,
+  nativeTables: (client: SqlClient, database: object) => NativeSqlTables = (client) =>
+    makeNativeSqlTables(client),
 ) => {
   type Mapping = AnyPasswordPersistenceMapping<Fragment>;
 
-  const { and, eq, gt, gte, inArray, lte, notExists, sql, column, updateValues } = operations;
+  const { and, eq, inArray, lte, column, updateValues } = operations;
   const { completeProofPlanIn } = proofs;
   const unavailable = () => PasswordUnavailable.make({});
 
@@ -200,23 +195,6 @@ export const makePasswordKernel = <
     state: column(mapping.attempt.table, mapping.attempt.state),
   });
 
-  const scopeColumns = (mapping: Mapping) => ({
-    moduleId: column(mapping.rateScope.table, mapping.rateScope.moduleId),
-    action: column(mapping.rateScope.table, mapping.rateScope.action),
-    scopeKind: column(mapping.rateScope.table, mapping.rateScope.scopeKind),
-    scopeKey: column(mapping.rateScope.table, mapping.rateScope.scopeKey),
-  });
-
-  const chargeColumns = (mapping: Mapping) => ({
-    moduleId: column(mapping.charge.table, mapping.charge.moduleId),
-    action: column(mapping.charge.table, mapping.charge.action),
-    scopeKind: column(mapping.charge.table, mapping.charge.scopeKind),
-    scopeKey: column(mapping.charge.table, mapping.charge.scopeKey),
-    attemptId: column(mapping.charge.table, mapping.charge.attemptId),
-    occurredAt: column(mapping.charge.table, mapping.charge.occurredAt),
-    retentionUntil: column(mapping.charge.table, mapping.charge.retentionUntil),
-  });
-
   const commandColumns = (mapping: Mapping) => ({
     moduleId: column(mapping.command.table, mapping.command.moduleId),
     commandId: column(mapping.command.table, mapping.command.commandId),
@@ -269,28 +247,6 @@ export const makePasswordKernel = <
 
   const sameIdentifier = (left: LoginIdentifier, right: LoginIdentifier) =>
     left.namespace === right.namespace && left.value === right.value;
-
-  const sameCredentialSnapshot = (
-    left: PasswordCredentialSnapshot,
-    right: PasswordCredentialSnapshot,
-  ) =>
-    left.moduleId === right.moduleId &&
-    left.revision.subjectId === right.revision.subjectId &&
-    left.revision.securityRevision === right.revision.securityRevision &&
-    left.credentialId === right.credentialId &&
-    left.credentialRevision === right.credentialRevision &&
-    left.verifierVersion === right.verifierVersion &&
-    left.normalization === right.normalization &&
-    left.identifierVerifiedAtMillis === right.identifierVerifiedAtMillis &&
-    left.revision.credentials.length === right.revision.credentials.length &&
-    left.revision.credentials.every((entry) =>
-      right.revision.credentials.some(
-        (other) => other.credentialId === entry.credentialId && other.revision === entry.revision,
-      ),
-    ) &&
-    left.identifierBindingRevision === right.identifierBindingRevision &&
-    sameIdentifier(left.identifier, right.identifier) &&
-    Redacted.value(left.verifier) === Redacted.value(right.verifier);
 
   const evidenceSatisfiedAt = (
     evidence: AuthenticationEvidence,
@@ -480,145 +436,6 @@ export const makePasswordKernel = <
       credential,
       snapshot,
     };
-  });
-
-  const scopeEntries = (
-    keys: PasswordScopeKeys,
-    policy: PasswordAttemptPolicy,
-  ): ReadonlyArray<ScopeEntry> => {
-    const values: ScopeEntry[] = [
-      { kind: "action", key: keys.action, ...policy.action },
-      { kind: "identifier", key: keys.identifier, ...policy.identifier },
-    ];
-
-    if (keys.subject !== undefined)
-      values.push({ kind: "subject", key: keys.subject, ...policy.subject });
-
-    return values;
-  };
-
-  const lockScope = Effect.fn("DrizzlePassword.lockScope")(function* (
-    mapping: Mapping,
-    configuration: PasswordSqlConfiguration,
-    moduleId: string,
-    action: PasswordAttemptAction,
-    entry: ScopeEntry,
-  ) {
-    const database = yield* CurrentPasswordSql;
-
-    const query = database.insert(mapping.rateScope.table).values(
-      mapping.rateScope.encodeInsert({
-        moduleId,
-        action,
-        scopeKind: entry.kind,
-        scopeKey: entry.key,
-      }),
-    );
-
-    yield* configuration.insertIfAbsent(query, mapping.rateScope.scopeKey, entry.key);
-    const c = scopeColumns(mapping);
-
-    yield* selectRows(
-      database
-        .select()
-        .from(mapping.rateScope.table)
-        .where(
-          and(
-            eq(c.moduleId, moduleId),
-            eq(c.action, action),
-            eq(c.scopeKind, entry.kind),
-            eq(c.scopeKey, entry.key),
-          ),
-        )
-        .limit(1),
-      configuration.locking,
-    );
-  });
-
-  const scopeAdmits = Effect.fn("DrizzlePassword.scopeAdmits")(function* (
-    mapping: Mapping,
-    moduleId: string,
-    action: PasswordAttemptAction,
-    entry: ScopeEntry,
-    policy: PasswordAttemptPolicy,
-    identifier: LoginIdentifier,
-    nativeSubjectId: unknown | undefined,
-    now: number,
-  ) {
-    const database = yield* CurrentPasswordSql;
-
-    const c = chargeColumns(mapping);
-
-    const charges = yield* selectRows(
-      database
-        .select({ attemptId: c.attemptId })
-        .from(mapping.charge.table)
-        .where(
-          and(
-            eq(c.moduleId, moduleId),
-            eq(c.action, action),
-            eq(c.scopeKind, entry.kind),
-            eq(c.scopeKey, entry.key),
-            gte(c.occurredAt, mapping.encodeInstant(now - entry.windowMillis)),
-          ),
-        )
-        .limit(entry.limit),
-      true,
-    );
-
-    if (charges.length >= entry.limit) return false;
-    const a = attemptColumns(mapping);
-
-    // Retention is the pending horizon. Expired rows stay until cleanup, but they
-    // no longer consume the admission budget after that horizon.
-    const pendingWhere = and(
-      entry.kind === "action"
-        ? and(eq(a.moduleId, moduleId), eq(a.action, action))
-        : entry.kind === "identifier"
-          ? and(
-              eq(a.moduleId, moduleId),
-              eq(a.action, action),
-              eq(a.identifierNamespace, identifier.namespace),
-              eq(a.identifierValue, identifier.value),
-            )
-          : and(eq(a.moduleId, moduleId), eq(a.action, action), eq(a.subjectId, nativeSubjectId)),
-      eq(a.state, "pending"),
-      gt(a.retentionUntil, mapping.encodeInstant(now)),
-    );
-
-    const pending = yield* selectRows(
-      database
-        .select({ attemptId: a.attemptId })
-        .from(mapping.attempt.table)
-        .where(pendingWhere)
-        .limit(policy.maximumPending),
-      true,
-    );
-
-    return pending.length < policy.maximumPending;
-  });
-
-  const insertCharge = Effect.fn("Drizzle.insertCharge")(function* (
-    mapping: Mapping,
-    moduleId: string,
-    action: PasswordAttemptAction,
-    entry: ScopeEntry,
-    attemptId: any,
-    now: number,
-  ) {
-    const database = yield* CurrentPasswordSql;
-
-    return yield* database.insert(mapping.charge.table).values(
-      mapping.charge.encodeInsert({
-        moduleId,
-        action,
-        scopeKind: entry.kind,
-        scopeKey: entry.key,
-        attemptId,
-        occurredAtMillis: now,
-        retentionUntilMillis: now + entry.windowMillis,
-      }),
-    );
   });
 
   const owned = <A, E, R>(
@@ -1139,267 +956,19 @@ export const makePasswordKernel = <
       ).pipe(Effect.mapError(unavailable));
     const hooks = yield* LifecycleHooks;
 
+    if (!validConstraints(mapping)) return yield* unavailable();
+    const root = yield* NativeDatabase;
+
+    const attempts = yield* makePasswordAttempts(
+      yield* sqlMapping(() => nativeTables(root.$client.withoutTransforms(), root)).pipe(
+        translateFailure,
+      ),
+      mapping,
+      configuration,
+    );
+
     return PasswordPersistence.of({
-      admitAttempt: (input, prepare) =>
-        Effect.gen(function* () {
-          const attemptId = yield* allocate(
-            configuration.mode,
-            mapping.allocateAttemptId,
-            mapping.allocateAttemptIdSync,
-          );
-
-          return yield* owned(
-            database,
-            mapping,
-            configuration,
-            Effect.gen(function* () {
-              const transaction = yield* CurrentPasswordSql;
-              const journal = yield* CurrentCommitJournal;
-
-              const resolved = yield* resolveCredential(
-                mapping,
-                input.moduleId,
-                input.identifier,
-                input.subjectId,
-                configuration.locking,
-              );
-
-              const keys = mapping.scopeKeys({
-                moduleId: input.moduleId,
-                action: input.action,
-                identifier: input.identifier,
-                ...(resolved?.snapshot === undefined
-                  ? {}
-                  : { subjectId: resolved.snapshot.revision.subjectId }),
-              });
-
-              const scopes = scopeEntries(keys, input.policy);
-              const admitted: ScopeEntry[] = [];
-
-              yield* lockScope(mapping, configuration, input.moduleId, input.action, scopes[0]!);
-              let currentNow = yield* nowMillis;
-
-              if (
-                yield* scopeAdmits(
-                  mapping,
-                  input.moduleId,
-                  input.action,
-                  scopes[0]!,
-                  input.policy,
-                  input.identifier,
-                  resolved?.nativeSubjectId,
-                  currentNow,
-                )
-              )
-                admitted.push(scopes[0]!);
-              if (admitted.length === 1) {
-                for (const entry of scopes.slice(1)) {
-                  yield* lockScope(mapping, configuration, input.moduleId, input.action, entry);
-                  currentNow = yield* nowMillis;
-                  if (
-                    yield* scopeAdmits(
-                      mapping,
-                      input.moduleId,
-                      input.action,
-                      entry,
-                      input.policy,
-                      input.identifier,
-                      resolved?.nativeSubjectId,
-                      currentNow,
-                    )
-                  )
-                    admitted.push(entry);
-                }
-              }
-              const now = yield* nowMillis;
-
-              for (const entry of admitted)
-                yield* insertCharge(mapping, input.moduleId, input.action, entry, attemptId, now);
-              if (admitted.length !== scopes.length)
-                return prepare({ _tag: "Denied" as const }, journal);
-              const snapshot = resolved?.snapshot;
-              const deadline = now + input.policy.attemptLifetimeMillis;
-
-              const retentionUntil = Math.max(
-                deadline,
-                ...scopes.map((entry) => now + entry.windowMillis),
-              );
-
-              yield* transaction.insert(mapping.attempt.table).values(
-                mapping.attempt.encodeInsert(
-                  {
-                    moduleId: input.moduleId,
-                    action: input.action,
-                    attemptId,
-                    identifier: input.identifier,
-                    ...(snapshot === undefined
-                      ? {}
-                      : {
-                          subjectId: snapshot.revision.subjectId,
-                          credentialId: snapshot.credentialId,
-                          securityRevision: snapshot.revision.securityRevision,
-                          credentialRevision: snapshot.credentialRevision,
-                          verifierVersion: snapshot.verifierVersion,
-                          identifierBindingRevision: snapshot.identifierBindingRevision,
-                        }),
-                    admittedAtMillis: now,
-                    deadlineMillis: deadline,
-                    retentionUntilMillis: retentionUntil,
-                  },
-                  {
-                    ...(resolved?.nativeSubjectId === undefined
-                      ? {}
-                      : { nativeSubjectId: resolved.nativeSubjectId }),
-                    state: "pending",
-                  },
-                ),
-              );
-
-              return prepare(
-                {
-                  _tag: "Admitted" as const,
-                  attemptId,
-                  ...(snapshot === undefined ? {} : { credential: snapshot }),
-                },
-                journal,
-              );
-            }),
-          );
-        }).pipe(
-          Effect.provideService(CurrentPasswordSql, database),
-          Effect.provideService(LifecycleHooks, hooks),
-          translateFailure,
-        ),
-      settleAttempt: (uncaptured, prepare) =>
-        Effect.gen(function* () {
-          const captured =
-            uncaptured.captured === undefined
-              ? undefined
-              : yield* snapshotPasswordCredential(uncaptured.captured);
-
-          const input = { ...uncaptured, ...(captured === undefined ? {} : { captured }) };
-
-          return yield* owned(
-            database,
-            mapping,
-            configuration,
-            Effect.gen(function* () {
-              const transaction = yield* CurrentPasswordSql;
-              const journal = yield* CurrentCommitJournal;
-
-              const c = attemptColumns(mapping);
-
-              const discovered = yield* selectRows(
-                transaction
-                  .select()
-                  .from(mapping.attempt.table)
-                  .where(and(eq(c.moduleId, input.moduleId), eq(c.attemptId, input.attemptId)))
-                  .limit(1),
-                false,
-              );
-
-              let row = discovered[0];
-
-              if (row === undefined || row[mapping.attempt.state] !== "pending")
-                return prepare("rejected", journal);
-              let decision: PasswordAttemptDecision = "rejected";
-              let current: any;
-              let attemptMatches = false;
-
-              if (input.outcome === "verified" && input.captured !== undefined) {
-                current = yield* resolveCredential(
-                  mapping,
-                  input.moduleId,
-                  input.captured.identifier,
-                  input.captured.revision.subjectId,
-                  configuration.locking,
-                );
-                attemptMatches =
-                  input.captured.moduleId === input.moduleId &&
-                  row[mapping.attempt.identifierNamespace] ===
-                    input.captured.identifier.namespace &&
-                  row[mapping.attempt.identifierValue] === input.captured.identifier.value &&
-                  mapping.subjectId.equals(
-                    row[mapping.attempt.subjectId],
-                    current?.nativeSubjectId,
-                  ) &&
-                  row[mapping.attempt.credentialId] === input.captured.credentialId &&
-                  row[mapping.attempt.securityRevision] ===
-                    input.captured.revision.securityRevision &&
-                  row[mapping.attempt.credentialRevision] === input.captured.credentialRevision &&
-                  row[mapping.attempt.verifierVersion] === input.captured.verifierVersion &&
-                  row[mapping.attempt.identifierBindingRevision] ===
-                    input.captured.identifierBindingRevision;
-              }
-              row = (yield* selectRows(
-                transaction
-                  .select()
-                  .from(mapping.attempt.table)
-                  .where(and(eq(c.moduleId, input.moduleId), eq(c.attemptId, input.attemptId)))
-                  .limit(1),
-                configuration.locking,
-              ))[0];
-              if (row === undefined || row[mapping.attempt.state] !== "pending")
-                return prepare("rejected", journal);
-              const now = yield* nowMillis;
-              const deadline = yield* mapping.decodeInstant(row[mapping.attempt.deadline]);
-
-              if (
-                attemptMatches &&
-                current?.snapshot !== undefined &&
-                input.captured !== undefined &&
-                deadline > now &&
-                sameCredentialSnapshot(current.snapshot, input.captured)
-              )
-                decision = "verified";
-              const prepared = prepare(decision, journal);
-
-              yield* transaction
-                .update(mapping.attempt.table)
-                .set(updateValues([[mapping.attempt.state, decision]]))
-                .where(
-                  and(
-                    eq(c.moduleId, input.moduleId),
-                    eq(c.attemptId, input.attemptId),
-                    eq(c.state, "pending"),
-                  ),
-                );
-              if (
-                decision === "verified" &&
-                input.rehash !== undefined &&
-                current?.snapshot !== undefined
-              ) {
-                const cc = credentialColumns(mapping);
-
-                const nextVersion = yield* allocate(
-                  configuration.mode,
-                  mapping.allocateRevision,
-                  mapping.allocateRevisionSync,
-                );
-
-                yield* transaction
-                  .update(mapping.credential.table)
-                  .set(mapping.credential.encodeVerifier(input.rehash.nextVerifier, nextVersion))
-                  .where(
-                    and(
-                      eq(cc.moduleId, input.moduleId),
-                      eq(cc.subjectId, current.nativeSubjectId),
-                      eq(cc.credentialId, current.snapshot.credentialId),
-                      eq(cc.credentialRevision, current.snapshot.credentialRevision),
-                      eq(cc.verifierVersion, input.rehash.expectedVersion),
-                      eq(cc.verifier, Redacted.value(input.rehash.expectedVerifier)),
-                    ),
-                  );
-              }
-
-              return prepared;
-            }),
-          );
-        }).pipe(
-          Effect.provideService(CurrentPasswordSql, database),
-          Effect.provideService(LifecycleHooks, hooks),
-          translateFailure,
-        ),
+      ...attempts,
       readForSubject: (input) =>
         safeRead(
           database,
@@ -1729,103 +1298,19 @@ export const makePasswordKernel = <
 
             const now = yield* nowMillis;
             const nativeNow = mapping.encodeInstant(now);
-            let remaining = input.limit;
-            let hasMore = false;
             const a = attemptColumns(mapping);
-            const c = chargeColumns(mapping);
 
             const attempts = yield* selectRows(
               transaction
                 .select({ attemptId: a.attemptId })
                 .from(mapping.attempt.table)
                 .where(and(eq(a.moduleId, input.moduleId), lte(a.retentionUntil, nativeNow)))
-                .limit(remaining + 1),
+                .limit(input.limit + 1),
               false,
             );
 
-            if (attempts.length > remaining) hasMore = true;
-            const attemptCandidates = attempts.slice(0, remaining);
-
-            remaining -= attemptCandidates.length;
-
-            const charges = yield* selectRows(
-              transaction
-                .select({
-                  action: c.action,
-                  scopeKind: c.scopeKind,
-                  scopeKey: c.scopeKey,
-                  attemptId: c.attemptId,
-                })
-                .from(mapping.charge.table)
-                .where(and(eq(c.moduleId, input.moduleId), lte(c.retentionUntil, nativeNow)))
-                .limit(remaining + 1),
-              false,
-            );
-
-            if (charges.length > remaining) hasMore = true;
-            const chargeCandidates = charges.slice(0, remaining);
-
-            remaining -= chargeCandidates.length;
-            const sc = scopeColumns(mapping);
-
-            const scopes = yield* selectRows(
-              transaction
-                .select({ action: sc.action, scopeKind: sc.scopeKind, scopeKey: sc.scopeKey })
-                .from(mapping.rateScope.table)
-                .where(
-                  and(
-                    eq(sc.moduleId, input.moduleId),
-                    notExists(
-                      transaction
-                        .select({ one: sql`1` })
-                        .from(mapping.charge.table)
-                        .where(
-                          and(
-                            eq(c.moduleId, sc.moduleId),
-                            eq(c.action, sc.action),
-                            eq(c.scopeKind, sc.scopeKind),
-                            eq(c.scopeKey, sc.scopeKey),
-                          ),
-                        ),
-                    ),
-                  ),
-                )
-                .limit(remaining + 1),
-              remaining === 0 ? false : configuration.locking,
-            );
-
-            if (scopes.length > remaining) hasMore = true;
-            const selectedScopes = scopes.slice(0, remaining);
-
-            remaining -= selectedScopes.length;
-            const selectedCharges: typeof chargeCandidates = [];
-
-            for (const candidate of chargeCandidates) {
-              const locked = yield* selectRows(
-                transaction
-                  .select({
-                    action: c.action,
-                    scopeKind: c.scopeKind,
-                    scopeKey: c.scopeKey,
-                    attemptId: c.attemptId,
-                  })
-                  .from(mapping.charge.table)
-                  .where(
-                    and(
-                      eq(c.moduleId, input.moduleId),
-                      eq(c.action, candidate.action),
-                      eq(c.scopeKind, candidate.scopeKind),
-                      eq(c.scopeKey, candidate.scopeKey),
-                      eq(c.attemptId, candidate.attemptId),
-                      lte(c.retentionUntil, nativeNow),
-                    ),
-                  )
-                  .limit(1),
-                configuration.locking,
-              );
-
-              if (locked[0] !== undefined) selectedCharges.push(locked[0] as any);
-            }
+            const hasMore = attempts.length > input.limit;
+            const attemptCandidates = attempts.slice(0, input.limit);
             const selectedAttempts: typeof attemptCandidates = [];
 
             for (const candidate of attemptCandidates) {
@@ -1849,25 +1334,12 @@ export const makePasswordKernel = <
 
             const prepared = prepare(
               {
-                removed: selectedAttempts.length + selectedCharges.length + selectedScopes.length,
+                removed: selectedAttempts.length,
                 hasMore,
               },
               journal,
             );
 
-            for (const row of selectedCharges)
-              yield* transaction
-                .delete(mapping.charge.table)
-                .where(
-                  and(
-                    eq(c.moduleId, input.moduleId),
-                    eq(c.action, row.action),
-                    eq(c.scopeKind, row.scopeKind),
-                    eq(c.scopeKey, row.scopeKey),
-                    eq(c.attemptId, row.attemptId),
-                    lte(c.retentionUntil, nativeNow),
-                  ),
-                );
             if (selectedAttempts.length > 0)
               yield* transaction.delete(mapping.attempt.table).where(
                 and(
@@ -1877,28 +1349,6 @@ export const makePasswordKernel = <
                     selectedAttempts.map((row: any) => row.attemptId),
                   ),
                   lte(a.retentionUntil, nativeNow),
-                ),
-              );
-            for (const row of selectedScopes)
-              yield* transaction.delete(mapping.rateScope.table).where(
-                and(
-                  eq(sc.moduleId, input.moduleId),
-                  eq(sc.action, row.action),
-                  eq(sc.scopeKind, row.scopeKind),
-                  eq(sc.scopeKey, row.scopeKey),
-                  notExists(
-                    transaction
-                      .select({ one: sql`1` })
-                      .from(mapping.charge.table)
-                      .where(
-                        and(
-                          eq(c.moduleId, sc.moduleId),
-                          eq(c.action, sc.action),
-                          eq(c.scopeKind, sc.scopeKind),
-                          eq(c.scopeKey, sc.scopeKey),
-                        ),
-                      ),
-                  ),
                 ),
               );
 

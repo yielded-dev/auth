@@ -1,4 +1,4 @@
-import { Password, Schema as AuthSchema, Sessions } from "@yielded/auth";
+import { Hooks, Password, Schema as AuthSchema, Sessions } from "@yielded/auth";
 import { Context, Effect, Layer, Option, Redacted, Schema } from "effect";
 
 import {
@@ -11,7 +11,7 @@ import {
   satisfies,
 } from "./accounts";
 import { AppAuth } from "./auth";
-import { charge, nextId, type State } from "./model";
+import { nextId, type State } from "./model";
 import { completionCurrent, consumeCompletion } from "./proofs";
 import { AccountStore } from "./store";
 
@@ -69,82 +69,82 @@ export const PasswordsLive = Layer.effectContext(
     const store = yield* AccountStore;
 
     const passwords = Password.PasswordPersistence.of({
-      admitAttempt: (input, prepare) =>
-        store
-          .transaction((state, journal, now) =>
-            Effect.sync(() => {
-              if (input.moduleId !== moduleId) return prepare({ _tag: "Denied" }, journal);
+      prepareAttempt: (input) =>
+        Effect.gen(function* () {
+          if (yield* Hooks.hasCommitScope) return yield* Password.PasswordUnavailable.make({});
+          if (input.moduleId !== moduleId) return yield* Password.PasswordUnavailable.make({});
+          const { action, attemptLifetimeMillis } = input;
+          const identifier = { ...input.identifier };
+          const requestedSubject = input.subjectId;
 
+          const captured = yield* store.read((state) =>
+            Effect.gen(function* () {
               const account = state.customers.find(
                 (item) =>
                   item.active &&
-                  (input.identifier.namespace === "email"
-                    ? item.email === input.identifier.value
-                    : input.identifier.namespace === "username" &&
-                      item.username === input.identifier.value) &&
-                  (input.subjectId === undefined || item.id === input.subjectId),
+                  (identifier.namespace === "email"
+                    ? item.email === identifier.value
+                    : identifier.namespace === "username" && item.username === identifier.value) &&
+                  (requestedSubject === undefined || item.id === requestedSubject),
               );
 
-              const captured =
+              const candidate =
                 account === undefined ? undefined : passwordCredential(state, account);
 
-              const scopes = [
-                { bucket: `password/${input.action}/global`, ...input.policy.action },
-                {
-                  bucket: `password/${input.action}/${input.identifier.namespace}/${input.identifier.value}`,
-                  ...input.policy.identifier,
-                },
-                ...(account === undefined
-                  ? []
-                  : [
-                      {
-                        bucket: `password/${input.action}/subject/${account.id}`,
-                        ...input.policy.subject,
-                      },
-                    ]),
-              ];
-
-              const admitted = charge(state, scopes, now);
-
-              if (
-                !admitted ||
-                state.attempts.filter((item) => item.pending && item.deadline > now).length >=
-                  input.policy.maximumPending
-              )
-                return prepare({ _tag: "Denied" }, journal);
-              const attemptId = Password.PasswordAttemptId.make(nextId(state, "attempt"));
-
-              const receipt = prepare(
-                {
-                  _tag: "Admitted",
-                  attemptId,
-                  ...(captured === undefined ? {} : { credential: captured }),
-                },
-                journal,
-              );
-
-              state.attempts = [
-                ...state.attempts,
-                {
-                  id: attemptId,
-                  moduleId,
-                  action: input.action,
-                  ...(captured === undefined ? {} : { captured }),
-                  pending: true,
-                  deadline: now + input.policy.attemptLifetimeMillis,
-                  retentionUntil:
-                    now +
-                    Math.max(
-                      input.policy.attemptLifetimeMillis,
-                      ...scopes.map((item) => item.windowMillis),
-                    ),
-                },
-              ];
-
-              return receipt;
+              return candidate === undefined
+                ? undefined
+                : yield* Password.snapshotPasswordCredential(candidate);
             }),
-          )
-          .pipe(Effect.catchTag("StoreUnavailable", () => Password.PasswordUnavailable.make({}))),
+          );
+
+          let used = false;
+
+          return Object.freeze({
+            ...(captured === undefined ? {} : { credential: captured }),
+            admit: <A>(
+              prepare: Password.PreparePasswordCommit<Password.PasswordAttemptAdmission, A>,
+            ) =>
+              Effect.gen(function* () {
+                if (yield* Hooks.hasCommitScope)
+                  return yield* Password.PasswordUnavailable.make({});
+                if (used) return yield* Password.PasswordUnavailable.make({});
+                used = true;
+
+                return yield* store.transaction((state, journal, now) =>
+                  Effect.sync(() => {
+                    const attemptId = Password.PasswordAttemptId.make(nextId(state, "attempt"));
+                    const deadline = now + attemptLifetimeMillis;
+
+                    const receipt = prepare(
+                      {
+                        _tag: "Admitted",
+                        attemptId,
+                        ...(captured === undefined ? {} : { credential: captured }),
+                      },
+                      journal,
+                    );
+
+                    state.attempts = [
+                      ...state.attempts,
+                      {
+                        id: attemptId,
+                        moduleId,
+                        action,
+                        ...(captured === undefined ? {} : { captured }),
+                        pending: true,
+                        deadline,
+                        retentionUntil: deadline,
+                      },
+                    ];
+
+                    return receipt;
+                  }),
+                );
+              }).pipe(
+                Effect.catchTag("StoreUnavailable", () => Password.PasswordUnavailable.make({})),
+              ),
+          });
+        }).pipe(Effect.catchTag("StoreUnavailable", () => Password.PasswordUnavailable.make({}))),
       settleAttempt: (input, prepare) =>
         store
           .transaction((state, journal, now) =>
@@ -170,10 +170,7 @@ export const PasswordsLive = Layer.effectContext(
                 actual !== undefined &&
                 encodeCredential(captured) === encodeCredential(attempt.captured) &&
                 current(state, captured.revision) &&
-                captured.credentialId === actual.credentialId &&
-                captured.credentialRevision === actual.credentialRevision &&
-                captured.identifierBindingRevision === actual.identifierBindingRevision &&
-                captured.identifier.value === actual.identifier.value;
+                encodeCredential(captured) === encodeCredential(actual);
 
               const receipt = prepare(verified ? "verified" : "rejected", journal);
 

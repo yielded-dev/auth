@@ -25,10 +25,6 @@ const uniquePlans: Readonly<Record<string, readonly [string, ReadonlyArray<strin
     "authorityCredential",
     ["subjectId", "credentialId"],
   ],
-  "unique(charge.moduleId,charge.action,charge.scopeKind,charge.scopeKey,charge.attemptId)": [
-    "charge",
-    ["moduleId", "action", "scopeKind", "scopeKey", "attemptId"],
-  ],
   "unique(command.moduleId,command.commandId)": ["command", ["moduleId", "commandId"]],
   "unique(connectedAdmission.admissionId)": ["admission", ["admissionId"]],
   "unique(connectedClient.clientKey)": ["client", ["clientKey"]],
@@ -88,10 +84,6 @@ const uniquePlans: Readonly<Record<string, readonly [string, ReadonlyArray<strin
   "unique(ownership.identityKey)": ["ownership", ["identityKey"]],
   "unique(pending.digest)": ["pending", ["digest"]],
   "unique(pending.flowId)": ["pending", ["flowId"]],
-  "unique(rateScope.moduleId,rateScope.action,rateScope.scopeKind,rateScope.scopeKey)": [
-    "rateScope",
-    ["moduleId", "action", "scopeKind", "scopeKey"],
-  ],
   "unique(rateScope.moduleId,rateScope.purpose,rateScope.action,rateScope.scopeKind,rateScope.scopeKey)":
     ["rateScope", ["moduleId", "purpose", "action", "scopeKind", "scopeKey"]],
   "unique(registration.moduleId,registration.requestId)": [

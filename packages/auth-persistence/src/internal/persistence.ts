@@ -29,6 +29,7 @@ import {
 import { randomId } from "./crypto";
 import { makeEmailKernel, CurrentEmailSql, type EmailSqlDatabase } from "./email-kernel";
 import { PersistenceMappingError } from "./mapping-error";
+import type { NativeSqlTables } from "./native-sql-table";
 import {
   makePasswordKernel,
   CurrentPasswordSql,
@@ -69,6 +70,7 @@ export interface Backend<T extends object, R> {
   readonly describe: (table: T) => StorageTable;
   readonly acquire: Effect.Effect<object, PersistenceConfigurationError, R | SqlClient.SqlClient>;
   readonly operations: QueryOperations;
+  readonly nativeTables: (client: SqlClient.SqlClient, database: object) => NativeSqlTables;
   readonly passkeys: (input: {
     readonly storage: MappingInput;
     readonly namespace: string;
@@ -112,9 +114,9 @@ export const createPersistence = <T extends object, R>(
   backend: Backend<T, R>,
 ): PersistenceApi<T, R> => {
   const proofKernel = makeProofKernel(backend.operations);
-  const passwordKernel = makePasswordKernel(backend.operations, proofKernel);
+  const passwordKernel = makePasswordKernel(backend.operations, proofKernel, backend.nativeTables);
   const emailKernel = makeEmailKernel(backend.operations, proofKernel);
-  const sessionKernel = makeSessionKernel(backend.operations);
+  const sessionKernel = makeSessionKernel(backend.operations, backend.nativeTables);
   const transactionKernel = makeTransactionKernel(backend.operations);
   const executionKernel = makeTransactionExecutionKernel(transactionKernel);
   const phoneKernel = makePhoneKernel(backend.operations, transactionKernel);
@@ -139,14 +141,7 @@ export const createPersistence = <T extends object, R>(
 
     const roles: StorageRole[] = ["identifiers", "credentials", "sessions", "sessionFlows"];
 
-    if (password)
-      roles.push(
-        "passwords",
-        "passwordAttempts",
-        "passwordScopes",
-        "passwordCharges",
-        "passwordCommands",
-      );
+    if (password) roles.push("passwords", "passwordAttempts", "passwordCommands");
     if (management) roles.push("passwordRegistrations");
     if (email) roles.push("emailCredentials", "emailCommands");
     if (phone) roles.push("phoneState");

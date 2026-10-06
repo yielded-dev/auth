@@ -78,21 +78,6 @@ export const storageTables = {
     },
     [["moduleId", "attemptId"]],
   ),
-  passwordScopes: spec({ moduleId: text, action: text, scopeKind: text, scopeKey: text }, [
-    ["moduleId", "action", "scopeKind", "scopeKey"],
-  ]),
-  passwordCharges: spec(
-    {
-      moduleId: text,
-      action: text,
-      scopeKind: text,
-      scopeKey: text,
-      attemptId: text,
-      occurredAt: integer,
-      retentionUntil: integer,
-    },
-    [["moduleId", "action", "scopeKind", "scopeKey", "attemptId"]],
-  ),
   passwordCommands: spec(
     {
       moduleId: text,

@@ -79,31 +79,6 @@ export const passwordAttempts = AuthPersistence.table({
   unique: [["moduleId", "attemptId"]],
 });
 
-export const passwordScopes = AuthPersistence.table({
-  name: "app_password_scopes",
-  columns: {
-    moduleId: { name: "c_module_id", type: "text" },
-    action: { name: "c_action", type: "text" },
-    scopeKind: { name: "c_scope_kind", type: "text" },
-    scopeKey: { name: "c_scope_key", type: "text" },
-  },
-  unique: [["moduleId", "action", "scopeKind", "scopeKey"]],
-});
-
-export const passwordCharges = AuthPersistence.table({
-  name: "app_password_charges",
-  columns: {
-    moduleId: { name: "c_module_id", type: "text" },
-    action: { name: "c_action", type: "text" },
-    scopeKind: { name: "c_scope_kind", type: "text" },
-    scopeKey: { name: "c_scope_key", type: "text" },
-    attemptId: { name: "c_attempt_id", type: "text" },
-    occurredAt: { name: "c_occurred_at", type: "integer" },
-    retentionUntil: { name: "c_retention_until", type: "integer" },
-  },
-  unique: [["moduleId", "action", "scopeKind", "scopeKey", "attemptId"]],
-});
-
 export const passwordCommands = AuthPersistence.table({
   name: "app_password_commands",
   columns: {

@@ -32,6 +32,7 @@ export {
 } from "./password/methods/models";
 
 export { PasswordActionEvidence } from "./password/methods/PasswordActionEvidence";
+export { PasswordAttemptLimiter } from "./password/methods/PasswordAttemptLimiter";
 
 export {
   PasswordActionRequired,
@@ -60,6 +61,7 @@ export { PasswordKdfAdmission } from "./password/PasswordKdfAdmission";
 
 export {
   type PasswordMutationInput,
+  type PasswordAttemptPreparation,
   PasswordPersistence,
   type PreparePasswordCommit,
 } from "./password/methods/PasswordPersistence";

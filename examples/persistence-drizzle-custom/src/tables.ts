@@ -71,46 +71,6 @@ export const passwordAttempts = sqliteTable(
   (table) => [uniqueIndex("app_password_attempts_key_0").on(table.moduleId, table.attemptId)],
 );
 
-export const passwordScopes = sqliteTable(
-  "app_password_scopes",
-  {
-    moduleId: text("c_module_id").notNull(),
-    action: text("c_action").notNull(),
-    scopeKind: text("c_scope_kind").notNull(),
-    scopeKey: text("c_scope_key").notNull(),
-  },
-  (table) => [
-    uniqueIndex("app_password_scopes_key_0").on(
-      table.moduleId,
-      table.action,
-      table.scopeKind,
-      table.scopeKey,
-    ),
-  ],
-);
-
-export const passwordCharges = sqliteTable(
-  "app_password_charges",
-  {
-    moduleId: text("c_module_id").notNull(),
-    action: text("c_action").notNull(),
-    scopeKind: text("c_scope_kind").notNull(),
-    scopeKey: text("c_scope_key").notNull(),
-    attemptId: text("c_attempt_id").notNull(),
-    occurredAt: integer("c_occurred_at").notNull(),
-    retentionUntil: integer("c_retention_until").notNull(),
-  },
-  (table) => [
-    uniqueIndex("app_password_charges_key_0").on(
-      table.moduleId,
-      table.action,
-      table.scopeKind,
-      table.scopeKey,
-      table.attemptId,
-    ),
-  ],
-);
-
 export const passwordCommands = sqliteTable(
   "app_password_commands",
   {

@@ -70,11 +70,9 @@ type Mapping<
   C extends AnySQLiteTable,
   AC extends AnySQLiteTable,
   A extends AnySQLiteTable,
-  RS extends AnySQLiteTable,
-  CE extends AnySQLiteTable,
   M extends AnySQLiteTable,
   NativeId,
-> = PasswordPersistenceMapping<S, I, C, AC, A, RS, CE, M, NativeId>;
+> = PasswordPersistenceMapping<S, I, C, AC, A, M, NativeId>;
 
 export const makeSqlitePasswordPersistenceServices = <
   S extends AnySQLiteTable,
@@ -82,12 +80,10 @@ export const makeSqlitePasswordPersistenceServices = <
   C extends AnySQLiteTable,
   AC extends AnySQLiteTable,
   A extends AnySQLiteTable,
-  RS extends AnySQLiteTable,
-  CE extends AnySQLiteTable,
   M extends AnySQLiteTable,
   NativeId,
 >(
-  mapping: Mapping<S, I, C, AC, A, RS, CE, M, NativeId>,
+  mapping: Mapping<S, I, C, AC, A, M, NativeId>,
   configuration: PasswordTargetConfiguration,
   proofMapping?: ProofPersistenceMapping<
     any,
@@ -112,8 +108,6 @@ export const coordinateSqlitePasswordPersistence = <
   C extends AnySQLiteTable,
   AC extends AnySQLiteTable,
   A extends AnySQLiteTable,
-  RS extends AnySQLiteTable,
-  CE extends AnySQLiteTable,
   M extends AnySQLiteTable,
   NativeId,
   PM extends
@@ -124,7 +118,7 @@ export const coordinateSqlitePasswordPersistence = <
   R,
 >(
   database: D,
-  mapping: Mapping<S, I, C, AC, A, RS, CE, M, NativeId>,
+  mapping: Mapping<S, I, C, AC, A, M, NativeId>,
   configuration: PasswordTargetConfiguration,
   proofMapping: PM,
   owner: (
@@ -208,8 +202,6 @@ export const makeSqlitePasswordTarget = <
     C extends AnySQLiteTable,
     AC extends AnySQLiteTable,
     A extends AnySQLiteTable,
-    RS extends AnySQLiteTable,
-    CE extends AnySQLiteTable,
     M extends AnySQLiteTable,
     NativeId,
     PM extends
@@ -223,7 +215,7 @@ export const makeSqlitePasswordTarget = <
   >(
     acquire: Effect.Effect<Database, DatabaseError, DatabaseRequirements>,
     options: {
-      readonly mapping: Mapping<S, I, C, AC, A, RS, CE, M, NativeId>;
+      readonly mapping: Mapping<S, I, C, AC, A, M, NativeId>;
       readonly proofMapping?: PM;
       readonly transaction?: never;
     },
@@ -242,8 +234,6 @@ export const makeSqlitePasswordTarget = <
     C extends AnySQLiteTable,
     AC extends AnySQLiteTable,
     A extends AnySQLiteTable,
-    RS extends AnySQLiteTable,
-    CE extends AnySQLiteTable,
     M extends AnySQLiteTable,
     NativeId,
     PM extends
@@ -259,7 +249,7 @@ export const makeSqlitePasswordTarget = <
   >(
     acquire: Effect.Effect<Database, DatabaseError, DatabaseRequirements>,
     options: {
-      readonly mapping: Mapping<S, I, C, AC, A, RS, CE, M, NativeId>;
+      readonly mapping: Mapping<S, I, C, AC, A, M, NativeId>;
       readonly proofMapping?: PM;
       readonly transaction: SuppliedService<TxId, NoInfer<TransactionOf<Database>>, TxShape>;
     },
@@ -278,8 +268,6 @@ export const makeSqlitePasswordTarget = <
     C extends AnySQLiteTable,
     AC extends AnySQLiteTable,
     A extends AnySQLiteTable,
-    RS extends AnySQLiteTable,
-    CE extends AnySQLiteTable,
     M extends AnySQLiteTable,
     NativeId,
     PM extends
@@ -295,7 +283,7 @@ export const makeSqlitePasswordTarget = <
   >(
     acquire: Effect.Effect<Database, DatabaseError, DatabaseRequirements>,
     options: {
-      readonly mapping: Mapping<S, I, C, AC, A, RS, CE, M, NativeId>;
+      readonly mapping: Mapping<S, I, C, AC, A, M, NativeId>;
       readonly proofMapping?: PM;
       readonly transaction?: SuppliedService<TxId, NoInfer<TransactionOf<Database>>, TxShape>;
     },
@@ -468,12 +456,10 @@ export const makeSqlitePasswordTarget = <
       C extends AnySQLiteTable,
       AC extends AnySQLiteTable,
       A extends AnySQLiteTable,
-      RS extends AnySQLiteTable,
-      CE extends AnySQLiteTable,
       M extends AnySQLiteTable,
       NativeId,
     >(
-      mapping: Mapping<S, I, C, AC, A, RS, CE, M, NativeId>,
+      mapping: Mapping<S, I, C, AC, A, M, NativeId>,
       proofMapping?: ProofPersistenceMapping<
         any,
         any,

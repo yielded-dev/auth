@@ -360,6 +360,12 @@ export const MigrationsLive = Layer.effectDiscard(
       "0004_browser_login": Effect.flatMap(SqlClient.SqlClient, (sql) =>
         sql.unsafe(BrowserLoginPersistence.migration),
       ),
+      "0005_separate_password_limits": Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+
+        yield* sql`drop table app_password_charges`;
+        yield* sql`drop table app_password_scopes`;
+      }),
     }),
   }),
 );

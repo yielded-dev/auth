@@ -1,5 +1,6 @@
 import { makeSessionKernel } from "@yielded/auth-persistence/Adapter";
 
+import { makeDrizzleSqlTables } from "./native-sql-table";
 import { drizzleQueryOperations } from "./query-operations";
 export type { SessionSqlDatabase } from "@yielded/auth-persistence/Adapter";
 export { CurrentSessionSql } from "@yielded/auth-persistence/Adapter";
@@ -11,4 +12,4 @@ export const {
   makeSqlStatefulSessions,
   makeSqlSignedValidity,
   makeSqlSessionStepUp,
-} = makeSessionKernel(drizzleQueryOperations);
+} = makeSessionKernel(drizzleQueryOperations, makeDrizzleSqlTables);

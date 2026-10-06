@@ -52,6 +52,10 @@ import {
   PasswordCredentialSnapshot,
 } from "./models";
 import { PasswordActionEvidence } from "./PasswordActionEvidence";
+import {
+  PasswordAttemptLimiter,
+  defaultPasswordAttemptLimiterLayer,
+} from "./PasswordAttemptLimiter";
 import { PasswordPersistence, type PasswordMutationInput } from "./PasswordPersistence";
 import type {
   PasswordPreparedPersistence as Persistence,
@@ -324,6 +328,7 @@ export const makePasswordPrepared = <
 
       const persistence = yield* PasswordPreparedPersistence,
         store = yield* PasswordPersistence,
+        limiter = yield* PasswordAttemptLimiter,
         hasher = yield* PasswordHashing,
         checker = yield* NewPasswordCheck,
         authority = yield* AuthenticationAuthority,
@@ -333,6 +338,7 @@ export const makePasswordPrepared = <
         crypto = yield* Crypto.Crypto;
 
       const preparationServices = Context.make(PasswordPersistence, store).pipe(
+        Context.add(PasswordAttemptLimiter, limiter),
         Context.add(PasswordHashing, hasher),
         Context.add(NewPasswordCheck, checker),
         Context.add(AuthenticationAuthority, authority),
@@ -1033,7 +1039,7 @@ export const makePasswordPrepared = <
         }),
       });
     }),
-  );
+  ).pipe(Layer.provide(defaultPasswordAttemptLimiterLayer));
 
   const BeginAdd = makeOperation(`${moduleId}/prepared/add/begin`, {
     payload: BeginAddInput,

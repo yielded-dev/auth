@@ -37,8 +37,6 @@ export const storage = Persistence.map({
     credentials: tables.credentials,
     passwords: tables.passwords,
     passwordAttempts: tables.passwordAttempts,
-    passwordScopes: tables.passwordScopes,
-    passwordCharges: tables.passwordCharges,
     passwordCommands: tables.passwordCommands,
     passwordRegistrations: tables.passwordRegistrations,
     emailCredentials: tables.emailCredentials,

@@ -27,7 +27,6 @@ export const passwordAuth = Auth.make("example/password-auth", {
           identifier: budget,
           subject: budget,
           action: budget,
-          maximumPending: 10,
           attemptLifetimeMillis: 60_000,
         },
       },
@@ -85,6 +84,7 @@ const requirement: Sessions.AuthenticationRequirement = {
 
 const bindingCodec = Schema.fromJsonString(Schema.toCodecJson(Schema.toType(Proofs.ProofBinding)));
 const bindingKey = Schema.encodeSync(bindingCodec);
+const credentialKey = Schema.encodeSync(Schema.fromJsonString(Password.PasswordCredentialSnapshot));
 
 interface Subject {
   id: AuthSchema.SubjectId;
@@ -107,7 +107,15 @@ interface Continuation {
 interface State {
   registrations: Set<string>;
   subjects: Map<string, Subject>;
-  attempts: Map<string, { captured?: Password.PasswordCredentialSnapshot; expires: number }>;
+  attempts: Map<
+    string,
+    {
+      moduleId: string;
+      action: "sign-in" | "change";
+      captured?: Password.PasswordCredentialSnapshot;
+      expires: number;
+    }
+  >;
   windows: Map<string, number[]>;
   requests: Map<string, { fingerprint: string; receipt: Proofs.ProofRequestReceipt }>;
   proofs: Map<string, Proof>;
@@ -284,53 +292,80 @@ export const makePasswordConsumer = Effect.gen(function* () {
   };
 
   const store = Password.PasswordPersistence.of({
-    admitAttempt: (input, prepare) =>
-      own((s, journal, now) => {
-        const row = s.subjects.get(input.identifier.value);
+    prepareAttempt: (input) =>
+      Effect.gen(function* () {
+        if (yield* Hooks.hasCommitScope) return yield* Password.PasswordUnavailable.make({});
+        if (input.moduleId !== "example/password")
+          return yield* Password.PasswordUnavailable.make({});
+        const { moduleId, action, attemptLifetimeMillis } = input;
+        const row = state.subjects.get(input.identifier.value);
 
-        const allowed = charge(
-          s,
-          [
-            `attempt:action:${input.action}`,
-            `attempt:identifier:${input.identifier.value}`,
-            ...(row ? [`attempt:subject:${row.id}`] : []),
-          ],
-          now,
-        );
-
-        if (
-          !allowed ||
-          [...s.attempts.values()].filter((a) => a.expires > now).length >=
-            input.policy.maximumPending
-        )
-          return prepare({ _tag: "Denied" }, journal);
-        const attemptId = Password.PasswordAttemptId.make(String(++sequence));
+        const candidate =
+          row?.identifier.namespace === input.identifier.namespace &&
+          (input.subjectId === undefined || row.id === input.subjectId)
+            ? row.password
+            : undefined;
 
         const captured =
-          input.subjectId === undefined || row?.id === input.subjectId ? row?.password : undefined;
+          candidate === undefined
+            ? undefined
+            : yield* Password.snapshotPasswordCredential(candidate);
 
-        s.attempts.set(attemptId, {
-          ...(captured === undefined ? {} : { captured }),
-          expires: now + input.policy.attemptLifetimeMillis,
+        let used = false;
+
+        return Object.freeze({
+          ...(captured === undefined ? {} : { credential: captured }),
+          admit: <A>(
+            prepare: Password.PreparePasswordCommit<Password.PasswordAttemptAdmission, A>,
+          ) =>
+            Effect.gen(function* () {
+              if (yield* Hooks.hasCommitScope) return yield* Password.PasswordUnavailable.make({});
+              if (used) return yield* Password.PasswordUnavailable.make({});
+              used = true;
+
+              return yield* own((s, journal, now) => {
+                const attemptId = Password.PasswordAttemptId.make(String(++sequence));
+
+                s.attempts.set(attemptId, {
+                  moduleId,
+                  action,
+                  ...(captured === undefined ? {} : { captured }),
+                  expires: now + attemptLifetimeMillis,
+                });
+
+                return prepare(
+                  {
+                    _tag: "Admitted",
+                    attemptId,
+                    ...(captured === undefined ? {} : { credential: captured }),
+                  },
+                  journal,
+                );
+              });
+            }),
         });
-
-        return prepare(
-          { _tag: "Admitted", attemptId, ...(captured ? { credential: captured } : {}) },
-          journal,
-        );
       }),
     settleAttempt: (input, prepare) =>
       own((s, journal, now) => {
         const admission = s.attempts.get(input.attemptId);
 
-        s.attempts.delete(input.attemptId);
+        if (admission?.moduleId === input.moduleId) s.attempts.delete(input.attemptId);
+
+        const actual =
+          input.captured === undefined
+            ? undefined
+            : find(s, input.captured.revision.subjectId)?.password;
 
         const valid =
           input.outcome === "verified" &&
           admission !== undefined &&
+          admission.moduleId === input.moduleId &&
           admission.expires > now &&
           input.captured !== undefined &&
-          admission.captured?.credentialId === input.captured.credentialId &&
+          admission.captured !== undefined &&
+          actual !== undefined &&
+          credentialKey(admission.captured) === credentialKey(input.captured) &&
+          credentialKey(actual) === credentialKey(input.captured) &&
           current(s, input.captured.revision);
 
         if (valid && input.rehash) {
