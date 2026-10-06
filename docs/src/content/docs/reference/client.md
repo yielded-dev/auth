@@ -131,8 +131,9 @@ Default atoms render `Initial` without fetching. For session-aware rendering:
    the same seed; close each registry with its host Scope.
 
 The seed is display data, not authentication authority. Acquisition does not
-fetch; browser query reads verify the live cookie. A result, failure, or account
-change permanently retires the seed. Never share server clients, registries, or
+fetch; browser query reads verify the live cookie. Confirmation of the same account
+replaces the seed without a loading gap. A failure or account replacement permanently
+retires the seed. Never share server clients, registries, or
 request-bearing memo maps across requests, or apply generic late hydration
 updates to auth atoms.
 

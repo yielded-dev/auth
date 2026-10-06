@@ -8,6 +8,88 @@ import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 import { TestClock } from "effect/testing";
 import { expect, test } from "vite-plus/test";
 
+// d1f2799 retires the SSR seed between confirming its subject and publishing the
+// session result. Observe every notification; a browser can batch away this gap.
+test.each(["confirmation", "replacement"] as const)(
+  "keeps an SSR session visible only through its initial %s",
+  (mode) =>
+    Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const contract = AuthContract.make("test/ssr-session", {
+            claims: Schema.Struct({ name: Schema.String }),
+          });
+
+          const seed = {
+            sessionId: "session",
+            subjectId: "member",
+            securityRevision: "1",
+            assurance: { method: "password", factors: ["knowledge"], authenticatedAt: 0 },
+            issuedAt: 0,
+            expiresAt: 3_600_000,
+            absoluteExpiresAt: 3_600_000,
+            claims: { name: "seed" },
+          } satisfies typeof contract.sessions.Session.Encoded;
+
+          const entered = yield* Deferred.make<void>();
+          const response = yield* Deferred.make<void>();
+
+          const http = HttpClient.make((request) =>
+            Effect.gen(function* () {
+              yield* Deferred.succeed(entered, undefined);
+              yield* Deferred.await(response);
+
+              return HttpClientResponse.fromWeb(
+                request,
+                Response.json({
+                  _tag: "Success",
+                  value: { ...seed, claims: { name: "confirmed" } },
+                }),
+              );
+            }),
+          );
+
+          const AppClient = Client.make(contract, { baseUrl: "https://example.test" });
+
+          const auth = AuthAtom.make(AppClient, {
+            initialSession: seed,
+            layer: AppClient.layer.pipe(Layer.provide(Layer.succeed(HttpClient.HttpClient, http))),
+          });
+
+          const registry = yield* Effect.acquireRelease(
+            Effect.sync(() => AtomRegistry.make()),
+            (value) => Effect.sync(() => value.dispose()),
+          );
+
+          const context = yield* AtomRegistry.getResult(registry, auth.runtime);
+          const states: Array<string> = [];
+
+          yield* Effect.acquireRelease(
+            Effect.sync(() => registry.subscribe(auth.session, (value) => states.push(value._tag))),
+            (unsubscribe) => Effect.sync(unsubscribe),
+          );
+          expect(registry.get(auth.session)).toMatchObject({
+            _tag: "Success",
+            value: { claims: { name: "seed" } },
+          });
+          yield* Deferred.await(entered);
+          if (mode === "replacement") {
+            yield* Context.get(context, AuthAtom.AuthAtomLifetime).replaceSubject("member");
+            expect(registry.get(auth.session)._tag).toBe("Initial");
+          }
+          yield* Deferred.succeed(response, undefined);
+
+          const session = yield* AtomRegistry.getResult(registry, auth.session, {
+            suspendOnWaiting: true,
+          }).pipe(Effect.timeout("1 second"));
+
+          expect(session?.claims.name).toBe("confirmed");
+          expect(states.includes("Initial")).toBe(mode === "replacement");
+        }),
+      ),
+    ),
+);
+
 // https://github.com/yielded-dev/auth/commit/32be91d2
 // Force the scheduler gap between the caller's fence and credential admission;
 // a real browser cannot reliably pause at that boundary.
