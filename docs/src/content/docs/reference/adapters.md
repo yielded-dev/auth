@@ -192,6 +192,21 @@ Driver factories and transaction coordinators declare `Database` and Effect
 the persistence Layer itself and to Auth at your composition root. SHA digests and
 entropy use Effect Crypto and may suspend.
 
+Password attempts use the same native Effect SQL implementation for direct SQL
+and interactive Drizzle drivers. Drizzle supplies table representations, codecs,
+defaults, and update hooks; its captured SQL client owns execution. Preflight
+authority reads use a single snapshot statement. Settlement and session creation
+still revalidate current authority in their committing transaction.
+
+A replacement `PasswordPersistence` implements `prepareAttempt`: read a coherent
+candidate and return its optional credential plus an `admit` operation. Keep native
+account IDs private in that operation. Auth consumes its separate subject limit
+before calling `admit`, which durably records the inspected candidate without
+holding a transaction across password hashing. Settlement must compare the original
+attempt, credential, identifier binding, revisions, and deadline with current state.
+The attempt grants no session authority. D1 performs its revalidation through a
+fixed guarded batch; it cannot execute an interactive SQL transaction.
+
 Use `databaseLayer` to acquire `Database` from the platform SQL client. Most drivers
 also accept a native database through `Layer.succeed(Database, db)`. Durable Object
 SQLite instead exposes `DatabaseValue`: `databaseLayer` builds this projection,
@@ -472,7 +487,9 @@ shows the application-owned schema and authority.
 
 D1 uses a preplanned conditional batch, not an interactive transaction. Allocate
 registration IDs before the batch. Do not replay a caller-owned mutation after an
-ambiguous response.
+ambiguous response. Password settlement guards run after its own writes. A
+caller-owned batch must not change that captured authority in later application
+statements; those statements run after the password guards.
 
 Durable Object SQLite uses the captured Effect SQL client's asynchronous
 `storage.transaction` boundary. Use `SqliteDo.databaseLayer` or

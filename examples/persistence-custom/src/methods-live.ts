@@ -14,11 +14,13 @@ export const AccountMethodsLive = Layer.effect(
     const registration = yield* AppAuth.strategies.password.RegistrationAuthority;
     const persistence = yield* Password.PasswordPersistence;
     const hasher = yield* Password.PasswordHashing;
+    const limiter = yield* Password.PasswordAttemptLimiter;
     const authority = yield* Sessions.AuthenticationAuthority;
     const claims = yield* AppAuth.strategies.password.SessionClaims;
     const completion = yield* AppAuth.sessions.AuthenticationCompletion;
     const crypto = yield* Crypto.Crypto;
     const moduleId = AppAuth.strategies.password.persistence.moduleId;
+    const attempts = Password.defaultPasswordMethodPolicy.attempts;
 
     return AccountMethods.of({
       register: Effect.fn("AccountMethods.register")(
@@ -57,20 +59,48 @@ export const AccountMethodsLive = Layer.effect(
           ),
         );
 
-        const admission = yield* persistence
-          .admitAttempt(
-            {
+        const admission = yield* Effect.gen(function* () {
+          yield* limiter.check({
+            moduleId,
+            action: "sign-in",
+            scope: "action",
+            key: "sign-in",
+            budget: attempts.action,
+          });
+          yield* limiter.check({
+            moduleId,
+            action: "sign-in",
+            scope: "identifier",
+            // Email keys match built-in sign-in; aliases also share the subject bucket.
+            key: JSON.stringify([identifier.namespace, identifier.value]),
+            budget: attempts.identifier,
+          });
+
+          const attempt = yield* persistence.prepareAttempt({
+            moduleId,
+            action: "sign-in",
+            identifier,
+            attemptLifetimeMillis: attempts.attemptLifetimeMillis,
+          });
+
+          if (attempt.credential !== undefined)
+            yield* limiter.check({
               moduleId,
               action: "sign-in",
-              identifier,
-              policy: Password.defaultPasswordMethodPolicy.attempts,
-            },
-            (value, journal) => journal.prepare(value),
-          )
-          .pipe(
-            Effect.flatMap((receipt) => receipt.read),
-            Effect.mapError(() => Password.PasswordUnavailable.make({})),
-          );
+              scope: "subject",
+              key: attempt.credential.revision.subjectId,
+              budget: attempts.subject,
+            });
+
+          return yield* attempt
+            .admit((value, journal) => journal.prepare(value))
+            .pipe(
+              Effect.flatMap((receipt) => receipt.read),
+              Effect.mapError(() => Password.PasswordUnavailable.make({})),
+            );
+        }).pipe(
+          Effect.catchTag("PasswordRejected", () => Effect.succeed({ _tag: "Denied" as const })),
+        );
 
         if (admission._tag === "Denied") {
           yield* hasher.dummy(input.password).pipe(Effect.ignore);
@@ -177,11 +207,11 @@ export const AccountMethodsLive = Layer.effect(
           return { evidence, credential: captured, rehash };
         }).pipe(Effect.result);
 
-        // Infrastructure failures retain the admission charge without credential rejection.
+        // Infrastructure failures never refund rate limits or settle as credential rejection.
         if (checked._tag === "Failure" && checked.failure._tag !== "PasswordRejected")
           return yield* checked.failure;
 
-        // Definite credential rejection settles once; abandoned attempts remain charged.
+        // Definite credential rejection settles once; abandoned attempts expire.
         const decision = yield* persistence
           .settleAttempt(
             {
@@ -221,4 +251,4 @@ export const AccountMethodsLive = Layer.effect(
       }),
     });
   }),
-);
+).pipe(Layer.provide(Password.PasswordAttemptLimiter.layer));

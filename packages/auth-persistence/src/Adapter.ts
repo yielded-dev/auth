@@ -101,16 +101,12 @@ export {
 export {
   type PasswordAttemptAction,
   type PasswordAttemptState,
-  type PasswordRateScopeKind,
-  type PasswordScopeKeys,
   type PasswordSubjectTable,
   type PasswordIdentifierTable,
   type PasswordAuthorityCredentialTable,
   type PasswordCredentialTable,
   type PasswordAttemptRecord,
   type PasswordAttemptTable,
-  type PasswordRateScopeTable,
-  type PasswordChargeTable,
   type PasswordCommandTable,
   type RequiredPasswordConstraints,
   requiredPasswordConstraints,
@@ -304,3 +300,12 @@ export {
   type PhysicalStorageTable,
   type StorageValidation,
 } from "./internal/storage-validation";
+
+export {
+  makeNativeSqlTables,
+  nativeSqlAlias,
+  type NativeSqlTables,
+  type SqlTable,
+} from "./internal/native-sql-table";
+
+export { samePasswordCredentialSnapshot } from "./internal/password-attempts";

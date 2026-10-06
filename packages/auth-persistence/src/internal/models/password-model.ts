@@ -19,14 +19,6 @@ export type PasswordAttemptAction = "sign-in" | "change";
 
 export type PasswordAttemptState = "pending" | "verified" | "rejected";
 
-export type PasswordRateScopeKind = "action" | "identifier" | "subject";
-
-export interface PasswordScopeKeys {
-  readonly action: string;
-  readonly identifier: string;
-  readonly subject?: string;
-}
-
 export interface PasswordSubjectTable<Subject extends Table, _NativeSubjectId> {
   readonly table: Subject["table"];
   readonly id: ColumnKey<Subject>;
@@ -171,40 +163,6 @@ export interface PasswordAttemptTable<Attempt extends Table, NativeSubjectId> {
   ) => Attempt["insert"];
 }
 
-export interface PasswordRateScopeTable<RateScope extends Table> {
-  readonly table: RateScope["table"];
-  readonly moduleId: ColumnKey<RateScope>;
-  readonly action: ColumnKey<RateScope>;
-  readonly scopeKind: ColumnKey<RateScope>;
-  readonly scopeKey: ColumnKey<RateScope>;
-  readonly encodeInsert: (input: {
-    readonly moduleId: string;
-    readonly action: PasswordAttemptAction;
-    readonly scopeKind: PasswordRateScopeKind;
-    readonly scopeKey: string;
-  }) => RateScope["insert"];
-}
-
-export interface PasswordChargeTable<Charge extends Table> {
-  readonly table: Charge["table"];
-  readonly moduleId: ColumnKey<Charge>;
-  readonly action: ColumnKey<Charge>;
-  readonly scopeKind: ColumnKey<Charge>;
-  readonly scopeKey: ColumnKey<Charge>;
-  readonly attemptId: ColumnKey<Charge>;
-  readonly occurredAt: ColumnKey<Charge>;
-  readonly retentionUntil: ColumnKey<Charge>;
-  readonly encodeInsert: (input: {
-    readonly moduleId: string;
-    readonly action: PasswordAttemptAction;
-    readonly scopeKind: PasswordRateScopeKind;
-    readonly scopeKey: string;
-    readonly attemptId: PasswordAttemptId;
-    readonly occurredAtMillis: number;
-    readonly retentionUntilMillis: number;
-  }) => Charge["insert"];
-}
-
 export interface PasswordCommandTable<Command extends Table> {
   readonly table: Command["table"];
   readonly moduleId: ColumnKey<Command>;
@@ -229,8 +187,6 @@ export interface RequiredPasswordConstraints {
   readonly credentialSubject: "unique(credential.moduleId,credential.subjectId)";
   readonly credentialId: "unique(credential.moduleId,credential.credentialId)";
   readonly attempt: "unique(attempt.moduleId,attempt.attemptId)";
-  readonly rateScope: "unique(rateScope.moduleId,rateScope.action,rateScope.scopeKind,rateScope.scopeKey)";
-  readonly charge: "unique(charge.moduleId,charge.action,charge.scopeKind,charge.scopeKey,charge.attemptId)";
   readonly command: "unique(command.moduleId,command.commandId)";
 }
 
@@ -240,16 +196,12 @@ export const requiredPasswordConstraints: RequiredPasswordConstraints = {
   credentialSubject: "unique(credential.moduleId,credential.subjectId)",
   credentialId: "unique(credential.moduleId,credential.credentialId)",
   attempt: "unique(attempt.moduleId,attempt.attemptId)",
-  rateScope: "unique(rateScope.moduleId,rateScope.action,rateScope.scopeKind,rateScope.scopeKey)",
-  charge: "unique(charge.moduleId,charge.action,charge.scopeKind,charge.scopeKey,charge.attemptId)",
   command: "unique(command.moduleId,command.commandId)",
 };
 
 export interface PasswordConstraintClassifier {
   /** Match only the mapped command uniqueness constraint. */
   readonly isCommandConflict: (cause: unknown) => boolean;
-  /** Match only the mapped rate-scope uniqueness constraint. */
-  readonly isRateScopeConflict: (cause: unknown) => boolean;
 }
 
 export interface PasswordD1Clock<Expression extends SqlExpression = SqlExpression> {
@@ -265,8 +217,6 @@ export interface PasswordPersistenceMapping<
   Credential extends Table,
   AuthorityCredential extends Table,
   Attempt extends Table,
-  RateScope extends Table,
-  Charge extends Table,
   Command extends Table,
   NativeSubjectId,
   Expression extends SqlExpression = SqlExpression,
@@ -280,17 +230,9 @@ export interface PasswordPersistenceMapping<
     NativeSubjectId
   >;
   readonly attempt: PasswordAttemptTable<Attempt, NativeSubjectId>;
-  readonly rateScope: PasswordRateScopeTable<RateScope>;
-  readonly charge: PasswordChargeTable<Charge>;
   readonly command: PasswordCommandTable<Command>;
   readonly subjectId: SubjectIdCodec<NativeSubjectId>;
   readonly constraints: RequiredPasswordConstraints;
-  readonly scopeKeys: (input: {
-    readonly moduleId: string;
-    readonly action: PasswordAttemptAction;
-    readonly identifier: LoginIdentifier;
-    readonly subjectId?: string;
-  }) => PasswordScopeKeys;
   readonly encodeInstant: (epochMillis: number) => unknown;
   readonly decodeInstant: (native: unknown) => Effect.Effect<number, PersistenceMappingError>;
   readonly allocateAttemptId?: Effect.Effect<PasswordAttemptId, PersistenceMappingError>;
@@ -311,8 +253,6 @@ export type D1PasswordPersistenceMapping<
   Credential extends Table,
   AuthorityCredential extends Table,
   Attempt extends Table,
-  RateScope extends Table,
-  Charge extends Table,
   Command extends Table,
   NativeSubjectId,
   Expression extends SqlExpression = SqlExpression,
@@ -322,8 +262,6 @@ export type D1PasswordPersistenceMapping<
   Credential,
   AuthorityCredential,
   Attempt,
-  RateScope,
-  Charge,
   Command,
   NativeSubjectId,
   Expression
@@ -486,8 +424,6 @@ export type PasswordRegistrationMapping<
 
 export type AnyPasswordPersistenceMapping<Expression extends SqlExpression = SqlExpression> =
   PasswordPersistenceMapping<
-    AnyTableModel,
-    AnyTableModel,
     AnyTableModel,
     AnyTableModel,
     AnyTableModel,

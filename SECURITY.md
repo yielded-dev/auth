@@ -64,9 +64,13 @@ outside them.
   recovery codes are stored as digests, and provider tokens and TOTP secrets as
   authenticated ciphertext, so a copied database without the application's keys
   yields no usable credentials.
-- The library enforces per-identifier, per-subject, and per-action budgets. It
-  cannot see client addresses, so per-network limiting and the network keys used by
-  phone admission are the host's responsibility.
+- Password sign-in and password-change verification use per-identifier,
+  per-subject, and per-action token buckets. Their default store is bounded to
+  10,000 keys per runtime, is local to one process, and resets on restart.
+  Multi-instance deployments must supply a shared Effect `RateLimiterStore` or
+  replace `PasswordAttemptLimiter`. Consumption precedes attempt writes, is never
+  refunded, and store failures deny the request. Hosts also own network admission
+  and the trusted network keys used by phone admission.
 - Identity selection, account provisioning, transaction authority, and
   authorization policy belong to the application. Provider claims and email
   addresses never select a subject on their own.

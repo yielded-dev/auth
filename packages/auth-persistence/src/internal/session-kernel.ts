@@ -36,8 +36,10 @@ import {
   type SessionStepUpPersistence,
 } from "@yielded/auth/Sessions";
 import { Cause, Context, DateTime, Effect, Option, Schema } from "effect";
+import type { SqlClient } from "effect/sql/SqlClient";
 import type * as SqlError from "effect/sql/SqlError";
 
+import { makeAuthoritySnapshot } from "./authority-snapshot";
 import { PersistenceMappingError, isMappedConstraintConflict } from "./mapping-error";
 import type {
   AuthenticationAuthorityMapping,
@@ -50,6 +52,7 @@ import type {
   StatefulSessionMapping,
 } from "./models/session-model";
 import type { SessionStepUpMapping } from "./models/step-up-model";
+import { makeNativeSqlTables, sqlMapping, type NativeSqlTables } from "./native-sql-table";
 /* oxlint-disable no-explicit-any -- existing storage kernels erase foreign table shapes; domain errors remain typed. */
 import type { QueryFailure } from "./query-operations";
 import type { QueryOperations } from "./query-operations";
@@ -61,7 +64,7 @@ import {
   validateStepUpPlan,
   stepUpRotationMatches,
 } from "./step-up-state";
-import type { NativeDatabase } from "./transaction-kernel";
+import { NativeDatabase } from "./transaction-kernel";
 
 type CommitMode = "interactive" | "synchronous";
 
@@ -139,7 +142,11 @@ type SqlStepUpRejectAbsence = SessionStepUpInvalid | StaleAuthentication;
 
 type SqlStepUpReadFailure = AdapterFailure | SqlStepUpRejectAbsence | SessionUnavailable;
 
-export const makeSessionKernel = (operations: QueryOperations) => {
+export const makeSessionKernel = (
+  operations: QueryOperations,
+  nativeTables: (client: SqlClient, database: object) => NativeSqlTables = (client) =>
+    makeNativeSqlTables(client),
+) => {
   const { and, eq, gt, lte, inArray, or, sql, column, updateValues } = operations;
   const unavailable = () => SessionUnavailable.make({});
 
@@ -396,15 +403,6 @@ export const makeSessionKernel = (operations: QueryOperations) => {
     };
   });
 
-  const captureIn = Effect.fn("DrizzleSession.capture")(function* (
-    mapping: AnyAuthorityMapping,
-    subjectId: SubjectId,
-    credentialIds: ReadonlyArray<string>,
-    locking: boolean,
-  ) {
-    return (yield* captureDetailsIn(mapping, subjectId, credentialIds, locking)).revision;
-  });
-
   const validateEvidenceIn = Effect.fn("DrizzleSession.validateEvidence")(function* (
     mapping: AnyAuthorityMapping,
     evidence: AuthenticationEvidence,
@@ -417,6 +415,17 @@ export const makeSessionKernel = (operations: QueryOperations) => {
       locking,
     );
 
+    return yield* validateCapturedEvidence(mapping, evidence, captured);
+  });
+
+  const validateCapturedEvidence = Effect.fnUntraced(function* (
+    mapping: AnyAuthorityMapping,
+    evidence: AuthenticationEvidence,
+    captured: {
+      readonly subject: Record<string, unknown>;
+      readonly revision: AuthenticationRevision;
+    },
+  ) {
     if (
       captured.revision.securityRevision !== evidence.revision.securityRevision ||
       captured.revision.credentials.length !== evidence.revision.credentials.length ||
@@ -643,18 +652,28 @@ export const makeSessionKernel = (operations: QueryOperations) => {
       );
     const hooks = yield* LifecycleHooks;
 
+    const root = yield* NativeDatabase;
+    const sqlClient = root.$client.withoutTransforms();
+
+    const tables = yield* sqlMapping(() => nativeTables(sqlClient, root)).pipe(
+      Effect.mapError(unavailable),
+    );
+
+    const readSnapshot = makeAuthoritySnapshot(sqlClient, tables, mapping);
+
     const service = {
       capture: (subjectId: SubjectId, credentialIds: ReadonlyArray<string>) =>
         safeTransaction(
-          inTransaction(database, captureIn(mapping, subjectId, credentialIds, true)),
+          readSnapshot(subjectId, credentialIds).pipe(Effect.map((value) => value.revision)),
         ),
       requirements: (evidence: AuthenticationEvidence) =>
         safeTransaction(
-          inTransaction(
-            database,
-            validateEvidenceIn(mapping, evidence, true).pipe(
-              Effect.map((result) => result.requirement),
-            ),
+          readSnapshot(
+            evidence.revision.subjectId,
+            evidence.revision.credentials.map((item) => item.credentialId),
+          ).pipe(
+            Effect.flatMap((captured) => validateCapturedEvidence(mapping, evidence, captured)),
+            Effect.map((value) => value.requirement),
           ),
         ),
       approve: <A>(

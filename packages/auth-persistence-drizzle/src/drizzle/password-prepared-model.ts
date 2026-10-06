@@ -87,8 +87,6 @@ export interface PasswordPreparedPersistenceMapping<
   Credential extends Table,
   AuthorityCredential extends Table,
   Attempt extends Table,
-  RateScope extends Table,
-  Charge extends Table,
   Command extends Table,
   Intent extends Table,
   Admission extends Table,
@@ -100,8 +98,6 @@ export interface PasswordPreparedPersistenceMapping<
     Credential,
     AuthorityCredential,
     Attempt,
-    RateScope,
-    Charge,
     Command,
     NativeSubjectId
   >;
@@ -119,8 +115,6 @@ export type D1PasswordPreparedPersistenceMapping<
   Credential extends Table,
   AuthorityCredential extends Table,
   Attempt extends Table,
-  RateScope extends Table,
-  Charge extends Table,
   Command extends Table,
   Intent extends Table,
   Admission extends Table,
@@ -131,8 +125,6 @@ export type D1PasswordPreparedPersistenceMapping<
   Credential,
   AuthorityCredential,
   Attempt,
-  RateScope,
-  Charge,
   Command,
   Intent,
   Admission,
@@ -146,8 +138,6 @@ export type D1PasswordPreparedPersistenceMapping<
     Credential,
     AuthorityCredential,
     Attempt,
-    RateScope,
-    Charge,
     Command,
     NativeSubjectId
   >;
@@ -245,8 +235,6 @@ export type D1PasswordPreparedProofMapping<
 };
 
 export type AnyPasswordPreparedPersistenceMapping = PasswordPreparedPersistenceMapping<
-  Table,
-  Table,
   Table,
   Table,
   Table,

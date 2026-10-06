@@ -16,6 +16,7 @@ import {
 import type { Effect } from "effect";
 import type { SqlClient } from "effect/sql/SqlClient";
 
+import { makeDrizzleSqlTables } from "../drizzle/native-sql-table";
 import { drizzleQueryOperations } from "../drizzle/query-operations";
 
 const makeTable = (definition: StorageTable) =>
@@ -76,6 +77,7 @@ export const sqlitePersistence = <R>(acquire: Effect.Effect<object, never, R | S
     makeTable,
     describe,
     operations: drizzleQueryOperations,
+    nativeTables: makeDrizzleSqlTables,
     acquire,
     passkeys: makeComposedPasskeys(drizzleQueryOperations),
   });

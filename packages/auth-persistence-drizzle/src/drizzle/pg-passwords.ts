@@ -55,11 +55,9 @@ type PasswordMapping<
   C extends AnyPgTable,
   AC extends AnyPgTable,
   A extends AnyPgTable,
-  RS extends AnyPgTable,
-  CE extends AnyPgTable,
   M extends AnyPgTable,
   NativeId,
-> = PasswordPersistenceMapping<S, I, C, AC, A, RS, CE, M, NativeId>;
+> = PasswordPersistenceMapping<S, I, C, AC, A, M, NativeId>;
 
 export const makePgPasswordPersistenceServices = <
   S extends AnyPgTable,
@@ -67,12 +65,10 @@ export const makePgPasswordPersistenceServices = <
   C extends AnyPgTable,
   AC extends AnyPgTable,
   A extends AnyPgTable,
-  RS extends AnyPgTable,
-  CE extends AnyPgTable,
   M extends AnyPgTable,
   NativeId,
 >(
-  mapping: PasswordMapping<S, I, C, AC, A, RS, CE, M, NativeId>,
+  mapping: PasswordMapping<S, I, C, AC, A, M, NativeId>,
   proofMapping?: ProofPersistenceMapping<
     any,
     any,
@@ -103,8 +99,6 @@ export function coordinatePgPasswordPersistence<
   C extends AnyPgTable,
   AC extends AnyPgTable,
   A extends AnyPgTable,
-  RS extends AnyPgTable,
-  CE extends AnyPgTable,
   M extends AnyPgTable,
   NativeId,
   PM extends
@@ -118,7 +112,7 @@ export function coordinatePgPasswordPersistence<
 >(
   acquire: Effect.Effect<D, DatabaseError, DatabaseRequirements>,
   options: {
-    readonly mapping: PasswordMapping<S, I, C, AC, A, RS, CE, M, NativeId>;
+    readonly mapping: PasswordMapping<S, I, C, AC, A, M, NativeId>;
     readonly proofMapping?: PM;
     readonly transaction?: never;
   },
@@ -136,8 +130,6 @@ export function coordinatePgPasswordPersistence<
   C extends AnyPgTable,
   AC extends AnyPgTable,
   A extends AnyPgTable,
-  RS extends AnyPgTable,
-  CE extends AnyPgTable,
   M extends AnyPgTable,
   NativeId,
   PM extends
@@ -153,7 +145,7 @@ export function coordinatePgPasswordPersistence<
 >(
   acquire: Effect.Effect<D, DatabaseError, DatabaseRequirements>,
   options: {
-    readonly mapping: PasswordMapping<S, I, C, AC, A, RS, CE, M, NativeId>;
+    readonly mapping: PasswordMapping<S, I, C, AC, A, M, NativeId>;
     readonly proofMapping?: PM;
     readonly transaction: SuppliedService<TxId, NoInfer<TransactionOf<D>>, TxShape>;
   },
@@ -171,8 +163,6 @@ export function coordinatePgPasswordPersistence<
   C extends AnyPgTable,
   AC extends AnyPgTable,
   A extends AnyPgTable,
-  RS extends AnyPgTable,
-  CE extends AnyPgTable,
   M extends AnyPgTable,
   NativeId,
   PM extends
@@ -188,7 +178,7 @@ export function coordinatePgPasswordPersistence<
 >(
   acquire: Effect.Effect<D, DatabaseError, DatabaseRequirements>,
   options: {
-    readonly mapping: PasswordMapping<S, I, C, AC, A, RS, CE, M, NativeId>;
+    readonly mapping: PasswordMapping<S, I, C, AC, A, M, NativeId>;
     readonly proofMapping?: PM;
     readonly transaction?: SuppliedService<TxId, NoInfer<TransactionOf<D>>, TxShape>;
   },

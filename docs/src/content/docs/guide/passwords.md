@@ -146,6 +146,34 @@ Configure `concurrency`, `maxQueued`, and `maxWaitMilliseconds` on the Layer;
 memory and CPU budget. These are process-local limits, without a strict FIFO
 ordering guarantee; applications still need ingress rate limits.
 
+Password verification also consumes action, identifier, and known-subject budgets
+through `Password.PasswordAttemptLimiter`. These token buckets allow an initial
+burst and refill at `limit / windowMillis`. Consumption happens before writing an
+attempt and is never refunded, even if verification is interrupted or fails.
+A store failure denies the request.
+
+The default store holds at most 10,000 keys, reclaims fully idle buckets when full,
+and rejects new keys while all entries remain active. It is local to each process
+and resets on restart. Multi-instance deployments need a shared Effect
+`RateLimiterStore`, such as Redis, or a replacement `PasswordAttemptLimiter`:
+
+```ts
+import { Layer } from "effect";
+import { RateLimiter } from "effect/persistence";
+import { Password } from "@yielded/auth";
+import { RedisLive } from "./redis";
+
+const PasswordLimits = Password.PasswordAttemptLimiter.layer.pipe(
+  Layer.provide(RateLimiter.layerStoreRedis().pipe(Layer.provide(RedisLive))),
+);
+```
+
+Provide `PasswordLimits` to your Auth Layer. `RedisLive` supplies Effect's `Redis`
+service using your platform client. The password attempt policy controls bucket
+sizes and attempt lifetime; KDF concurrency remains a separate service. Pending
+attempts expire under that lifetime, so there is no separate `maximumPending`
+password setting.
+
 Compromised-password screening fails closed. `PasswordPolicy.screeningTimeoutMillis`
 defaults to 10,000 ms (allowed range: 1–30,000); a timed-out check returns
 `PasswordCheckUnavailable`, so no password is registered or changed.

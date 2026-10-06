@@ -31,8 +31,6 @@ export const makePgPasswordPreparedPersistenceServices = <
   C extends AnyPgTable,
   AC extends AnyPgTable,
   A extends AnyPgTable,
-  RS extends AnyPgTable,
-  CE extends AnyPgTable,
   M extends AnyPgTable,
   T extends AnyPgTable,
   B extends AnyPgTable,
@@ -45,7 +43,7 @@ export const makePgPasswordPreparedPersistenceServices = <
   PCr extends AnyPgTable = AnyPgTable,
   PNativeId = unknown,
 >(
-  mapping: PasswordPreparedPersistenceMapping<S, I, C, AC, A, RS, CE, M, T, B, NativeId>,
+  mapping: PasswordPreparedPersistenceMapping<S, I, C, AC, A, M, T, B, NativeId>,
   proofMapping?: PasswordPreparedProofMapping<PS, PC, PM, PSub, PI, PCr, PNativeId>,
 ) =>
   Effect.flatMap(
@@ -65,8 +63,6 @@ export function coordinatePgPasswordPreparedPersistence<
   C extends AnyPgTable,
   AC extends AnyPgTable,
   A extends AnyPgTable,
-  RS extends AnyPgTable,
-  CE extends AnyPgTable,
   M extends AnyPgTable,
   T extends AnyPgTable,
   B extends AnyPgTable,
@@ -86,7 +82,7 @@ export function coordinatePgPasswordPreparedPersistence<
 >(
   acquire: Effect.Effect<D, DatabaseError, DatabaseRequirements>,
   options: {
-    readonly mapping: PasswordPreparedPersistenceMapping<S, I, C, AC, A, RS, CE, M, T, B, NativeId>;
+    readonly mapping: PasswordPreparedPersistenceMapping<S, I, C, AC, A, M, T, B, NativeId>;
     readonly proofMapping?:
       | PasswordPreparedProofMapping<PS, PC, PM, PSub, PI, PCr, PNativeId>
       | undefined;
@@ -108,8 +104,6 @@ export function coordinatePgPasswordPreparedPersistence<
   C extends AnyPgTable,
   AC extends AnyPgTable,
   A extends AnyPgTable,
-  RS extends AnyPgTable,
-  CE extends AnyPgTable,
   M extends AnyPgTable,
   T extends AnyPgTable,
   B extends AnyPgTable,
@@ -131,7 +125,7 @@ export function coordinatePgPasswordPreparedPersistence<
 >(
   acquire: Effect.Effect<D, DatabaseError, DatabaseRequirements>,
   options: {
-    readonly mapping: PasswordPreparedPersistenceMapping<S, I, C, AC, A, RS, CE, M, T, B, NativeId>;
+    readonly mapping: PasswordPreparedPersistenceMapping<S, I, C, AC, A, M, T, B, NativeId>;
     readonly proofMapping?:
       | PasswordPreparedProofMapping<PS, PC, PM, PSub, PI, PCr, PNativeId>
       | undefined;
@@ -153,8 +147,6 @@ export function coordinatePgPasswordPreparedPersistence<
   C extends AnyPgTable,
   AC extends AnyPgTable,
   A extends AnyPgTable,
-  RS extends AnyPgTable,
-  CE extends AnyPgTable,
   M extends AnyPgTable,
   T extends AnyPgTable,
   B extends AnyPgTable,
@@ -176,7 +168,7 @@ export function coordinatePgPasswordPreparedPersistence<
 >(
   acquire: Effect.Effect<D, DatabaseError, DatabaseRequirements>,
   options: {
-    readonly mapping: PasswordPreparedPersistenceMapping<S, I, C, AC, A, RS, CE, M, T, B, NativeId>;
+    readonly mapping: PasswordPreparedPersistenceMapping<S, I, C, AC, A, M, T, B, NativeId>;
     readonly proofMapping?:
       | PasswordPreparedProofMapping<PS, PC, PM, PSub, PI, PCr, PNativeId>
       | undefined;

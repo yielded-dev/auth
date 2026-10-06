@@ -151,12 +151,7 @@ export type Roles<C extends ClaimsCodec, Id extends string, A extends Definition
   | "sessionFlows"
   | (Enabled<A, "password"> extends never
       ? never
-      :
-          | "passwords"
-          | "passwordAttempts"
-          | "passwordScopes"
-          | "passwordCharges"
-          | "passwordCommands")
+      : "passwords" | "passwordAttempts" | "passwordCommands")
   | (ManagedPassword<A> extends never ? never : "passwordRegistrations")
   | (Enabled<A, "phone"> extends never ? never : "phoneState")
   | (Enabled<A, "email"> extends never ? never : "emailCredentials" | "emailCommands")

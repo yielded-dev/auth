@@ -19,12 +19,22 @@ import type {
   PasswordMutationDecision,
   PasswordReplacement,
 } from "./models";
-import type { PasswordAttemptPolicy } from "./policy";
 
 export type PreparePasswordCommit<Value, A> = (
   value: Value,
   journal: CommitJournal,
 ) => PreparedCommit<A>;
+
+/** A captured candidate, before rate admission or credential verification.
+ * The persistence owner retains native identifiers privately. Admission records
+ * this snapshot; settlement must revalidate it before accepting the proof.
+ */
+export interface PasswordAttemptPreparation {
+  readonly credential?: PasswordCredentialSnapshot;
+  readonly admit: <A>(
+    prepare: PreparePasswordCommit<PasswordAttemptAdmission, A>,
+  ) => Effect.Effect<PreparedCommit<A>, PasswordUnavailable>;
+}
 
 export interface PasswordMutationInput {
   readonly moduleId: string;
@@ -45,25 +55,20 @@ export interface PasswordMutationInput {
 export class PasswordPersistence extends Context.Service<
   PasswordPersistence,
   {
-    /** Charge existence-independent identifier/action + known-subject rolling windows
-     * and bounded in-flight admissions before KDF. Capture active subject, identifier,
-     * actual credential and semantic revisions atomically (shared authority.capture
-     * predicate). Unknown/disabled/missing/corrupt/subject-limited return no verifier.
-     * Denial shape never reveals which bucket. No refund on interruption/abandonment;
-     * expired pending attempts remain conservatively charged through window horizons.
-     * Verification infrastructure failures use this same abandonment policy; they
-     * must not settle as credential rejection or refund admission capacity.
+    /** Read a coherent candidate without writing or holding a transaction open.
+     * The strategy consumes action/identifier limits before this lookup and the
+     * subject limit before admit. Unknown/disabled/missing return no verifier.
+     * admit can execute once, records a single-use attempt, and resolves only after
+     * owned commit. Failure or an unknown outcome does not authorize plan reuse.
+     * Abandoned attempts expire; limit consumption is never refunded.
      */
-    readonly admitAttempt: <A>(
-      input: {
-        readonly moduleId: string;
-        readonly action: "sign-in" | "change";
-        readonly identifier: LoginIdentifier;
-        readonly subjectId?: SubjectId;
-        readonly policy: PasswordAttemptPolicy;
-      },
-      prepare: PreparePasswordCommit<PasswordAttemptAdmission, A>,
-    ) => Effect.Effect<PreparedCommit<A>, PasswordUnavailable>;
+    readonly prepareAttempt: (input: {
+      readonly moduleId: string;
+      readonly action: "sign-in" | "change";
+      readonly identifier: LoginIdentifier;
+      readonly subjectId?: SubjectId;
+      readonly attemptLifetimeMillis: number;
+    }) => Effect.Effect<PasswordAttemptPreparation, PasswordUnavailable>;
     /** Single-use settlement. verified requires SAME captured semantic revisions and
      * attempt ownership. Rehash CAS includes old verifier/version, changes verifierVersion
      * only and never semantic/security revisions or a newer credential's counters.

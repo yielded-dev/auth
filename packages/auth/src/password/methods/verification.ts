@@ -27,6 +27,7 @@ import { PasswordHashingUnavailable, PasswordKdfBusy } from "../errors";
 import { PasswordHashing } from "../PasswordHashing";
 import { PasswordMethodUnsupported, PasswordRejected, PasswordUnavailable } from "./errors";
 import type { PasswordCredentialSnapshot } from "./models";
+import { PasswordAttemptLimiter } from "./PasswordAttemptLimiter";
 import { PasswordPersistence } from "./PasswordPersistence";
 import type { PasswordMethodPolicy } from "./policy";
 import { snapshotPasswordCredential, snapshotPasswordRevision } from "./snapshot";
@@ -164,19 +165,43 @@ export const makePasswordVerification = ({
     const store = yield* PasswordPersistence;
     const hasher = yield* PasswordHashing;
     const authority = yield* AuthenticationAuthority;
+    const limiter = yield* PasswordAttemptLimiter;
 
-    const admitted = yield* read(
-      yield* store.admitAttempt(
-        {
+    const admitted = yield* Effect.gen(function* () {
+      yield* limiter.check({
+        moduleId,
+        action,
+        scope: "action",
+        key: action,
+        budget: policy.attempts.action,
+      });
+      yield* limiter.check({
+        moduleId,
+        action,
+        scope: "identifier",
+        key: JSON.stringify(["email", request.email]),
+        budget: policy.attempts.identifier,
+      });
+
+      const attempt = yield* store.prepareAttempt({
+        moduleId,
+        action,
+        identifier: identifier(request.email),
+        ...(subjectId === undefined ? {} : { subjectId }),
+        attemptLifetimeMillis: policy.attempts.attemptLifetimeMillis,
+      });
+
+      if (attempt.credential !== undefined)
+        yield* limiter.check({
           moduleId,
           action,
-          identifier: identifier(request.email),
-          ...(subjectId === undefined ? {} : { subjectId }),
-          policy: policy.attempts,
-        },
-        (decision, journal) => journal.prepare(decision),
-      ),
-    );
+          scope: "subject",
+          key: attempt.credential.revision.subjectId,
+          budget: policy.attempts.subject,
+        });
+
+      return yield* read(yield* attempt.admit((decision, journal) => journal.prepare(decision)));
+    }).pipe(Effect.catchTag("PasswordRejected", () => Effect.succeed({ _tag: "Denied" as const })));
 
     // All denied branches do one bounded dummy attempt too. Local admission can
     // reject it; no claim of exact network timing is made.

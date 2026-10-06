@@ -15,6 +15,7 @@ import {
   PasswordUnavailable,
 } from "./errors";
 import type { PasswordCredentialSnapshot } from "./models";
+import { defaultPasswordAttemptLimiterLayer } from "./PasswordAttemptLimiter";
 import {
   defaultPasswordMethodPolicy,
   snapshotPasswordMethodPolicy,
@@ -110,7 +111,7 @@ export const makePasswordSignIn = <
         }),
       );
     }),
-  );
+  ).pipe(Layer.provide(defaultPasswordAttemptLimiterLayer));
 
   return Object.freeze({
     persistence: { kind: "password" as const, moduleId, management: false as const },

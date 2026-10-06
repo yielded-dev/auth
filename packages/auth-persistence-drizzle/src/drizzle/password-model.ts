@@ -6,8 +6,6 @@ import type { DrizzleTableModel } from "./table-model";
 export {
   type PasswordAttemptAction,
   type PasswordAttemptState,
-  type PasswordRateScopeKind,
-  type PasswordScopeKeys,
   type PasswordAttemptRecord,
   type RequiredPasswordConstraints,
   requiredPasswordConstraints,
@@ -51,14 +49,6 @@ export type PasswordAttemptTable<
   NativeSubjectId,
 > = Shared.PasswordAttemptTable<DrizzleTableModel<Attempt>, NativeSubjectId>;
 
-export type PasswordRateScopeTable<RateScope extends Table> = Shared.PasswordRateScopeTable<
-  DrizzleTableModel<RateScope>
->;
-
-export type PasswordChargeTable<Charge extends Table> = Shared.PasswordChargeTable<
-  DrizzleTableModel<Charge>
->;
-
 export type PasswordCommandTable<Command extends Table> = Shared.PasswordCommandTable<
   DrizzleTableModel<Command>
 >;
@@ -71,8 +61,6 @@ export type PasswordPersistenceMapping<
   Credential extends Table,
   AuthorityCredential extends Table,
   Attempt extends Table,
-  RateScope extends Table,
-  Charge extends Table,
   Command extends Table,
   NativeSubjectId,
 > = Shared.PasswordPersistenceMapping<
@@ -81,8 +69,6 @@ export type PasswordPersistenceMapping<
   DrizzleTableModel<Credential>,
   DrizzleTableModel<AuthorityCredential>,
   DrizzleTableModel<Attempt>,
-  DrizzleTableModel<RateScope>,
-  DrizzleTableModel<Charge>,
   DrizzleTableModel<Command>,
   NativeSubjectId,
   SQL
@@ -94,8 +80,6 @@ export type D1PasswordPersistenceMapping<
   Credential extends Table,
   AuthorityCredential extends Table,
   Attempt extends Table,
-  RateScope extends Table,
-  Charge extends Table,
   Command extends Table,
   NativeSubjectId,
 > = Shared.D1PasswordPersistenceMapping<
@@ -104,8 +88,6 @@ export type D1PasswordPersistenceMapping<
   DrizzleTableModel<Credential>,
   DrizzleTableModel<AuthorityCredential>,
   DrizzleTableModel<Attempt>,
-  DrizzleTableModel<RateScope>,
-  DrizzleTableModel<Charge>,
   DrizzleTableModel<Command>,
   NativeSubjectId,
   SQL
@@ -147,8 +129,6 @@ export type PasswordRegistrationMapping<
 >;
 
 export type AnyPasswordPersistenceMapping = PasswordPersistenceMapping<
-  Table,
-  Table,
   Table,
   Table,
   Table,

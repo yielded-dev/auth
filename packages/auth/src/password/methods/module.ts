@@ -54,6 +54,10 @@ import {
 } from "./models";
 import { PasswordActionEvidence } from "./PasswordActionEvidence";
 import {
+  PasswordAttemptLimiter,
+  defaultPasswordAttemptLimiterLayer,
+} from "./PasswordAttemptLimiter";
+import {
   PasswordPersistence,
   type PreparePasswordCommit,
   type PasswordMutationInput,
@@ -295,6 +299,7 @@ const makePasswordWithManagement = <
         return yield* PasswordMethodConfigurationError.make({});
       const policy = yield* validatePasswordMethodPolicy(policyInput);
       const store = yield* PasswordPersistence;
+      const limiter = yield* PasswordAttemptLimiter;
       const hasher = yield* PasswordHashing;
       const checker = yield* NewPasswordCheck;
       const actionEvidence = yield* PasswordActionEvidence;
@@ -313,6 +318,7 @@ const makePasswordWithManagement = <
       const registrationCodec = Schema.toCodecIso(RegistrationCodec);
 
       const preparationServices = Context.make(PasswordPersistence, store).pipe(
+        Context.add(PasswordAttemptLimiter, limiter),
         Context.add(PasswordHashing, hasher),
         Context.add(NewPasswordCheck, checker),
         Context.add(AuthenticationAuthority, authority),
@@ -744,7 +750,7 @@ const makePasswordWithManagement = <
         }),
       });
     }),
-  );
+  ).pipe(Layer.provide(defaultPasswordAttemptLimiterLayer));
 
   const Register = makeOperation(`${moduleId}/register`, {
     payload: RegisterInput,
