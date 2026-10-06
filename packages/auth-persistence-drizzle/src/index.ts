@@ -1,3 +1,5 @@
+export type { OAuthProxyColumns } from "./drizzle/oauth-proxy";
+
 export {
   type AnyEmailAddressMapping,
   type AnyEmailRegistrationMapping,

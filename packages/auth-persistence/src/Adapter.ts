@@ -190,6 +190,12 @@ export {
 export { requireStandalone } from "./internal/standalone";
 
 export {
+  makeOAuthProxyPersistence,
+  oauthProxyColumns,
+  type OAuthProxySqlTable,
+} from "./internal/oauth-proxy";
+
+export {
   decodeStepUpIntent,
   encodeStepUpIntent,
   stepUpIntentLive,
