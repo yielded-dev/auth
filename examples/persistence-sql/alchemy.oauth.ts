@@ -11,7 +11,7 @@ export default Alchemy.Stack(
       name: "yielded-auth",
       main: "./src/oauth-settings-worker.ts",
       compatibility: { date: "2026-07-01", flags: ["nodejs_compat"] },
-      routes: [{ pattern: "auth.yielded.dev/*", zoneName: "yielded.dev" }],
+      domain: { name: "auth.yielded.dev", zoneName: "yielded.dev" },
       workersDev: { enabled: false, previewsEnabled: false },
       assets: { directory: "./dist", runWorkerFirst: true },
       env: {

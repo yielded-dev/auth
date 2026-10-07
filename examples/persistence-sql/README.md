@@ -178,14 +178,16 @@ vp -C examples/persistence-sql run deploy:oauth
 ```
 
 [alchemy.oauth.ts](alchemy.oauth.ts) owns the separate `yielded-auth` production
-stack and the `auth.yielded.dev/*` route. Supply Cloudflare account credentials,
+stack and the `auth.yielded.dev` custom domain. Supply Cloudflare account credentials,
 the GitHub variables above, `YIELDED_DISPLAY_NAME`, `YIELDED_AGENT_CLIENT_SECRET`,
 and two secret bindings: `AUTH_SETTINGS_KEYS` and `AUTH_IDENTITY_KEYS`, containing
 the respective key-file JSON. Read them through your secret manager, not shell
 history or public build variables. Browser assets contain no secrets.
 
-The hostname must have a proxied DNS record in the configured Yielded zone. An
-originless `AAAA 100::` record is sufficient because the Worker owns every path.
+Cloudflare owns the hostname's DNS and certificate in the configured Yielded zone.
+Use a Worker custom domain: Agent's same-zone `fetch` calls can reach it without
+a service binding, whereas a Worker route cannot receive those calls. Remove a
+conflicting CNAME before attaching the domain.
 The GitHub callback is `https://auth.yielded.dev/oauth-settings/callback`; discovery
 is `https://auth.yielded.dev/.well-known/openid-configuration`. The documentation
 site at `yielded.dev/auth/` remains a separate deployment.
