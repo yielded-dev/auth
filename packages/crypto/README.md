@@ -23,7 +23,7 @@ Full backend Layers require one shared `KdfAdmission` Layer. The focused
 `WebCrypto.layerHmac(subtle)` and global `layerWebCrypto` adapters need no KDF
 admission. Waiting for derivation is bounded;
 once admitted, derivation retains its permit until actual work and cleanup finish,
-including interruption. Portable Argon2id yields through Effect between batches,
+including interruption. Portable Argon2id yields through Effect between time slices,
 accepts interruption, and clears its work buffers before releasing admission. It
 still runs on the calling thread. JavaScript cannot guarantee zeroization or
 constant-time execution.

@@ -159,9 +159,12 @@ validation, PHC parsing and rehash policy.
 `KdfAdmission.layer()` defaults to one running derivation, sixteen queued requests
 and a five-second acquisition wait. Waiting can be interrupted. Once native work
 starts, interruption waits for the work and cleanup to finish before releasing
-capacity. Portable Argon2id accepts interruption between bounded batches and
-clears its memory and scratch buffers before releasing admission. It remains on
-the calling thread. `KdfAdmission.run` preserves the work's interruptibility;
+capacity. Portable Argon2id targets eight-millisecond time slices, checking elapsed
+time every 256 blocks and yielding after at most 2,048 blocks even when the host
+clock is frozen during computation, as on Workers. These are cooperative limits,
+not a wall-time guarantee. It accepts interruption between slices and clears its
+memory and scratch buffers before releasing admission. It remains on the calling
+thread. `KdfAdmission.run` preserves the work's interruptibility;
 custom backends must protect any nonabortable native work until it finishes.
 Nested `run` calls reuse admission only in the same fiber and on the same service
 instance. A child fiber acquires independently.
