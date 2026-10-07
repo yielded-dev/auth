@@ -1,5 +1,6 @@
 import * as Signature from "@yielded/crypto/Signature";
 import { Effect, Redacted, Schema } from "effect";
+import { Base64Url } from "effect/encoding";
 
 import { InvalidKey } from "./Errors";
 import { algorithms } from "./internal/algorithms";
@@ -80,6 +81,24 @@ export const SecretJwk = Schema.Struct({
 
 export type SecretJwk = typeof SecretJwk.Type;
 
+export const GenerateKeyPairInput = Schema.Union([
+  Schema.Struct({
+    algorithm: Schema.Literals(["RS256", "PS256"]),
+    modulusLength: Schema.optionalKey(Signature.RsaModulusLength),
+    kid: metadata.kid,
+  }),
+  Schema.Struct({ algorithm: Schema.Literals(["ES256", "EdDSA"]), kid: metadata.kid }),
+]);
+
+export type GenerateKeyPairInput = typeof GenerateKeyPairInput.Type;
+
+export const GeneratedKeyPair = Schema.Struct({
+  publicKey: PublicJwk,
+  privateKey: Schema.Redacted(PrivateJwk, { disallowJsonEncode: true }),
+});
+
+export type GeneratedKeyPair = typeof GeneratedKeyPair.Type;
+
 /** Validated, algorithm-bound key snapshots. Private material remains Redacted. */
 export interface PublicKey {
   readonly _tag: "PublicKey";
@@ -104,6 +123,90 @@ export interface SecretKey {
 
 export type SigningKey = PrivateKey | SecretKey;
 export type VerificationKey = PublicKey | SecretKey;
+
+/** Generate typed signing JWKs through the selected crypto backend. */
+export const generateKeyPair = Effect.fnUntraced(function* (input: GenerateKeyPairInput) {
+  const value = yield* Schema.decodeEffect(GenerateKeyPairInput)(input).pipe(
+    Effect.mapError(() => InvalidKey.make({})),
+  );
+
+  const signatures = yield* Signature.Signature;
+
+  return yield* Effect.acquireUseRelease(
+    signatures.generateKeyPair({
+      algorithm: algorithms[value.algorithm],
+      ...("modulusLength" in value ? { modulusLength: value.modulusLength } : {}),
+    }),
+    (pair) =>
+      Effect.sync((): GeneratedKeyPair => {
+        const parameters = Redacted.value(pair.privateKey);
+
+        const meta = {
+          alg: value.algorithm,
+          use: "sig" as const,
+          ...(value.kid === undefined ? {} : { kid: value.kid }),
+        };
+
+        switch (parameters.algorithm) {
+          case "RSASSA-PKCS1-v1_5-SHA256":
+          case "RSA-PSS-SHA256": {
+            const publicKey = {
+              ...meta,
+              kty: "RSA" as const,
+              n: Base64Url.encode(parameters.n),
+              e: Base64Url.encode(parameters.e),
+            };
+
+            return {
+              publicKey,
+              privateKey: Redacted.make({
+                ...publicKey,
+                d: Base64Url.encode(parameters.d),
+                p: Base64Url.encode(parameters.p),
+                q: Base64Url.encode(parameters.q),
+                dp: Base64Url.encode(parameters.dp),
+                dq: Base64Url.encode(parameters.dq),
+                qi: Base64Url.encode(parameters.qi),
+              }),
+            };
+          }
+          case "ECDSA-P256-SHA256": {
+            const publicKey = {
+              ...meta,
+              kty: "EC" as const,
+              crv: "P-256" as const,
+              x: Base64Url.encode(parameters.x),
+              y: Base64Url.encode(parameters.y),
+            };
+
+            return {
+              publicKey,
+              privateKey: Redacted.make({ ...publicKey, d: Base64Url.encode(parameters.d) }),
+            };
+          }
+          case "Ed25519": {
+            const publicKey = {
+              ...meta,
+              kty: "OKP" as const,
+              crv: "Ed25519" as const,
+              x: Base64Url.encode(parameters.x),
+            };
+
+            return {
+              publicKey,
+              privateKey: Redacted.make({ ...publicKey, d: Base64Url.encode(parameters.d) }),
+            };
+          }
+        }
+      }),
+    (pair) =>
+      Effect.sync(() => {
+        for (const part of Object.values(Redacted.value(pair.privateKey))) {
+          if (typeof part !== "string") part.fill(0);
+        }
+      }),
+  );
+});
 
 const read = <S extends Schema.Constraint>(schema: S, input: unknown) =>
   Effect.try({

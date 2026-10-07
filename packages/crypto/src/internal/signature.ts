@@ -1,11 +1,12 @@
 import { Effect, Redacted, Schema } from "effect";
 import { Base64Url } from "effect/encoding";
 
-import { InvalidInput } from "../Errors";
+import { CryptoUnavailable, InvalidInput } from "../Errors";
 import {
   type Algorithm,
   type PrivateKey,
   PrivateKeyInput,
+  GenerateKeyPairInput,
   PrivateKeyParameters,
   type PublicKey,
   PublicKeyInput,
@@ -21,6 +22,21 @@ const derBytes = Schema.Uint8Array.check(Schema.isMinLength(1), Schema.isMaxLeng
 
 const RsaAlgorithm = Schema.Struct({
   modulusLength: Schema.Int.check(Schema.isGreaterThanOrEqualTo(2048)),
+});
+
+const component = Schema.Uint8ArrayFromBase64Url;
+const GeneratedEc = Schema.Struct({ x: component, y: component, d: component });
+const GeneratedEd = Schema.Struct({ x: component, d: component });
+
+const GeneratedRsa = Schema.Struct({
+  n: component,
+  e: component,
+  d: component,
+  p: component,
+  q: component,
+  dp: component,
+  dq: component,
+  qi: component,
 });
 
 const importAlgorithm = (algorithm: Algorithm) => {
@@ -175,6 +191,75 @@ export const makeSignature = (subtle: SubtleCrypto): Signature["Service"] => {
         }),
       } satisfies PublicKey;
     }),
+    generateKeyPair: Effect.fnUntraced(function* (input) {
+      const value = yield* decode(GenerateKeyPairInput, input, "parameters");
+
+      const pair = yield* Effect.tryPromise({
+        try: () => {
+          switch (value.algorithm) {
+            case "ECDSA-P256-SHA256":
+              return subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, [
+                "sign",
+                "verify",
+              ]);
+            case "Ed25519":
+              return subtle.generateKey("Ed25519", true, ["sign", "verify"]);
+            case "RSASSA-PKCS1-v1_5-SHA256":
+            case "RSA-PSS-SHA256":
+              return subtle.generateKey(
+                {
+                  name: value.algorithm === "RSA-PSS-SHA256" ? "RSA-PSS" : "RSASSA-PKCS1-v1_5",
+                  hash: "SHA-256",
+                  modulusLength: value.modulusLength ?? 2048,
+                  publicExponent: new Uint8Array([1, 0, 1]),
+                },
+                true,
+                ["sign", "verify"],
+              );
+          }
+        },
+        catch: nativeError,
+      });
+
+      const jwk = yield* Effect.tryPromise({
+        try: () => subtle.exportKey("jwk", pair.privateKey),
+        catch: nativeError,
+      });
+
+      // JsonWebKey does not guarantee algorithm-specific fields. Decode only at
+      // this native boundary; callers receive typed components, never loose JWKs.
+      const parameters: PrivateKeyParameters = yield* Effect.gen(function* () {
+        switch (value.algorithm) {
+          case "ECDSA-P256-SHA256":
+            return {
+              algorithm: value.algorithm,
+              ...(yield* Schema.decodeUnknownEffect(GeneratedEc)(jwk, { reportInput: false })),
+            };
+          case "Ed25519":
+            return {
+              algorithm: value.algorithm,
+              ...(yield* Schema.decodeUnknownEffect(GeneratedEd)(jwk, { reportInput: false })),
+            };
+          case "RSASSA-PKCS1-v1_5-SHA256":
+          case "RSA-PSS-SHA256":
+            return {
+              algorithm: value.algorithm,
+              ...(yield* Schema.decodeUnknownEffect(GeneratedRsa)(jwk, { reportInput: false })),
+            };
+        }
+      }).pipe(Effect.mapError(() => CryptoUnavailable.make({})));
+
+      yield* decode(PrivateKeyParameters, parameters, "key");
+
+      const publicKey: PublicKeyParameters =
+        "n" in parameters
+          ? { algorithm: parameters.algorithm, n: parameters.n.slice(), e: parameters.e.slice() }
+          : "y" in parameters
+            ? { algorithm: parameters.algorithm, x: parameters.x.slice(), y: parameters.y.slice() }
+            : { algorithm: "Ed25519", x: parameters.x.slice() };
+
+      return { publicKey, privateKey: Redacted.make(parameters) };
+    }, Effect.uninterruptible),
     encodePublicKey: Effect.fnUntraced(function* (input) {
       const parameters = yield* decode(PublicKeyParameters, input, "key");
       const key = yield* importComponents(parameters, "verify");

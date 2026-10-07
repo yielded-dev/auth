@@ -122,6 +122,11 @@ Signature signing takes a `Redacted` PKCS8 DER private key; verification takes a
 SPKI DER public key. `encodePublicKey` and `encodePrivateKey` convert raw
 unsigned key components through the platform’s key parser; private components
 and the resulting PKCS8 use `Redacted`. Keys are limited to 16 KiB of DER.
+`generateKeyPair({ algorithm })` returns typed public components and redacted
+private components. RSA defaults to 2048 bits with exponent 65537; `modulusLength`
+also accepts 3072 or 4096. The caller owns the exported secret bytes. Native
+generation is joined before interruption completes. Custom `Signature` services
+implement generation alongside encoding, signing and verification.
 [JOSE](./jose.mdx) owns JWK metadata and JWTs. PHC password hashes, PEM text and
 Auth envelopes are outside this package. SHA-1 HMAC is available
 for existing protocols such as TOTP.

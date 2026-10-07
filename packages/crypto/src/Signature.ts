@@ -50,6 +50,26 @@ export const PrivateKeyParameters = Schema.Union([
 
 export type PrivateKeyParameters = typeof PrivateKeyParameters.Type;
 
+export const RsaModulusLength = Schema.Literals([2048, 3072, 4096]);
+
+/** RSA defaults to 2048 bits and exponent 65537; curves are fixed by algorithm. */
+export const GenerateKeyPairInput = Schema.Union([
+  Schema.Struct({ algorithm: Schema.Literals(["ECDSA-P256-SHA256", "Ed25519"]) }),
+  Schema.Struct({
+    algorithm: Schema.Literals(["RSASSA-PKCS1-v1_5-SHA256", "RSA-PSS-SHA256"]),
+    modulusLength: Schema.optionalKey(RsaModulusLength),
+  }),
+]);
+
+export type GenerateKeyPairInput = typeof GenerateKeyPairInput.Type;
+
+export const KeyPairParameters = Schema.Struct({
+  publicKey: PublicKeyParameters,
+  privateKey: Schema.Redacted(PrivateKeyParameters, { disallowJsonEncode: true }),
+});
+
+export type KeyPairParameters = typeof KeyPairParameters.Type;
+
 export const PrivateKeyInput = Schema.Struct({
   algorithm: Algorithm,
   privateKey: Schema.Redacted(Schema.Uint8Array, { disallowJsonEncode: true }),
@@ -108,6 +128,10 @@ export class Signature extends Context.Service<
     readonly importPublicKey: (
       input: PublicKeyInput,
     ) => Effect.Effect<PublicKey, OperationError, Scope.Scope>;
+    /** Generate exportable components. The caller owns the returned secret bytes. */
+    readonly generateKeyPair: (
+      input: GenerateKeyPairInput,
+    ) => Effect.Effect<KeyPairParameters, OperationError>;
     readonly encodePublicKey: (
       input: PublicKeyParameters,
     ) => Effect.Effect<Uint8Array, OperationError>;
