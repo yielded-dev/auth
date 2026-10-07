@@ -199,7 +199,7 @@ export const makeNativePasswordRegistrationServices = Effect.fnUntraced(function
       : Option.isSome(parent)
         ? executor.run(work)
         : executor
-            .coordinate(
+            .operation(
               work.pipe(
                 Effect.mapError((error) =>
                   error instanceof PasswordIdentifierTaken ? error : unavailable(),

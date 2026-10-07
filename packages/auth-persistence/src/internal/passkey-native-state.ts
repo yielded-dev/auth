@@ -132,7 +132,11 @@ export const makePasskeyNativeReadState = Effect.fnUntraced(function* (
     });
   });
 
-  const readAuthority = Effect.fnUntraced(function* (nativeId: unknown, lock: boolean) {
+  const readAuthority = Effect.fnUntraced(function* (
+    nativeId: unknown,
+    lock: boolean,
+    credentialId?: string,
+  ) {
     // The subject lock is a distinct first statement; joined FOR UPDATE cannot
     // establish the lock order required by coordinated application transactions.
     if (lock) {
@@ -148,11 +152,23 @@ export const makePasskeyNativeReadState = Effect.fnUntraced(function* (
       )
         return undefined;
 
+      const lockedFactors = sql`select ${factor.fields("f_")} from ${factor.name} where ${factor.column(read.authority.subjectId)} = ${factor.value(read.authority.subjectId, nativeId)} and ${active("authority")} order by ${factor.column(read.authority.credentialId)} limit 65 ${sql.onDialectOrElse({ pg: () => sql`for update`, mysql: () => sql`for update`, orElse: () => sql`` })}`;
+
       const rows =
-        yield* sql<PasskeyNativeRow>`select ${factor.fields("f_")} from ${factor.name} where ${factor.column(read.authority.subjectId)} = ${factor.value(read.authority.subjectId, nativeId)} and ${active("authority")} order by ${factor.column(read.authority.credentialId)} limit 65 ${sql.onDialectOrElse({ pg: () => sql`for update`, mysql: () => sql`for update`, orElse: () => sql`` })}`;
+        credentialId === undefined
+          ? yield* sql<PasskeyNativeRow>`${lockedFactors}`
+          : yield* sql<PasskeyNativeRow>`with locked_factors as ${sql.onDialectOrElse({ pg: () => sql`materialized`, orElse: () => sql`` })} (${lockedFactors})
+        select locked_factors.*, ${credential.fields("c_")} from ${credential.name} left join locked_factors on 1 = 1
+        where ${credential.column(read.credential.subjectId)} = ${credential.value(read.credential.subjectId, nativeId)} and ${exactSqlText(sql, credential.column(read.credential.credentialId), credential.value(read.credential.credentialId, credentialId))} and ${active("credential")}`;
+
+      invariant(rows.length <= 64);
 
       return {
         row,
+        credential:
+          credentialId === undefined || rows[0] === undefined
+            ? undefined
+            : credential.decode(rows[0], "c_"),
         revision: revision(
           row,
           rows.map((row) => factor.decode(row, "f_")),
@@ -165,7 +181,7 @@ export const makePasskeyNativeReadState = Effect.fnUntraced(function* (
       observedFactor = joinedFactor;
 
     const rows =
-      yield* sql<PasskeyNativeRow>`select ${observedSubject.fields("s_")}, ${observedFactor.fields("f_")}, ${now} as "engineNow" from ${selected("subject", "passkey_subject")} left join ${selected("authority", "passkey_factor")} on ${observedFactor.column(read.authority.subjectId)} = ${observedFactor.value(read.authority.subjectId, nativeId)} where ${observedSubject.column(read.subject.id)} = ${observedSubject.value(read.subject.id, nativeId)} limit 65`;
+      yield* sql<PasskeyNativeRow>`select ${observedSubject.fields("s_")}, ${observedFactor.fields("f_")}, ${now} as "engineNow" ${credentialId === undefined ? sql`` : sql`, ${joinedCredential.fields("c_")}`} from ${selected("subject", "passkey_subject")} left join ${selected("authority", "passkey_factor")} on ${observedFactor.column(read.authority.subjectId)} = ${observedFactor.value(read.authority.subjectId, nativeId)} ${credentialId === undefined ? sql`` : sql`join ${selected("credential", "passkey_credential")} on ${joinedCredential.column(read.credential.subjectId)} = ${joinedCredential.value(read.credential.subjectId, nativeId)} and ${exactSqlText(sql, joinedCredential.column(read.credential.credentialId), joinedCredential.value(read.credential.credentialId, credentialId))}`} where ${observedSubject.column(read.subject.id)} = ${observedSubject.value(read.subject.id, nativeId)} limit 65`;
 
     if (rows.length === 0 || rows.length > 64) return undefined;
     const row = observedSubject.decode(rows[0]!, "s_");
@@ -189,6 +205,7 @@ export const makePasskeyNativeReadState = Effect.fnUntraced(function* (
 
     return {
       row,
+      credential: credentialId === undefined ? undefined : joinedCredential.decode(rows[0]!, "c_"),
       revision: revision(
         row,
         rows.map((selected) => observedFactor.decode(selected, "f_")),

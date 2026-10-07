@@ -17,7 +17,6 @@ import type { SqlClient } from "effect/sql/SqlClient";
 
 import { nativeDatabase, type NativeDatabaseHandle } from "../drizzle/native-database";
 import { makeDrizzleSqlTables } from "../drizzle/native-sql-table";
-import { makeComposedPasskeys } from "../drizzle/passkeys";
 
 const makeTable = (definition: StorageTable) =>
   sqliteTable(
@@ -79,5 +78,4 @@ export const sqlitePersistence = <R>(acquire: Effect.Effect<object, never, R | S
     describe,
     acquire: nativeDatabase(acquire),
     maxParameters: (database) => database.maxParameters,
-    passkeys: makeComposedPasskeys,
   });

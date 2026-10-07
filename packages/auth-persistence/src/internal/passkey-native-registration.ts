@@ -196,7 +196,8 @@ export const makePasskeyNativeRegistration = <R>(
             ),
             1,
           );
-          yield* insertCredential(
+
+          const inserted = yield* insertCredential(
             nativeId,
             ceremony,
             verified,
@@ -205,9 +206,10 @@ export const makePasskeyNativeRegistration = <R>(
             nowMillis,
             subjectRow,
           );
+
           yield* postcondition(
             "passkey-registration-subject",
-            sql`${flow.absent(access)} and ${subjectCondition(revision)} and ${count} <= ${cap} and ${finalEligibility} and ${state.now} < ${ceremony.expiresAtMillis}`,
+            sql`${inserted.condition} and ${flow.absent(access)} and ${subjectCondition(revision)} and ${count} <= ${cap} and ${finalEligibility} and ${state.now} < ${ceremony.expiresAtMillis}`,
           );
 
           return yield* preparePasskeyNative({ _tag: "RegistrationAccepted" }, prepare);

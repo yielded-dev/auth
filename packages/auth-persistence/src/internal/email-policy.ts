@@ -1,5 +1,6 @@
 import {
   type EmailAddressMutation,
+  type EmailAddressTarget,
   type EmailAction,
   EmailUnavailable,
   snapshotEmailCredential,
@@ -10,11 +11,11 @@ import type { LoginIdentifier } from "@yielded/auth/Identity";
 import {
   snapshotAuthenticationEvidence,
   type AuthenticationRevision,
+  type AuthenticationRequirement,
   type SecurityRevision,
 } from "@yielded/auth/Sessions";
 import { Effect } from "effect";
 
-import type { EmailMutationRead } from "./email-store";
 import { PersistenceMappingError } from "./mapping-error";
 import type { AnyEmailAddressMapping } from "./models/email-model";
 import { passwordEvidenceSatisfiedAt } from "./password-policy";
@@ -224,3 +225,11 @@ export const allocateEmailSecurityRevision = (
 
   return Effect.fail(unavailable());
 };
+
+export interface EmailMutationRead {
+  readonly target: EmailAddressTarget;
+  readonly requirement: Effect.Effect<
+    AuthenticationRequirement,
+    EmailUnavailable | PersistenceMappingError
+  >;
+}

@@ -3,6 +3,7 @@ import { PasskeyPersistence } from "@yielded/auth/Passkey";
 import type { Table } from "drizzle-orm";
 import { type Crypto, Effect, Context } from "effect";
 
+import type { D1BatchStatements } from "./D1BatchStatements";
 import { NativeDatabase, nativeDatabase } from "./native-database";
 import type {
   PasskeyCredentialMapping,
@@ -36,7 +37,7 @@ export const makePasskeyTarget = <
   D,
   T extends Table,
   Extra = unknown,
-  Synchronous extends boolean = false,
+  Provided extends D1BatchStatements = never,
 >(
   databaseService: Context.Service<DatabaseId, D>,
   configuration: PasskeyTargetConfiguration,
@@ -63,11 +64,11 @@ export const makePasskeyTarget = <
       >;
       readonly transaction?: never;
     },
-    body: Effect.Effect<A, E, Synchronous extends true ? NoInfer<PasskeyPersistence> : R>,
+    body: Effect.Effect<A, E, R>,
   ): Effect.Effect<
     A,
     PasskeyCoordinatorError<E> | DatabaseError,
-    | (Synchronous extends true ? never : Exclude<R, PasskeyPersistence>)
+    | Exclude<R, PasskeyPersistence | Provided>
     | Crypto.Crypto
     | LifecycleHooks
     | DatabaseRequirements
@@ -95,13 +96,17 @@ export const makePasskeyTarget = <
         PasskeyPersistenceMapping<PasskeyCredentialMapping<S, C, F, N>, Flow, N> & Extra,
         RSetup
       >;
-      readonly transaction: SuppliedService<TxId, NoInfer<TransactionOf<Database>>, TxShape>;
+      readonly transaction: SuppliedService<
+        TxId,
+        NoInfer<[Provided] extends [never] ? TransactionOf<Database> : never>,
+        TxShape
+      >;
     },
-    body: Effect.Effect<A, E, Synchronous extends true ? NoInfer<PasskeyPersistence | TxId> : R>,
+    body: Effect.Effect<A, E, R>,
   ): Effect.Effect<
     A,
     PasskeyCoordinatorError<E> | DatabaseError,
-    | (Synchronous extends true ? never : Exclude<R, PasskeyPersistence | TxId>)
+    | Exclude<R, PasskeyPersistence | TxId | Provided>
     | Crypto.Crypto
     | LifecycleHooks
     | DatabaseRequirements
@@ -171,11 +176,11 @@ export const makePasskeyTarget = <
       >;
       readonly transaction?: never;
     },
-    body: Effect.Effect<A, E, Synchronous extends true ? NoInfer<PasskeyPersistence> : R>,
+    body: Effect.Effect<A, E, R>,
   ): Effect.Effect<
     A,
     PasskeyCoordinatorError<E> | DatabaseError,
-    | (Synchronous extends true ? never : Exclude<R, PasskeyPersistence>)
+    | Exclude<R, PasskeyPersistence | Provided>
     | Crypto.Crypto
     | LifecycleHooks
     | DatabaseRequirements
@@ -199,13 +204,17 @@ export const makePasskeyTarget = <
         PasskeyRegistrationCeremonyMapping<Flow> & Extra,
         RSetup
       >;
-      readonly transaction: SuppliedService<TxId, NoInfer<TransactionOf<Database>>, TxShape>;
+      readonly transaction: SuppliedService<
+        TxId,
+        NoInfer<[Provided] extends [never] ? TransactionOf<Database> : never>,
+        TxShape
+      >;
     },
-    body: Effect.Effect<A, E, Synchronous extends true ? NoInfer<PasskeyPersistence | TxId> : R>,
+    body: Effect.Effect<A, E, R>,
   ): Effect.Effect<
     A,
     PasskeyCoordinatorError<E> | DatabaseError,
-    | (Synchronous extends true ? never : Exclude<R, PasskeyPersistence | TxId>)
+    | Exclude<R, PasskeyPersistence | TxId | Provided>
     | Crypto.Crypto
     | LifecycleHooks
     | DatabaseRequirements
@@ -255,7 +264,7 @@ export const makePasskeyTarget = <
   }
 
   return {
-    ...makePasskeyWriteTarget<DatabaseId, D, T, Extra, Synchronous>(databaseService, configuration),
+    ...makePasskeyWriteTarget<DatabaseId, D, T, Extra, Provided>(databaseService, configuration),
     makePasskeyCredentialServices: <S extends T, C extends T, F extends T, N, RSetup = never>(
       mapping: PasskeyMappingSource<PasskeyCredentialMapping<S, C, F, N> & Extra, RSetup>,
     ) =>

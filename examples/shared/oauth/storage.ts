@@ -187,8 +187,7 @@ export const subject = {
   isActiveStatus: (value: unknown) => value === "active",
   activeCondition: eq(subjects.columns.status, "active"),
   decodeAuthenticationRequirement: () => requirement,
-  decodeActionRequirement: () => requirement,
-} satisfies Mapping.OAuthConnectedSubjectTable<typeof subjects>;
+} satisfies Mapping.OAuthSubjectReadTable<typeof subjects>;
 
 export const authority = {
   table: credentials,
@@ -617,10 +616,13 @@ export const makeServices = (mappings: Effect.Success<ReturnType<typeof makeMapp
         )
           return yield* OAuth.OAuthRejected.make({});
 
-        const current = yield* connectedServices.oauthConnectedPersistence.read({
-          moduleId,
-          subjectId: localSubject,
-        });
+        const current =
+          input.purpose === "use"
+            ? input.captured
+            : yield* connectedServices.oauthConnectedPersistence.read({
+                moduleId,
+                subjectId: localSubject,
+              });
 
         if (
           current === undefined ||

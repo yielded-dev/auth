@@ -74,8 +74,6 @@ export const makeExternalIdentityServices = <
   mapping: ExternalIdentityTables<Subject, External, NativeId>,
 ) => makePgExternalIdentityServices(mapping);
 
-export const commitMode = "interactive" as const;
-
 export const makeIdentityServices = <
   Subject extends AnyPgTable,
   Identifier extends AnyPgTable,
@@ -87,17 +85,14 @@ export const makeIdentityServices = <
 ) => makePgIdentityServices(mapping);
 
 import { makeOAuthTarget } from "./drizzle/oauth-drivers";
-import { sqlClientOAuthStandaloneGuard } from "./drizzle/oauth-target";
 
 const oauthTarget = makeOAuthTarget<
   Database,
   EffectPgDatabase<AnyRelations>,
   AnyPgTable<{ dialect: "pg" }>
 >(Database, {
-  mode: "interactive",
+  mode: "native",
   dialect: "pg",
-  locking: true,
-  standaloneGuard: sqlClientOAuthStandaloneGuard,
   transactionConstructor: PasskeyTransaction,
 });
 
@@ -117,7 +112,6 @@ export const {
 } = oauthTarget;
 
 import { makePasskeyTarget } from "./drizzle/passkey-drivers";
-import { sqlClientPasskeyStandaloneGuard } from "./drizzle/passkey/target";
 
 const passkeyTarget = makePasskeyTarget<
   Database,
@@ -125,10 +119,8 @@ const passkeyTarget = makePasskeyTarget<
   AnyPgTable<{ dialect: "pg" }>
 >(Database, {
   transactionConstructor: PasskeyTransaction,
-  mode: "interactive",
+  mode: "native",
   dialect: "pg",
-  locking: true,
-  standaloneGuard: sqlClientPasskeyStandaloneGuard,
 });
 
 export const {

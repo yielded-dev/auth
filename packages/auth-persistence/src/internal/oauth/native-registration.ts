@@ -1,6 +1,6 @@
 import type { LifecycleHooks } from "@yielded/auth/Hooks";
 import * as M from "@yielded/auth/OAuth";
-import { Crypto, Effect, Schema } from "effect";
+import { Crypto, Effect, Option, Schema } from "effect";
 import { SqlClient } from "effect/sql";
 import type { Fragment } from "effect/sql/Statement";
 
@@ -11,9 +11,12 @@ import type {
   OAuthRegistrationMapping,
 } from "../models/oauth-model";
 import type { NativeSqlTables } from "../native-sql-table";
+import { conditionalSqlInsert } from "../session-native-record";
 import { exactSqlText, executeSqlChange } from "../sql-change";
+import { cleanupSqlRows } from "../sql-cleanup";
 import {
   appendSqlBatchStatement,
+  CurrentSqlCommit,
   makeSqlCommitExecutor,
   registerSqlBatchPostcondition,
   registerSqlPostcondition,
@@ -126,24 +129,19 @@ const makeIntent = Effect.fnUntraced(function* (
     } else invariant((yield* executeSqlChange(sql, statement)) === 1);
   });
 
-  const cleanup = Effect.fnUntraced(function* (moduleId: string, limit: number) {
-    const scope = exact(i.moduleId, moduleId);
-    const due = sql`${tables.expression(mapping.clock.toMillis(intent.column(i.retentionUntil)))} <= ${now}`;
-    const deletion = sql`delete from ${intent.name} where ${scope} and ${intent.column(i.reference)} in (select candidate from (select ${intent.column(i.reference)} as candidate from ${intent.name} where ${scope} and ${due} order by ${intent.column(i.retentionUntil)}, ${intent.column(i.reference)} limit ${limit}) as intent_cleanup)`;
-
-    if (batch) {
-      const rows =
-        yield* sql`select ${intent.column(i.reference)} from ${intent.name} where ${scope} and ${due} order by ${intent.column(i.retentionUntil)}, ${intent.column(i.reference)} limit ${limit}`;
-
-      yield* appendSqlBatchStatement(deletion);
-      yield* appendSqlBatchStatement(sqlBatchAssertion(sql, sql`changes() = ${rows.length}`));
-
-      return { removed: rows.length, hasMore: rows.length === limit };
-    }
-    const removed = yield* executeSqlChange(sql, deletion);
-
-    return { removed, hasMore: removed === limit };
-  });
+  const cleanup = (moduleId: string, limit: number) =>
+    cleanupSqlRows(
+      [
+        {
+          table: intent,
+          keys: [i.moduleId, i.reference],
+          due: sql`${exact(i.moduleId, moduleId)} and ${tables.expression(mapping.clock.toMillis(intent.column(i.retentionUntil)))} <= ${now}`,
+          order: [intent.column(i.retentionUntil), intent.column(i.reference)],
+        },
+      ],
+      limit,
+      batch,
+    );
 
   return {
     sql,
@@ -173,6 +171,7 @@ export const makeNativeOAuthRegistrationIntentServices = Effect.fnUntraced(funct
 > {
   const executor = yield* makeSqlCommitExecutor(unavailable);
   const crypto = yield* Crypto.Crypto;
+  const external = yield* Effect.serviceOption(CurrentSqlCommit);
   const state = yield* makeIntent(tables, mapping, batch !== undefined);
   const { sql, intent, unowned, horizon, stored } = state;
   const i = mapping.intent;
@@ -181,7 +180,7 @@ export const makeNativeOAuthRegistrationIntentServices = Effect.fnUntraced(funct
     const work = Effect.provideService(effect, Crypto.Crypto, crypto);
 
     return batch === undefined
-      ? executor.run(work)
+      ? executor.run(work, "statement")
       : executor.batch(work).pipe(Effect.provideService(SqlBatchCommit, batch));
   };
 
@@ -211,29 +210,31 @@ export const makeNativeOAuthRegistrationIntentServices = Effect.fnUntraced(funct
             tables.expression(mapping.eligible(value)),
           ]);
 
-          if ((yield* sql`select 1 where ${eligible}`).length !== 1) return yield* rejected();
           const snapshot = stored.encode({ intent: value, application: { _tag: "Unbound" } });
 
-          if (batch !== undefined) yield* appendSqlBatchStatement(sqlBatchAssertion(sql, eligible));
-          yield* state.change(
-            intent.insert({
-              ...i.encodeInsert(value),
-              [i.moduleId]: context.moduleId,
-              [i.reference]: value.reference,
-              [i.flowId]: context.flowId,
-              [i.identityKey]: identityKey,
-              [i.snapshot]: snapshot,
-              [i.expiresAt]: mapping.clock.encodeInstant(value.expiresAtMillis),
-              [i.retentionUntil]: mapping.clock.encodeInstant(value.retentionUntilMillis),
-            }),
-          );
-          yield* state.finish(
-            "oauth-registration-intent-issued",
-            sql.and([
-              eligible,
-              sql`exists(select 1 from ${intent.name} where ${state.key(context.moduleId, value.reference)} and ${state.exact(i.snapshot, snapshot)})`,
-            ]),
-          );
+          const values = {
+            ...i.encodeInsert(value),
+            [i.moduleId]: context.moduleId,
+            [i.reference]: value.reference,
+            [i.flowId]: context.flowId,
+            [i.identityKey]: identityKey,
+            [i.snapshot]: snapshot,
+            [i.expiresAt]: mapping.clock.encodeInstant(value.expiresAtMillis),
+            [i.retentionUntil]: mapping.clock.encodeInstant(value.retentionUntilMillis),
+          };
+
+          const statement = conditionalSqlInsert(sql, intent, values, eligible);
+
+          if (batch !== undefined) yield* state.change(statement);
+          else if ((yield* executeSqlChange(sql, statement)) !== 1) return yield* rejected();
+          if (Option.isSome(external))
+            yield* state.finish(
+              "oauth-registration-intent-issued",
+              sql.and([
+                eligible,
+                sql`exists(select 1 from ${intent.name} where ${state.key(context.moduleId, value.reference)} and ${state.exact(i.snapshot, snapshot)})`,
+              ]),
+            );
 
           return yield* prepareOAuthNative({ _tag: "RegistrationIssued", intent: value }, prepare);
         }),
@@ -254,6 +255,7 @@ export const makeNativeOAuthRegistrationServices = Effect.fnUntraced(function* <
 > {
   const executor = yield* makeSqlCommitExecutor(unavailable);
   const crypto = yield* Crypto.Crypto;
+  const external = yield* Effect.serviceOption(CurrentSqlCommit);
   const state = yield* makeIntent(tables, mapping, batch !== undefined);
   const mutation = yield* makeOAuthNativeMutation(tables, mapping, batch !== undefined);
   const { sql, now, intent, horizon, stored } = state;
@@ -266,11 +268,14 @@ export const makeNativeOAuthRegistrationServices = Effect.fnUntraced(function* <
   const subject = tables(s.table);
   const application = Schema.fromJsonString(mapping.registration);
 
-  const run = <A, E, R>(effect: Effect.Effect<A, E, R>) => {
+  const run = <A, E, R>(
+    effect: Effect.Effect<A, E, R>,
+    mode: "transaction" | "statement" = "transaction",
+  ) => {
     const work = Effect.provideService(effect, Crypto.Crypto, crypto);
 
     return batch === undefined
-      ? executor.run(work)
+      ? executor.run(work, mode)
       : executor.batch(work).pipe(Effect.provideService(SqlBatchCommit, batch));
   };
 
@@ -307,11 +312,15 @@ export const makeNativeOAuthRegistrationServices = Effect.fnUntraced(function* <
         }),
       ),
     register: (original, prepare) =>
-      run(
+      read(
         Effect.gen(function* () {
           const access = M.snapshotOAuthSync(M.OAuthRegistrationAccess, original.access);
           const expected = M.snapshotOAuthSync(M.OAuthRegistrationIntent, original.intent);
           const found = yield* state.read(access);
+
+          const decide = (decision: M.OAuthRegistrationDecision) =>
+            run(prepareOAuthNative(decision, prepare), "statement");
+
           const rejected = () => prepareOAuthNative({ _tag: "Rejected" } as const, prepare);
 
           if (
@@ -319,7 +328,7 @@ export const makeNativeOAuthRegistrationServices = Effect.fnUntraced(function* <
             state.intentStored.encode(found.inspection.intent) !==
               state.intentStored.encode(expected)
           )
-            return yield* rejected();
+            return decide({ _tag: "Rejected" });
 
           const binding = M.snapshotOAuthSync(M.OAuthRegistrationInspection, {
             intent: expected,
@@ -343,153 +352,173 @@ export const makeNativeOAuthRegistrationServices = Effect.fnUntraced(function* <
               previous.payload !== binding.payload ||
               previous.requestId !== binding.requestId
             )
-              return yield* prepareOAuthNative({ _tag: "Conflict" }, prepare);
+              return decide({ _tag: "Conflict" });
 
-            return yield* prepareOAuthNative(
+            return decide(
               previous._tag === "Registered"
                 ? { _tag: "Registered", replayed: true }
                 : { _tag: "Rejected" },
-              prepare,
             );
           }
-          invariant(new TextEncoder().encode(binding.payload).length <= 1048576);
-          const registration = yield* Schema.decodeEffect(application)(binding.payload);
 
-          invariant((yield* Schema.encodeEffect(application)(registration)) === binding.payload);
-          if ((yield* Schema.encodeEffect(application)(original.registration)) !== binding.payload)
-            return yield* rejected();
-          const inspection = yield* mapping.inspect({ intent: expected, registration });
+          return run(
+            Effect.gen(function* () {
+              invariant(new TextEncoder().encode(binding.payload).length <= 1048576);
+              const registration = yield* Schema.decodeEffect(application)(binding.payload);
 
-          if (inspection.fingerprint !== binding.fingerprint) return yield* rejected();
-          const policyInput = { intent: expected, registration };
+              invariant(
+                (yield* Schema.encodeEffect(application)(registration)) === binding.payload,
+              );
+              if (
+                (yield* Schema.encodeEffect(application)(original.registration)) !== binding.payload
+              )
+                return yield* rejected();
+              const inspection = yield* mapping.inspect({ intent: expected, registration });
 
-          const eligible = sql.and([
-            state.unowned(found.identityKey),
-            tables.expression(mapping.eligibility.admission(policyInput)),
-            horizon(expected),
-          ]);
+              if (inspection.fingerprint !== binding.fingerprint) return yield* rejected();
+              const policyInput = { intent: expected, registration };
 
-          const admitted =
-            inspection.eligible && (yield* sql`select 1 where ${eligible}`).length === 1;
+              const eligible = sql.and([
+                state.unowned(found.identityKey),
+                tables.expression(mapping.eligibility.admission(policyInput)),
+                horizon(expected),
+              ]);
 
-          let final: Fragment = horizon(expected);
+              let admitted =
+                inspection.eligible &&
+                (batch === undefined || (yield* sql`select 1 where ${eligible}`).length === 1);
 
-          if (admitted) {
-            const nativeId = yield* mapping.allocateSubjectId;
-            const subjectId = yield* mapping.subjectId.toSubject(nativeId);
+              let final: Fragment = horizon(expected);
 
-            invariant(
-              mapping.subjectId.equals(nativeId, yield* mapping.subjectId.toNative(subjectId)),
-            );
+              if (admitted) {
+                const nativeId = yield* mapping.allocateSubjectId;
+                const subjectId = yield* mapping.subjectId.toSubject(nativeId);
 
-            const credentialId = yield* Schema.decodeEffect(
-              M.OAuthCredentialSnapshot.fields.credentialId,
-            )(yield* mapping.allocateCredentialId);
+                invariant(
+                  mapping.subjectId.equals(nativeId, yield* mapping.subjectId.toNative(subjectId)),
+                );
 
-            const revision = yield* Schema.decodeEffect(
-              M.OAuthCredentialSnapshot.fields.credentialRevision,
-            )(yield* mapping.allocateRevision);
+                const credentialId = yield* Schema.decodeEffect(
+                  M.OAuthCredentialSnapshot.fields.credentialId,
+                )(yield* mapping.allocateCredentialId);
 
-            const subjectValues = {
-              ...mapping.encodeSubjectInsert(
-                { ...policyInput, requestId: binding.requestId },
-                { subjectId: nativeId, securityRevision: revision },
-              ),
-              [s.id]: nativeId,
-              [s.securityRevision]: revision,
-            };
+                const revision = yield* Schema.decodeEffect(
+                  M.OAuthCredentialSnapshot.fields.credentialRevision,
+                )(yield* mapping.allocateRevision);
 
-            invariant(s.isActiveStatus(subjectValues[s.status]));
-            // A newly inserted subject is the first lock. The exact unbound intent
-            // CAS below arbitrates concurrent registration; a loser rolls back all
-            // local rows and never repeats provisioning automatically.
-            yield* state.change(subject.insert(subjectValues));
-            const policy = { ...policyInput, nativeSubjectId: nativeId };
+                const subjectValues = {
+                  ...mapping.encodeSubjectInsert(
+                    { ...policyInput, requestId: binding.requestId },
+                    { subjectId: nativeId, securityRevision: revision },
+                  ),
+                  [s.id]: nativeId,
+                  [s.securityRevision]: revision,
+                };
 
-            invariant((mapping.eligibility.guards?.length ?? 0) <= 32);
-            for (const guard of mapping.eligibility.guards ?? []) {
-              const table = tables(guard.table);
+                invariant(s.isActiveStatus(subjectValues[s.status]));
+                // A newly inserted subject is the first lock. The exact unbound intent
+                // CAS below arbitrates concurrent registration; a loser rolls back all
+                // local rows and never repeats provisioning automatically.
+                const creation = conditionalSqlInsert(sql, subject, subjectValues, eligible);
 
-              const rows =
-                yield* sql`select ${table.column(guard.orderBy)} from ${table.name} where ${tables.expression(guard.condition(policy))} order by ${table.column(guard.orderBy)} limit 65 ${batch === undefined ? sql.onDialectOrElse({ sqlite: () => sql``, orElse: () => sql`for update` }) : sql``}`;
+                if (batch !== undefined) yield* state.change(creation);
+                else admitted = (yield* executeSqlChange(sql, creation)) === 1;
+                if (admitted) {
+                  const policy = { ...policyInput, nativeSubjectId: nativeId };
 
-              invariant(rows.length > 0 && rows.length <= 64);
-            }
+                  invariant((mapping.eligibility.guards?.length ?? 0) <= 32);
+                  for (const guard of mapping.eligibility.guards ?? []) {
+                    const table = tables(guard.table);
 
-            const admission = sql.and([
-              state.unowned(found.identityKey),
-              tables.expression(mapping.eligibility.admission(policy)),
-              horizon(expected),
-            ]);
+                    const rows =
+                      yield* sql`select ${table.column(guard.orderBy)} from ${table.name} where ${tables.expression(guard.condition(policy))} order by ${table.column(guard.orderBy)} limit 65 ${batch === undefined ? sql.onDialectOrElse({ sqlite: () => sql``, orElse: () => sql`for update` }) : sql``}`;
 
-            yield* mutation.assert(admission);
-            invariant(
-              (yield* mutation.ensureOwnership(expected.identity, nativeId)) === found.identityKey,
-            );
+                    invariant(rows.length > 0 && rows.length <= 64);
+                  }
 
-            const values = {
-              ...c.encodeInsert({
-                moduleId: expected.context.moduleId,
-                subjectId: nativeId,
-                identityKey: found.identityKey,
-                credentialId,
-                credentialRevision: revision,
-              }),
-              [c.moduleId]: expected.context.moduleId,
-              [c.subjectId]: nativeId,
-              [c.identityKey]: found.identityKey,
-              [c.credentialId]: credentialId,
-              [c.credentialRevision]: revision,
-            };
+                  invariant(
+                    (yield* mutation.ensureOwnership(expected.identity, nativeId)) ===
+                      found.identityKey,
+                  );
 
-            invariant(c.isActiveStatus(values[c.status]));
-            yield* state.change(credential.insert(values));
+                  const values = {
+                    ...c.encodeInsert({
+                      moduleId: expected.context.moduleId,
+                      subjectId: nativeId,
+                      identityKey: found.identityKey,
+                      credentialId,
+                      credentialRevision: revision,
+                    }),
+                    [c.moduleId]: expected.context.moduleId,
+                    [c.subjectId]: nativeId,
+                    [c.identityKey]: found.identityKey,
+                    [c.credentialId]: credentialId,
+                    [c.credentialRevision]: revision,
+                  };
 
-            const factor = {
-              ...a.encodeInsert({ subjectId: nativeId, credentialId, revision }),
-              [a.subjectId]: nativeId,
-              [a.credentialId]: credentialId,
-              [a.revision]: revision,
-            };
+                  invariant(c.isActiveStatus(values[c.status]));
+                  yield* state.change(
+                    conditionalSqlInsert(
+                      sql,
+                      credential,
+                      values,
+                      sql.and([
+                        tables.expression(mapping.eligibility.admission(policy)),
+                        horizon(expected),
+                        sql`exists(select 1 from ${mutation.ownership.name} where ${mutation.ownerCondition(found.identityKey, nativeId)})`,
+                      ]),
+                    ),
+                  );
 
-            invariant(a.isActiveStatus(factor[a.status]));
-            yield* state.change(authority.insert(factor));
-            final = sql.and([
-              horizon(expected),
-              tables.expression(mapping.eligibility.postcondition(policy)),
-              mutation.authorityCondition(nativeId, {
-                subjectId,
-                securityRevision: revision,
-                credentials: [{ credentialId, revision }],
-              }),
-              sql`exists(select 1 from ${credential.name} where ${credential.column(c.subjectId)} = ${credential.value(c.subjectId, nativeId)} and ${exactSqlText(sql, credential.column(c.credentialId), credential.value(c.credentialId, credentialId))} and ${exactSqlText(sql, credential.column(c.credentialRevision), credential.value(c.credentialRevision, revision))} and ${exactSqlText(sql, credential.column(c.identityKey), credential.value(c.identityKey, found.identityKey))} and ${tables.expression(c.activeCondition)})`,
-              sql`exists(select 1 from ${mutation.ownership.name} where ${mutation.ownerCondition(found.identityKey, nativeId)})`,
-            ]);
-          }
+                  const factor = {
+                    ...a.encodeInsert({ subjectId: nativeId, credentialId, revision }),
+                    [a.subjectId]: nativeId,
+                    [a.credentialId]: credentialId,
+                    [a.revision]: revision,
+                  };
 
-          const snapshot = stored.encode({
-            intent: expected,
-            application: { ...binding, _tag: admitted ? "Registered" : "Rejected" },
-          });
+                  invariant(a.isActiveStatus(factor[a.status]));
+                  yield* state.change(authority.insert(factor));
+                  final = sql.and([
+                    horizon(expected),
+                    tables.expression(mapping.eligibility.postcondition(policy)),
+                    mutation.authorityCondition(nativeId, {
+                      subjectId,
+                      securityRevision: revision,
+                      credentials: [{ credentialId, revision }],
+                    }),
+                    sql`exists(select 1 from ${credential.name} where ${credential.column(c.subjectId)} = ${credential.value(c.subjectId, nativeId)} and ${exactSqlText(sql, credential.column(c.credentialId), credential.value(c.credentialId, credentialId))} and ${exactSqlText(sql, credential.column(c.credentialRevision), credential.value(c.credentialRevision, revision))} and ${exactSqlText(sql, credential.column(c.identityKey), credential.value(c.identityKey, found.identityKey))} and ${tables.expression(c.activeCondition)})`,
+                    sql`exists(select 1 from ${mutation.ownership.name} where ${mutation.ownerCondition(found.identityKey, nativeId)})`,
+                  ]);
+                }
+              }
 
-          yield* state.change(
-            sql`${intent.update({ [i.snapshot]: snapshot })} where ${state.key(access.moduleId, access.reference)} and ${state.exact(i.snapshot, found.encoded)} and ${horizon(expected)}`,
-          );
-          yield* state.finish(
-            "oauth-registration-outcome",
-            sql.and([
-              final,
-              sql`exists(select 1 from ${intent.name} where ${state.key(access.moduleId, access.reference)} and ${state.exact(i.snapshot, snapshot)})`,
-              sql`${now} < ${expected.expiresAtMillis}`,
-            ]),
-          );
+              const snapshot = stored.encode({
+                intent: expected,
+                application: { ...binding, _tag: admitted ? "Registered" : "Rejected" },
+              });
 
-          return yield* prepareOAuthNative(
-            admitted ? { _tag: "Registered", replayed: false } : { _tag: "Rejected" },
-            prepare,
+              yield* state.change(
+                sql`${intent.update({ [i.snapshot]: snapshot })} where ${state.key(access.moduleId, access.reference)} and ${state.exact(i.snapshot, found.encoded)} and ${final}`,
+              );
+              if (Option.isSome(external))
+                yield* state.finish(
+                  "oauth-registration-outcome",
+                  sql.and([
+                    final,
+                    sql`exists(select 1 from ${intent.name} where ${state.key(access.moduleId, access.reference)} and ${state.exact(i.snapshot, snapshot)})`,
+                    sql`${now} < ${expected.expiresAtMillis}`,
+                  ]),
+                );
+
+              return yield* prepareOAuthNative(
+                admitted ? { _tag: "Registered", replayed: false } : { _tag: "Rejected" },
+                prepare,
+              );
+            }),
           );
         }),
-      ),
+      ).pipe(Effect.flatten),
     cleanup: (input, prepare) =>
       run(
         Effect.gen(function* () {

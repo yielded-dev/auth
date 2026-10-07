@@ -149,18 +149,21 @@ const PersistenceLive = Persistence.layer.pipe(Layer.provide(ProvisioningLive));
 
 `createCustomer` inserts only the application subject, allocating its ID and initial
 security revision. It runs inside the library's SQL transaction: use the same Effect
-SQL client, including Drizzle over it. Identifier, password, and receipt writes commit
-with that insert. The stable `requestId` also identifies the application operation.
+SQL client, including Drizzle over it. Identifier and password writes commit with
+that insert. The stable `requestId` identifies the application operation.
 Do not send email or open a separate transaction in this callback.
-Replays suppress creation and never overwrite or recover another request's password.
+An occupied identifier suppresses creation; retrying never overwrites or recovers
+another request's password. There is no registration-receipt table.
 See the [managed example's wiring](https://github.com/yielded-dev/auth/blob/main/examples/persistence-drizzle-managed/src/live.ts).
 `subjects.actionRequirements` can supply a distinct recovery or credential-change
 policy; it defaults to `subjects.requirements`.
 
-Standalone operations retain their transaction, revision, proof-consumption,
-and receipt checks. They reject unrelated ambient transactions. Combine protected
-application writes through an explicit transaction adapter; an unknown commit
-outcome does not authorize issuing another credential or repeating delivery.
+Reads use ordinary SQL without a commit journal or read-only transaction. Standalone
+mutations use the shared commit owner and reject unrelated ambient transactions;
+drivers without a reliable transaction marker fail closed. Combine protected
+application writes through an explicit coordinator. Its receipt releases credentials
+and events only after the outer owner commits; an unknown outcome does not authorize
+another credential issuance or delivery.
 
 ## Connect password storage
 
@@ -332,7 +335,9 @@ Adapters provide implementations; they are not installed automatically.
 Install the selected driver's Effect SQL and Drizzle peers. Import it directly to
 avoid loading unrelated adapters. Shared mapping types live in `@yielded/auth-persistence-drizzle`.
 
-Adapter authors can reuse the canonical row codecs when composing explicit services:
+Adapter authors can supply mapped table contracts or implement `NativeSqlTables`;
+both feed the shared strategy implementation and commit owner. Reuse the canonical
+row codecs when composing explicit services:
 
 ```ts
 import { makeStorageMappings } from "@yielded/auth-persistence/Adapter";
@@ -345,10 +350,10 @@ const proofMapping = Effect.gen(function* () {
 ```
 
 Mapping construction requires Effect `Crypto`; provide it at the calling Layer.
-The layout must include each requested mapping's role tables. These are shared
-mapping types: the adapter still supplies typed table handles and, for D1, its
-engine clock and atomic commit predicates. Refine authority policy only for the
-intended proof purpose; the composed Layer's defaults remain unchanged.
+The layout must include each requested mapping's role tables. Drivers supply typed
+table handles, column codecs, SQL expressions, and the transaction or fixed-batch
+boundary. D1 builds its named assertions from the shared statements. Refine authority
+policy only for the intended proof purpose; the composed Layer's defaults remain unchanged.
 
 Use the Effect SQL peer ranges declared by the adapter package and keep the driver
 aligned with `effect`. The native PostgreSQL driver accepts one
@@ -657,6 +662,11 @@ identity ownership. Unlink/disconnect release ownership only when those referenc
 are absent. Keep the durable grant identity and refresh version/claim predicates;
 no ordinary callback claim or token-use admission row is needed.
 
+Core assesses action evidence once. The committing adapter checks the accepted
+authorization's exact subject, action, flow, target, revisions, and fixed deadline;
+it does not reassess factor evidence. Map independent application policy through
+the current `policy.condition` predicate.
+
 For `OAuth.make({ access: profile })`, use the same connected services alongside
 `makeOAuthSignInServices` and map `credential` to the shared login table. Live flow
 rows contain their Schema snapshot and exact callback predicates. The
@@ -669,10 +679,11 @@ was reached, so another call can remove zero rows.
 <summary>D1 and Durable Object transaction boundaries</summary>
 
 D1 uses a preplanned conditional batch, not an interactive transaction. Allocate
-registration IDs before the batch. Do not replay a caller-owned mutation after an
-ambiguous response. Password mutation guards run after their own writes. A
-caller-owned batch must not change that captured authority in later application
-statements; those statements run after the password guards.
+registration IDs before the batch. Named final checks run after all staged application
+statements; native coordinated owners likewise check after the application callback.
+Declare every independently mutable requirement-decoder input in
+`subject.requirementColumns`; use `[]` only for constant policy. Do not replay a
+caller-owned mutation after an ambiguous response.
 
 Durable Object SQLite uses the captured Effect SQL client's asynchronous
 `storage.transaction` boundary. Use `SqliteDo.databaseLayer` or

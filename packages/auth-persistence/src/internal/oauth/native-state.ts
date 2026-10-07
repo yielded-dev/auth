@@ -90,6 +90,28 @@ export const makeOAuthNativeAuthority = Effect.fnUntraced(function* (
     };
   });
 
+  const captureSubject = Effect.fnUntraced(function* (subjectId: SubjectId, locking: boolean) {
+    const nativeId = yield* mapping.subjectId.toNative(subjectId);
+
+    const rows =
+      yield* sql`select ${subject.fields("s_")}, ${now} as engine_now from ${subject.name} where ${subject.column(mapping.subject.id)} = ${subject.value(mapping.subject.id, nativeId)} and ${tables.expression(mapping.subject.activeCondition)} limit 2 ${locking ? lock : sql``}`;
+
+    invariant(rows.length <= 1);
+    if (rows[0] === undefined) return undefined;
+    const row = subject.decode(rows[0], "s_");
+
+    invariant(mapping.subjectId.equals(row[mapping.subject.id], nativeId));
+
+    return {
+      nativeId,
+      subject: row,
+      securityRevision: yield* Schema.decodeUnknownEffect(
+        OAuthAccountRevision.fields.securityRevision,
+      )(row[mapping.subject.securityRevision]),
+      now: yield* Schema.decodeEffect(Schema.Int)(Number(rows[0].engine_now)),
+    };
+  });
+
   const capture = Effect.fnUntraced(function* (subjectId: SubjectId, locking: boolean) {
     const nativeId = yield* mapping.subjectId.toNative(subjectId);
 
@@ -146,7 +168,7 @@ export const makeOAuthNativeAuthority = Effect.fnUntraced(function* (
     };
   });
 
-  return { sql, now, lock, subject, authority, capture, revision };
+  return { sql, now, lock, subject, authority, capture, captureSubject, revision };
 });
 
 export const makeOAuthNativeState = Effect.fnUntraced(function* (

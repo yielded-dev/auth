@@ -73,9 +73,9 @@ export const makeNativeSignedSessionValidityServices = Effect.fnUntraced(functio
 
   const native = <A, E, R>(work: Effect.Effect<A, E, R>) =>
     batch === undefined
-      ? executor.coordinate(normalizeSessionOperation(work), "statement")
+      ? executor.operation(normalizeSessionOperation(work), "statement")
       : executor
-          .coordinateBatch(normalizeSessionOperation(work))
+          .operationBatch(normalizeSessionOperation(work))
           .pipe(Effect.provideService(SqlBatchCommit, batch));
 
   const stage = Effect.fnUntraced(function* (statement: Fragment, expected?: number) {

@@ -11,6 +11,7 @@ import { PersistenceMappingError } from "./mapping-error";
 import type { AnyProofPersistenceMapping } from "./models/proof-model";
 import type { NativeSqlTables } from "./native-sql-table";
 import { exactSqlText, executeSqlChange } from "./sql-change";
+import { cleanupSqlRows } from "./sql-cleanup";
 import {
   appendSqlBatchStatement,
   CurrentSqlCommit,
@@ -309,7 +310,7 @@ export const makeNativeProofStore = Effect.fnUntraced(function* (
         yield* appendSqlBatchStatement(failure);
       } else yield* sql`${failure}`;
 
-      return "rejected" as const;
+      return { decision: "rejected" as const };
     }
     const consumed = decode(rows[0]);
 
@@ -318,9 +319,10 @@ export const makeNativeProofStore = Effect.fnUntraced(function* (
       yield* appendSqlBatchStatement(deletion);
       yield* appendSqlBatchStatement(sqlBatchAssertion(sql, sql`changes() = 1`));
     }
-    if (Option.isSome(externalOwner)) {
+    const validUntil = sql`${now} >= ${consumed.issuedAtMillis} and ${now} < ${consumed.expiresAtMillis}`;
+
+    if (Option.isSome(externalOwner) && externalOwner.value.origin === "application") {
       const absent = sql`not exists(select 1 from ${proof.name} where ${exact(p.moduleId, input.moduleId)} and ${exact(p.proofId, input.proofId)})`;
-      const validUntil = sql`${now} >= ${consumed.issuedAtMillis} and ${now} < ${consumed.expiresAtMillis}`;
       const condition = sql`${absent} and ${validUntil}`;
 
       if (batch)
@@ -339,7 +341,7 @@ export const makeNativeProofStore = Effect.fnUntraced(function* (
         });
     }
 
-    return "redeemed" as const;
+    return { decision: "redeemed" as const, validUntil };
   });
 
   const cancel = Effect.fnUntraced(function* (
@@ -352,25 +354,19 @@ export const makeNativeProofStore = Effect.fnUntraced(function* (
     else yield* sql`${deletion}`;
   });
 
-  const cleanup = Effect.fnUntraced(function* (
-    input: Parameters<P.ProofPersistence["Service"]["cleanup"]>[0],
-  ) {
-    const scope = exact(p.moduleId, input.moduleId);
-    const due = sql`${scope} and ${millis(p.expiresAt)} <= ${now}`;
-    const selection = sql`select ${proof.column(p.proofId)} as candidate from ${proof.name} where ${due} order by ${proof.column(p.expiresAt)}, ${proof.column(p.proofId)} limit ${input.limit}`;
-    const deletion = sql`delete from ${proof.name} where ${scope} and ${proof.column(p.proofId)} in (select candidate from (${selection}) as proof_cleanup)`;
-
-    const removed = batch
-      ? (yield* sql`${selection}`).length
-      : yield* executeSqlChange(sql, deletion);
-
-    if (batch) {
-      yield* appendSqlBatchStatement(deletion);
-      yield* appendSqlBatchStatement(sqlBatchAssertion(sql, sql`changes() = ${removed}`));
-    }
-
-    return { removed, hasMore: removed === input.limit };
-  });
+  const cleanup = (input: Parameters<P.ProofPersistence["Service"]["cleanup"]>[0]) =>
+    cleanupSqlRows(
+      [
+        {
+          table: proof,
+          keys: [p.moduleId, p.proofId],
+          due: sql`${exact(p.moduleId, input.moduleId)} and ${millis(p.expiresAt)} <= ${now}`,
+          order: [proof.column(p.expiresAt), proof.column(p.proofId)],
+        },
+      ],
+      input.limit,
+      batch,
+    );
 
   return { issue, lockSubject, redeemLocked, cancel, cleanup, mysql };
 });
@@ -426,7 +422,10 @@ export const makeNativeProofServices = Effect.fnUntraced(function* (
         Effect.gen(function* () {
           const locked = yield* store.lockSubject(input.binding);
 
-          return yield* prepare(locked ? yield* store.redeemLocked(input) : "rejected", project);
+          return yield* prepare(
+            locked ? (yield* store.redeemLocked(input)).decision : "rejected",
+            project,
+          );
         }),
       ),
     cancel: (input, project) =>

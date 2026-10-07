@@ -1,45 +1,34 @@
 import {
-  captureSqlBatchStatements,
+  type SqlBatchCommit,
   makeBatchPasskeyServices,
   makeNativePasskeyCeremonyServices,
   makeNativePasskeyCredentialServices,
   makeNativePasskeyServices,
-  makeSqlCommitExecutor,
-  requireStandalone,
-  SqlBatchCommit,
-  SqlNativeCommit,
   type NativeSqlTables,
   type NativePasskeyCeremonyMapping,
   type PasskeyNativeMapping,
   type PasskeyNativeRead,
 } from "@yielded/auth-persistence/Adapter";
-import { hasCommitScope, LifecycleHooks } from "@yielded/auth/Hooks";
+import { LifecycleHooks } from "@yielded/auth/Hooks";
 import { PasskeyConfigurationError, PasskeyUnavailable } from "@yielded/auth/Passkey";
 import { type Crypto, Effect } from "effect";
-import { SqlClient } from "effect/sql";
+import type { SqlClient } from "effect/sql";
 
-import { D1BatchStatements } from "../D1BatchStatements";
+import type { D1BatchStatements } from "../D1BatchStatements";
 import type { PersistenceMappingError } from "../model";
-import { NativeDatabase, type NativeDatabaseHandle } from "../native-database";
-import { makeDrizzleSqlTables } from "../native-sql-table";
+import {
+  NativeDatabase,
+  type NativeDatabaseHandle,
+  type NativePhysicalDatabase,
+} from "../native-database";
+import {
+  nativeTarget,
+  coordinateNativeTarget,
+  type NativeTargetConfiguration,
+} from "../native-target";
 import type { PasskeyPersistenceServices, PasskeyMappingSource } from "../passkey-model";
 import { validateDrizzleStorage } from "../storage-validation";
-import {
-  sqlClientTransactionStandaloneGuard,
-  type TransactionTargetConfiguration,
-} from "../transaction-execution";
-import {
-  makeDrizzleTransactionHandle,
-  type DrizzleTransactionConstructor,
-  type DrizzleTransactionFactory,
-} from "../transaction-handle";
-import { makeMysqlTransactionHandle, mysqlNativeCommit } from "../transaction-mysql";
-import type { TransactionNativeDatabase } from "../transaction-owner";
-
-export type PasskeyTargetConfiguration = TransactionTargetConfiguration<PasskeyUnavailable> & {
-  readonly transactionConstructor?: DrizzleTransactionConstructor;
-  readonly transactionFactory?: DrizzleTransactionFactory;
-};
+export type PasskeyTargetConfiguration = NativeTargetConfiguration;
 
 export type PasskeyCoordinatorError<E> =
   | E
@@ -48,19 +37,6 @@ export type PasskeyCoordinatorError<E> =
   | PersistenceMappingError;
 
 const unavailable = () => PasskeyUnavailable.make({});
-
-export const sqlClientPasskeyStandaloneGuard = (
-  marker: Parameters<typeof sqlClientTransactionStandaloneGuard>[1],
-) => sqlClientTransactionStandaloneGuard(unavailable, marker);
-
-const withPhysicalOwner = <A, E, R>(
-  effect: Effect.Effect<A, E, R>,
-  database: Pick<NativeDatabaseHandle, "$client">,
-  configuration: PasskeyTargetConfiguration,
-) =>
-  configuration.dialect === "mysql"
-    ? effect.pipe(Effect.provideService(SqlNativeCommit, mysqlNativeCommit(database.$client)))
-    : effect;
 
 const emptyHooks: LifecycleHooks["Service"] = {
   before: () => Effect.void,
@@ -103,9 +79,9 @@ type NativePasskeyServices = Effect.Success<ReturnType<typeof makeNativePasskeyS
 
 interface PasskeyMapped<M> {
   readonly mapping: M;
-  readonly database: TransactionNativeDatabase;
+  readonly database: NativePhysicalDatabase;
   readonly tables: NativeSqlTables;
-  readonly batch: SqlBatchCommit["Service"];
+  readonly batch: SqlBatchCommit["Service"] | undefined;
   readonly provide: <A, E, R>(
     effect: Effect.Effect<A, E, R>,
   ) => Effect.Effect<A, E, Exclude<Exclude<R, SqlClient.SqlClient>, SqlBatchCommit>>;
@@ -122,25 +98,8 @@ export const makePasskeyMapped = Effect.fnUntraced(function* <M, R>(
 > {
   const mapping = yield* capturePasskeyMapping(source, configuration);
   const database = yield* NativeDatabase;
-  const tables = makeDrizzleSqlTables(database.$client, database);
-
-  const batch = {
-    client: database.$client,
-    execute: (statements: Parameters<NonNullable<SqlBatchCommit["Service"]>["execute"]>[0]) =>
-      database.$client.batch(statements).pipe(Effect.asVoid),
-  };
-
+  const { tables, batch, provide } = yield* nativeTarget(configuration);
   const native = mapping as unknown as PasskeyNativeMapping;
-
-  const provide = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-    withPhysicalOwner(
-      effect.pipe(
-        Effect.provideService(SqlClient.SqlClient, database.$client),
-        Effect.provideService(SqlBatchCommit, batch),
-      ),
-      database,
-      configuration,
-    );
 
   return {
     mapping,
@@ -211,46 +170,7 @@ export const coordinatePasskeyOwner = <S, Transaction, A, E, R, ESetup, RSetup>(
   A,
   E | PasskeyUnavailable,
   Exclude<R, D1BatchStatements> | RSetup | LifecycleHooks
-> =>
-  withPhysicalOwner(
-    Effect.gen(function* () {
-      if (yield* hasCommitScope) return yield* unavailable();
-      yield* requireStandalone(unavailable, database.$client.transactionService);
-      const executor = yield* makeSqlCommitExecutor(unavailable);
-
-      const work = Effect.gen(function* () {
-        const services = yield* make.pipe(Effect.mapError(unavailable));
-
-        const transaction =
-          configuration.mode === "batch"
-            ? undefined
-            : configuration.dialect === "mysql"
-              ? yield* makeMysqlTransactionHandle(database)
-              : (configuration.transactionFactory?.(database) ??
-                makeDrizzleTransactionHandle(database, configuration.transactionConstructor));
-
-        const collector = yield* captureSqlBatchStatements;
-
-        return yield* body(transaction as Transaction, services).pipe(
-          Effect.provideService(D1BatchStatements, {
-            append: (statement) => collector.append(statement).pipe(Effect.orDie),
-          }),
-        );
-      });
-
-      return yield* configuration.mode === "batch"
-        ? executor.coordinateBatch(work)
-        : executor.coordinate(work);
-    }).pipe(
-      Effect.provideService(SqlClient.SqlClient, database.$client),
-      Effect.provideService(SqlBatchCommit, {
-        client: database.$client,
-        execute: (statements) => database.$client.batch(statements).pipe(Effect.asVoid),
-      }),
-    ),
-    database,
-    configuration,
-  );
+> => coordinateNativeTarget(unavailable, database, configuration, make, body);
 
 export const coordinateTargetPasskey = <M, RSetup, Transaction, A, E, R>(
   database: NativeDatabaseHandle,

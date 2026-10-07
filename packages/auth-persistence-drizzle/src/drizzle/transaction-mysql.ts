@@ -169,12 +169,3 @@ export const mysqlNativeCommit = (client: SqlClient): SqlNativeCommit["Service"]
       () => effect,
     ),
 });
-
-export const mysqlTransaction = <A, E, R, Failure>(
-  unavailable: () => Failure,
-  database: any,
-  body: (transaction: any) => Effect.Effect<A, E, R>,
-): Effect.Effect<A, E | Failure | SqlError, R> =>
-  withMysqlTransaction(unavailable, database.$client, () =>
-    Effect.flatMap(makeMysqlTransactionHandle(database), body),
-  );

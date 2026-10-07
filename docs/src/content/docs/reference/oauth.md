@@ -227,9 +227,16 @@ completion results may include `{ connection: { grantId, profileKey } }`.
 Confirmed retention precedes session delivery. Callback completion consumes its
 bound flow before exchanging the code. A failed or uncertain exchange, grant commit,
 or session issuance requires a new ceremony; none permits repeating that code.
-`exchangeTimeoutMillis` bounds provider work independently of persisted state.
+`exchangeTimeoutMillis` sets a cooperative provider deadline independently of
+persisted state. Refresh and revocation settlement request cancellation after five
+seconds; scoped driver or resource cleanup can take longer. An unknown outcome
+never releases tokens or permits repeating the external call.
 
-Refresh keeps one durable claim against the exact grant and token versions.
+Token-use policy receives the frozen authority and sealed grant already read by
+core, before any token is opened. Apply your application permission checks to that
+snapshot; metadata policy obtains its authority separately when needed.
+
+Refresh keeps one durable claim against the exact sealed snapshot and grant/token versions.
 Concurrent callers cannot take it over, even after its deadline. An unknown refresh
 outcome requires fresh authorization. A new retained sign-in or Reconnect exchanges
 a new authorization code and replaces the unresolved grant while preserving its

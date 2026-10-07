@@ -7,6 +7,7 @@ import {
 import type { Table } from "drizzle-orm";
 import { type Crypto, Effect, Context } from "effect";
 
+import type { D1BatchStatements } from "./D1BatchStatements";
 import { NativeDatabase, nativeDatabase } from "./native-database";
 import { makeOAuthConnectedTarget } from "./oauth-connected-drivers";
 import type {
@@ -40,7 +41,8 @@ export const makeOAuthTarget = <
   DatabaseId,
   D,
   T extends Table,
-  Synchronous extends boolean = false,
+  Extra = unknown,
+  Provided extends D1BatchStatements = never,
 >(
   databaseService: Context.Service<DatabaseId, D>,
   configuration: OAuthTargetConfiguration,
@@ -61,14 +63,14 @@ export const makeOAuthTarget = <
   >(
     acquire: Effect.Effect<Database, DatabaseError, DatabaseRequirements>,
     options: {
-      readonly mapping: OAuthSignInMapping<S, O, C, AC, F, N>;
+      readonly mapping: OAuthSignInMapping<S, O, C, AC, F, N> & Extra;
       readonly transaction?: never;
     },
-    body: Effect.Effect<A, E, Synchronous extends true ? NoInfer<OAuthSignInPersistence> : R>,
+    body: Effect.Effect<A, E, R>,
   ): Effect.Effect<
     A,
     OAuthCoordinatorError<E> | DatabaseError,
-    | (Synchronous extends true ? never : Exclude<R, OAuthSignInPersistence>)
+    | Exclude<R, OAuthSignInPersistence | Provided>
     | Crypto.Crypto
     | LifecycleHooks
     | DatabaseRequirements
@@ -91,18 +93,18 @@ export const makeOAuthTarget = <
   >(
     acquire: Effect.Effect<Database, DatabaseError, DatabaseRequirements>,
     options: {
-      readonly mapping: OAuthSignInMapping<S, O, C, AC, F, N>;
-      readonly transaction: SuppliedService<TxId, NoInfer<TransactionOf<Database>>, TxShape>;
+      readonly mapping: OAuthSignInMapping<S, O, C, AC, F, N> & Extra;
+      readonly transaction: SuppliedService<
+        TxId,
+        NoInfer<[Provided] extends [never] ? TransactionOf<Database> : never>,
+        TxShape
+      >;
     },
-    body: Effect.Effect<
-      A,
-      E,
-      Synchronous extends true ? NoInfer<OAuthSignInPersistence | TxId> : R
-    >,
+    body: Effect.Effect<A, E, R>,
   ): Effect.Effect<
     A,
     OAuthCoordinatorError<E> | DatabaseError,
-    | (Synchronous extends true ? never : Exclude<R, OAuthSignInPersistence | TxId>)
+    | Exclude<R, OAuthSignInPersistence | TxId | Provided>
     | Crypto.Crypto
     | LifecycleHooks
     | DatabaseRequirements
@@ -125,7 +127,7 @@ export const makeOAuthTarget = <
   >(
     acquire: Effect.Effect<Database, DatabaseError, DatabaseRequirements>,
     options: {
-      readonly mapping: OAuthSignInMapping<S, O, C, AC, F, N>;
+      readonly mapping: OAuthSignInMapping<S, O, C, AC, F, N> & Extra;
       readonly transaction?: SuppliedService<TxId, NoInfer<TransactionOf<Database>>, TxShape>;
     },
     body: Effect.Effect<A, E, R>,
@@ -171,14 +173,14 @@ export const makeOAuthTarget = <
   >(
     acquire: Effect.Effect<Database, DatabaseError, DatabaseRequirements>,
     options: {
-      readonly mapping: OAuthRegistrationIntentMapping<O, I, N>;
+      readonly mapping: OAuthRegistrationIntentMapping<O, I, N> & Extra;
       readonly transaction?: never;
     },
-    body: Effect.Effect<A, E, Synchronous extends true ? NoInfer<OAuthRegistrationIntents> : R>,
+    body: Effect.Effect<A, E, R>,
   ): Effect.Effect<
     A,
     OAuthCoordinatorError<E> | DatabaseError,
-    | (Synchronous extends true ? never : Exclude<R, OAuthRegistrationIntents>)
+    | Exclude<R, OAuthRegistrationIntents | Provided>
     | Crypto.Crypto
     | LifecycleHooks
     | DatabaseRequirements
@@ -198,18 +200,18 @@ export const makeOAuthTarget = <
   >(
     acquire: Effect.Effect<Database, DatabaseError, DatabaseRequirements>,
     options: {
-      readonly mapping: OAuthRegistrationIntentMapping<O, I, N>;
-      readonly transaction: SuppliedService<TxId, NoInfer<TransactionOf<Database>>, TxShape>;
+      readonly mapping: OAuthRegistrationIntentMapping<O, I, N> & Extra;
+      readonly transaction: SuppliedService<
+        TxId,
+        NoInfer<[Provided] extends [never] ? TransactionOf<Database> : never>,
+        TxShape
+      >;
     },
-    body: Effect.Effect<
-      A,
-      E,
-      Synchronous extends true ? NoInfer<OAuthRegistrationIntents | TxId> : R
-    >,
+    body: Effect.Effect<A, E, R>,
   ): Effect.Effect<
     A,
     OAuthCoordinatorError<E> | DatabaseError,
-    | (Synchronous extends true ? never : Exclude<R, OAuthRegistrationIntents | TxId>)
+    | Exclude<R, OAuthRegistrationIntents | TxId | Provided>
     | Crypto.Crypto
     | LifecycleHooks
     | DatabaseRequirements
@@ -229,7 +231,7 @@ export const makeOAuthTarget = <
   >(
     acquire: Effect.Effect<Database, DatabaseError, DatabaseRequirements>,
     options: {
-      readonly mapping: OAuthRegistrationIntentMapping<O, I, N>;
+      readonly mapping: OAuthRegistrationIntentMapping<O, I, N> & Extra;
       readonly transaction?: SuppliedService<TxId, NoInfer<TransactionOf<Database>>, TxShape>;
     },
     body: Effect.Effect<A, E, R>,
@@ -282,14 +284,14 @@ export const makeOAuthTarget = <
   >(
     acquire: Effect.Effect<Database, DatabaseError, DatabaseRequirements>,
     options: {
-      readonly mapping: OAuthAccountsMapping<S, O, C, AC, F, N>;
+      readonly mapping: OAuthAccountsMapping<S, O, C, AC, F, N> & Extra;
       readonly transaction?: never;
     },
-    body: Effect.Effect<A, E, Synchronous extends true ? NoInfer<OAuthAccountsPersistence> : R>,
+    body: Effect.Effect<A, E, R>,
   ): Effect.Effect<
     A,
     OAuthCoordinatorError<E> | DatabaseError,
-    | (Synchronous extends true ? never : Exclude<R, OAuthAccountsPersistence>)
+    | Exclude<R, OAuthAccountsPersistence | Provided>
     | Crypto.Crypto
     | LifecycleHooks
     | DatabaseRequirements
@@ -312,18 +314,18 @@ export const makeOAuthTarget = <
   >(
     acquire: Effect.Effect<Database, DatabaseError, DatabaseRequirements>,
     options: {
-      readonly mapping: OAuthAccountsMapping<S, O, C, AC, F, N>;
-      readonly transaction: SuppliedService<TxId, NoInfer<TransactionOf<Database>>, TxShape>;
+      readonly mapping: OAuthAccountsMapping<S, O, C, AC, F, N> & Extra;
+      readonly transaction: SuppliedService<
+        TxId,
+        NoInfer<[Provided] extends [never] ? TransactionOf<Database> : never>,
+        TxShape
+      >;
     },
-    body: Effect.Effect<
-      A,
-      E,
-      Synchronous extends true ? NoInfer<OAuthAccountsPersistence | TxId> : R
-    >,
+    body: Effect.Effect<A, E, R>,
   ): Effect.Effect<
     A,
     OAuthCoordinatorError<E> | DatabaseError,
-    | (Synchronous extends true ? never : Exclude<R, OAuthAccountsPersistence | TxId>)
+    | Exclude<R, OAuthAccountsPersistence | TxId | Provided>
     | Crypto.Crypto
     | LifecycleHooks
     | DatabaseRequirements
@@ -346,7 +348,7 @@ export const makeOAuthTarget = <
   >(
     acquire: Effect.Effect<Database, DatabaseError, DatabaseRequirements>,
     options: {
-      readonly mapping: OAuthAccountsMapping<S, O, C, AC, F, N>;
+      readonly mapping: OAuthAccountsMapping<S, O, C, AC, F, N> & Extra;
       readonly transaction?: SuppliedService<TxId, NoInfer<TransactionOf<Database>>, TxShape>;
     },
     body: Effect.Effect<A, E, R>,
@@ -401,18 +403,15 @@ export const makeOAuthTarget = <
   >(
     acquire: Effect.Effect<Database, DatabaseError, DatabaseRequirements>,
     options: {
-      readonly mapping: OAuthRegistrationMapping<NoInfer<Registration>, S, O, C, AC, I, N>;
+      readonly mapping: OAuthRegistrationMapping<NoInfer<Registration>, S, O, C, AC, I, N> & Extra;
       readonly target: SuppliedService<TargetId, OAuthRegistrationAuthority<Registration>>;
       readonly transaction?: never;
     },
-    body: Effect.Effect<A, E, Synchronous extends true ? NoInfer<TargetId> : R>,
+    body: Effect.Effect<A, E, R>,
   ): Effect.Effect<
     A,
     OAuthCoordinatorError<E> | DatabaseError,
-    | (Synchronous extends true ? never : Exclude<R, TargetId>)
-    | Crypto.Crypto
-    | LifecycleHooks
-    | DatabaseRequirements
+    Exclude<R, TargetId | Provided> | Crypto.Crypto | LifecycleHooks | DatabaseRequirements
   >;
   function coordinateOAuthRegistration<
     Database extends D,
@@ -434,18 +433,19 @@ export const makeOAuthTarget = <
   >(
     acquire: Effect.Effect<Database, DatabaseError, DatabaseRequirements>,
     options: {
-      readonly mapping: OAuthRegistrationMapping<NoInfer<Registration>, S, O, C, AC, I, N>;
+      readonly mapping: OAuthRegistrationMapping<NoInfer<Registration>, S, O, C, AC, I, N> & Extra;
       readonly target: SuppliedService<TargetId, OAuthRegistrationAuthority<Registration>>;
-      readonly transaction: SuppliedService<TxId, NoInfer<TransactionOf<Database>>, TxShape>;
+      readonly transaction: SuppliedService<
+        TxId,
+        NoInfer<[Provided] extends [never] ? TransactionOf<Database> : never>,
+        TxShape
+      >;
     },
-    body: Effect.Effect<A, E, Synchronous extends true ? NoInfer<TargetId | TxId> : R>,
+    body: Effect.Effect<A, E, R>,
   ): Effect.Effect<
     A,
     OAuthCoordinatorError<E> | DatabaseError,
-    | (Synchronous extends true ? never : Exclude<R, TargetId | TxId>)
-    | Crypto.Crypto
-    | LifecycleHooks
-    | DatabaseRequirements
+    Exclude<R, TargetId | TxId | Provided> | Crypto.Crypto | LifecycleHooks | DatabaseRequirements
   >;
   function coordinateOAuthRegistration<
     Database extends D,
@@ -467,7 +467,7 @@ export const makeOAuthTarget = <
   >(
     acquire: Effect.Effect<Database, DatabaseError, DatabaseRequirements>,
     options: {
-      readonly mapping: OAuthRegistrationMapping<NoInfer<Registration>, S, O, C, AC, I, N>;
+      readonly mapping: OAuthRegistrationMapping<NoInfer<Registration>, S, O, C, AC, I, N> & Extra;
       readonly target: SuppliedService<TargetId, OAuthRegistrationAuthority<Registration>>;
       readonly transaction?: SuppliedService<TxId, NoInfer<TransactionOf<Database>>, TxShape>;
     },
@@ -504,7 +504,7 @@ export const makeOAuthTarget = <
   }
 
   return {
-    ...makeOAuthConnectedTarget<DatabaseId, D, T, {}, Synchronous>(databaseService, configuration),
+    ...makeOAuthConnectedTarget<DatabaseId, D, T, Extra, Provided>(databaseService, configuration),
     coordinateOAuthSignIn,
     coordinateOAuthRegistrationIntents,
     coordinateOAuthAccounts,
@@ -516,19 +516,19 @@ export const makeOAuthTarget = <
       F extends T,
       N,
     >(
-      mapping: OAuthAccountsMapping<S, O, C, AC, F, N>,
+      mapping: OAuthAccountsMapping<S, O, C, AC, F, N> & Extra,
     ) =>
       makeTargetOAuthAccountsServices(mapping, configuration).pipe(
         Effect.provideServiceEffect(NativeDatabase, nativeDatabase(databaseService)),
       ),
     makeOAuthSignInServices: <S extends T, O extends T, C extends T, AC extends T, F extends T, N>(
-      mapping: OAuthSignInMapping<S, O, C, AC, F, N>,
+      mapping: OAuthSignInMapping<S, O, C, AC, F, N> & Extra,
     ) =>
       makeTargetOAuthSignInServices(mapping, configuration).pipe(
         Effect.provideServiceEffect(NativeDatabase, nativeDatabase(databaseService)),
       ),
     makeOAuthRegistrationIntentServices: <O extends T, I extends T, N>(
-      mapping: OAuthRegistrationIntentMapping<O, I, N>,
+      mapping: OAuthRegistrationIntentMapping<O, I, N> & Extra,
     ) =>
       makeTargetOAuthRegistrationIntentServices(mapping, configuration).pipe(
         Effect.provideServiceEffect(NativeDatabase, nativeDatabase(databaseService)),
@@ -542,7 +542,7 @@ export const makeOAuthTarget = <
       I extends T,
       N,
     >(
-      mapping: OAuthRegistrationMapping<Registration, S, O, C, AC, I, N>,
+      mapping: OAuthRegistrationMapping<Registration, S, O, C, AC, I, N> & Extra,
     ) =>
       makeTargetOAuthRegistrationServices<Registration>(mapping, configuration).pipe(
         Effect.provideServiceEffect(NativeDatabase, nativeDatabase(databaseService)),

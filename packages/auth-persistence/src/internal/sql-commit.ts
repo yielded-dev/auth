@@ -13,8 +13,10 @@ import { SqlClient } from "effect/sql";
 import type { SqlError } from "effect/sql/SqlError";
 import type { Statement } from "effect/sql/Statement";
 
-import type { PersistenceStoreError } from "./persistence-owner";
+import type { PersistenceMappingError } from "./mapping-error";
 import { requireStandalone } from "./standalone";
+
+type SqlCommitError = PersistenceMappingError | Schema.SchemaError | SqlError;
 
 export class SqlCommitOwnerError extends Schema.TaggedError<SqlCommitOwnerError>()(
   "SqlCommitOwnerError",
@@ -52,7 +54,7 @@ export class SqlNativeCommit extends Context.Service<
     readonly client: SqlClient.SqlClient;
     readonly withTransaction: <A, E, R>(
       effect: Effect.Effect<A, E, R>,
-    ) => Effect.Effect<A, E | PersistenceStoreError, R>;
+    ) => Effect.Effect<A, E | SqlCommitError, R>;
   }
 >()("@yielded/auth-persistence/SqlNativeCommit") {}
 
@@ -60,12 +62,13 @@ type SqlCommitMode = "transaction" | "statement" | "batch";
 
 interface SqlPostcondition {
   readonly name: string;
-  readonly check: Effect.Effect<void, PersistenceStoreError, SqlClient.SqlClient>;
+  readonly check: Effect.Effect<void, SqlCommitError, SqlClient.SqlClient>;
 }
 
 export interface SqlCommitScope {
   readonly client: SqlClient.SqlClient;
   readonly mode: SqlCommitMode;
+  readonly origin: "operation" | "application";
   readonly postconditions: Array<
     SqlPostcondition | { readonly name: string; readonly statement: Statement<unknown> }
   >;
@@ -149,6 +152,14 @@ export interface SqlCommitExecutor<Failure> {
   readonly read: <A, E, R>(
     effect: Effect.Effect<A, E, R>,
   ) => Effect.Effect<A, Failure, Exclude<Exclude<R, SqlClient.SqlClient>, LifecycleHooks>>;
+  /** Preserve expected operation failures without admitting application suffix work. */
+  readonly operation: <A, E, R>(
+    effect: Effect.Effect<A, E, R>,
+    mode?: "transaction" | "statement",
+  ) => Effect.Effect<A, E | Failure, OwnedRequirements<R>>;
+  readonly operationBatch: <A, E, R>(
+    effect: Effect.Effect<A, E, R>,
+  ) => Effect.Effect<A, E | Failure, OwnedRequirements<R> | SqlBatchCommit>;
   readonly coordinate: <A, E, R>(
     effect: Effect.Effect<A, E, R>,
     mode?: "transaction" | "statement",
@@ -262,6 +273,7 @@ export const makeSqlCommitExecutor = Effect.fnUntraced(function* <Failure>(
   const owned = <A, E, R>(
     effect: Effect.Effect<A, E, R>,
     mode: SqlCommitMode,
+    origin: SqlCommitScope["origin"],
     batch?: SqlBatchCommit["Service"],
   ) => {
     if (Option.isSome(captured)) {
@@ -280,6 +292,7 @@ export const makeSqlCommitExecutor = Effect.fnUntraced(function* <Failure>(
         const scope: SqlCommitScope = {
           client: sql,
           mode,
+          origin,
           active: true,
           poisoned: false,
           inFlight: 0,
@@ -336,6 +349,7 @@ export const makeSqlCommitExecutor = Effect.fnUntraced(function* <Failure>(
   const coordinate = <A, E, R>(
     effect: Effect.Effect<A, E, R>,
     mode: SqlCommitMode,
+    origin: SqlCommitScope["origin"],
     batch?: SqlBatchCommit["Service"],
   ) => {
     class ApplicationFailure extends Data.TaggedError("SqlCommitApplicationFailure")<{
@@ -344,7 +358,7 @@ export const makeSqlCommitExecutor = Effect.fnUntraced(function* <Failure>(
     const wrapped = effect.pipe(Effect.mapError((error) => new ApplicationFailure({ error })));
 
     return reportPersistenceFailure(
-      owned(wrapped, mode, batch),
+      owned(wrapped, mode, origin, batch),
       (error) => error instanceof ApplicationFailure || Schema.is(SqlCommitOwnerError)(error),
     ).pipe(
       Effect.catchCause((cause) =>
@@ -365,18 +379,24 @@ export const makeSqlCommitExecutor = Effect.fnUntraced(function* <Failure>(
 
   return {
     read,
+    operation: <A, E, R>(
+      effect: Effect.Effect<A, E, R>,
+      mode: "transaction" | "statement" = "transaction",
+    ) => coordinate(effect, mode, "operation"),
+    operationBatch: <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+      Effect.flatMap(SqlBatchCommit, (batch) => coordinate(effect, "batch", "operation", batch)),
     coordinate: <A, E, R>(
       effect: Effect.Effect<A, E, R>,
       mode: "transaction" | "statement" = "transaction",
-    ) => coordinate(effect, mode),
+    ) => coordinate(effect, mode, "application"),
     coordinateBatch: <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-      Effect.flatMap(SqlBatchCommit, (batch) => coordinate(effect, "batch", batch)),
+      Effect.flatMap(SqlBatchCommit, (batch) => coordinate(effect, "batch", "application", batch)),
     run: <A, E, R>(
       effect: Effect.Effect<A, E, R>,
       mode: "transaction" | "statement" = "transaction",
-    ): Effect.Effect<A, Failure, OwnedRequirements<R>> => report(owned(effect, mode)),
+    ): Effect.Effect<A, Failure, OwnedRequirements<R>> => report(owned(effect, mode, "operation")),
     batch: <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-      Effect.flatMap(SqlBatchCommit, (batch) => report(owned(effect, "batch", batch))),
+      Effect.flatMap(SqlBatchCommit, (batch) => report(owned(effect, "batch", "operation", batch))),
   };
 });
 

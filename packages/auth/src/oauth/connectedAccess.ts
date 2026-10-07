@@ -93,6 +93,8 @@ export const connectedSafe = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
     ),
   );
 
+/** Cooperative deadline: cancellation waits for scoped driver/resource cleanup,
+ * including uninterruptible commit finalizers. It is not a hard wall-clock bound. */
 export const connectedBounded = <A, E, R>(effect: Effect.Effect<A, E, R>, millis: number) =>
   Effect.gen(function* () {
     const fiber = yield* effect.pipe(Effect.interruptible, Effect.forkChild);
@@ -331,13 +333,7 @@ export const makeOAuthConnectedAccess = <const Id extends string>(
             const receipt = yield* restore(
               claimRefresh(
                 {
-                  key: {
-                    moduleId: id,
-                    subjectId: grant.context.subjectId,
-                    grantId: grant.context.grantId,
-                  },
-                  grantVersion: grant.context.grantVersion,
-                  tokenVersion: grant.context.tokenVersion,
+                  grant,
                   authorization,
                   claimId,
                   nextTokenVersion,
@@ -442,8 +438,8 @@ export const makeOAuthConnectedAccess = <const Id extends string>(
               ? exchanged.value
               : { _tag: "ReauthorizationRequired" };
 
-            // Bound settlement even while preserving the refresh mask. Unknown
-            // completion never releases tokens or authorizes another refresh.
+            // Request settlement cancellation after five seconds while preserving
+            // scoped cleanup. Unknown completion releases no token or retry authority.
             const finished = yield* Effect.exit(
               connectedBounded(
                 settleRefresh({ claim: owned, authorization, outcome }, (value, journal) =>
@@ -478,12 +474,38 @@ export const makeOAuthConnectedAccess = <const Id extends string>(
         const caller = yield* connectedCaller(invocation);
         const input = yield* snapshotOAuth(M.OAuthConnectedUse, raw);
 
+        const inspected = yield* read({
+          moduleId: id,
+          subjectId: caller.subjectId,
+          selector: { _tag: "Grant", grantId: input.grantId },
+        });
+
+        if (inspected?.grant === undefined) return yield* OAuthRejected.make({});
+
+        const captured = yield* snapshotOAuth(
+          Schema.Struct({ revision: OAuthAccountRevision, grant: M.OAuthConnectedGrantSnapshot }),
+          { revision: inspected.revision, grant: inspected.grant },
+        );
+
+        const snapshot = captured.grant;
+
+        if (
+          captured.revision.subjectId !== caller.subjectId ||
+          snapshot.context.moduleId !== id ||
+          snapshot.context.subjectId !== caller.subjectId ||
+          snapshot.context.grantId !== input.grantId ||
+          snapshot.context.configuration.profile.key !== input.profileKey ||
+          !connectedProfile(policy, snapshot.context.configuration.profile)
+        )
+          return yield* OAuthRejected.make({});
+
         const authorization = yield* connectedUseAuthorization(
           yield* authorize({
             invocation: caller,
             moduleId: id,
             purpose: "use",
             ...input,
+            captured,
           }),
           id,
           caller.subjectId,
@@ -492,19 +514,8 @@ export const makeOAuthConnectedAccess = <const Id extends string>(
           input.profileKey,
         );
 
-        const inspected = yield* read({
-          moduleId: id,
-          subjectId: caller.subjectId,
-          selector: { _tag: "Grant", grantId: input.grantId },
-        });
-
-        if (
-          inspected === undefined ||
-          inspected.grant === undefined ||
-          !connectedSame(OAuthAccountRevision, inspected.revision, authorization.revision)
-        )
+        if (!connectedSame(OAuthAccountRevision, captured.revision, authorization.revision))
           return yield* OAuthRejected.make({});
-        const snapshot = yield* snapshotOAuth(M.OAuthConnectedGrantSnapshot, inspected.grant);
 
         if (snapshot.state === "Refreshing") {
           if (
@@ -519,14 +530,6 @@ export const makeOAuthConnectedAccess = <const Id extends string>(
           return yield* M.OAuthConnectedReauthorizationRequired.make({});
         let grant = snapshotOAuthSync(M.OAuthConnectedStoredGrant, snapshot);
 
-        if (
-          grant.context.moduleId !== id ||
-          grant.context.subjectId !== caller.subjectId ||
-          grant.context.grantId !== input.grantId ||
-          grant.context.configuration.profile.key !== input.profileKey ||
-          !connectedProfile(policy, grant.context.configuration.profile)
-        )
-          return yield* OAuthRejected.make({});
         const now = DateTime.toEpochMillis(yield* DateTime.now);
 
         if (

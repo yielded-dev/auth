@@ -90,9 +90,9 @@ export const makeNativeStatefulSessionServices = Effect.fnUntraced(function* <Cl
     mode: "transaction" | "statement" = "transaction",
   ) =>
     batch === undefined
-      ? executor.coordinate(normalizeSessionOperation(work), mode)
+      ? executor.operation(normalizeSessionOperation(work), mode)
       : executor
-          .coordinateBatch(normalizeSessionOperation(work))
+          .operationBatch(normalizeSessionOperation(work))
           .pipe(Effect.provideService(SqlBatchCommit, batch));
 
   const stage = Effect.fnUntraced(function* (statement: Fragment, expected?: number) {

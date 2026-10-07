@@ -19,7 +19,6 @@ import { DateTime, Effect, Redacted } from "effect";
 
 import { PersistenceMappingError } from "./mapping-error";
 import type { AnyProofPersistenceMapping } from "./models/proof-model";
-import type { PasswordMutationRead } from "./password-store";
 
 const unavailable = () => PasswordUnavailable.make({});
 
@@ -285,3 +284,24 @@ export const validatePasswordMutation = Effect.fnUntraced(function* (
 
   return now;
 });
+
+/** Decoded subject-first snapshot used only for this action's policy decision. */
+export interface PasswordMutationRead {
+  readonly subject:
+    | { readonly active: boolean; readonly securityRevision: SecurityRevision }
+    | undefined;
+  readonly identifierCurrent: boolean;
+  readonly credentials: ReadonlyArray<{
+    readonly credentialId: string;
+    readonly revision: SecurityRevision;
+    readonly active: boolean;
+  }>;
+  readonly snapshot: Effect.Effect<
+    PasswordCredentialSnapshot | undefined,
+    PasswordUnavailable | PersistenceMappingError
+  >;
+  readonly requirement: Effect.Effect<
+    AuthenticationRequirement,
+    PasswordUnavailable | PersistenceMappingError
+  >;
+}

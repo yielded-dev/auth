@@ -255,12 +255,12 @@ export const registrationMapping = {
       sql`not exists(select 1 from ${subject} where ${subject.id} = ${value.accountId})`,
     finalEligibility: ({ registration, subjectId }) =>
       sql`exists(select 1 from ${subject} where ${subject.id} = ${subjectId} and ${subject.name} = ${registration.name} and ${subject.status} = 'active')`,
-    subject: ({ registration }) => ({
+    subject: ({ registration, marker }) => ({
       subjectId: registration.accountId,
       values: {
         id: registration.accountId,
         status: "active",
-        securityRevision: "",
+        securityRevision: marker,
         name: registration.name,
         organization: registration.organization,
         totpEnabled: false,

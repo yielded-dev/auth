@@ -13,6 +13,7 @@ import type { SubjectIdCodec } from "../models/common";
 import type { OAuthClock, OAuthFlowTable } from "../models/oauth-model";
 import type { NativeSqlTables } from "../native-sql-table";
 import { exactSqlText, executeSqlChange } from "../sql-change";
+import { cleanupSqlRows } from "../sql-cleanup";
 import {
   appendSqlBatchStatement,
   CurrentSqlCommit,
@@ -230,28 +231,23 @@ export const makeOAuthNativeFlow = Effect.fnUntraced(function* <Flow extends OAu
     return value;
   });
 
-  const cleanup = Effect.fnUntraced(function* (moduleId: string, limit: number) {
-    const scoped = sql.and([exact(f.moduleId, moduleId), exact(f.purpose, purpose)]);
-
-    const deletion = sql`delete from ${flow.name} where ${scoped} and ${flow.column(f.flowId)} in (
-        select candidate from (select ${flow.column(f.flowId)} as candidate from ${flow.name}
-          where ${scoped} and ${millis(f.expiresAt)} <= ${now}
-          order by ${flow.column(f.expiresAt)}, ${flow.column(f.flowId)} limit ${limit}) as oauth_cleanup
-      )`;
-
-    if (batch) {
-      const rows =
-        yield* sql`select ${flow.column(f.flowId)} from ${flow.name} where ${scoped} and ${millis(f.expiresAt)} <= ${now} order by ${flow.column(f.expiresAt)}, ${flow.column(f.flowId)} limit ${limit}`;
-
-      yield* appendSqlBatchStatement(deletion);
-      yield* appendSqlBatchStatement(sqlBatchAssertion(sql, sql`changes() = ${rows.length}`));
-
-      return { removed: rows.length, hasMore: rows.length === limit };
-    }
-    const removed = yield* executeSqlChange(sql, deletion);
-
-    return { removed, hasMore: removed === limit };
-  });
+  const cleanup = (moduleId: string, limit: number) =>
+    cleanupSqlRows(
+      [
+        {
+          table: flow,
+          keys: [f.moduleId, f.flowId],
+          due: sql.and([
+            exact(f.moduleId, moduleId),
+            exact(f.purpose, purpose),
+            sql`${millis(f.expiresAt)} <= ${now}`,
+          ]),
+          order: [flow.column(f.expiresAt), flow.column(f.flowId)],
+        },
+      ],
+      limit,
+      batch,
+    );
 
   return { issue, consume, cleanup, mysql };
 });

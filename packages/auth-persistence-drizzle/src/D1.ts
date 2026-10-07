@@ -8,17 +8,6 @@ import type { AnySQLiteTable } from "drizzle-orm/sqlite-core";
 import { Database } from "./drizzle/d1-database";
 export { Database } from "./drizzle/d1-database";
 
-export {
-  makeD1OAuthAccountsServices as makeOAuthAccountsServices,
-  makeD1OAuthSignInServices as makeOAuthSignInServices,
-  makeD1OAuthRegistrationIntentServices as makeOAuthRegistrationIntentServices,
-  makeD1OAuthRegistrationServices as makeOAuthRegistrationServices,
-  coordinateD1OAuthRegistration as coordinateOAuthRegistration,
-  coordinateD1OAuthSignIn as coordinateOAuthSignIn,
-  coordinateD1OAuthRegistrationIntents as coordinateOAuthRegistrationIntents,
-  coordinateD1OAuthAccounts as coordinateOAuthAccounts,
-} from "./drizzle/d1-oauth";
-
 import {
   makeD1ExternalIdentityServices,
   makeD1IdentityServices,
@@ -73,8 +62,6 @@ export const makeExternalIdentityServices = <
   mapping: D1ExternalIdentityMapping<Subject, External, NativeId>,
 ) => makeD1ExternalIdentityServices(mapping);
 
-export const commitMode = "batch" as const;
-
 export const makeIdentityServices = <
   Subject extends AnySQLiteTable,
   Identifier extends AnySQLiteTable,
@@ -85,31 +72,36 @@ export const makeIdentityServices = <
   mapping: D1GeneratedIdentityMapping<Subject, Identifier, External, Request, NativeId>,
 ) => makeD1IdentityServices(mapping);
 
-import { Effect, Layer } from "effect";
+import { Layer } from "effect";
 
-import { makeD1OAuthConnectedTarget } from "./drizzle/oauth-connected-drivers";
+import type { D1BatchStatements } from "./drizzle/D1BatchStatements";
+import { makeOAuthTarget } from "./drizzle/oauth-drivers";
 import type { OAuthD1Mapping } from "./drizzle/oauth-model";
+import { makePasskeyTarget } from "./drizzle/passkey-drivers";
+import type { D1PasskeyMapping } from "./drizzle/passkey-model";
 
-const connectedTarget = makeD1OAuthConnectedTarget<
-  Database,
-  EffectSQLiteD1Database<AnyRelations> & { readonly $client: D1Client },
-  AnySQLiteTable<{ dialect: "sqlite" }>,
-  OAuthD1Mapping
->(Database, {
-  mode: "batch",
-  dialect: "sqlite",
-  locking: false,
-  standaloneGuard: () => Effect.void,
-});
+type D1Database = EffectSQLiteD1Database<AnyRelations> & { readonly $client: D1Client };
+type D1Table = AnySQLiteTable<{ dialect: "sqlite" }>;
 
 export const {
+  makeOAuthAccountsServices,
+  makeOAuthSignInServices,
+  makeOAuthRegistrationIntentServices,
+  makeOAuthRegistrationServices,
+  coordinateOAuthRegistration,
+  coordinateOAuthSignIn,
+  coordinateOAuthRegistrationIntents,
+  coordinateOAuthAccounts,
   makeOAuthConnectedServices,
   makeOAuthConnectedRevocationServices,
   coordinateOAuthConnected,
   coordinateOAuthConnectedRevocations,
-} = connectedTarget;
+} = makeOAuthTarget<Database, D1Database, D1Table, OAuthD1Mapping, D1BatchStatements>(Database, {
+  mode: "batch",
+  dialect: "sqlite",
+});
 
-export {
+export const {
   makePasskeyCredentialServices,
   makePasskeyPersistenceServices,
   makePasskeyRegistrationCeremonyServices,
@@ -119,7 +111,10 @@ export {
   makePasskeyRegistrationServices,
   coordinatePasskeyManagement,
   coordinatePasskeyRegistration,
-} from "./drizzle/d1-passkey";
+} = makePasskeyTarget<Database, D1Database, D1Table, D1PasskeyMapping, D1BatchStatements>(
+  Database,
+  { mode: "batch", dialect: "sqlite" },
+);
 
 export { D1BatchStatements } from "./drizzle/D1BatchStatements";
 

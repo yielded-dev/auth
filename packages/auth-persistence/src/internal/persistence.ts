@@ -2,7 +2,6 @@ import { EmailAddressPersistence, EmailUnavailable } from "@yielded/auth/Email";
 import type { LifecycleHooks } from "@yielded/auth/Hooks";
 import { hasCommitScope } from "@yielded/auth/Hooks";
 import {
-  type PasskeyConfig,
   PasskeyCredentials,
   PasskeyManagementPersistence,
   PasskeyPersistence,
@@ -31,11 +30,11 @@ import {
   type SubjectOptions,
   type PasskeyFeature,
   type PasskeyRequirement,
-  type MappingInput,
 } from "./configuration";
 import { makeNativeEmailAddressServices } from "./email-native";
 import { PersistenceMappingError } from "./mapping-error";
 import type { NativeSqlTables } from "./native-sql-table";
+import { makeManagedPasskeys } from "./passkey-managed";
 import { makeNativePasswordServices } from "./password-native";
 import { makeComposedPhoneTargets } from "./phone-composed";
 import { makeNativeProofServices } from "./proof-native";
@@ -61,28 +60,12 @@ import {
   type StorageValidation,
 } from "./storage-validation";
 
-export interface ComposedPasskeyInput {
-  readonly storage: MappingInput;
-  readonly namespace: string;
-  readonly dialect: "pg" | "sqlite";
-  readonly features: ReadonlyArray<PasskeyFeature>;
-  readonly passwordModules: ReadonlyArray<string>;
-}
-
 export interface Backend<T extends object, R, Database extends object = object> {
   readonly makeTable: (definition: StorageTable) => T;
   readonly describe: (table: T) => StorageTable;
   readonly acquire: Effect.Effect<Database, PersistenceConfigurationError, R | SqlClient.SqlClient>;
   readonly nativeTables: (database: Database) => NativeSqlTables;
   readonly maxParameters: (database: Database) => number | undefined;
-  readonly passkeys: (
-    input: ComposedPasskeyInput,
-    database: Database,
-  ) => Effect.Effect<
-    Context.Context<never>,
-    PersistenceConfigurationError,
-    PasskeyConfig | LifecycleHooks | SqlClient.SqlClient | Crypto.Crypto
-  >;
 }
 
 const configError = (reason: string) => PersistenceConfigurationError.make({ reason });
@@ -431,7 +414,7 @@ export const createPersistence = <T extends object, R, Database extends object =
 
         if (passkeys.length > 0) {
           // Auth capability metadata determines whether PasskeyConfig is required.
-          const services = backend.passkeys(
+          const services = makeManagedPasskeys(
             {
               storage,
               namespace: auth.namespace,
@@ -441,7 +424,7 @@ export const createPersistence = <T extends object, R, Database extends object =
                 feature?.kind === "password" ? [feature.moduleId] : [],
               ),
             },
-            database,
+            backend.nativeTables(database),
           ) as Effect.Effect<
             Context.Context<never>,
             PersistenceConfigurationError,

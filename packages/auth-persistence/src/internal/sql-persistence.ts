@@ -3,7 +3,6 @@ import { SqlClient } from "effect/sql";
 
 import { PersistenceConfigurationError, type PersistenceApi } from "./configuration";
 import { makeNativeSqlTables } from "./native-sql-table";
-import { makeManagedPasskeys } from "./passkey-managed";
 import { createPersistence } from "./persistence";
 import { Table } from "./sql-table";
 import type { StorageTable } from "./storage-tables";
@@ -24,10 +23,6 @@ export const AuthPersistence: PersistenceApi<Table> & { readonly table: typeof t
     }),
     nativeTables: makeNativeSqlTables,
     maxParameters: (client) => client.onDialectOrElse({ sqlite: () => 96, orElse: () => 16_000 }),
-    passkeys: (input, client) =>
-      makeManagedPasskeys(input, makeNativeSqlTables(client)).pipe(
-        Effect.provideService(SqlClient.SqlClient, client),
-      ),
     acquire: Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
 

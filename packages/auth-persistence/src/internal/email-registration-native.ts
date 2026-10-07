@@ -237,12 +237,17 @@ export const makeNativeEmailRegistrationServices = Effect.fnUntraced(function* <
             }
 
             const proof = yield* makeNativeProofStore(tables, proofs, batch !== undefined),
-              decision = yield* proof.redeemLocked(redemption);
+              redeemed = yield* proof.redeemLocked(redemption);
 
             yield* registerSqlCommitReceipt(
-              original.redemption.prepare(decision, yield* CurrentCommitJournal, (value) => value),
+              original.redemption.prepare(
+                redeemed.decision,
+                yield* CurrentCommitJournal,
+                (value) => value,
+              ),
             );
-            if (decision !== "redeemed") return yield* prepare({ _tag: "Rejected" }, project);
+            if (redeemed.decision !== "redeemed")
+              return yield* prepare({ _tag: "Rejected" }, project);
 
             const allocate = () =>
               allocateEmailValue(mode, mapping.allocateRevision, mapping.allocateRevisionSync);
@@ -336,6 +341,7 @@ export const makeNativeEmailRegistrationServices = Effect.fnUntraced(function* <
             );
 
             const conditions: Fragment[] = [
+              redeemed.validUntil,
               sql`exists(select 1 from ${subject.name} where ${id(subject, s.id, native)} and ${exact(subject, s.securityRevision, securityRevision)} and ${id(subject, s.status, s.activeStatusValue)})`,
               sql`exists(select 1 from ${identifier.name} where ${identifierKey(input.identifier)} and ${id(identifier, i.subjectId, native)} and ${exact(identifier, i.bindingRevision, identifierRevision)} and ${id(identifier, i.verifiedAt, mapping.clock.encodeInstant(verifiedAt))})`,
               sql`exists(select 1 from ${credential.name} where ${exact(credential, c.moduleId, input.moduleId)} and ${exact(credential, c.credentialId, credentialId)} and ${id(credential, c.subjectId, native)} and ${exact(credential, c.credentialRevision, credentialRevision)} and ${exact(credential, c.identifierNamespace, input.identifier.namespace)} and ${exact(credential, c.identifierValue, input.identifier.value)} and ${id(credential, c.status, c.activeStatusValue)})`,

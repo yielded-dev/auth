@@ -173,8 +173,8 @@ export const makeOAuthConnectedMaintenance = <const Id extends string>(
                 ? ("Confirmed" as const)
                 : ("Unknown" as const);
 
-            // The provider call may finish during shutdown; allow at most five
-            // seconds for its private settlement before reporting unavailable.
+            // Request settlement cancellation after five seconds. Scoped driver
+            // cleanup may take longer; an unknown outcome permits no retry.
             const final = yield* connectedBounded(
               settle({ claim: owned, outcome }, (value, journal) =>
                 journal.prepare(

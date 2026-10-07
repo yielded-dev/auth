@@ -60,8 +60,6 @@ export const makeExternalIdentityServices = <
   mapping: ExternalIdentityTables<Subject, External, NativeId>,
 ) => makeMysqlExternalIdentityServices(mapping);
 
-export const commitMode = "interactive" as const;
-
 export const makeIdentityServices = <
   Subject extends AnyMySqlTable,
   Identifier extends AnyMySqlTable,
@@ -73,17 +71,14 @@ export const makeIdentityServices = <
 ) => makeMysqlIdentityServices(mapping);
 
 import { makeOAuthTarget } from "./drizzle/oauth-drivers";
-import { sqlClientOAuthStandaloneGuard } from "./drizzle/oauth-target";
 
 const oauthTarget = makeOAuthTarget<
   Database,
   EffectMysql2Database<AnyRelations>,
   AnyMySqlTable<{ dialect: "mysql" }>
 >(Database, {
-  mode: "interactive",
+  mode: "native",
   dialect: "mysql",
-  locking: true,
-  standaloneGuard: sqlClientOAuthStandaloneGuard,
 });
 
 export const {
@@ -102,17 +97,14 @@ export const {
 } = oauthTarget;
 
 import { makePasskeyTarget } from "./drizzle/passkey-drivers";
-import { sqlClientPasskeyStandaloneGuard } from "./drizzle/passkey/target";
 
 const passkeyTarget = makePasskeyTarget<
   Database,
   EffectMysql2Database<AnyRelations>,
   AnyMySqlTable<{ dialect: "mysql" }>
 >(Database, {
-  mode: "interactive",
+  mode: "native",
   dialect: "mysql",
-  locking: true,
-  standaloneGuard: sqlClientPasskeyStandaloneGuard,
 });
 
 export const {

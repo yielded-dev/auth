@@ -10,11 +10,6 @@ export {
   requiredOAuthConnectedRevocationConstraints,
 } from "./models/oauth-connected-model";
 
-export type OAuthConnectedSubjectTable<S extends Table> = Shared.OAuthConnectedSubjectTable<
-  SqlTableModel<S>,
-  SQL
->;
-
 export type OAuthConnectedGrantTable<G extends Table, N> = Shared.OAuthConnectedGrantTable<
   SqlTableModel<G>,
   N

@@ -1,14 +1,15 @@
 import type { LifecycleHooks } from "@yielded/auth/Hooks";
 import * as M from "@yielded/auth/OAuth";
 import { SessionInvalidationWindow } from "@yielded/auth/Sessions";
-import { Crypto, Effect, Schema } from "effect";
+import { Crypto, Effect, Option, Schema } from "effect";
 import type { SqlClient } from "effect/sql/SqlClient";
 import type { Fragment } from "effect/sql/Statement";
 
 import { type OAuthAccountsMapping, OAuthEligibilityFact } from "../models/oauth-model";
 import type { NativeSqlTables } from "../native-sql-table";
+import { conditionalSqlInsert } from "../session-native-record";
 import { exactSqlText } from "../sql-change";
-import { makeSqlCommitExecutor, SqlBatchCommit } from "../sql-commit";
+import { makeSqlCommitExecutor, SqlBatchCommit, CurrentSqlCommit } from "../sql-commit";
 import type { SqlExpression, TableModel } from "../table-model";
 import { makeOAuthNativeFlow } from "./native-flow";
 import { makeOAuthNativeMutation } from "./native-mutation";
@@ -20,7 +21,7 @@ import {
   sameRevision,
   satisfies,
   unavailable,
-  validAction,
+  matchesAcceptedAction,
 } from "./state";
 
 // Physical metadata is validated by the adapter; schema values remain typed.
@@ -45,6 +46,7 @@ export const makeNativeOAuthAccountsServices = Effect.fnUntraced(function* (
 > {
   const executor = yield* makeSqlCommitExecutor(unavailable);
   const crypto = yield* Crypto.Crypto;
+  const external = yield* Effect.serviceOption(CurrentSqlCommit);
   const state = yield* makeOAuthNativeState(tables, mapping);
   const mutation = yield* makeOAuthNativeMutation(tables, mapping, batch !== undefined);
 
@@ -129,6 +131,7 @@ export const makeNativeOAuthAccountsServices = Effect.fnUntraced(function* (
           const flow = M.snapshotOAuthSync(M.OAuthLinkFlow, original.flow);
           const verified = M.snapshotOAuthSync(M.OAuthVerifiedExternalIdentity, original.identity);
           const context = flow.context;
+
           const current = yield* mutation.capture(context.revision.subjectId, batch === undefined);
           const rejected = () => prepareOAuthNative({ _tag: "Rejected" } as const, prepare);
 
@@ -146,7 +149,7 @@ export const makeNativeOAuthAccountsServices = Effect.fnUntraced(function* (
           )(context);
 
           if (
-            !(yield* validAction(
+            !(yield* matchesAcceptedAction(
               context.authorization,
               {
                 moduleId: context.moduleId,
@@ -155,9 +158,7 @@ export const makeNativeOAuthAccountsServices = Effect.fnUntraced(function* (
                 revision: context.revision,
                 intent,
               },
-              mapping.subject.decodeActionRequirement(current.subject, "link-begin"),
               current.now,
-              context.maximumEvidenceAgeMillis,
             ))
           )
             return yield* rejected();
@@ -178,69 +179,73 @@ export const makeNativeOAuthAccountsServices = Effect.fnUntraced(function* (
           if (identityKey === undefined)
             return yield* prepareOAuthNative({ _tag: "Conflict" }, prepare);
 
-          const existing = yield* sql`select ${credential.fields("login_")} from ${credential.name}
-        where ${exactSqlText(sql, credential.column(c.identityKey), credential.value(c.identityKey, identityKey))}`;
+          const identityCondition = exactSqlText(
+            sql,
+            credential.column(c.identityKey),
+            credential.value(c.identityKey, identityKey),
+          );
+
+          // Fixed D1 plans classify an existing login before staging writes. Native
+          // owners attempt the unique insert and read only its conflict outcome.
+          const existing =
+            batch === undefined
+              ? []
+              : yield* sql`select ${credential.fields("login_")} from ${credential.name} where ${identityCondition} and ${before}`;
 
           invariant(existing.length <= 1);
-          let credentialId: string;
-          let credentialRevision: M.OAuthCredentialSnapshot["credentialRevision"];
+          let credentialId = yield* mapping.allocateCredentialId;
+          let credentialRevision = yield* mapping.allocateRevision;
+          let changed = false;
           let revision = current.revision;
 
-          if (existing[0] !== undefined) {
-            const row = credential.decode(existing[0], "login_");
+          if (existing.length === 0) {
+            const values = {
+              ...c.encodeInsert({
+                moduleId: context.moduleId,
+                subjectId: current.nativeId,
+                identityKey,
+                credentialId,
+                credentialRevision,
+              }),
+              [c.moduleId]: context.moduleId,
+              [c.subjectId]: current.nativeId,
+              [c.identityKey]: identityKey,
+              [c.credentialId]: credentialId,
+              [c.credentialRevision]: credentialRevision,
+            };
 
-            if (
-              !mapping.subjectId.equals(row[c.subjectId], current.nativeId) ||
-              row[c.moduleId] !== context.moduleId ||
-              !c.isActiveStatus(row[c.status])
-            )
-              return yield* rejected();
-            credentialId = yield* Schema.decodeUnknownEffect(
-              M.OAuthCredentialSnapshot.fields.credentialId,
-            )(row[c.credentialId]);
-            credentialRevision = yield* Schema.decodeUnknownEffect(
-              M.OAuthCredentialSnapshot.fields.credentialRevision,
-            )(row[c.credentialRevision]);
-            if (
-              !revision.credentials.some(
-                (entry) =>
-                  entry.credentialId === credentialId && entry.revision === credentialRevision,
-              )
-            )
-              return yield* rejected();
-          } else {
-            credentialId = yield* mapping.allocateCredentialId;
-            credentialRevision = yield* mapping.allocateRevision;
-            invariant(
-              (yield* mutation.change(
-                credential.insert({
-                  ...c.encodeInsert({
-                    moduleId: context.moduleId,
-                    subjectId: current.nativeId,
-                    identityKey,
-                    credentialId,
-                    credentialRevision,
-                  }),
-                  [c.moduleId]: context.moduleId,
-                  [c.subjectId]: current.nativeId,
-                  [c.identityKey]: identityKey,
-                  [c.credentialId]: credentialId,
-                  [c.credentialRevision]: credentialRevision,
-                }),
-              )) === 1,
+            invariant(c.isActiveStatus(values[c.status]));
+
+            const inserted = yield* mutation.insertUnique(
+              sql`${conditionalSqlInsert(sql, credential, values, before)} ${sql.onDialectOrElse({ mysql: () => sql``, orElse: () => sql`on conflict do nothing` })}`,
             );
+
+            changed = inserted === 1;
+          }
+          if (changed) {
+            const factor = {
+              ...a.encodeInsert({
+                subjectId: current.nativeId,
+                credentialId,
+                revision: credentialRevision,
+              }),
+              [a.subjectId]: current.nativeId,
+              [a.credentialId]: credentialId,
+              [a.revision]: credentialRevision,
+            };
+
+            invariant(a.isActiveStatus(factor[a.status]));
             invariant(
               (yield* mutation.change(
-                authority.insert({
-                  ...a.encodeInsert({
-                    subjectId: current.nativeId,
-                    credentialId,
-                    revision: credentialRevision,
-                  }),
-                  [a.subjectId]: current.nativeId,
-                  [a.credentialId]: credentialId,
-                  [a.revision]: credentialRevision,
-                }),
+                conditionalSqlInsert(
+                  sql,
+                  authority,
+                  factor,
+                  sql.and([
+                    before,
+                    sql`exists(select 1 from ${credential.name} where ${credentialCondition(current.nativeId, identityKey, credentialId, credentialRevision)})`,
+                  ]),
+                ),
               )) === 1,
             );
             revision = {
@@ -250,18 +255,45 @@ export const makeNativeOAuthAccountsServices = Effect.fnUntraced(function* (
                 { credentialId, revision: credentialRevision },
               ].sort((left, right) => left.credentialId.localeCompare(right.credentialId)),
             };
-          }
-          yield* mutation.finish(
-            "oauth-link-authority",
-            sql.and([
-              mutation.authorityCondition(current.nativeId, revision),
-              sql`${now} < ${deadline}`,
-              sql`exists(select 1 from ${credential.name} where ${credentialCondition(current.nativeId, identityKey, credentialId, credentialRevision)})`,
-              sql`exists(select 1 from ${mutation.ownership.name} where ${mutation.ownerCondition(identityKey, current.nativeId)})`,
-            ]),
-          );
+          } else {
+            const rows =
+              existing.length === 1
+                ? existing
+                : yield* sql`select ${credential.fields("login_")} from ${credential.name} where ${identityCondition} and ${before}`;
 
-          const captured = yield* Schema.decodeEffect(Schema.toType(M.OAuthCredentialSnapshot))({
+            invariant(rows.length === 1);
+            const row = credential.decode(rows[0]!, "login_");
+
+            invariant(
+              mapping.subjectId.equals(row[c.subjectId], current.nativeId) &&
+                row[c.moduleId] === context.moduleId &&
+                c.isActiveStatus(row[c.status]),
+            );
+            credentialId = yield* Schema.decodeUnknownEffect(
+              M.OAuthCredentialSnapshot.fields.credentialId,
+            )(row[c.credentialId]);
+            credentialRevision = yield* Schema.decodeUnknownEffect(
+              M.OAuthCredentialSnapshot.fields.credentialRevision,
+            )(row[c.credentialRevision]);
+            invariant(
+              revision.credentials.some(
+                (entry) =>
+                  entry.credentialId === credentialId && entry.revision === credentialRevision,
+              ),
+            );
+          }
+          if (Option.isSome(external))
+            yield* mutation.finish(
+              "oauth-link-authority",
+              sql.and([
+                mutation.authorityCondition(current.nativeId, revision),
+                sql`${now} < ${deadline}`,
+                sql`exists(select 1 from ${credential.name} where ${credentialCondition(current.nativeId, identityKey, credentialId, credentialRevision)})`,
+                sql`exists(select 1 from ${mutation.ownership.name} where ${mutation.ownerCondition(identityKey, current.nativeId)})`,
+              ]),
+            );
+
+          const result = yield* Schema.decodeEffect(Schema.toType(M.OAuthCredentialSnapshot))({
             moduleId: context.moduleId,
             identity: verified.identity,
             credentialId,
@@ -271,7 +303,7 @@ export const makeNativeOAuthAccountsServices = Effect.fnUntraced(function* (
           });
 
           return yield* prepareOAuthNative(
-            { _tag: "Linked", credential: captured, changed: existing.length === 0 },
+            { _tag: "Linked", credential: result, changed },
             prepare,
           );
         }),
@@ -307,6 +339,7 @@ export const makeNativeOAuthAccountsServices = Effect.fnUntraced(function* (
                     invalidation.maximumExposureMillis > 0)
                 : invalidation.existingSessions === "original-absolute-expiry"),
           );
+
           const current = yield* mutation.capture(captured.revision.subjectId, batch === undefined);
           const rejected = () => prepareOAuthNative({ _tag: "Rejected" } as const, prepare);
 
@@ -318,7 +351,7 @@ export const makeNativeOAuthAccountsServices = Effect.fnUntraced(function* (
           )(captured);
 
           if (
-            !(yield* validAction(
+            !(yield* matchesAcceptedAction(
               authorization,
               {
                 moduleId: captured.moduleId,
@@ -327,9 +360,7 @@ export const makeNativeOAuthAccountsServices = Effect.fnUntraced(function* (
                 revision: captured.revision,
                 intent,
               },
-              mapping.subject.decodeActionRequirement(current.subject, "unlink"),
               current.now,
-              authorization.requirement.maximumAgeMillis,
             ))
           )
             return yield* rejected();
@@ -341,11 +372,6 @@ export const makeNativeOAuthAccountsServices = Effect.fnUntraced(function* (
             captured.credentialId,
             captured.credentialRevision,
           );
-
-          const rows =
-            yield* sql`select ${credential.fields("target_")} from ${credential.name} where ${target}`;
-
-          if (rows.length !== 1) return yield* rejected();
 
           const eligible = new Map<
             string,
@@ -371,18 +397,37 @@ export const makeNativeOAuthAccountsServices = Effect.fnUntraced(function* (
               ),
             );
 
-            return sql`select * from (select ${branch} as method_branch, ${sql.join(", ", false)(fields)} from ${table.name}
+            // The bounded array ordinal is an integer SQL literal, matching the sentinel.
+            return sql`select * from (select ${sql.literal(String(branch))} as method_branch, 1 as target_present, ${sql.join(", ", false)(fields)} from ${table.name}
               where ${table.column(source.subjectId)} = ${table.value(source.subjectId, current.nativeId)} and ${tables.expression(source.condition(current.nativeId))}
               order by ${table.column(source.credentialId)} limit 65) as ${sql(`eligible_${branch}`)}`;
           });
 
-          const candidates =
-            branches.length === 0 ? [] : yield* sql`${sql.join(" union all ", false)(branches)}`;
+          const allowed = sql.and([
+            mutation.authorityCondition(current.nativeId, current.revision),
+            sql`exists(select 1 from ${credential.name} where ${target} and ${exactSqlText(sql, credential.column(c.moduleId), credential.value(c.moduleId, captured.moduleId))})`,
+          ]);
+
+          const empty = sources.flatMap((entry, index) =>
+            entry.table.keys.map(
+              (key, ordinal) =>
+                sql`(select ${entry.table.selectedColumn(key)} from ${entry.table.name} where 1 = 0) as ${sql(`method_${index}_${ordinal}`)}`,
+            ),
+          );
+
+          const sentinel = sql`select -1 as method_branch, case when ${allowed} then 1 else 0 end as target_present ${empty.length === 0 ? sql`` : sql`, ${sql.join(", ", false)(empty)}`}`;
+          const candidates = yield* sql`${sql.join(" union all ", false)([sentinel, ...branches])}`;
+          const presence = candidates.find((row) => Number(row.method_branch) === -1);
+
+          invariant(presence !== undefined);
+          if (Number(presence.target_present) !== 1) return yield* rejected();
 
           const counts = new Map<number, number>();
 
           for (const row of candidates) {
             const branch = yield* Schema.decodeEffect(Schema.Int)(Number(row.method_branch));
+
+            if (branch === -1) continue;
             const entry = sources[branch];
 
             invariant(entry !== undefined);

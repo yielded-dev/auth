@@ -6,7 +6,7 @@ import type { NativeSqlTables } from "../native-sql-table";
 import { exactSqlText } from "../sql-change";
 import type { SqlExpression, TableModel } from "../table-model";
 import { makeOAuthNativeMutation } from "./native-mutation";
-import { invariant, oauthIdentityKey, sameRevision, storage } from "./state";
+import { invariant, oauthIdentityKey, storage } from "./state";
 
 // Physical metadata is checked by the adapter compiler.
 export type OAuthNativeConnectedMapping = OAuthConnectedMapping<
@@ -241,15 +241,13 @@ export const makeOAuthNativeConnectedState = Effect.fnUntraced(function* (
   };
 
   const use = (
-    current: NonNullable<Effect.Success<ReturnType<typeof mutation.capture>>>,
+    nativeId: unknown,
     authorization: M.OAuthConnectedUseAuthorization,
     purpose: "metadata" | "use",
     context?: M.OAuthConnectedTokenContext,
   ) => {
     if (
       authorization.purpose !== purpose ||
-      !sameRevision(current.revision, authorization.revision) ||
-      current.now >= authorization.expiresAtMillis ||
       (context !== undefined &&
         (context.moduleId !== authorization.moduleId ||
           context.subjectId !== authorization.revision.subjectId ||
@@ -260,12 +258,12 @@ export const makeOAuthNativeConnectedState = Effect.fnUntraced(function* (
       return undefined;
 
     return sql.and([
-      mutation.authorityCondition(current.nativeId, current.revision),
+      mutation.authorityCondition(nativeId, authorization.revision),
       sql`${now} < ${authorization.expiresAtMillis}`,
       tables.expression(
         mapping.policy.condition({
-          subjectId: current.nativeId,
-          revision: current.revision,
+          subjectId: nativeId,
+          revision: authorization.revision,
           kind: purpose,
           authorization,
           ...(context === undefined ? {} : { grant: context }),

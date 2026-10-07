@@ -10,11 +10,6 @@ export {
   requiredOAuthConnectedRevocationConstraints,
 } from "@yielded/auth-persistence/Adapter";
 
-export type OAuthConnectedSubjectTable<S extends Table> = Shared.OAuthConnectedSubjectTable<
-  DrizzleTableModel<S>,
-  SQL
->;
-
 export type OAuthConnectedGrantTable<G extends Table, N> = Shared.OAuthConnectedGrantTable<
   DrizzleTableModel<G>,
   N

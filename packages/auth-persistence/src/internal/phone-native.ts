@@ -71,6 +71,7 @@ export const makeNativePhoneServices = Effect.fnUntraced(function* (
   const sql = (yield* SqlClient).withoutTransforms();
   const executor = yield* makeSqlCommitExecutor(unavailable);
   const crypto = yield* Crypto.Crypto;
+  const external = yield* Effect.serviceOption(CurrentSqlCommit);
 
   const s = mapping.subject,
     i = mapping.identifier,
@@ -455,13 +456,14 @@ export const makeNativePhoneServices = Effect.fnUntraced(function* (
           const result = yield* store.redeemLocked(redemption);
 
           const proofReceipt = input.redemption.prepare(
-            result,
+            result.decision,
             yield* CurrentCommitJournal,
             (value) => value,
           );
 
           yield* registerSqlCommitReceipt(proofReceipt);
-          if (result !== "redeemed") return yield* rejected();
+          if (result.decision !== "redeemed") return yield* rejected();
+          freshness.push(result.validUntil);
 
           const subjectId =
             input.action === "register"
@@ -510,24 +512,9 @@ export const makeNativePhoneServices = Effect.fnUntraced(function* (
             });
 
             yield* stage(subject.insert(inserted));
-            if (batch === undefined) {
-              // Provisioned defaults may participate in current sign-in policy.
-              const rows =
-                yield* sql`select ${subject.fields("provisioned_")} from ${subject.name} where ${id(subject, s.id, native)} limit 2`;
-
-              ensure(rows.length === 1);
-              subjectRow = subject.decode(rows[0]!, "provisioned_");
-            } else {
-              // Fixed batches require the synchronous provisioning encoder to
-              // provide every value needed by its requirement decoder.
-              subjectRow = inserted;
-            }
-          } else {
-            yield* stage(
-              sql`${subject.update({ [s.securityRevision]: securityRevision })} where ${id(subject, s.id, native)} and ${exact(subject, s.securityRevision, target.revision!.securityRevision)} and ${activeSubject} and ${sql.and(freshness)}`,
-            );
-            if (subjectRow !== undefined)
-              subjectRow = { ...subjectRow, [s.securityRevision]: securityRevision };
+            // Native provisioning decodes database defaults in the final guarded
+            // read; fixed batches require complete encoder values.
+            subjectRow = inserted;
           }
           ensure(subjectRow !== undefined);
           const finalConditions: Fragment[] = [...freshness];
@@ -609,9 +596,27 @@ export const makeNativePhoneServices = Effect.fnUntraced(function* (
 
           finalConditions.push(
             factorCondition(revision),
-            sql`exists(select 1 from ${subject.name} where ${id(subject, s.id, native)} and ${exact(subject, s.securityRevision, securityRevision)} and ${activeSubject})`,
             sql`exists(select 1 from ${identifier.name} where ${numberKey(target.phoneNumber)} and ${exact(identifier, i.moduleId, mapping.moduleId)} and ${exact(identifier, i.credentialId, credentialId)} and ${id(identifier, i.subjectId, native)} and ${exact(identifier, i.revision, custodyRevision)} and ${id(identifier, i.verifiedAt, mapping.encodeInstant(captured.now))} and ${activeIdentifier})`,
           );
+          const resultingState = sql.and(finalConditions);
+
+          if (input.action !== "register") {
+            ensure(target.revision !== null);
+            yield* stage(
+              sql`${subject.update({ [s.securityRevision]: securityRevision })} where ${id(subject, s.id, native)} and ${exact(subject, s.securityRevision, target.revision.securityRevision)} and ${activeSubject} and ${resultingState}`,
+            );
+            subjectRow = { ...subjectRow, [s.securityRevision]: securityRevision };
+          }
+          finalConditions.push(
+            sql`exists(select 1 from ${subject.name} where ${id(subject, s.id, native)} and ${exact(subject, s.securityRevision, securityRevision)} and ${activeSubject})`,
+          );
+          if (input.action === "register" && batch === undefined) {
+            const rows =
+              yield* sql`select ${subject.fields("provisioned_")} from ${subject.name} where ${id(subject, s.id, native)} and ${exact(subject, s.securityRevision, securityRevision)} and ${activeSubject} and ${resultingState} limit 2`;
+
+            ensure(rows.length === 1);
+            subjectRow = subject.decode(rows[0]!, "provisioned_");
+          }
           const final = sql.and(finalConditions);
 
           if (batch !== undefined)
@@ -619,7 +624,7 @@ export const makeNativePhoneServices = Effect.fnUntraced(function* (
               name: "phone-custody-authority",
               statement: sqlBatchAssertion(sql, final),
             });
-          else
+          else if (Option.isSome(external))
             yield* registerSqlPostcondition({
               name: "phone-custody-authority",
               check: Effect.gen(function* () {

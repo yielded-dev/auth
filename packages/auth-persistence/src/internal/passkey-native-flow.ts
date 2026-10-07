@@ -8,6 +8,7 @@ import type { PasskeyCeremonyMapping } from "./models/passkey-model";
 import type { NativeSqlTables } from "./native-sql-table";
 import { passkeyMatchesAccess, validPasskeyCeremony } from "./passkey-policy";
 import { exactSqlText, executeSqlChange } from "./sql-change";
+import { cleanupSqlRows } from "./sql-cleanup";
 import { appendSqlBatchStatement } from "./sql-commit";
 import type { TableModel } from "./table-model";
 
@@ -97,12 +98,19 @@ export const makePasskeyNativeFlow = Effect.fnUntraced(function* (
       : undefined;
   });
 
-  const cleanup = (moduleId: string, limit: number) =>
-    sql`delete from ${flow.name} where ${module(moduleId)} and ${flow.column(mapping.flow.flowId)} in (
-      select candidate from (select ${flow.column(mapping.flow.flowId)} as candidate from ${flow.name}
-        where ${module(moduleId)} and ${millis(flow.column(mapping.flow.expiresAt))} <= ${now}
-        order by ${flow.column(mapping.flow.expiresAt)}, ${flow.column(mapping.flow.flowId)} limit ${limit}) as passkey_cleanup
-    )`;
+  const cleanup = (moduleId: string, limit: number, batch = false) =>
+    cleanupSqlRows(
+      [
+        {
+          table: flow,
+          keys: [mapping.flow.moduleId, mapping.flow.flowId],
+          due: sql`${module(moduleId)} and ${millis(flow.column(mapping.flow.expiresAt))} <= ${now}`,
+          order: [flow.column(mapping.flow.expiresAt), flow.column(mapping.flow.flowId)],
+        },
+      ],
+      limit,
+      batch,
+    );
 
   const stage = Effect.fnUntraced(function* (statement: Fragment, count: number) {
     yield* appendSqlBatchStatement(sql`${statement}`);
