@@ -206,7 +206,6 @@ export const AccountMethodsLive = Layer.effect(
           .prepare({
             evidence: checked.success.evidence,
             requirement: checked.success.requirement,
-            fresh: true,
             claims: values,
           })
           .pipe(

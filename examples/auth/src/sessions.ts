@@ -8,6 +8,7 @@ import {
   exampleAuthority,
   initialRevision,
   policy,
+  requirement,
   staffSessions,
   subjectId,
 } from "./session-consumer";
@@ -82,6 +83,7 @@ const program = Effect.gen(function* () {
 
       const input = {
         evidence: yield* Schema.encodeEffect(Sessions.AuthenticationEvidence)(evidence),
+        requirement,
         claims: { tenant: "acme", staffNumber: "42" },
       };
 
@@ -113,8 +115,8 @@ const program = Effect.gen(function* () {
       const inspected = yield* (yield* staffSessions.SessionStrategy).inspect(issued.credential);
 
       if (
-        inspected.provenance.evidence.flowId !== evidence.flowId ||
-        !Object.isFrozen(inspected.provenance.evidence.proofs[0].verifiedAt) ||
+        inspected.inspection.provenance.evidence.flowId !== evidence.flowId ||
+        !Object.isFrozen(inspected.inspection.provenance.evidence.proofs[0].verifiedAt) ||
         "provenance" in verified ||
         "credentialVersion" in verified
       )
@@ -157,7 +159,9 @@ const program = Effect.gen(function* () {
         // This verifier installs no AuthenticationAuthority, persistence, or completion capability.
         const pureVerify = staffSessions.operations.Verify.handlerLayer(
           Effect.fn("Example.verifyOnly")(function* (input) {
-            return yield* (yield* staffSessions.SessionStrategy).verify(input.credential);
+            return yield* (yield* staffSessions.SessionStrategy)
+              .inspect(input.credential)
+              .pipe(Effect.map((source) => source.inspection.session));
           }),
         ).pipe(Layer.provide(stateless));
 

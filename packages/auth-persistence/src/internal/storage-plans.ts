@@ -93,7 +93,10 @@ const uniquePlans: Readonly<Record<string, readonly [string, ReadonlyArray<strin
     ["moduleId", "purpose", "scopeKey"],
   ],
   "unique(session.digest)": ["session", ["digest"]],
-  "unique(tombstone.subjectId,tombstone.sessionId)": ["tombstone", ["subjectId", "sessionId"]],
+  "unique(tombstone.moduleId,tombstone.subjectId,tombstone.sessionId)": [
+    "tombstone",
+    ["moduleId", "subjectId", "sessionId"],
+  ],
   "unique(tuple.identityKey)": ["ownership.tuple", ["identityKey"]],
   "unique(unlinkCommand.moduleId,unlinkCommand.commandId)": ["command", ["moduleId", "commandId"]],
 };

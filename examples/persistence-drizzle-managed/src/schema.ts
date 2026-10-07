@@ -51,7 +51,7 @@ export const {
   passwords,
   proofs,
   sessions,
-  sessionFlows,
+  pending,
   emailCredentials,
   passkeyCredentials,
   passkeyFlows,

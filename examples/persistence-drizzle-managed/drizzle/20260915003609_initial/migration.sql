@@ -76,19 +76,10 @@ CREATE TABLE `customer_auth_passwords` (
 	`normalization` text NOT NULL
 );
 --> statement-breakpoint
-CREATE TABLE `customer_auth_sessionFlows` (
-	`flow_id` text NOT NULL,
-	`subject_id` text NOT NULL,
-	`state` text NOT NULL,
-	`pending_digest` text,
-	`dedup_until` integer NOT NULL
-);
---> statement-breakpoint
 CREATE TABLE `customer_auth_sessions` (
 	`session_id` text NOT NULL,
 	`subject_id` text NOT NULL,
 	`digest` text NOT NULL,
-	`version` text NOT NULL,
 	`security_revision` text NOT NULL,
 	`issued_at` integer NOT NULL,
 	`expires_at` integer NOT NULL,
@@ -114,8 +105,6 @@ CREATE UNIQUE INDEX `customer_auth_passwords_key_0` ON `customer_auth_passwords`
 --> statement-breakpoint
 CREATE UNIQUE INDEX `customer_auth_passwords_key_1` ON `customer_auth_passwords` (`module_id`,`credential_id`);
 --> statement-breakpoint
-CREATE UNIQUE INDEX `customer_auth_sessionFlows_key_0` ON `customer_auth_sessionFlows` (`flow_id`);
---> statement-breakpoint
 CREATE UNIQUE INDEX `customer_auth_sessions_key_0` ON `customer_auth_sessions` (`session_id`);
 --> statement-breakpoint
 CREATE UNIQUE INDEX `customer_auth_sessions_key_1` ON `customer_auth_sessions` (`digest`);
@@ -137,3 +126,21 @@ CREATE TABLE `customer_auth_proofs` (
 CREATE UNIQUE INDEX `customer_auth_proofs_key_0` ON `customer_auth_proofs` (`module_id`,`purpose`,`series_key`);
 --> statement-breakpoint
 CREATE UNIQUE INDEX `customer_auth_proofs_key_1` ON `customer_auth_proofs` (`module_id`,`proof_id`);
+
+--> statement-breakpoint
+CREATE TABLE `customer_auth_pending` (
+	`module_id` text NOT NULL,
+	`kind` text NOT NULL,
+	`digest` text NOT NULL,
+	`version` text NOT NULL,
+	`flow_id` text NOT NULL,
+	`subject_id` text NOT NULL,
+	`binding_digest` text NOT NULL,
+	`snapshot` text NOT NULL,
+	`expires_at` integer NOT NULL,
+	`attempt_limit` integer NOT NULL,
+	`failed_attempts` integer NOT NULL,
+	`consumed` integer NOT NULL
+);
+--> statement-breakpoint
+CREATE UNIQUE INDEX `customer_auth_pending_key_0` ON `customer_auth_pending` (`digest`);

@@ -149,7 +149,8 @@ const result = yield* auth.regenerateRecoveryCodes("totp", { commandId, actionPr
 ```
 
 This invalidates every old code, including unused ones, and privately reveals ten
-new codes once. It leaves the authenticator enabled. Save the replacement set
+new codes once. It leaves the authenticator enabled and preserves existing
+sessions; the result is `{ enabled: true }` without an invalidation claim. Save the replacement set
 and discard the old one. Regeneration does not require enabling pending recovery
 or lost-factor reset. A session alone, or possession of a recovery code alone,
 is insufficient authorization.

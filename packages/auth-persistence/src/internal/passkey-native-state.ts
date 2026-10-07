@@ -107,7 +107,11 @@ export const makePasskeyNativeReadState = Effect.fnUntraced(function* (
     });
   };
 
-  const decodeCredential = (row: PasskeyNativeRow, current: M.PasskeyCredential["revision"]) => {
+  const decodeCredential = Effect.fnUntraced(function* (
+    row: PasskeyNativeRow,
+    current: M.PasskeyCredential["revision"],
+    subjectRow: PasskeyNativeRow,
+  ) {
     const value = read.credential.decode(row);
     const owned = current.credentials.find((entry) => entry.credentialId === value.credentialId);
 
@@ -123,9 +127,10 @@ export const makePasskeyNativeReadState = Effect.fnUntraced(function* (
     return M.snapshotPasskeySync(M.PasskeyCredential, {
       ...value,
       revision: current,
+      requirement: yield* read.subject.decodeRequirement(subjectRow),
       active: true,
     });
-  };
+  });
 
   const readAuthority = Effect.fnUntraced(function* (nativeId: unknown, lock: boolean) {
     // The subject lock is a distinct first statement; joined FOR UPDATE cannot
@@ -248,12 +253,13 @@ export const makePasskeyNativeReadState = Effect.fnUntraced(function* (
         }),
       );
 
-      return decodeCredential(
+      return yield* decodeCredential(
         row,
         revision(
           subjectRow,
           rows.map((row) => f.decode(row, "f_")),
         ),
+        subjectRow,
       );
     }
 
@@ -269,7 +275,9 @@ export const makePasskeyNativeReadState = Effect.fnUntraced(function* (
     );
     const current = yield* readAuthority(read.credential.decodeSubjectId(row), false);
 
-    return current === undefined ? undefined : decodeCredential(row, current.revision);
+    return current === undefined
+      ? undefined
+      : yield* decodeCredential(row, current.revision, current.row);
   });
 
   return {

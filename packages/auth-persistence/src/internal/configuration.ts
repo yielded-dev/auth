@@ -126,6 +126,9 @@ export type Ports<C extends ClaimsCodec, Id extends string, A extends Definition
   | AuthenticationAuthority
   | KeyId<A["sessions"]["StatefulSessionPersistence"]>
   | KeyId<A["sessions"]["SessionRepository"]>
+  | KeyId<A["sessions"]["PendingAuthentication"]>
+  | KeyId<A["sessions"]["SessionStepUpPersistence"]>
+  | KeyId<A["sessions"]["SessionCleanup"]>
   | (Enabled<A, "password"> extends never ? never : PasswordPersistence)
   | KeyId<RegistrationKey<ManagedPassword<A>>>
   | (Enabled<A, "passkey"> extends never ? never : PasskeyPersistence | PasskeyCredentials)
@@ -138,7 +141,7 @@ export type Roles<C extends ClaimsCodec, Id extends string, A extends Definition
   | "identifiers"
   | "credentials"
   | "sessions"
-  | "sessionFlows"
+  | "pending"
   | (Enabled<A, "password"> extends never ? never : "passwords")
   | (Enabled<A, "email"> extends never ? never : "emailCredentials")
   | (Enabled<A, "passkey"> extends never ? never : "passkeyCredentials" | "passkeyFlows")

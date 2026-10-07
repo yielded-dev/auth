@@ -22,6 +22,7 @@ export {
   TotpActionAuthorization,
   TotpEnrollmentStarted,
   TotpManagementResult,
+  TotpRecoveryRegenerated,
   TotpRecoveryReset,
   TotpDecision,
   TotpMutation,

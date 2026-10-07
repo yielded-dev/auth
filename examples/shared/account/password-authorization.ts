@@ -24,11 +24,11 @@ export const authorizePasswordSession = Effect.fn("Customers.authorizePasswordSe
     phishingResistant: true,
   });
 
-  const original = source.provenance.evidence;
+  const original = source.inspection.provenance.evidence;
 
   if (
-    source.session.sessionId !== invocation.sessionId ||
-    source.session.subjectId !== invocation.subjectId ||
+    source.inspection.session.sessionId !== invocation.sessionId ||
+    source.inspection.session.subjectId !== invocation.subjectId ||
     original.revision.subjectId !== challenge.revision.subjectId ||
     original.revision.securityRevision !== challenge.revision.securityRevision
   )

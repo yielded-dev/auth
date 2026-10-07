@@ -151,6 +151,7 @@ export interface SqlCommitExecutor<Failure> {
   ) => Effect.Effect<A, Failure, Exclude<Exclude<R, SqlClient.SqlClient>, LifecycleHooks>>;
   readonly coordinate: <A, E, R>(
     effect: Effect.Effect<A, E, R>,
+    mode?: "transaction" | "statement",
   ) => Effect.Effect<A, E | Failure, OwnedRequirements<R>>;
   readonly coordinateBatch: <A, E, R>(
     effect: Effect.Effect<A, E, R>,
@@ -334,7 +335,7 @@ export const makeSqlCommitExecutor = Effect.fnUntraced(function* <Failure>(
 
   const coordinate = <A, E, R>(
     effect: Effect.Effect<A, E, R>,
-    mode: "transaction" | "batch",
+    mode: SqlCommitMode,
     batch?: SqlBatchCommit["Service"],
   ) => {
     class ApplicationFailure extends Data.TaggedError("SqlCommitApplicationFailure")<{
@@ -364,7 +365,10 @@ export const makeSqlCommitExecutor = Effect.fnUntraced(function* <Failure>(
 
   return {
     read,
-    coordinate: <A, E, R>(effect: Effect.Effect<A, E, R>) => coordinate(effect, "transaction"),
+    coordinate: <A, E, R>(
+      effect: Effect.Effect<A, E, R>,
+      mode: "transaction" | "statement" = "transaction",
+    ) => coordinate(effect, mode),
     coordinateBatch: <A, E, R>(effect: Effect.Effect<A, E, R>) =>
       Effect.flatMap(SqlBatchCommit, (batch) => coordinate(effect, "batch", batch)),
     run: <A, E, R>(

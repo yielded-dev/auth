@@ -567,7 +567,6 @@ const makePasswordWithManagement = <
             .prepare({
               evidence: verified.evidence,
               requirement: verified.requirement,
-              fresh: true,
               claims: values,
             })
             .pipe(Effect.flatMap(read), Effect.mapError(passwordCompletionFailure));

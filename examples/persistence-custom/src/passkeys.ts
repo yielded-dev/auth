@@ -40,6 +40,7 @@ const credentialFor = (state: Readonly<State>, rpId: string, protocolId: string)
     ? undefined
     : {
         ...saved.credential,
+        requirement,
         revision: revision(state, account),
       };
 };
@@ -316,7 +317,7 @@ export const PasskeysLive = Layer.effectContext(
                 return prepare({ _tag: "Rejected" }, journal);
               const id = nextId(state, "passkey");
 
-              const credential = Passkey.PasskeyCredential.make({
+              const credential = {
                 credentialId: id,
                 rpId: ceremony.profile.rpId,
                 protocolCredentialId: input.verified.protocolCredentialId,
@@ -339,7 +340,7 @@ export const PasskeysLive = Layer.effectContext(
                 backupEligible: input.verified.backupEligible,
                 backupState: input.verified.backupState,
                 counter: input.verified.counter,
-              });
+              };
 
               const summary = {
                 credentialId: id,

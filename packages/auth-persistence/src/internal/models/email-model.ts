@@ -18,6 +18,9 @@ export interface EmailSubjectReadTable<Subject extends Table> {
   readonly securityRevision: ColumnKey<Subject>;
   readonly isActiveStatus: (value: unknown) => boolean;
   readonly activeStatusValue: unknown;
+  readonly decodeRequirement: (
+    row: Subject["select"],
+  ) => Effect.Effect<AuthenticationRequirement, PersistenceMappingError>;
 }
 
 export interface EmailSubjectTable<Subject extends Table> extends EmailSubjectReadTable<Subject> {
@@ -97,7 +100,7 @@ export interface EmailCredentialReadTable<
     readonly identifier: Identifier["select"];
     readonly credential: Credential["select"];
   }) => Effect.Effect<
-    import("@yielded/auth/Email").EmailCredentialSnapshot,
+    Omit<import("@yielded/auth/Email").EmailCredentialSnapshot, "requirement">,
     PersistenceMappingError
   >;
 }

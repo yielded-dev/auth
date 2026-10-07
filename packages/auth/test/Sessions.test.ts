@@ -28,22 +28,21 @@ const sessionLayer = (audience: string) =>
       ]),
     );
 
+const requirement = Sessions.AuthenticationRequirement.make({
+  alternatives: [
+    {
+      factors: ["knowledge"],
+      userVerified: false,
+      phishingResistant: false,
+      minimumCredentials: 1,
+    },
+  ],
+  maximumAgeMillis: 60_000,
+});
+
 const authority = Layer.succeed(Sessions.AuthenticationAuthority, {
   capture: () => Effect.die("This regression supplies trusted method evidence directly"),
-  requirements: () =>
-    Effect.succeed(
-      Sessions.AuthenticationRequirement.make({
-        alternatives: [
-          {
-            factors: ["knowledge"],
-            userVerified: false,
-            phishingResistant: false,
-            minimumCredentials: 1,
-          },
-        ],
-        maximumAgeMillis: 60_000,
-      }),
-    ),
+  requirements: () => Effect.succeed(requirement),
   approve: (_input, prepare) =>
     coordinateCommit((journal) => Effect.sync(() => prepare(undefined, journal))).pipe(
       Effect.map((result) => result.value),
@@ -76,7 +75,7 @@ const issue = Effect.fnUntraced(
       ],
     });
 
-    const prepared = yield* strategy.prepareEstablish({ evidence, claims: {} });
+    const prepared = yield* strategy.prepareEstablish({ evidence, requirement, claims: {} });
     const issued = yield* prepared.read;
     const command = issued.credentialCommands.find((command) => command._tag === "Issue");
 
@@ -88,9 +87,9 @@ const issue = Effect.fnUntraced(
 );
 
 const verify = (token: Redacted.Redacted<string>, audience: string) =>
-  Effect.flatMap(sessions.SessionStrategy, (strategy) => strategy.verify(token)).pipe(
-    Effect.provide(sessionLayer(audience)),
-  );
+  Effect.flatMap(sessions.SessionStrategy, (strategy) =>
+    strategy.inspect(token).pipe(Effect.map((source) => source.inspection.session)),
+  ).pipe(Effect.provide(sessionLayer(audience)));
 
 // Preserve the existing audience-isolation regression at the current session boundary.
 // Shared keys isolate the audience check from signature rejection.

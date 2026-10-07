@@ -137,7 +137,6 @@ export const storageTables = {
       sessionId: text,
       subjectId: text,
       digest: text,
-      version: text,
       securityRevision: text,
       issuedAt: integer,
       expiresAt: integer,
@@ -146,15 +145,22 @@ export const storageTables = {
     },
     [["sessionId"], ["digest"]],
   ),
-  sessionFlows: spec(
+  pending: spec(
     {
+      moduleId: text,
+      kind: text,
+      digest: text,
+      version: text,
       flowId: text,
       subjectId: text,
-      state: text,
-      pendingDigest: optionalText,
-      dedupUntil: integer,
+      bindingDigest: text,
+      snapshot: text,
+      expiresAt: integer,
+      attemptLimit: integer,
+      failedAttempts: integer,
+      consumed: boolean,
     },
-    [["flowId"]],
+    [["digest"]],
   ),
 } as const;
 

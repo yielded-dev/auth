@@ -51,6 +51,11 @@ import type { RequestBindingConfig } from "../operations/RequestBindingConfig";
 import { ProofUnavailable } from "../proofs/errors";
 import { ProofRequestContext } from "../proofs/ProofRequestContext";
 import { sessionCacheTransport } from "../sessions/cookieCache";
+import {
+  cacheSessionInvocation,
+  SessionVerificationCapture,
+  withSessionRequest,
+} from "../sessions/invocation";
 import type { SessionMetadata } from "../sessions/models";
 import { httpGroup, matchesEndpoint } from "./auth-contract";
 import { makeOAuth, type OAuthOptions } from "./oauth";
@@ -144,7 +149,10 @@ export const layer = <
   const Options extends AuthHttpOptions<unknown, unknown, unknown>,
 >(
   auth: Omit<Context.Key<I, Api>, typeof Unify.unifySymbol> & {
-    readonly sessions: { readonly Session: Schema.Codec<S, unknown, unknown, RE> };
+    readonly sessions: {
+      readonly moduleId: string;
+      readonly Session: Schema.Codec<S, unknown, unknown, RE>;
+    };
     readonly contract: { readonly basePath?: string; readonly actions: Actions };
     readonly layer: Layer.Layer<I, AE, AR>;
   },
@@ -171,7 +179,10 @@ export const make = <
   const Options extends AuthHttpOptions<unknown, unknown, unknown>,
 >(
   auth: Omit<Context.Key<I, Api>, typeof Unify.unifySymbol> & {
-    readonly sessions: { readonly Session: Schema.Codec<S, unknown, unknown, RE> };
+    readonly sessions: {
+      readonly moduleId: string;
+      readonly Session: Schema.Codec<S, unknown, unknown, RE>;
+    };
     readonly contract: { readonly basePath?: string; readonly actions: Actions };
     readonly layer: Layer.Layer<I, AE, AR>;
   },
@@ -266,17 +277,37 @@ export const make = <
     api: Pick<SessionApi<S>, "verifySession">,
     credential: Redacted.Redacted<string> | undefined,
   ) =>
-    credential === undefined
-      ? Effect.succeed(guest)
-      : api.verifySession(credential).pipe(
-          Effect.map((session) => ({
+    Effect.gen(function* () {
+      if (credential === undefined) return guest;
+      const capture = yield* Effect.serviceOption(SessionVerificationCapture);
+      const now = DateTime.toEpochMillis(yield* DateTime.now);
+
+      const original =
+        Option.isSome(capture) && capture.value.isActive()
+          ? capture.value.sessions.findLast(
+              (value) =>
+                value.moduleId === auth.sessions.moduleId &&
+                Redacted.value(value.credential) === Redacted.value(credential) &&
+                now < value.expiresAtMillis &&
+                now < value.absoluteExpiresAtMillis,
+            )
+          : undefined;
+
+      const session =
+        original ??
+        (yield* api
+          .verifySession(credential)
+          .pipe(Effect.catchTag("SessionInvalid", () => Effect.succeed(null))));
+
+      return session === null
+        ? guest
+        : {
             _tag: "Authenticated" as const,
             subjectId: session.subjectId,
             sessionId: session.sessionId,
             assurance: session.assurance,
-          })),
-          Effect.catchTag("SessionInvalid", () => Effect.succeed(guest)),
-        );
+          };
+    });
 
   /** Existing operation contracts retain private predecode injection and their wire format. */
   const operationLayer = Layer.merge(
@@ -407,7 +438,9 @@ export const make = <
           commands.push(...values);
         });
 
-      const resolveInvocation = resolve(api, security.credentials.session);
+      const resolveInvocation = yield* cacheSessionInvocation(
+        resolve(api, security.credentials.session),
+      );
 
       return yield* Effect.gen(function* () {
         let response = yield* effect.pipe(
@@ -522,7 +555,7 @@ export const make = <
           );
         }),
       );
-    });
+    }, withSessionRequest);
 
   const requestLayer = HttpRouter.middleware<{
     provides: I | AuthRequest | ProofRequestContext;

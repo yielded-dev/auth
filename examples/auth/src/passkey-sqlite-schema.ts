@@ -126,6 +126,7 @@ export const read = {
     status: "status",
     securityRevision: "securityRevision",
     decodeId: (row) => row.id!,
+    decodeRequirement: () => Effect.succeed(requirement),
     isActiveStatus: active,
     activeCondition: sql`${subject.status} = 'active'`,
   },
@@ -151,7 +152,8 @@ export const read = {
       // oxlint-disable-next-line no-restricted-properties -- the partial native database row is decoded at the storage boundary.
       Schema.decodeUnknownSync(
         Passkey.PasskeyCredential.mapFields(
-          ({ revision: _revision, active: _active, ...fields }) => fields,
+          ({ revision: _revision, active: _active, requirement: _requirement, ...fields }) =>
+            fields,
         ),
       )({ ...row, profile: Schema.decodeSync(profileCodec)(row.profile!) }),
     decodeSubjectId: (row) => row.subjectId!,

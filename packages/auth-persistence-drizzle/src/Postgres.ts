@@ -23,17 +23,6 @@ import {
 
 export { Database } from "./drizzle/pg-database";
 
-export {
-  coordinatePgAuthenticationAuthority as coordinateAuthenticationAuthority,
-  coordinatePgPendingAuthentication as coordinatePendingAuthentication,
-  coordinatePgSignedSessionValidity as coordinateSignedSessionValidity,
-  coordinatePgStatefulSessions as coordinateStatefulSessions,
-  makePgAuthenticationAuthorityServices as makeAuthenticationAuthorityServices,
-  makePgPendingAuthenticationServices as makePendingAuthenticationServices,
-  makePgSignedSessionValidityServices as makeSignedSessionValidityServices,
-  makePgStatefulSessionServices as makeStatefulSessionServices,
-} from "./drizzle/pg-sessions";
-
 import { makeProofTarget } from "./drizzle/proof-drivers";
 
 export const { coordinateProofPersistence, makeProofPersistenceServices } = makeProofTarget(
@@ -97,11 +86,6 @@ export const makeIdentityServices = <
   mapping: IdentityTables<Subject, Identifier, External, Request, NativeId>,
 ) => makePgIdentityServices(mapping);
 
-export {
-  makePgSessionStepUpServices as makeSessionStepUpServices,
-  coordinatePgSessionStepUp as coordinateSessionStepUp,
-} from "./drizzle/pg-sessions";
-
 import { makeOAuthTarget } from "./drizzle/oauth-drivers";
 import { sqlClientOAuthStandaloneGuard } from "./drizzle/oauth-target";
 
@@ -159,21 +143,6 @@ export const {
   coordinatePasskeyRegistration,
 } = passkeyTarget;
 
-import { makeTotpTarget, sqlClientTotpStandaloneGuard } from "./drizzle/totp-target";
-
-const totpTarget = makeTotpTarget<
-  Database,
-  EffectPgDatabase<AnyRelations>,
-  AnyPgTable<{ dialect: "pg" }>
->(Database, {
-  mode: "interactive",
-  dialect: "pg",
-  locking: true,
-  standaloneGuard: sqlClientTotpStandaloneGuard,
-});
-
-export const { makeTotpPersistenceServices, coordinateTotpPersistence } = totpTarget;
-
 import { makePhoneTarget } from "./drizzle/phone-drivers";
 
 export const { makePhonePersistenceServices, coordinatePhonePersistence } = makePhoneTarget(
@@ -196,3 +165,31 @@ export const AuthPersistence = {
 
 /** Construct Drizzle from the driver's SQL-client Layer. */
 export const databaseLayer = Layer.effect(Database, makeWithDefaults({}));
+
+import { makeSessionTarget } from "./drizzle/session-drivers";
+
+export const {
+  coordinateAuthenticationAuthority,
+  coordinatePendingAuthentication,
+  coordinateSignedSessionValidity,
+  coordinateStatefulSessions,
+  makeAuthenticationAuthorityServices,
+  makePendingAuthenticationServices,
+  makeSignedSessionValidityServices,
+  makeStatefulSessionServices,
+  makeSessionStepUpServices,
+  coordinateSessionStepUp,
+  makeSessionCleanupServices,
+} = makeSessionTarget(Database, {
+  mode: "native",
+  dialect: "pg",
+  transactionConstructor: PasskeyTransaction,
+});
+
+import { makeTotpTarget } from "./drizzle/totp-target";
+
+export const { makeTotpPersistenceServices, coordinateTotpPersistence } = makeTotpTarget(Database, {
+  mode: "native",
+  dialect: "pg",
+  transactionConstructor: PasskeyTransaction,
+});

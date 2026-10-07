@@ -189,7 +189,7 @@ export const PasswordPersistenceLive = Layer.effect(
 );
 ```
 
-`passwordMapping` maps your account, identifier, credential, revision, and receipt
+`passwordMapping` maps your account, identifier, credential, and authority revision
 tables. It is a `PasswordPersistenceMapping` from `@yielded/auth-persistence-drizzle`.
 Supply `LifecycleHooks` and your other account/session Layers at the composition root.
 Driver factories and transaction coordinators declare `Database` and Effect
@@ -209,20 +209,26 @@ coherent credential snapshot without writes or a transaction held across hashing
 parameters change; a lost comparison is a no-op. Rate limits belong to
 `PasswordAttemptLimiter`, so no password attempt table or cleanup operation is needed.
 
+Explicit session mappings declare every independently mutable subject input to
+`decodeRequirement` in `subject.requirementColumns`. D1 requires this declaration;
+use `[]` only for a constant decoder. Native coordinated owners re-evaluate the
+decoder after application writes, while D1 guards the declared inputs in its batch.
+
 `AuthenticationAuthority.capture` returns `{ revision, requirement }` from the same
 subject read, including the full active factor vector. Requested credential IDs are
-required anchors; `capture(subjectId, [])` still returns all active factors.
-Password lookup returns that full vector too, and sign-in confirms it with the
-existing policy capture before verifying the password. Only actual verification
-produces a factor proof; unrelated factors never gain proof timestamps.
-Password sign-in reuses the requirement to choose a session or a pending second factor. The committing session or password-mutation authority must
+required anchors; `capture(subjectId, [])` still returns all active factors. Only
+actual method verification produces proofs. Method credential snapshots also carry
+that current requirement;
+explicit email and passkey mappings derive it with `subject.decodeRequirement` from
+the joined subject row rather than storing policy on the credential. Password sign-in reuses that requirement to choose a session or a
+pending second factor. The committing session or password-mutation authority must
 still check current status, policy, and the original revisions. Credential replacement
 updates both the password and authority credential revisions; identifier removal,
 rebinding, or eligibility changes must atomically bump the subject security revision.
 
-Fresh password sign-in sets `fresh: true` when establishing a session and needs no
-session flow record. Pending-factor completion, handoffs, and other methods retain
-flow deduplication. D1 checks authority through its fixed guarded batch.
+Session issuance has no flow-deduplication table. Each method consumes its own proof
+before issuance; an unknown issuance outcome requires a new authentication ceremony.
+D1 checks the original authority through its fixed guarded batch.
 
 Use `databaseLayer` to acquire `Database` from the platform SQL client. Most drivers
 also accept a native database through `Layer.succeed(Database, db)`. Durable Object
@@ -386,9 +392,17 @@ owner-scoped revocation tombstone in one statement. Each ID uses its own column
 codec. Both modes check current authority and fresh expiry times on every read;
 committed revocations retain immediate invalidation.
 
-Ordinary verification opens no transaction. Within a caller-owned Effect SQL
-transaction, verification uses a savepoint so a caught query failure leaves the
-transaction usable. Mutation transaction and receipt guarantees still apply.
+Ordinary verification uses plain reads. A caller-owned transaction retains the
+database's normal query-failure behavior. Mutation transaction and receipt
+guarantees still apply.
+
+Explicit session mappings require `moduleId`, the shared engine clock, and the
+native active-status values. Session rotation uses the captured record and old
+digest as its guard; there is no row-version column or session-flow table.
+`SessionPendingTables` maps one module-scoped table for `Login` and `StepUp`, with
+an exact digest key and kind on every read or write. The Login codec preserves
+application claims. `SessionCleanup` shares one total deletion limit across
+expired pending proofs and due revocation tombstones; see [session maintenance](./sessions#custom-composition).
 
 ## Passwords
 
@@ -569,6 +583,18 @@ references share compatible SQL types and ID encodings; custom codecs that trans
 IDs outside SQL require additional mapped reads. Passkey budgets use Effect's
 `RateLimiter`, with a bounded process-local default. Supply a shared `RateLimiter` or
 `RateLimiterStore` for limits coordinated across replicas.
+
+## TOTP
+
+`TotpMapping.subject.requirementColumns` follows the same policy-input contract as
+session mappings: declare all mutable decoder inputs, or `[]` for constant policy.
+D1 rejects omission. Both native and batch owners retain the original authority
+vector and authorization deadline.
+
+Recovery reset maps the same Login pending table and codec as sessions. The owner
+matches its module, kind, original digest, binding and credential revisions; a
+step-up intent cannot authorize recovery reset. Recovery-code regeneration changes
+the factor version while preserving the subject revision and existing sessions.
 
 ## Phone
 

@@ -3,7 +3,6 @@ import { SessionUnavailable } from "@yielded/auth/Sessions";
 import { DateTime, Effect } from "effect";
 
 import { PersistenceMappingError } from "./mapping-error";
-import type { SessionSqlOptions } from "./session-store";
 
 export const preservesRevision = (
   completed: AuthenticationEvidence,
@@ -38,7 +37,7 @@ export const preservesRevision = (
 };
 
 export const allocateSessionValue = <A>(
-  mode: SessionSqlOptions["mode"],
+  mode: "interactive" | "synchronous" | "batch",
   asynchronous: Effect.Effect<A, PersistenceMappingError> | undefined,
   synchronous: (() => A) | undefined,
 ): Effect.Effect<A, PersistenceMappingError | SessionUnavailable> => {

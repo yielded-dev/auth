@@ -5,6 +5,7 @@ import {
   PasskeyPersistence,
 } from "@yielded/auth/Passkey";
 import type { SubjectId } from "@yielded/auth/Schema";
+import type { AuthenticationRequirement } from "@yielded/auth/Sessions";
 import { Effect, Layer } from "effect";
 
 import type { TableModel as Table, SqlExpression } from "../table-model";
@@ -65,6 +66,9 @@ export interface PasskeySubjectReadTable<
   readonly id: PasskeyColumn<T>;
   readonly status: PasskeyColumn<T>;
   readonly securityRevision: PasskeyColumn<T>;
+  readonly decodeRequirement: (
+    row: T["select"],
+  ) => Effect.Effect<AuthenticationRequirement, PersistenceMappingError>;
   readonly decodeId: (row: Readonly<Partial<T["select"]>>) => N;
   readonly isActiveStatus: (value: unknown) => boolean;
   readonly activeCondition: Expression;
@@ -109,7 +113,7 @@ export interface PasskeyCredentialReadTable<
   readonly counter: PasskeyColumn<T>;
   readonly decode: (
     row: Readonly<Partial<T["select"]>>,
-  ) => Omit<PasskeyCredential, "revision" | "active">;
+  ) => Omit<PasskeyCredential, "revision" | "active" | "requirement">;
   readonly decodeSubjectId: (row: Readonly<Partial<T["select"]>>) => N;
   readonly isActiveStatus: (value: unknown) => boolean;
   readonly activeCondition: Expression;

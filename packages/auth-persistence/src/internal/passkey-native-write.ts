@@ -135,13 +135,14 @@ export const makePasskeyNativeWrites = (
     nativeId: unknown,
     credentialId: string,
     revision: M.PasskeyCredential["revision"],
+    subjectRow: Readonly<Record<string, unknown>>,
   ) {
     const rows =
       yield* sql`select ${credential.fields("c_")} from ${credential.name} where ${owned(nativeId, credentialId)}`;
 
     return rows.length !== 1
       ? undefined
-      : state.decodeCredential(credential.decode(rows[0]!, "c_"), revision);
+      : yield* state.decodeCredential(credential.decode(rows[0]!, "c_"), revision, subjectRow);
   });
 
   const insertCredential = Effect.fnUntraced(function* (
@@ -151,6 +152,7 @@ export const makePasskeyNativeWrites = (
     revision: M.PasskeyCredential["revision"],
     name: string,
     nowMillis: number,
+    subjectRow: Readonly<Record<string, unknown>>,
   ) {
     invariant(ceremony.context._tag === "Enrollment" || ceremony.context._tag === "Registration");
     const credentialId = yield* randomId;
@@ -159,6 +161,7 @@ export const makePasskeyNativeWrites = (
 
     const value = M.snapshotPasskeySync(M.PasskeyCredential, {
       credentialId,
+      requirement: yield* read.subject.decodeRequirement(subjectRow),
       rpId: ceremony.profile.rpId,
       protocolCredentialId: verified.protocolCredentialId,
       userHandle: ceremony.context.userHandle,
@@ -312,7 +315,13 @@ export const makePasskeyNativeManagement = (
           const current = yield* state.readAuthority(nativeId, false);
 
           if (current === undefined) return { _tag: "Rejected" } as const;
-          const value = yield* currentCredential(nativeId, input.credentialId, current.revision);
+
+          const value = yield* currentCredential(
+            nativeId,
+            input.credentialId,
+            current.revision,
+            current.row,
+          );
 
           return value === undefined
             ? ({ _tag: "Rejected" } as const)
@@ -395,6 +404,7 @@ export const makePasskeyNativeManagement = (
             current.revision,
             context.name,
             current.nowMillis,
+            current.row,
           );
 
           yield* postcondition(
@@ -466,6 +476,7 @@ export const makePasskeyNativeManagement = (
             nativeId,
             input.credential.credentialId,
             current.revision,
+            current.row,
           );
 
           const policy = M.snapshotPasskeySync(

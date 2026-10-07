@@ -180,7 +180,11 @@ export const makeNativeEmailReader = Effect.fnUntraced(function* (
         credential: credentialRow,
       });
 
-      return yield* Schema.decodeEffect(EmailCredentialSnapshot)({ ...decoded, revision });
+      return yield* Schema.decodeEffect(EmailCredentialSnapshot)({
+        ...decoded,
+        revision,
+        requirement: yield* s.decodeRequirement(subjectRow),
+      });
     });
 
     ensureEmail(

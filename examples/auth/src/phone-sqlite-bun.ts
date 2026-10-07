@@ -83,13 +83,17 @@ export const phoneConsumer = Effect.gen(function* () {
   const proofServices = yield* makeProofPersistenceServices(proofs);
 
   const authority = yield* makeAuthenticationAuthorityServices({
+    moduleId: sessions.moduleId,
+    clock: proofs.clock,
     subjectId,
     subject: {
       table: customer,
       id: "customerNo",
       status: "enabled",
       securityRevision: "security",
-      isActiveStatus: (value) => value === true,
+      activeStatusValue: true,
+      isActiveStatus: (value: unknown) => value === true,
+      requirementColumns: [],
       decodeRequirement: () => Effect.succeed(requirement),
     },
     credential: {
@@ -98,7 +102,8 @@ export const phoneConsumer = Effect.gen(function* () {
       credentialId: "key",
       revision: "revision",
       status: "enabled",
-      isActiveStatus: (value) => value === true,
+      activeStatusValue: true,
+      isActiveStatus: (value: unknown) => value === true,
     },
     isConstraintConflict: () => false,
   });
@@ -180,11 +185,11 @@ export const phoneConsumer = Effect.gen(function* () {
             .inspect(proof)
             .pipe(Effect.mapError(() => PhoneOtp.PhoneActionRequired.make({})));
 
-          if (inspected.provenance.evidence.revision.subjectId !== invocation.subjectId)
+          if (inspected.inspection.provenance.evidence.revision.subjectId !== invocation.subjectId)
             return yield* PhoneOtp.PhoneActionRequired.make({});
 
           const evidence = {
-            ...inspected.provenance.evidence,
+            ...inspected.inspection.provenance.evidence,
             flowId: challenge.flowId,
             bindingDigest: challenge.bindingDigest,
           };
@@ -323,7 +328,9 @@ export const phoneConsumer = Effect.gen(function* () {
     );
 
     const initialToken = token("session"),
-      initial = yield* sessionStrategy.verify(Redacted.make(initialToken));
+      initial = yield* sessionStrategy
+        .inspect(Redacted.make(initialToken))
+        .pipe(Effect.map((source) => source.inspection.session));
 
     assert(
       initial.claims.customerNumber === nativeSubject(initial.subjectId),
@@ -374,7 +381,12 @@ export const phoneConsumer = Effect.gen(function* () {
       assert(result._tag === "Authenticated", "phone-only sign-in failed");
       const signed = token("session");
 
-      return { signed, session: yield* sessionStrategy.verify(Redacted.make(signed)) };
+      return {
+        signed,
+        session: yield* sessionStrategy
+          .inspect(Redacted.make(signed))
+          .pipe(Effect.map((source) => source.inspection.session)),
+      };
     });
 
     const verifiedLogin = yield* signIn("+27820000002"),
@@ -403,7 +415,10 @@ export const phoneConsumer = Effect.gen(function* () {
       !sent.some((m) => m.id === failed.challenge.reference.proofId),
       "failed delivery created accepted message",
     );
-    const old = yield* sessionStrategy.verify(Redacted.make(initialToken));
+
+    const old = yield* sessionStrategy
+      .inspect(Redacted.make(initialToken))
+      .pipe(Effect.map((source) => source.inspection.session));
 
     assert(
       old.absoluteExpiresAt.epochMilliseconds === initial.absoluteExpiresAt.epochMilliseconds,

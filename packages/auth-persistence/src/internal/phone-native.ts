@@ -276,6 +276,7 @@ export const makeNativePhoneServices = Effect.fnUntraced(function* (
             custody.state !== "verified" ||
             custody.verifiedAtMillis === null ||
             revision === null ||
+            current.subjectRow === undefined ||
             !revision.credentials.some(
               (f) =>
                 f.credentialId === custody.credentialId &&
@@ -293,6 +294,7 @@ export const makeNativePhoneServices = Effect.fnUntraced(function* (
               credentialId: custody.credentialId,
               credentialRevision: custody.credentialRevision,
               revision,
+              requirement: yield* resolve(mapping.subject.decodeRequirement(current.subjectRow)),
             }),
           );
         }),
@@ -498,16 +500,36 @@ export const makeNativePhoneServices = Effect.fnUntraced(function* (
                 ]),
               ),
             );
-          if (input.action === "register")
-            yield* stage(
-              subject.insert(
-                s.encodeInsert!({ id: native, securityRevision, phoneNumber: target.phoneNumber }),
-              ),
-            );
-          else
+          let subjectRow = captured.subjectRow;
+
+          if (input.action === "register") {
+            const inserted = s.encodeInsert!({
+              id: native,
+              securityRevision,
+              phoneNumber: target.phoneNumber,
+            });
+
+            yield* stage(subject.insert(inserted));
+            if (batch === undefined) {
+              // Provisioned defaults may participate in current sign-in policy.
+              const rows =
+                yield* sql`select ${subject.fields("provisioned_")} from ${subject.name} where ${id(subject, s.id, native)} limit 2`;
+
+              ensure(rows.length === 1);
+              subjectRow = subject.decode(rows[0]!, "provisioned_");
+            } else {
+              // Fixed batches require the synchronous provisioning encoder to
+              // provide every value needed by its requirement decoder.
+              subjectRow = inserted;
+            }
+          } else {
             yield* stage(
               sql`${subject.update({ [s.securityRevision]: securityRevision })} where ${id(subject, s.id, native)} and ${exact(subject, s.securityRevision, target.revision!.securityRevision)} and ${activeSubject} and ${sql.and(freshness)}`,
             );
+            if (subjectRow !== undefined)
+              subjectRow = { ...subjectRow, [s.securityRevision]: securityRevision };
+          }
+          ensure(subjectRow !== undefined);
           const finalConditions: Fragment[] = [...freshness];
 
           if (target.source !== null) {
@@ -622,6 +644,7 @@ export const makeNativePhoneServices = Effect.fnUntraced(function* (
                 credentialId,
                 credentialRevision,
                 revision,
+                requirement: yield* resolve(mapping.subject.decodeRequirement(subjectRow)),
               },
             },
             project,

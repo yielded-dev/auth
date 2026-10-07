@@ -109,7 +109,6 @@ export const makePasswordSignIn = <
             .prepare({
               evidence: verified.evidence,
               requirement: verified.requirement,
-              fresh: true,
               claims,
             })
             .pipe(Effect.flatMap(readPasswordCommit), Effect.mapError(passwordCompletionFailure));

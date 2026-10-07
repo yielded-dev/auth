@@ -108,7 +108,9 @@ const program = Effect.gen(function* () {
 
       const sessionVerify = sessions.operations.Verify.handlerLayer(
         Effect.fn("ExampleEmail.VerifySession")(function* (input) {
-          return yield* (yield* sessions.SessionStrategy).verify(input.credential);
+          return yield* (yield* sessions.SessionStrategy)
+            .inspect(input.credential)
+            .pipe(Effect.map((source) => source.inspection.session));
         }),
       ).pipe(Layer.provide(strategy));
 

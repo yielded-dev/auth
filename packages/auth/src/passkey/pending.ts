@@ -4,6 +4,7 @@ import type { AuthInvocation } from "../operations/context";
 import type { AuthOperationResult } from "../operations/credentials";
 import { makeOperation, operationGroup } from "../operations/operation";
 import type { makeSessionModule } from "../sessions/module";
+import { pendingAuthenticationContext } from "../sessions/PendingAuthentication";
 import {
   passkeyUnexpected,
   passkeyRateLimiterLayer,
@@ -73,8 +74,8 @@ export const makePasskeyPending = <
       const services = yield* Effect.context<PasskeyCredentials>();
 
       const target = Effect.fn("PasskeyPending.target")(function* (token: typeof credential.Type) {
-        const context = yield* completion
-          .pendingContext(token)
+        const pending = yield* completion
+          .inspectPending(token)
           .pipe(
             Effect.mapError((error) =>
               error._tag === "HookDenied"
@@ -87,12 +88,18 @@ export const makePasskeyPending = <
             ),
           );
 
-        return yield* snapshotPasskey(PasskeyTarget, {
+        const context = yield* pendingAuthenticationContext(pending.record).pipe(
+          Effect.mapError(() => PasskeyRejected.make({})),
+        );
+
+        const fixed = yield* snapshotPasskey(PasskeyTarget, {
           ...context,
           moduleId: sessions.moduleId,
           kind: "login-pending",
           commandId: context.flowId,
         });
+
+        return { pending, fixed };
       }, passkeyUnexpected);
 
       return Pending.of({
@@ -101,7 +108,7 @@ export const makePasskeyPending = <
           yield* passkeyNoAmbient();
           if (invocation._tag !== "Guest") return yield* PasskeyRejected.make({});
 
-          const fixed = yield* target(input.pendingCredential),
+          const { fixed } = yield* target(input.pendingCredential),
             captured = yield* runtime
               .exclusions(input.profileId, fixed.revision.subjectId)
               .pipe(Effect.provide(services));
@@ -116,7 +123,7 @@ export const makePasskeyPending = <
           input = yield* snapshotPasskey(Schema.toType(CompleteInput), input);
           yield* passkeyNoAmbient();
           if (invocation._tag !== "Guest") return yield* PasskeyRejected.make({});
-          const fixed = yield* target(input.pendingCredential);
+          const { pending, fixed } = yield* target(input.pendingCredential);
 
           const verified = yield* runtime
             .authentication(input, { _tag: "Pending", target: fixed })
@@ -138,7 +145,7 @@ export const makePasskeyPending = <
           const result = yield* readPasskeyCommit(
             yield* completion
               .preparePending({
-                credential: input.pendingCredential,
+                pending,
                 additional: verified.evidence,
               })
               .pipe(

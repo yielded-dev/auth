@@ -67,9 +67,10 @@ export const authSchema = storage.schema;
     "customer_auth_identifiers",
     "customer_auth_passwords",
     "customer_auth_sessions",
+    "customer_auth_pending",
     "customer_auth_passkeyCredentials",
   ]}
-  more="24 more, depending on the methods you install"
+  more="Additional tables depend on the installed methods"
 />
 
 Only the methods you install add tables. Export them from `authSchema` and
@@ -87,6 +88,8 @@ Declare every table yourself, with your own names and columns:
 export const identifiers = sqliteTable(
   "app_identifiers",
   {
+    moduleId: text("c_module_id"),
+    credentialId: text("c_credential_id"),
     namespace: text("c_namespace").notNull(),
     value: text("c_value").notNull(),
     subjectId: text("c_subject_id").notNull(),
@@ -109,6 +112,7 @@ export const storage = Persistence.map({
     credentials: tables.credentials,
     passwords: tables.passwords,
     sessions: tables.sessions,
+    pending: tables.pending,
     // …one entry per role
   },
 });
@@ -117,6 +121,8 @@ export const storage = Persistence.map({
 The library still runs every query and transaction. On its first storage operation,
 the composed persistence Layer checks each mapped column and unique key against the
 database. Cookie-cached and anonymous session reads skip this initialization.
+The stateful backend supplies pending login, step-up, and bounded session cleanup
+from one module-scoped pending table; each operation checks its own kind.
 
 The same `Persistence.map` works without Drizzle. Import `AuthPersistence` from
 `@yielded/auth-persistence`, describe the tables for Effect SQL, and write the DDL
@@ -152,9 +158,10 @@ username sign-in uses an extended contract.
 ### What a custom backend must guarantee
 
 Storage services describe workflow commits, not just CRUD. Your implementation
-must recheck the relevant account and credential state, consume proofs, and
-commit changes with their retry receipts atomically where the operation requires
-it. A receipt records the original decision so a retry can recover it safely.
+must recheck the relevant account and credential state and consume proofs with
+protected changes in the same commit. The commit receipt releases private
+credentials and lifecycle events only after that owner succeeds. Durable replay
+is available only where a workflow explicitly retains its original decision.
 
 Choose a transaction or batch owner that can uphold those contracts. Splitting
 account and credential writes across independent backends does not make them

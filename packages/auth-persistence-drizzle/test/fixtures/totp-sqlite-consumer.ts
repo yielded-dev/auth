@@ -5,7 +5,6 @@ import {
   AuthenticationEvidence,
   AuthenticationRequirement,
   AuthenticationFlowId,
-  SecurityRevision,
 } from "@yielded/auth/Sessions";
 import {
   base32,
@@ -176,12 +175,7 @@ export const useAuthenticator = Effect.gen(function* () {
       evidence: AuthenticationEvidence.make({
         flowId: challenge.flowId,
         bindingDigest: challenge.bindingDigest,
-        revision: {
-          ...snapshot.revision,
-          credentials: [
-            { credentialId: "verified-passkey", revision: SecurityRevision.make("passkey-1") },
-          ],
-        },
+        revision: snapshot.revision,
         proofs: [
           {
             method: "passkey",
@@ -210,7 +204,6 @@ export const useAuthenticator = Effect.gen(function* () {
         snapshot,
         moduleId,
         subjectId,
-        commandId,
         policy,
         action: change,
         ...(authorization === undefined ? {} : { authorization }),

@@ -170,7 +170,11 @@ export const makePasskeyMethod = <
 
           const result = yield* readPasskeyCommit(
             yield* completion
-              .prepare({ evidence: verified.evidence, claims: captured })
+              .prepare({
+                evidence: verified.evidence,
+                requirement: verified.credential.requirement,
+                claims: captured,
+              })
               .pipe(
                 Effect.mapError((error) =>
                   error._tag === "HookDenied"

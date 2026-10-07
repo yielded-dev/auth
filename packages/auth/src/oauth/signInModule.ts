@@ -617,6 +617,7 @@ export const makeOAuthMethod = <
 
             const established = yield* completeAuthentication({
               claims,
+              requirement: credential.requirement,
               evidence: {
                 revision: credential.revision,
                 flowId: AuthenticationFlowId.make(context.flowId),

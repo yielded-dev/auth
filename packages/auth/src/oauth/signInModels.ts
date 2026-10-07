@@ -4,7 +4,7 @@ import { returnTarget } from "../internal/return-target";
 import { RequestBindingCredential, RequestBindingFlowId } from "../operations/requestBinding";
 import { CleanupLimit } from "../persistence/cleanup";
 import { SubjectId, TokenDigest } from "../Schema";
-import { SecurityRevision } from "../sessions/models";
+import { AuthenticationRequirement, SecurityRevision } from "../sessions/models";
 import { OAuthConnectedProfile } from "./permissionProfile";
 import { OAuthGeneration, OAuthProviderKey } from "./schema";
 
@@ -179,6 +179,8 @@ export const OAuthVerifiedExternalIdentity = Schema.Struct({
 export type OAuthVerifiedExternalIdentity = typeof OAuthVerifiedExternalIdentity.Type;
 
 export const OAuthCredentialSnapshot = Schema.Struct({
+  /** Current policy from the same authoritative read as the revision vector. */
+  requirement: AuthenticationRequirement,
   moduleId: OAuthModuleId,
   identity: OAuthExternalIdentity,
   credentialId: Schema.NonEmptyString.check(Schema.isMaxLength(256)),

@@ -1,7 +1,6 @@
 export { OAuthProxyPersistence } from "./internal/drizzle-sqlite-oauth-proxy";
 
 import type { D1Client } from "@effect/sql-d1/D1Client";
-export { makeTotpPersistenceServices, coordinateTotpPersistence } from "./drizzle/d1-totp";
 import type { AnyRelations } from "drizzle-orm";
 import { type EffectSQLiteD1Database, makeWithDefaults } from "drizzle-orm/effect-d1";
 import type { AnySQLiteTable } from "drizzle-orm/sqlite-core";
@@ -25,18 +24,6 @@ import {
   makeD1IdentityServices,
   makeD1SubjectProvisioningServices,
 } from "./drizzle/d1-identity";
-
-export {
-  coordinateD1AuthenticationAuthority as coordinateAuthenticationAuthority,
-  coordinateD1PendingAuthentication as coordinatePendingAuthentication,
-  coordinateD1SignedSessionValidity as coordinateSignedSessionValidity,
-  coordinateD1StatefulSessions as coordinateStatefulSessions,
-  makeD1AuthenticationAuthorityServices as makeAuthenticationAuthorityServices,
-  makeD1PendingAuthenticationServices as makePendingAuthenticationServices,
-  makeD1SignedSessionValidityServices as makeSignedSessionValidityServices,
-  makeD1StatefulSessionServices as makeStatefulSessionServices,
-} from "./drizzle/d1-sessions";
-
 import { makeProofTarget } from "./drizzle/proof-drivers";
 
 export const { coordinateProofPersistence, makeProofPersistenceServices } = makeProofTarget(
@@ -98,11 +85,6 @@ export const makeIdentityServices = <
   mapping: D1GeneratedIdentityMapping<Subject, Identifier, External, Request, NativeId>,
 ) => makeD1IdentityServices(mapping);
 
-export {
-  makeD1SessionStepUpServices as makeSessionStepUpServices,
-  coordinateD1SessionStepUp as coordinateSessionStepUp,
-} from "./drizzle/d1-sessions";
-
 import { Effect, Layer } from "effect";
 
 import { makeD1OAuthConnectedTarget } from "./drizzle/oauth-connected-drivers";
@@ -150,3 +132,26 @@ export const { makePhonePersistenceServices, coordinatePhonePersistence } = make
 
 /** Construct Drizzle from the driver's SQL-client Layer. */
 export const databaseLayer = Layer.effect(Database, makeWithDefaults({}));
+
+import { makeSessionTarget } from "./drizzle/session-drivers";
+
+export const {
+  coordinateAuthenticationAuthority,
+  coordinatePendingAuthentication,
+  coordinateSignedSessionValidity,
+  coordinateStatefulSessions,
+  makeAuthenticationAuthorityServices,
+  makePendingAuthenticationServices,
+  makeSignedSessionValidityServices,
+  makeStatefulSessionServices,
+  makeSessionStepUpServices,
+  coordinateSessionStepUp,
+  makeSessionCleanupServices,
+} = makeSessionTarget(Database, { mode: "batch", dialect: "sqlite" });
+
+import { makeTotpTarget } from "./drizzle/totp-target";
+
+export const { makeTotpPersistenceServices, coordinateTotpPersistence } = makeTotpTarget(Database, {
+  mode: "batch",
+  dialect: "sqlite",
+});

@@ -72,4 +72,23 @@ Signed Layers use the same default signing service. Configure cookie caching on
 
 `completionLayer({ pendingLifetimeMillis, attemptLimit })` supports additional
 factors through `PendingAuthentication` persistence. `SessionStrategy.inspect`
-returns private provenance for authorization; public verification omits it.
+returns a `SessionSource` with private `inspection` and a strategy-specific
+`guard`; public verification omits both. Trusted completion requires the current
+`AuthenticationRequirement` captured with the credential's full authority vector.
+The committing owner checks authority again.
+
+Login and step-up pending proofs share storage with mandatory module scope and a
+`Login` or `StepUp` kind. Each port accepts only its own kind. An inspected pending snapshot
+carries the current requirement into completion; it is never accepted from a
+public request.
+
+Provide the module's `SessionCleanup` service to use `sessions.cleanup({ limit })`.
+`limit` is 1–1,000 and applies across expired pending proofs and due assisted
+revocation tombstones. The result is `{ removed, hasMore }`; `hasMore` means the
+limit was reached, so the next call can remove zero rows. Missing maintenance
+support returns an unsupported-capability error.
+
+For pre-production upgrades, reset development session rows, pending proofs,
+step-up intents, revocation tombstones, and their cookies. Remove session-flow
+and separate step-up tables, remove session row versions, and map the shared
+pending role; the current examples include the complete initial schemas.

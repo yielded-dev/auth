@@ -26,7 +26,7 @@ import { storageTables, type StorageRole } from "./storage-tables";
 const profileJson = Schema.fromJsonString(M.PasskeyProfile);
 
 const credentialData = M.PasskeyCredential.mapFields(
-  ({ revision: _revision, active: _active, ...fields }) => fields,
+  ({ revision: _revision, active: _active, requirement: _requirement, ...fields }) => fields,
 );
 
 const configurationError = (reason: string) => PersistenceConfigurationError.make({ reason });
@@ -71,6 +71,7 @@ const mappings = Effect.fnUntraced(function* (
       status: s.status,
       securityRevision: s.securityRevision,
       decodeId: (row) => row[s.id],
+      decodeRequirement: s.requirements,
       isActiveStatus: (value) => Object.is(value, s.activeValue),
       activeCondition: sql`${subject.column(s.status)} = ${subject.value(s.status, s.activeValue)}`,
     },

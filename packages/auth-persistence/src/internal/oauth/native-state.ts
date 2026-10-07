@@ -228,6 +228,7 @@ export const makeOAuthNativeState = Effect.fnUntraced(function* (
       credentialId,
       credentialRevision,
       revision: current,
+      requirement: mapping.subject.decodeAuthenticationRequirement(s.decode(rows[0]!, "s_")),
     });
   });
 

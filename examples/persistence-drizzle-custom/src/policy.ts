@@ -35,17 +35,17 @@ const EmailActions = Layer.effect(
             .inspectInvocation(invocation, token)
             .pipe(Effect.provideService(AppAuth.sessions.SessionStrategy, sessions));
 
-          const original = source.provenance.evidence;
+          const original = source.inspection.provenance.evidence;
 
           const confirmsRegisteredAddress =
             challenge.action === "verify-address" &&
             challenge.targetIdentifierRevision !== undefined &&
-            challenge.target.value === source.session.claims.email;
+            challenge.target.value === source.inspection.session.claims.email;
 
           if (
             (challenge.action === "verify-address" && !confirmsRegisteredAddress) ||
-            source.session.sessionId !== invocation.sessionId ||
-            source.session.subjectId !== invocation.subjectId ||
+            source.inspection.session.sessionId !== invocation.sessionId ||
+            source.inspection.session.subjectId !== invocation.subjectId ||
             original.revision.subjectId !== challenge.revision.subjectId ||
             original.revision.securityRevision !== challenge.revision.securityRevision ||
             original.revision.credentials.some(
@@ -201,11 +201,11 @@ const PasskeyActions = Layer.effect(
             .inspectInvocation(invocation, token)
             .pipe(Effect.provideService(AppAuth.sessions.SessionStrategy, sessions));
 
-          const original = source.provenance.evidence;
+          const original = source.inspection.provenance.evidence;
 
           if (
-            source.session.sessionId !== invocation.sessionId ||
-            source.session.subjectId !== invocation.subjectId ||
+            source.inspection.session.sessionId !== invocation.sessionId ||
+            source.inspection.session.subjectId !== invocation.subjectId ||
             original.revision.subjectId !== challenge.revision.subjectId ||
             original.revision.securityRevision !== challenge.revision.securityRevision ||
             original.revision.credentials.some(

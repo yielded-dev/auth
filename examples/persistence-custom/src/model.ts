@@ -5,7 +5,7 @@ import {
   Schema as AuthSchema,
   Sessions,
 } from "@yielded/auth";
-import { Schema } from "effect";
+import { Schema, Struct } from "effect";
 
 import { Claims, Username } from "./contract";
 
@@ -37,7 +37,6 @@ export const Session = Schema.Struct({
   ...Sessions.SessionMetadata.fields,
   claims: Claims,
   digest: AuthSchema.TokenDigest,
-  version: Sessions.SecurityRevision,
   provenance: Sessions.SessionAuthenticationProvenance,
   credentialVersion: Sessions.SessionCredentialVersion,
 });
@@ -51,18 +50,17 @@ const Proof = Schema.Struct({
 });
 
 const Passkey = Schema.Struct({
-  credential: AuthPasskey.PasskeyCredential,
+  credential: AuthPasskey.PasskeyCredential.mapFields(Struct.omit(["requirement"])),
   summary: AuthPasskey.PasskeyCredentialSummary,
 });
 
 /** Application records, not SQL roles. Every disk value is decoded before use. */
 export const Database = Schema.Struct({
-  version: Schema.Literal(2),
+  version: Schema.Literal(3),
   sequence: Schema.Natural,
   customers: Schema.Array(Customer),
   passwords: Schema.Array(Password),
   sessions: Schema.Array(Session),
-  flows: Schema.Array(Schema.Struct({ id: Schema.String, expiresAt: Schema.Int })),
   proofs: Schema.Array(Proof),
   passkeys: Schema.Array(Passkey),
   ceremonies: Schema.Array(AuthPasskey.PasskeyCeremony),
@@ -71,12 +69,11 @@ export const Database = Schema.Struct({
 export type State = { -readonly [K in keyof typeof Database.Type]: (typeof Database.Type)[K] };
 
 export const emptyDatabase = (): State => ({
-  version: 2,
+  version: 3,
   sequence: 0,
   customers: [],
   passwords: [],
   sessions: [],
-  flows: [],
   proofs: [],
   passkeys: [],
   ceremonies: [],

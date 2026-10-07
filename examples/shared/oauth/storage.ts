@@ -186,6 +186,7 @@ export const subject = {
   securityRevision: "securityRevision",
   isActiveStatus: (value: unknown) => value === "active",
   activeCondition: eq(subjects.columns.status, "active"),
+  decodeAuthenticationRequirement: () => requirement,
   decodeActionRequirement: () => requirement,
 } satisfies Mapping.OAuthConnectedSubjectTable<typeof subjects>;
 
@@ -594,9 +595,16 @@ export const makeServices = (mappings: Effect.Success<ReturnType<typeof makeMapp
     });
 
     const sessionServices = yield* Mapping.makeAuthenticationAuthorityServices({
+      moduleId,
+      clock: signIn.clock,
       subjectId,
-      subject: { ...subject, decodeRequirement: () => Effect.succeed(requirement) },
-      credential: authority,
+      subject: {
+        ...subject,
+        activeStatusValue: "active",
+        requirementColumns: [],
+        decodeRequirement: () => Effect.succeed(requirement),
+      },
+      credential: { ...authority, activeStatusValue: "active" },
       isConstraintConflict: () => false,
     });
 

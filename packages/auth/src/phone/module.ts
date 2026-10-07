@@ -260,7 +260,7 @@ export const makePhoneOtp = <
         });
 
         const established = yield* (yield* sessions.AuthenticationCompletion)
-          .prepare({ evidence, claims })
+          .prepare({ evidence, requirement: current.target.value.requirement, claims })
           .pipe(
             Effect.flatMap((receipt) => receipt.read),
             Effect.mapError(phoneFailure),
