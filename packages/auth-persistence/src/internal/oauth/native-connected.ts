@@ -6,7 +6,7 @@ import type { SqlClient } from "effect/sql/SqlClient";
 import type { Fragment } from "effect/sql/Statement";
 
 import type { NativeSqlTables, SqlTable } from "../native-sql-table";
-import { conditionalSqlInsert } from "../session-native-record";
+import { makeConditionalSqlInsert } from "../session-native-record";
 import { exactSqlText, executeSqlChange } from "../sql-change";
 import { cleanupSqlRows } from "../sql-cleanup";
 import { makeSqlCommitExecutor, SqlBatchCommit, CurrentSqlCommit } from "../sql-commit";
@@ -37,6 +37,7 @@ export const makeNativeOAuthConnectedServices = Effect.fnUntraced(function* (
   M.OAuthUnavailable,
   SqlClient | LifecycleHooks | Crypto.Crypto
 > {
+  const conditionalInsert = yield* makeConditionalSqlInsert();
   const executor = yield* makeSqlCommitExecutor(unavailable);
   const crypto = yield* Crypto.Crypto;
   const external = yield* Effect.serviceOption(CurrentSqlCommit);
@@ -318,7 +319,7 @@ export const makeNativeOAuthConnectedServices = Effect.fnUntraced(function* (
 
           const changed = yield* state.change(
             previous === undefined
-              ? conditionalSqlInsert(sql, grant, values, sql`${required} and ${owner}`)
+              ? conditionalInsert(grant, values, sql`${required} and ${owner}`)
               : sql`${grant.update(values)} where ${state.key(key, current.nativeId)} and ${state.exact(g.grantVersion, previous.grantVersion)} and ${state.exact(g.identityKey, identityKey)} and ${state.exact(g.profileKey, previous.configuration.profile.key)} ${input._tag === "SignIn" ? sql`and ${state.exact(g.tokenVersion, previous.tokenVersion)}` : sql``} and ${required} and ${owner}`,
           );
 

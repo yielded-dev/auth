@@ -7,7 +7,7 @@ import type { Fragment } from "effect/sql/Statement";
 
 import { type OAuthAccountsMapping, OAuthEligibilityFact } from "../models/oauth-model";
 import type { NativeSqlTables } from "../native-sql-table";
-import { conditionalSqlInsert } from "../session-native-record";
+import { makeConditionalSqlInsert } from "../session-native-record";
 import { exactSqlText } from "../sql-change";
 import { makeSqlCommitExecutor, SqlBatchCommit, CurrentSqlCommit } from "../sql-commit";
 import type { SqlExpression, TableModel } from "../table-model";
@@ -44,6 +44,7 @@ export const makeNativeOAuthAccountsServices = Effect.fnUntraced(function* (
   M.OAuthUnavailable,
   SqlClient | LifecycleHooks | Crypto.Crypto
 > {
+  const conditionalInsert = yield* makeConditionalSqlInsert();
   const executor = yield* makeSqlCommitExecutor(unavailable);
   const crypto = yield* Crypto.Crypto;
   const external = yield* Effect.serviceOption(CurrentSqlCommit);
@@ -217,7 +218,7 @@ export const makeNativeOAuthAccountsServices = Effect.fnUntraced(function* (
             invariant(c.isActiveStatus(values[c.status]));
 
             const inserted = yield* mutation.insertUnique(
-              sql`${conditionalSqlInsert(sql, credential, values, before)} ${sql.onDialectOrElse({ mysql: () => sql``, orElse: () => sql`on conflict do nothing` })}`,
+              sql`${conditionalInsert(credential, values, before)} ${sql.onDialectOrElse({ mysql: () => sql``, orElse: () => sql`on conflict do nothing` })}`,
             );
 
             changed = inserted === 1;
@@ -237,8 +238,7 @@ export const makeNativeOAuthAccountsServices = Effect.fnUntraced(function* (
             invariant(a.isActiveStatus(factor[a.status]));
             invariant(
               (yield* mutation.change(
-                conditionalSqlInsert(
-                  sql,
+                conditionalInsert(
                   authority,
                   factor,
                   sql.and([

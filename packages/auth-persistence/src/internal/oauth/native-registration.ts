@@ -11,7 +11,7 @@ import type {
   OAuthRegistrationMapping,
 } from "../models/oauth-model";
 import type { NativeSqlTables } from "../native-sql-table";
-import { conditionalSqlInsert } from "../session-native-record";
+import { makeConditionalSqlInsert } from "../session-native-record";
 import { exactSqlText, executeSqlChange } from "../sql-change";
 import { cleanupSqlRows } from "../sql-cleanup";
 import {
@@ -169,6 +169,7 @@ export const makeNativeOAuthRegistrationIntentServices = Effect.fnUntraced(funct
   M.OAuthUnavailable,
   SqlClient.SqlClient | LifecycleHooks | Crypto.Crypto
 > {
+  const conditionalInsert = yield* makeConditionalSqlInsert();
   const executor = yield* makeSqlCommitExecutor(unavailable);
   const crypto = yield* Crypto.Crypto;
   const external = yield* Effect.serviceOption(CurrentSqlCommit);
@@ -223,7 +224,7 @@ export const makeNativeOAuthRegistrationIntentServices = Effect.fnUntraced(funct
             [i.retentionUntil]: mapping.clock.encodeInstant(value.retentionUntilMillis),
           };
 
-          const statement = conditionalSqlInsert(sql, intent, values, eligible);
+          const statement = conditionalInsert(intent, values, eligible);
 
           if (batch !== undefined) yield* state.change(statement);
           else if ((yield* executeSqlChange(sql, statement)) !== 1) return yield* rejected();
@@ -253,6 +254,7 @@ export const makeNativeOAuthRegistrationServices = Effect.fnUntraced(function* <
   M.OAuthUnavailable,
   SqlClient.SqlClient | LifecycleHooks | Crypto.Crypto
 > {
+  const conditionalInsert = yield* makeConditionalSqlInsert();
   const executor = yield* makeSqlCommitExecutor(unavailable);
   const crypto = yield* Crypto.Crypto;
   const external = yield* Effect.serviceOption(CurrentSqlCommit);
@@ -419,7 +421,7 @@ export const makeNativeOAuthRegistrationServices = Effect.fnUntraced(function* <
                 // A newly inserted subject is the first lock. The exact unbound intent
                 // CAS below arbitrates concurrent registration; a loser rolls back all
                 // local rows and never repeats provisioning automatically.
-                const creation = conditionalSqlInsert(sql, subject, subjectValues, eligible);
+                const creation = conditionalInsert(subject, subjectValues, eligible);
 
                 if (batch !== undefined) yield* state.change(creation);
                 else admitted = (yield* executeSqlChange(sql, creation)) === 1;
@@ -458,8 +460,7 @@ export const makeNativeOAuthRegistrationServices = Effect.fnUntraced(function* <
 
                   invariant(c.isActiveStatus(values[c.status]));
                   yield* state.change(
-                    conditionalSqlInsert(
-                      sql,
+                    conditionalInsert(
                       credential,
                       values,
                       sql.and([
