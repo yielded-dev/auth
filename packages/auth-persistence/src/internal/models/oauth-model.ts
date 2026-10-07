@@ -53,10 +53,6 @@ export interface OAuthSubjectTable<
   S extends Table,
   Expression extends SqlExpression = SqlExpression,
 > extends OAuthSubjectReadTable<S, Expression> {
-  readonly decodeActionRequirement: (
-    row: S["select"],
-    action: OAuthAction,
-  ) => AuthenticationRequirement;
   readonly nextSecurityRevision: (current: SecurityRevision) => SecurityRevision;
 }
 

@@ -287,7 +287,7 @@ const program = Effect.gen(function* () {
       yield* call.passwordSignIn({ email, password: newPassword });
     }),
   );
-  yield* Effect.log("Failed credential storage rolled back the customer and registration receipt.");
+  yield* Effect.log("Failed credential storage rolled back the customer and identifier binding.");
   yield* Effect.log(
     "The resend button delivered a replacement code and completed password recovery.",
   );

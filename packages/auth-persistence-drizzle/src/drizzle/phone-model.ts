@@ -31,10 +31,6 @@ export type PhoneMapping<
 
 export type AnyPhoneMapping = PhoneMapping<Table, Table, Table, Table, unknown>;
 
-export interface D1PhoneMapping {
-  readonly d1: { readonly primary: true };
-}
-
 export interface PhonePersistenceServices {
   readonly phonePersistence: PhonePersistence["Service"];
   readonly phoneSignInTargets: PhoneSignInTargets["Service"];

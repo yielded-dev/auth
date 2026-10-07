@@ -260,6 +260,8 @@ export const makeNativePasswordServices = Effect.fnUntraced(function* (
               !samePasswordCredentialSnapshot(state.snapshot, input.credential))
         )
           return yield* prepare("rejected" as const, project);
+        let proofValidity = sql`1 = 1`;
+
         if (redemption !== undefined) {
           if (proofs === undefined) return yield* unavailable();
 
@@ -270,19 +272,20 @@ export const makeNativePasswordServices = Effect.fnUntraced(function* (
 
           if (!passwordProofRedemptionMatches({ ...input, redemption: captured }))
             return yield* prepare("rejected" as const, project);
-          // Construct under this physical owner: protected redemption always installs
-          // its final absence/expiry condition, even for a root service from a Layer.
+          // Inherit the physical owner; application owners retain the exact consumed
+          // proof absence check after their callback.
           const proof = yield* makeNativeProofStore(tables, proofs, batch !== undefined);
-          const decision = yield* proof.redeemLocked(captured.input);
+          const redeemed = yield* proof.redeemLocked(captured.input);
 
           const proofReceipt = captured.prepare(
-            decision,
+            redeemed.decision,
             yield* CurrentCommitJournal,
             (value) => value,
           );
 
           yield* registerSqlCommitReceipt(proofReceipt);
-          if (decision === "rejected") return yield* prepare("rejected" as const, project);
+          if (redeemed.decision === "rejected") return yield* prepare("rejected" as const, project);
+          proofValidity = redeemed.validUntil;
         }
         const mode = "interactive";
 
@@ -339,7 +342,7 @@ export const makeNativePasswordServices = Effect.fnUntraced(function* (
 
         ensure(requestedDeadline !== undefined && currentDeadline !== undefined);
         const deadline = Math.min(requestedDeadline, currentDeadline);
-        const freshness = sql`${now} >= ${state.now} and ${now} < ${deadline}`;
+        const freshness = sql`${now} >= ${state.now} and ${now} < ${deadline} and ${proofValidity}`;
 
         const stage = Effect.fnUntraced(function* (statement: Fragment) {
           if (batch === undefined) ensure((yield* executeSqlChange(sql, statement)) === 1);
@@ -403,9 +406,6 @@ export const makeNativePasswordServices = Effect.fnUntraced(function* (
             sql`${rawAuthority.update(a.encodeRevision(credentialRevision))} where ${subjectKey(rawAuthority, a.subjectId, nativeId)} and ${exact(rawAuthority, a.credentialId, old.credentialId)} and ${exact(rawAuthority, a.revision, old.credentialRevision)}`,
           );
         }
-        yield* stage(
-          sql`${rawSubject.update({ [s.securityRevision]: nextSecurityRevision })} where ${subjectKey(rawSubject, s.id, nativeId)} and ${exact(rawSubject, s.securityRevision, input.expectedRevision.securityRevision)} and ${rawSubject.column(s.status)} = ${rawSubject.value(s.status, locked[s.status])} and ${freshness}`,
-        );
 
         const expectedFactors = state.revision.credentials
           .filter((factor) => factor.credentialId !== credentialId)
@@ -413,7 +413,13 @@ export const makeNativePasswordServices = Effect.fnUntraced(function* (
 
         const finalPassword = sql`exists(select 1 from ${rawPassword.name} where ${subjectKey(rawPassword, c.subjectId, nativeId)} and ${exact(rawPassword, c.moduleId, input.moduleId)} and ${exact(rawPassword, c.credentialId, credentialId)} and ${exact(rawPassword, c.credentialRevision, credentialRevision)} and ${exact(rawPassword, c.verifierVersion, verifierVersion)} and ${exact(rawPassword, c.verifier, Redacted.value(input.replacement.verifier))} and ${exact(rawPassword, c.normalization, input.replacement.normalization)})`;
 
-        if (batch !== undefined) {
+        const canGuardResult =
+          (a.status === undefined || a.d1ActiveStatusValue !== undefined) &&
+          (input.credential === undefined || i.d1CurrentCondition !== undefined);
+
+        let resultingState: Fragment | undefined;
+
+        if (canGuardResult) {
           const active =
             a.status === undefined
               ? sql`1 = 1`
@@ -422,7 +428,6 @@ export const makeNativePasswordServices = Effect.fnUntraced(function* (
           const conditions: Array<Fragment> = [
             finalPassword,
             freshness,
-            sql`exists(select 1 from ${rawSubject.name} where ${subjectKey(rawSubject, s.id, nativeId)} and ${exact(rawSubject, s.securityRevision, nextSecurityRevision)} and ${rawSubject.column(s.status)} = ${rawSubject.value(s.status, s.d1ActiveStatusValue)})`,
             sql`(select count(*) from ${rawAuthority.name} where ${subjectKey(rawAuthority, a.subjectId, nativeId)} and ${active}) = ${expectedFactors.length}`,
             ...expectedFactors.map(
               (factor) =>
@@ -440,11 +445,24 @@ export const makeNativePasswordServices = Effect.fnUntraced(function* (
               sql`exists(select 1 from ${identifierTable.name} where ${exact(identifierTable, i.namespace, expected.identifier.namespace)} and ${exact(identifierTable, i.value, expected.identifier.value)} and ${subjectKey(identifierTable, i.subjectId, nativeId)} and ${exact(identifierTable, i.bindingRevision, expected.identifierBindingRevision)} and ${expected.identifierVerifiedAtMillis === undefined ? sql`${identifierTable.column(i.verifiedAt)} is null` : sql`${identifierTable.column(i.verifiedAt)} = ${identifierTable.value(i.verifiedAt, mapping.clock.encodeInstant(expected.identifierVerifiedAtMillis))}`})`,
             );
           }
+          resultingState = sql.and(conditions);
+        }
+        yield* stage(
+          sql`${rawSubject.update({ [s.securityRevision]: nextSecurityRevision })} where ${subjectKey(rawSubject, s.id, nativeId)} and ${exact(rawSubject, s.securityRevision, input.expectedRevision.securityRevision)} and ${rawSubject.column(s.status)} = ${rawSubject.value(s.status, locked[s.status])} and ${freshness} and ${resultingState ?? sql`1 = 1`}`,
+        );
+        if (batch !== undefined) {
+          ensure(resultingState !== undefined);
           yield* registerSqlBatchPostcondition({
             name: "password-replacement-authority",
-            statement: sqlBatchAssertion(sql, sql.and(conditions)),
+            statement: sqlBatchAssertion(
+              sql,
+              sql.and([
+                resultingState,
+                sql`exists(select 1 from ${rawSubject.name} where ${subjectKey(rawSubject, s.id, nativeId)} and ${exact(rawSubject, s.securityRevision, nextSecurityRevision)} and ${rawSubject.column(s.status)} = ${rawSubject.value(s.status, s.d1ActiveStatusValue)})`,
+              ]),
+            ),
           });
-        } else
+        } else if (Option.isSome(parent) || resultingState === undefined)
           yield* registerSqlPostcondition({
             name: "password-replacement-authority",
             check: Effect.gen(function* () {

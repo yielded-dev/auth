@@ -131,20 +131,6 @@ export const makePasskeyNativeWrites = (
     return sql`exists(select 1 from ${subject.name} where ${subject.column(read.subject.id)} = ${subject.value(read.subject.id, id)} and ${eq(subject, read.subject.securityRevision, current.securityRevision)} and ${state.active("subject")}) and ${sql.and(current.credentials.map((entry) => sql`exists(select 1 from ${factor.name} where ${factor.column(read.authority.subjectId)} = ${factor.value(read.authority.subjectId, id)} and ${eq(factor, read.authority.credentialId, entry.credentialId)} and ${eq(factor, read.authority.revision, entry.revision)} and ${state.active("authority")})`))}`;
   };
 
-  const currentCredential = Effect.fnUntraced(function* (
-    nativeId: unknown,
-    credentialId: string,
-    revision: M.PasskeyCredential["revision"],
-    subjectRow: Readonly<Record<string, unknown>>,
-  ) {
-    const rows =
-      yield* sql`select ${credential.fields("c_")} from ${credential.name} where ${owned(nativeId, credentialId)}`;
-
-    return rows.length !== 1
-      ? undefined
-      : yield* state.decodeCredential(credential.decode(rows[0]!, "c_"), revision, subjectRow);
-  });
-
   const insertCredential = Effect.fnUntraced(function* (
     nativeId: unknown,
     ceremony: M.PasskeyCeremony,
@@ -237,19 +223,16 @@ export const makePasskeyNativeWrites = (
       ].map((key) => [key, authorityValues[key]]),
     );
 
-    yield* postcondition(
-      "passkey-enrollment-credential",
-      sql`exists(select 1 from ${credential.name} where ${match(credential, semantic)}) and exists(select 1 from ${factor.name} where ${match(factor, authority)})`,
-    );
-
-    return details;
+    return {
+      details,
+      condition: sql`exists(select 1 from ${credential.name} where ${match(credential, semantic)}) and exists(select 1 from ${factor.name} where ${match(factor, authority)})`,
+    };
   });
 
   return {
     summary,
     owned,
     subjectCondition,
-    currentCredential,
     insertCredential,
     postcondition,
     write,
@@ -273,7 +256,6 @@ export const makePasskeyNativeManagement = (
     summary,
     owned,
     subjectCondition,
-    currentCredential,
     insertCredential,
     postcondition,
     write,
@@ -312,16 +294,14 @@ export const makePasskeyNativeManagement = (
 
           if (!flow.validModule(input.moduleId)) return { _tag: "Rejected" } as const;
           const nativeId = state.native(input.subjectId);
-          const current = yield* state.readAuthority(nativeId, false);
+          const current = yield* state.readAuthority(nativeId, false, input.credentialId);
 
           if (current === undefined) return { _tag: "Rejected" } as const;
 
-          const value = yield* currentCredential(
-            nativeId,
-            input.credentialId,
-            current.revision,
-            current.row,
-          );
+          const value =
+            current.credential === undefined
+              ? undefined
+              : yield* state.decodeCredential(current.credential, current.revision, current.row);
 
           return value === undefined
             ? ({ _tag: "Rejected" } as const)
@@ -409,10 +389,13 @@ export const makePasskeyNativeManagement = (
 
           yield* postcondition(
             "passkey-enrollment-authority",
-            sql`${flow.absent(input.access)} and ${subjectCondition(current.revision)} and ${policyUnchanged} and (select count(*) from ${credential.name} where ${owned(nativeId)}) <= ${cap} and ${expression(mapping.write.policy.action(nativeId, context.authorization))} and ${state.now} < ${authority.expiresBeforeMillis}`,
+            sql`${enrolled.condition} and ${flow.absent(input.access)} and ${subjectCondition(current.revision)} and ${policyUnchanged} and (select count(*) from ${credential.name} where ${owned(nativeId)}) <= ${cap} and ${expression(mapping.write.policy.action(nativeId, context.authorization))} and ${state.now} < ${authority.expiresBeforeMillis}`,
           );
 
-          return yield* preparePasskeyNative({ _tag: "Enrolled", credential: enrolled }, prepare);
+          return yield* preparePasskeyNative(
+            { _tag: "Enrolled", credential: enrolled.details },
+            prepare,
+          );
         }),
       ),
     rename: (original, prepare) =>
@@ -467,17 +450,20 @@ export const makePasskeyNativeManagement = (
           if (!flow.validModule(input.moduleId))
             return yield* preparePasskeyNative({ _tag: "Rejected" }, prepare);
           const nativeId = state.native(input.credential.revision.subjectId);
-          const current = yield* state.readAuthority(nativeId, !base.batch);
+
+          const current = yield* state.readAuthority(
+            nativeId,
+            !base.batch,
+            input.credential.credentialId,
+          );
 
           if (current === undefined)
             return yield* preparePasskeyNative({ _tag: "Rejected" }, prepare);
 
-          const captured = yield* currentCredential(
-            nativeId,
-            input.credential.credentialId,
-            current.revision,
-            current.row,
-          );
+          const captured =
+            current.credential === undefined
+              ? undefined
+              : yield* state.decodeCredential(current.credential, current.revision, current.row);
 
           const policy = M.snapshotPasskeySync(
             M.PasskeyManagementPolicy,
@@ -542,19 +528,31 @@ export const makePasskeyNativeManagement = (
 
           const allowed = expression(mapping.write.policy.action(nativeId, input.authorization));
 
-          const rows =
-            yield* sql`select case when ${remaining} then 1 else 0 end as remaining, case when ${allowed} then 1 else 0 end as allowed`;
+          const classify = Effect.gen(function* () {
+            const rows =
+              yield* sql`select case when ${remaining} then 1 else 0 end as remaining, case when ${allowed} and ${state.now} < ${authority.expiresBeforeMillis} and ${subjectCondition(current.revision)} then 1 else 0 end as allowed`;
 
-          if (Number(rows[0]?.allowed) !== 1)
-            return yield* preparePasskeyNative({ _tag: "Rejected" }, prepare);
-          if (Number(rows[0]?.remaining) !== 1)
-            return yield* preparePasskeyNative({ _tag: "LastSignInMethod" }, prepare);
+            return Number(rows[0]?.allowed) !== 1
+              ? ("Rejected" as const)
+              : Number(rows[0]?.remaining) !== 1
+                ? ("LastSignInMethod" as const)
+                : undefined;
+          });
+
           const next = SecurityRevision.make(yield* randomId);
+          const update = sql`${subject.update({ [read.subject.securityRevision]: next })} where ${subject.column(read.subject.id)} = ${subject.value(read.subject.id, nativeId)} and ${eq(subject, read.subject.securityRevision, current.revision.securityRevision)} and ${state.active("subject")} and ${remaining} and ${allowed} and ${state.now} < ${authority.expiresBeforeMillis}`;
 
-          yield* write(
-            sql`${subject.update({ [read.subject.securityRevision]: next })} where ${subject.column(read.subject.id)} = ${subject.value(read.subject.id, nativeId)} and ${eq(subject, read.subject.securityRevision, current.revision.securityRevision)} and ${state.active("subject")} and ${remaining} and ${allowed} and ${state.now} < ${authority.expiresBeforeMillis}`,
-            1,
-          );
+          if (base.batch) {
+            const rejected = yield* classify;
+
+            if (rejected !== undefined)
+              return yield* preparePasskeyNative({ _tag: rejected }, prepare);
+            yield* write(update, 1);
+          } else if ((yield* flow.change(update)) !== 1) {
+            const rejected = yield* classify;
+
+            return yield* preparePasskeyNative({ _tag: rejected ?? "Rejected" }, prepare);
+          }
           yield* write(
             sql`${credential.update({ [read.credential.status]: mapping.write.credential.removedStatus, [read.credential.credentialRevision]: next })} where ${owned(nativeId, captured.credentialId)} and ${eq(credential, read.credential.credentialRevision, captured.revision.credentials.find((entry) => entry.credentialId === captured.credentialId)?.revision)}`,
             1,
@@ -580,25 +578,23 @@ export const makePasskeyNativeManagement = (
             invalidation: input.invalidation,
           };
 
+          const finalConditions: Array<Fragment> = [];
+
           for (const mutation of mapping.invalidation.mutations) {
             const table = tables(mutation.table);
             const query = sql`${table.update(mutation.values(invalidation))} where ${expression(mutation.where(invalidation))}`;
 
             if (base.batch) yield* appendSqlBatchStatement(query);
             else yield* query;
-            yield* postcondition(
-              "passkey-removal-invalidation",
-              expression(mutation.postcondition(invalidation)),
-            );
+            finalConditions.push(expression(mutation.postcondition(invalidation)));
           }
-          yield* postcondition(
-            "passkey-removal-credential",
+          finalConditions.push(
             sql`exists(select 1 from ${credential.name} where ${credential.column(read.credential.subjectId)} = ${credential.value(read.credential.subjectId, nativeId)} and ${eq(credential, read.credential.credentialId, captured.credentialId)} and ${eq(credential, read.credential.credentialRevision, next)} and ${eq(credential, read.credential.status, mapping.write.credential.removedStatus)}) and exists(select 1 from ${factor.name} where ${factor.column(read.authority.subjectId)} = ${factor.value(read.authority.subjectId, nativeId)} and ${eq(factor, read.authority.credentialId, captured.credentialId)} and ${eq(factor, read.authority.revision, next)} and ${eq(factor, read.authority.status, mapping.write.authority.removedStatus)})`,
           );
-          yield* postcondition(
-            "passkey-removal-authority",
+          finalConditions.push(
             sql`${expression(mapping.invalidation.postcondition(invalidation))} and ${policyUnchanged} and ${remaining} and ${state.now} < ${authority.expiresBeforeMillis}`,
           );
+          yield* postcondition("passkey-removal", sql.and(finalConditions));
 
           return yield* preparePasskeyNative(
             {

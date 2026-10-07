@@ -1,5 +1,5 @@
 import type { OAuthAccountRevision, OAuthExternalIdentity } from "@yielded/auth/OAuth";
-import { Effect, Schema } from "effect";
+import { Cause, Effect, Schema } from "effect";
 import { SqlClient } from "effect/sql";
 import { SqlError } from "effect/sql/SqlError";
 import type { Fragment } from "effect/sql/Statement";
@@ -113,12 +113,29 @@ export const makeOAuthNativeMutation = Effect.fnUntraced(function* (
       sql`${ownership.column(o.subjectId)} = ${ownership.value(o.subjectId, nativeId)}`,
     ]);
 
+  const insertUnique = (statement: Fragment) =>
+    change(statement).pipe(
+      Effect.catchCause((cause) =>
+        cause.reasons.length > 0 &&
+        cause.reasons.every(
+          (reason) =>
+            Cause.isFailReason(reason) &&
+            Schema.is(SqlError)(reason.error) &&
+            reason.error.reason._tag === "UniqueViolation",
+        )
+          ? Effect.succeed(0)
+          : Effect.failCause(cause),
+      ),
+    );
+
   const ensureOwnership = Effect.fnUntraced(function* (
     identity: typeof OAuthExternalIdentity.Type,
     nativeId: unknown,
   ) {
     const identityKey = yield* oauthIdentityKey(identity);
 
+    // An existing-owner mapping may deliberately reject creation in encodeInsert.
+    // Inspect ownership after the caller's subject lock before invoking that policy.
     const rows =
       yield* sql`select ${ownership.fields("identity_")} from ${ownership.name} where ${exact(o.identityKey, identityKey)}`;
 
@@ -155,12 +172,7 @@ export const makeOAuthNativeMutation = Effect.fnUntraced(function* (
       return identityKey;
     }
 
-    const inserted = yield* change(statement).pipe(
-      Effect.catchIf(
-        (error) => Schema.is(SqlError)(error) && error.reason._tag === "UniqueViolation",
-        () => Effect.succeed(0),
-      ),
-    );
+    const inserted = yield* insertUnique(statement);
 
     if (inserted === 1) return identityKey;
 
@@ -203,6 +215,7 @@ export const makeOAuthNativeMutation = Effect.fnUntraced(function* (
     factorCondition,
     ownerCondition,
     ensureOwnership,
+    insertUnique,
     releaseOwnership,
     execute,
   };

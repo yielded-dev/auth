@@ -29,10 +29,11 @@ connection and migration runner.
 
 The composed Layer covers password sign-in and management, email address verification
 and changes, phone sign-in, and passkey sign-in and management with stateful sessions
-on PostgreSQL and SQLite. The `/Adapter` module exposes the shared mapping contracts
-and workflow capabilities used by companion adapters. Shared workflows own
-policy, authority checks, and commit receipts; each backend owns its native
-queries and transaction-bound reads and writes. The direct adapter uses Effect
-SQL statements, while the Drizzle package uses application table mappings.
+on PostgreSQL and SQLite. The `/Adapter` module has two integration levels:
+typed table mappings, or `NativeSqlTables` with shared strategy factories. The same
+native statements and commit owner serve direct SQL and Drizzle; drivers translate
+physical columns and expressions and supply transaction or atomic-batch execution.
+Plain reads use no transaction. Protected mutations retain their named final checks
+when an application joins additional work to the owner.
 See [persistence examples](../../docs/src/content/docs/reference/adapters.md#runnable-examples) for all
 four ownership models and their current limits.

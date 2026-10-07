@@ -1,6 +1,6 @@
 import type { LifecycleHooks } from "@yielded/auth/Hooks";
 import * as M from "@yielded/auth/OAuth";
-import { Effect, Schema } from "effect";
+import { Effect, Option, Schema } from "effect";
 import { SqlClient } from "effect/sql";
 import type { Fragment } from "effect/sql/Statement";
 
@@ -10,6 +10,7 @@ import type { NativeSqlTables } from "../native-sql-table";
 import { exactSqlText, executeSqlChange } from "../sql-change";
 import {
   appendSqlBatchStatement,
+  CurrentSqlCommit,
   makeSqlCommitExecutor,
   registerSqlBatchPostcondition,
   registerSqlPostcondition,
@@ -38,6 +39,7 @@ export const makeNativeOAuthRevocationServices = Effect.fnUntraced(function* (
   SqlClient.SqlClient | LifecycleHooks
 > {
   const executor = yield* makeSqlCommitExecutor(unavailable);
+  const external = yield* Effect.serviceOption(CurrentSqlCommit);
   const sql = (yield* SqlClient.SqlClient).withoutTransforms();
   const job = tables(mapping.job.table);
   const j = mapping.job;
@@ -52,9 +54,12 @@ export const makeNativeOAuthRevocationServices = Effect.fnUntraced(function* (
       ? sql.onDialectOrElse({ sqlite: () => sql``, orElse: () => sql`for update` })
       : sql``;
 
-  const run = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+  const run = <A, E, R>(
+    effect: Effect.Effect<A, E, R>,
+    mode: "transaction" | "statement" = "transaction",
+  ) =>
     batch === undefined
-      ? executor.run(effect)
+      ? executor.run(effect, mode)
       : executor.batch(effect).pipe(Effect.provideService(SqlBatchCommit, batch));
 
   const change = Effect.fnUntraced(function* (statement: Fragment) {
@@ -131,9 +136,10 @@ export const makeNativeOAuthRevocationServices = Effect.fnUntraced(function* (
           yield* change(
             sql`${job.update({ [j.state]: "Claimed", [j.claimId]: claimId, [j.claimedAt]: mapping.clock.encodeInstant(engineNow), [j.claimExpiresAt]: mapping.clock.encodeInstant(deadline) })} where ${pending} and ${exact(j.jobId, value.jobId)} and ${exact(j.snapshot, encoded)} and ${now} >= ${engineNow} and ${now} < ${deadline}`,
           );
-          yield* finish(
-            sql`exists(select 1 from ${job.name} where ${exact(j.jobId, value.jobId)} and ${exact(j.snapshot, encoded)} and ${exact(j.claimId, claimId)} and ${exact(j.state, "Claimed")}) and ${now} < ${deadline}`,
-          );
+          if (Option.isSome(external))
+            yield* finish(
+              sql`exists(select 1 from ${job.name} where ${exact(j.jobId, value.jobId)} and ${exact(j.snapshot, encoded)} and ${exact(j.claimId, claimId)} and ${exact(j.state, "Claimed")}) and ${now} < ${deadline}`,
+            );
 
           return yield* prepareOAuthNative({ _tag: "Claimed", claim }, prepare);
         }),
@@ -158,17 +164,24 @@ export const makeNativeOAuthRevocationServices = Effect.fnUntraced(function* (
             sql`${now} >= ${claim.claimedAtMillis} and ${now} < ${claim.claimExpiresAtMillis}`,
           ]);
 
-          const rows = yield* sql`select 1 from ${job.name} where ${target} ${lock}`;
+          const statement = sql`${job.update({ [j.state]: outcome })} where ${target}`;
 
-          if (rows.length === 0) return yield* prepareOAuthNative({ settled: false }, prepare);
-          invariant(rows.length === 1);
-          yield* change(sql`${job.update({ [j.state]: outcome })} where ${target}`);
-          yield* finish(
-            sql`exists(select 1 from ${job.name} where ${exact(j.jobId, claim.job.jobId)} and ${exact(j.snapshot, stored.encode(claim.job))} and ${exact(j.claimId, claim.claimId)} and ${exact(j.state, outcome)}) and ${now} < ${claim.claimExpiresAtMillis}`,
-          );
+          if (batch !== undefined) {
+            const rows = yield* sql`select 1 from ${job.name} where ${target}`;
+
+            if (rows.length === 0) return yield* prepareOAuthNative({ settled: false }, prepare);
+            invariant(rows.length === 1);
+            yield* change(statement);
+          } else if ((yield* executeSqlChange(sql, statement)) !== 1)
+            return yield* prepareOAuthNative({ settled: false }, prepare);
+          if (Option.isSome(external))
+            yield* finish(
+              sql`exists(select 1 from ${job.name} where ${exact(j.jobId, claim.job.jobId)} and ${exact(j.snapshot, stored.encode(claim.job))} and ${exact(j.claimId, claim.claimId)} and ${exact(j.state, outcome)}) and ${now} < ${claim.claimExpiresAtMillis}`,
+            );
 
           return yield* prepareOAuthNative({ settled: true }, prepare);
         }),
+        "statement",
       ),
   };
 

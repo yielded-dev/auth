@@ -1,16 +1,29 @@
 import type { SQL } from "drizzle-orm";
 import type { EffectDrizzleQueryError } from "drizzle-orm/effect-core";
 import { Context, Effect } from "effect";
+import type { SqlClient } from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
+import type { Statement } from "effect/sql/Statement";
 
-import type { TransactionNativeDatabase } from "./transaction-owner";
+/** Only installed driver handles are erased; domain values keep their schemas. */
+export interface NativePhysicalDatabase {
+  readonly maxParameters?: number;
+  readonly $client: SqlClient & {
+    readonly batch: (
+      statements: ReadonlyArray<Statement<unknown>>,
+    ) => Effect.Effect<unknown, SqlError>;
+  };
+  readonly transaction: <A, E, R>(
+    body: (transaction: NativeDatabaseHandle) => Effect.Effect<A, E, R>,
+  ) => Effect.Effect<A, E | SqlError, R>;
+}
 
 /** The captured native Drizzle owner; never a shared/raw SQL resource. */
-export class NativeDatabase extends Context.Service<NativeDatabase, TransactionNativeDatabase>()(
+export class NativeDatabase extends Context.Service<NativeDatabase, NativePhysicalDatabase>()(
   "effect-auth/persistence/NativeDatabase",
 ) {}
 
-export type NativeDatabaseHandle = NativeSqlDatabase & TransactionNativeDatabase;
+export type NativeDatabaseHandle = NativeSqlDatabase & NativePhysicalDatabase;
 
 /* oxlint-disable no-explicit-any -- only native query-builder handles are erased; domain values use mapped codecs. */
 export interface NativeSqlQuery<A = ReadonlyArray<any>> extends Effect.Effect<
@@ -49,5 +62,5 @@ export interface NativeSqlDatabase {
 export const nativeDatabase = <Database, E, R>(acquire: Effect.Effect<Database, E, R>) =>
   Effect.map(
     acquire,
-    (database) => database as unknown as Database & TransactionNativeDatabase & NativeSqlDatabase,
+    (database) => database as unknown as Database & NativePhysicalDatabase & NativeSqlDatabase,
   );

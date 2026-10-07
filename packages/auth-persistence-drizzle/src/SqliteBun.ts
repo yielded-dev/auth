@@ -65,8 +65,6 @@ export const {
 
 export const { coordinateProofPersistence, makeProofPersistenceServices } = proofTarget;
 
-export const commitMode = "interactive" as const;
-
 export const makeIdentityServices = <
   Subject extends AnySQLiteTable,
   Identifier extends AnySQLiteTable,
@@ -104,17 +102,14 @@ export const makeExternalIdentityServices = <
   );
 
 import { makeOAuthTarget } from "./drizzle/oauth-drivers";
-import { sqlClientOAuthStandaloneGuard } from "./drizzle/oauth-target";
 
 const oauthTarget = makeOAuthTarget<
   Database,
   EffectSQLiteBunDatabase<AnyRelations>,
   AnySQLiteTable<{ dialect: "sqlite" }>
 >(Database, {
-  mode: "interactive",
+  mode: "native",
   dialect: "sqlite",
-  locking: false,
-  standaloneGuard: sqlClientOAuthStandaloneGuard,
   transactionConstructor: PasskeyTransaction,
 });
 
@@ -134,7 +129,6 @@ export const {
 } = oauthTarget;
 
 import { makePasskeyTarget } from "./drizzle/passkey-drivers";
-import { sqlClientPasskeyStandaloneGuard } from "./drizzle/passkey/target";
 
 const passkeyTarget = makePasskeyTarget<
   Database,
@@ -142,10 +136,8 @@ const passkeyTarget = makePasskeyTarget<
   AnySQLiteTable<{ dialect: "sqlite" }>
 >(Database, {
   transactionConstructor: PasskeyTransaction,
-  mode: "interactive",
+  mode: "native",
   dialect: "sqlite",
-  locking: false,
-  standaloneGuard: sqlClientPasskeyStandaloneGuard,
 });
 
 export const {

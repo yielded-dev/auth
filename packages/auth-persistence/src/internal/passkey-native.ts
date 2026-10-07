@@ -239,20 +239,9 @@ const services = Effect.fnUntraced(function* (
           const input = M.snapshotPasskeySync(passkeyOperationInputs.cleanup, original);
 
           passkeyNativeInvariant(flow.validModule(input.moduleId));
-          let removed: number;
-          const statement = flow.cleanup(input.moduleId, input.limit);
-
-          if (batch === undefined) removed = yield* flow.change(statement);
-          else {
-            const rows =
-              yield* sql`select ${flow.flow.column(mapping.flow.flowId)} from ${flow.flow.name} where ${flow.module(input.moduleId)} and ${flow.millis(flow.flow.column(mapping.flow.expiresAt))} <= ${flow.now} limit ${input.limit}`;
-
-            removed = rows.length;
-            yield* flow.stage(statement, removed);
-          }
 
           return yield* preparePasskeyNative(
-            { removed, hasMore: removed === input.limit },
+            yield* flow.cleanup(input.moduleId, input.limit, batch !== undefined),
             prepare,
           );
         }),

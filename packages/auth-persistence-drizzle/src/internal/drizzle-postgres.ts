@@ -18,7 +18,6 @@ import type { SqlClient } from "effect/sql/SqlClient";
 
 import { nativeDatabase, type NativeDatabaseHandle } from "../drizzle/native-database";
 import { makeDrizzleSqlTables } from "../drizzle/native-sql-table";
-import { makeComposedPasskeys } from "../drizzle/passkeys";
 
 const makeTable = (definition: StorageTable) =>
   pgTable(
@@ -81,5 +80,4 @@ export const postgresPersistence = <R>(acquire: Effect.Effect<object, never, R |
     describe,
     acquire: nativeDatabase(acquire),
     maxParameters: (database) => database.maxParameters,
-    passkeys: makeComposedPasskeys,
   });

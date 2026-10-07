@@ -87,8 +87,10 @@ const result = yield* auth.changePassword({ commandId, currentPassword, newPassw
 This call requires an authenticated `Auth.AuthRequest`. Applications requiring
 another factor supply `actionProof` or accept recent session step-up through
 `PasswordActionEvidence`. A passkey step-up can authorize the change without
-`currentPassword`; verify its authentication time and factor from `invocation.assurance`
-within the configured evidence age. Current authority is checked again at commit.
+`currentPassword`; check authentication age and the actual fresh private passkey
+proof obtained through `sessions.inspectInvocation`. Public `invocation.assurance`
+describes the session but cannot supply credential IDs or replace that proof.
+Current authority is checked again at commit.
 The result reports the session invalidation behavior of your selected strategy.
 After passkey authentication, the application can call:
 
@@ -193,8 +195,8 @@ Sign-in reads the credential and captures authority before hashing, then checks
 current account status, credential revisions, and factor policy again when issuing
 a session. No password attempt row or direct sign-in flow row is stored. Rehashing
 writes only when hash parameters change, with a comparison that cannot overwrite a
-newer password. Pending second factors and password-change receipts retain their
-own durable state.
+newer password. Pending second factors retain their own single-use state; password
+changes use the original authority and credential revisions without a command receipt.
 
 Compromised-password screening fails closed. `PasswordPolicy.screeningTimeoutMillis`
 defaults to 10,000 ms (allowed range: 1–30,000); a timed-out check returns

@@ -8,8 +8,6 @@ import type { AnySQLiteTable } from "drizzle-orm/sqlite-core";
 import { Context, Effect, Layer } from "effect";
 
 import { NativeDatabase, nativeDatabase } from "./drizzle/native-database";
-import { sqlClientOAuthStandaloneGuard } from "./drizzle/oauth-target";
-import { sqlClientPasskeyStandaloneGuard } from "./drizzle/passkey/target";
 
 /** The application-owned Drizzle database used to construct persistence services. */
 export class Database extends Context.Service<Database, EffectLibsqlDatabase<AnyRelations>>()(
@@ -67,8 +65,6 @@ export const {
 
 export const { coordinateProofPersistence, makeProofPersistenceServices } = proofTarget;
 
-export const commitMode = "interactive" as const;
-
 export const makeIdentityServices = <
   Subject extends AnySQLiteTable,
   Identifier extends AnySQLiteTable,
@@ -112,10 +108,8 @@ const oauthTarget = makeOAuthTarget<
   EffectLibsqlDatabase<AnyRelations>,
   AnySQLiteTable<{ dialect: "sqlite" }>
 >(Database, {
-  mode: "interactive",
+  mode: "native",
   dialect: "sqlite",
-  locking: false,
-  standaloneGuard: sqlClientOAuthStandaloneGuard,
   transactionConstructor: PasskeyTransaction,
 });
 
@@ -142,10 +136,8 @@ const passkeyTarget = makePasskeyTarget<
   AnySQLiteTable<{ dialect: "sqlite" }>
 >(Database, {
   transactionConstructor: PasskeyTransaction,
-  mode: "interactive",
+  mode: "native",
   dialect: "sqlite",
-  locking: false,
-  standaloneGuard: sqlClientPasskeyStandaloneGuard,
 });
 
 export const {

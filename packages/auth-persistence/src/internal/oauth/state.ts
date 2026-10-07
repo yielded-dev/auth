@@ -7,7 +7,7 @@ import {
   snapshotOAuthSync,
 } from "@yielded/auth/OAuth";
 import type { AuthenticationRequirement } from "@yielded/auth/Sessions";
-import { Crypto, DateTime, Effect, Schema } from "effect";
+import { Crypto, Effect, Schema } from "effect";
 import { Base64Url } from "effect/encoding";
 
 import { digest, randomId } from "../crypto";
@@ -151,7 +151,7 @@ export const satisfies = (
   );
 };
 
-export const validAction = Effect.fnUntraced(function* (
+export const matchesAcceptedAction = Effect.fnUntraced(function* (
   authorization: OAuthActionAuthorization | OAuthConnectedActionAuthorization,
   expected: {
     readonly moduleId: string;
@@ -162,9 +162,7 @@ export const validAction = Effect.fnUntraced(function* (
     readonly revision: OAuthAccountRevision;
     readonly intent: string;
   },
-  currentRequirement: AuthenticationRequirement,
   now: number,
-  maximumAgeMillis: number,
 ) {
   const challenge = authorization.challenge;
   const evidence = authorization.evidence;
@@ -197,36 +195,5 @@ export const validAction = Effect.fnUntraced(function* (
   )
     return false;
 
-  const revisions = new Map(
-    expected.revision.credentials.map((item) => [item.credentialId, item.revision]),
-  );
-
-  if (
-    evidence.proofs.some(
-      (proof) =>
-        !revisions.has(proof.credentialId) || DateTime.toEpochMillis(proof.verifiedAt) > now,
-    )
-  )
-    return false;
-
-  if (authorization.source._tag === "Session") {
-    const authenticatedAt = DateTime.toEpochMillis(authorization.source.authenticatedAt);
-
-    if (
-      authenticatedAt > now ||
-      now - authenticatedAt >=
-        Math.min(maximumAgeMillis, authorization.requirement.maximumAgeMillis)
-    )
-      return false;
-  }
-
-  return [authorization.requirement, currentRequirement].every((requirement) => {
-    const fresh = evidence.proofs.filter((proof) => {
-      const age = now - DateTime.toEpochMillis(proof.verifiedAt);
-
-      return age >= 0 && age < Math.min(maximumAgeMillis, requirement.maximumAgeMillis);
-    });
-
-    return satisfies(fresh, requirement);
-  });
+  return true;
 });

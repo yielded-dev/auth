@@ -1,13 +1,15 @@
-import type { LifecycleHooks } from "@yielded/auth/Hooks";
+import type { LifecycleHooks, CommitJournal, PreparedCommit } from "@yielded/auth/Hooks";
 import * as M from "@yielded/auth/OAuth";
-import { Crypto, Effect, Schema } from "effect";
+import { Crypto, Effect, Option, Schema } from "effect";
 import * as Base64Url from "effect/encoding/Base64Url";
 import type { SqlClient } from "effect/sql/SqlClient";
 import type { Fragment } from "effect/sql/Statement";
 
-import type { NativeSqlTables } from "../native-sql-table";
-import { exactSqlText } from "../sql-change";
-import { makeSqlCommitExecutor, SqlBatchCommit } from "../sql-commit";
+import type { NativeSqlTables, SqlTable } from "../native-sql-table";
+import { makeConditionalSqlInsert } from "../session-native-record";
+import { exactSqlText, executeSqlChange } from "../sql-change";
+import { cleanupSqlRows } from "../sql-cleanup";
+import { makeSqlCommitExecutor, SqlBatchCommit, CurrentSqlCommit } from "../sql-commit";
 import {
   connectedSummary,
   makeOAuthNativeConnectedState,
@@ -23,7 +25,7 @@ import {
   sameRevision,
   storage,
   unavailable,
-  validAction,
+  matchesAcceptedAction,
 } from "./state";
 
 export const makeNativeOAuthConnectedServices = Effect.fnUntraced(function* (
@@ -35,8 +37,11 @@ export const makeNativeOAuthConnectedServices = Effect.fnUntraced(function* (
   M.OAuthUnavailable,
   SqlClient | LifecycleHooks | Crypto.Crypto
 > {
+  const conditionalInsert = yield* makeConditionalSqlInsert();
   const executor = yield* makeSqlCommitExecutor(unavailable);
   const crypto = yield* Crypto.Crypto;
+  const external = yield* Effect.serviceOption(CurrentSqlCommit);
+  const planned = batch !== undefined && Option.isSome(external);
   const state = yield* makeOAuthNativeConnectedState(tables, mapping, batch !== undefined);
 
   const flow = yield* makeOAuthNativeFlow(
@@ -50,6 +55,7 @@ export const makeNativeOAuthConnectedServices = Effect.fnUntraced(function* (
 
   const { sql, now, grant } = state;
   const g = mapping.grant;
+  const mysql = sql.onDialectOrElse({ mysql: () => true, orElse: () => false });
 
   const run = <A, E, R>(
     effect: Effect.Effect<A, E, R>,
@@ -61,6 +67,44 @@ export const makeNativeOAuthConnectedServices = Effect.fnUntraced(function* (
       ? executor.run(work, mode)
       : executor.batch(work).pipe(Effect.provideService(SqlBatchCommit, batch));
   };
+
+  const atomic = <A, E, R>(
+    effect: Effect.Effect<A, E, R>,
+    mode: "transaction" | "statement" = "statement",
+  ) =>
+    planned
+      ? run(effect)
+      : executor.run(Effect.provideService(effect, Crypto.Crypto, crypto), mode);
+
+  const refreshMiss = <A>(
+    key: M.OAuthConnectedGrantKey,
+    nativeId: unknown,
+    encoded: string,
+    required: Fragment,
+    upper: number,
+    prepare: (
+      decision: typeof M.OAuthConnectedRefreshDecision.Type,
+      journal: CommitJournal,
+    ) => PreparedCommit<A>,
+  ) =>
+    Effect.gen(function* () {
+      const rows =
+        yield* sql`select ${grant.column(g.state)} as state,${now} as instant from ${grant.name} where ${state.key(key, nativeId)} and ${state.exact(g.snapshot, encoded)} and ${required} limit 2`;
+
+      invariant(rows.length <= 1);
+      const row = rows[0];
+
+      return yield* prepareOAuthNative(
+        row === undefined
+          ? { _tag: "Rejected" }
+          : row.state === "Refreshing"
+            ? { _tag: "Busy" }
+            : row.state !== "Active" || Number(row.instant) >= upper
+              ? { _tag: "ReauthorizationRequired" }
+              : { _tag: "Busy" },
+        prepare,
+      );
+    });
 
   const read = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
     executor.read(Effect.provideService(effect, Crypto.Crypto, crypto));
@@ -135,7 +179,18 @@ export const makeNativeOAuthConnectedServices = Effect.fnUntraced(function* (
         Effect.gen(function* () {
           const input = M.snapshotOAuthSync(M.OAuthConnectedSettlement, original);
           const token = input.grant.context;
-          const current = yield* state.capture(token.subjectId, batch === undefined);
+          const captured = yield* state.captureSubject(token.subjectId, batch === undefined);
+
+          const revision =
+            input._tag === "Connect" ? input.flow.context.revision : input.credential.revision;
+
+          const current =
+            captured === undefined ||
+            captured.securityRevision !== revision.securityRevision ||
+            revision.subjectId !== token.subjectId
+              ? undefined
+              : { ...captured, revision };
+
           const rejected = () => prepareOAuthNative({ _tag: "Rejected" } as const, prepare);
 
           if (
@@ -171,7 +226,7 @@ export const makeNativeOAuthConnectedServices = Effect.fnUntraced(function* (
             )
               return yield* rejected();
             if (
-              !(yield* validAction(
+              !(yield* matchesAcceptedAction(
                 input.authorization,
                 {
                   moduleId: c.moduleId,
@@ -182,9 +237,7 @@ export const makeNativeOAuthConnectedServices = Effect.fnUntraced(function* (
                     Schema.fromJsonString(M.OAuthConnectedTransactionContext),
                   )(c),
                 },
-                mapping.subject.decodeActionRequirement(current.subject, "connected-complete"),
                 current.now,
-                c.maximumEvidenceAgeMillis,
               ))
             )
               return yield* rejected();
@@ -239,58 +292,58 @@ export const makeNativeOAuthConnectedServices = Effect.fnUntraced(function* (
             sql`${now} < ${deadline}`,
           ]);
 
-          if ((yield* sql`select 1 where ${required}`).length !== 1) return yield* rejected();
-
           const key = {
             moduleId: token.moduleId,
             subjectId: token.subjectId,
             grantId: token.grantId,
           };
 
-          const old = yield* state.readGrant(key, current.nativeId, batch === undefined);
-
           if (
-            previous === undefined
-              ? old !== undefined
-              : old === undefined ||
-                previous.grantId !== token.grantId ||
-                old.value.context.grantVersion !== previous.grantVersion ||
-                (input._tag === "SignIn" &&
-                  old.value.context.tokenVersion !== previous.tokenVersion) ||
-                !sameIdentity(old.value.context.identity, previous.identity) ||
-                !sameIdentity(token.identity, previous.identity) ||
-                !sameConfiguration(old.value.context.configuration, previous.configuration) ||
-                token.grantVersion === previous.grantVersion
+            previous !== undefined &&
+            (previous.grantId !== token.grantId ||
+              !sameIdentity(token.identity, previous.identity) ||
+              !sameConfiguration(token.configuration, previous.configuration) ||
+              token.grantVersion === previous.grantVersion)
           )
             return yield* rejected();
-          const identityKey = yield* state.ensureOwnership(token.identity, current.nativeId);
+
+          const identityKey =
+            input._tag === "SignIn" || previous !== undefined
+              ? yield* oauthIdentityKey(token.identity)
+              : yield* state.ensureOwnership(token.identity, current.nativeId);
 
           if (identityKey === undefined)
             return yield* prepareOAuthNative({ _tag: "Conflict" }, prepare);
+          const owner = sql`exists(select 1 from ${state.ownership.name} where ${state.ownerCondition(identityKey, current.nativeId)})`;
           const values = state.values(input.grant, current.nativeId, identityKey);
 
-          if (old === undefined) {
-            if (batch !== undefined) yield* state.assert(required);
-            invariant((yield* state.change(grant.insert(values))) === 1);
-          } else
-            invariant(
-              (yield* state.change(
-                sql`${grant.update(values)} where ${state.key(key, current.nativeId)} and ${state.exact(g.grantVersion, old.value.context.grantVersion)} ${input._tag === "SignIn" ? sql`and ${state.exact(g.tokenVersion, old.value.context.tokenVersion)}` : sql``} and ${required}`,
-              )) === 1,
-            );
-          yield* state.finish(
-            "oauth-connected-grant",
-            sql.and([
-              required,
-              present(
-                key,
-                current.nativeId,
-                state.stored.encode(input.grant),
-                state.exact(g.state, "Active"),
-              ),
-              sql`exists(select 1 from ${state.ownership.name} where ${state.ownerCondition(identityKey, current.nativeId)})`,
-            ]),
+          const changed = yield* state.change(
+            previous === undefined
+              ? conditionalInsert(grant, values, sql`${required} and ${owner}`)
+              : sql`${grant.update(values)} where ${state.key(key, current.nativeId)} and ${state.exact(g.grantVersion, previous.grantVersion)} and ${state.exact(g.identityKey, identityKey)} and ${state.exact(g.profileKey, previous.configuration.profile.key)} ${input._tag === "SignIn" ? sql`and ${state.exact(g.tokenVersion, previous.tokenVersion)}` : sql``} and ${required} and ${owner}`,
           );
+
+          if (changed !== 1) {
+            // A fresh connection may have inserted ownership in this transaction.
+            // Roll it back together with a lost grant predicate.
+            invariant(input._tag !== "Connect" || previous !== undefined);
+
+            return yield* rejected();
+          }
+          if (Option.isSome(external))
+            yield* state.finish(
+              "oauth-connected-grant",
+              sql.and([
+                required,
+                present(
+                  key,
+                  current.nativeId,
+                  state.stored.encode(input.grant),
+                  state.exact(g.state, "Active"),
+                ),
+                sql`exists(select 1 from ${state.ownership.name} where ${state.ownerCondition(identityKey, current.nativeId)})`,
+              ]),
+            );
 
           return yield* prepareOAuthNative({ _tag: "Connected", grant: input.grant }, prepare);
         }),
@@ -308,16 +361,14 @@ export const makeNativeOAuthConnectedServices = Effect.fnUntraced(function* (
             ...(original.cursor === undefined ? {} : { cursor: original.cursor }),
           });
 
-          const current = yield* state.capture(authorization.revision.subjectId, false);
-
-          if (current === undefined) return { items: [] };
-          const required = state.use(current, authorization, "metadata");
+          const nativeId = yield* mapping.subjectId.toNative(authorization.revision.subjectId);
+          const required = state.use(nativeId, authorization, "metadata");
 
           if (required === undefined) return { items: [] };
 
           const rows =
             yield* sql`select ${grant.column(g.summary)} as summary, ${grant.column(g.state)} as state from ${grant.name}
-        where ${state.exact(g.moduleId, authorization.moduleId)} and ${grant.column(g.subjectId)} = ${grant.value(g.subjectId, current.nativeId)} and ${required}
+        where ${state.exact(g.moduleId, authorization.moduleId)} and ${grant.column(g.subjectId)} = ${grant.value(g.subjectId, nativeId)} and ${required}
         ${input.cursor === undefined ? sql`` : sql`and ${grant.column(g.grantId)} > ${grant.value(g.grantId, input.cursor)}`}
         order by ${grant.column(g.grantId)} limit ${input.limit}`;
 
@@ -355,7 +406,16 @@ export const makeNativeOAuthConnectedServices = Effect.fnUntraced(function* (
             original.authorization,
           );
 
-          const current = yield* state.capture(key.subjectId, batch === undefined);
+          const captured = yield* state.captureSubject(key.subjectId, batch === undefined);
+          const revision = authorization.challenge.revision;
+
+          const current =
+            captured === undefined ||
+            revision.subjectId !== key.subjectId ||
+            captured.securityRevision !== revision.securityRevision
+              ? undefined
+              : { ...captured, revision };
+
           const rejected = () => prepareOAuthNative({ _tag: "Rejected" } as const, prepare);
 
           if (
@@ -364,7 +424,7 @@ export const makeNativeOAuthConnectedServices = Effect.fnUntraced(function* (
           )
             return yield* rejected();
           if (
-            !(yield* validAction(
+            !(yield* matchesAcceptedAction(
               authorization,
               {
                 moduleId: key.moduleId,
@@ -378,9 +438,7 @@ export const makeNativeOAuthConnectedServices = Effect.fnUntraced(function* (
                   grantVersion: version,
                 }),
               },
-              mapping.subject.decodeActionRequirement(current.subject, "connected-disconnect"),
               current.now,
-              authorization.requirement.maximumAgeMillis,
             ))
           )
             return yield* rejected();
@@ -402,9 +460,16 @@ export const makeNativeOAuthConnectedServices = Effect.fnUntraced(function* (
             }),
           ]);
 
-          if ((yield* sql`select 1 where ${required}`).length !== 1) return yield* rejected();
           let remoteRevocation: "Pending" | "Unsupported" = "Unsupported";
           const final = [];
+
+          // The locked snapshot is also the provider job payload; never enqueue
+          // caller ciphertext or delete a different grant revision.
+          const removed = yield* state.change(
+            sql`delete from ${grant.name} where ${state.key(key, current.nativeId)} and ${state.exact(g.grantVersion, version)} and ${state.exact(g.snapshot, old.encoded)} and ${required}`,
+          );
+
+          if (removed !== 1) return yield* rejected();
 
           if (
             mapping.revocation.mode === "provider" &&
@@ -452,24 +517,20 @@ export const makeNativeOAuthConnectedServices = Effect.fnUntraced(function* (
             );
             remoteRevocation = "Pending";
           }
-          invariant(
-            (yield* state.change(
-              sql`delete from ${grant.name} where ${state.key(key, current.nativeId)} and ${state.exact(g.grantVersion, version)} and ${required}`,
-            )) === 1,
-          );
           yield* state.releaseOwnership(
             old.identityKey,
             current.nativeId,
             referenced(old.identityKey, current.nativeId),
           );
-          yield* state.finish(
-            "oauth-connected-disconnected",
-            sql.and([
-              required,
-              sql`not exists(select 1 from ${grant.name} where ${state.key(key, current.nativeId)})`,
-              ...final,
-            ]),
-          );
+          if (Option.isSome(external))
+            yield* state.finish(
+              "oauth-connected-disconnected",
+              sql.and([
+                required,
+                sql`not exists(select 1 from ${grant.name} where ${state.key(key, current.nativeId)})`,
+                ...final,
+              ]),
+            );
 
           return yield* prepareOAuthNative(
             { _tag: "Disconnected", grantId: key.grantId, remoteRevocation },
@@ -478,103 +539,136 @@ export const makeNativeOAuthConnectedServices = Effect.fnUntraced(function* (
         }),
       ),
     claimRefresh: (original, prepare) =>
-      run(
+      atomic(
         Effect.gen(function* () {
-          const key = M.snapshotOAuthSync(M.OAuthConnectedGrantKey, original.key);
+          const stored = M.snapshotOAuthSync(M.OAuthConnectedStoredGrant, original.grant);
+          const token = stored.context;
+
+          const key = {
+            moduleId: token.moduleId,
+            subjectId: token.subjectId,
+            grantId: token.grantId,
+          };
+
+          const nativeId = yield* mapping.subjectId.toNative(token.subjectId);
 
           const authorization = M.snapshotOAuthSync(
             M.OAuthConnectedUseAuthorization,
             original.authorization,
           );
 
-          const current = yield* state.capture(key.subjectId, batch === undefined);
           const rejected = () => prepareOAuthNative({ _tag: "Rejected" } as const, prepare);
+          const required = state.use(nativeId, authorization, "use", token);
 
-          if (current === undefined) return yield* rejected();
-          const old = yield* state.readGrant(key, current.nativeId, batch === undefined);
-
+          if (required === undefined) return yield* rejected();
           if (
-            old === undefined ||
-            old.value.context.grantVersion !== original.grantVersion ||
-            old.value.context.tokenVersion !== original.tokenVersion
-          )
-            return yield* rejected();
-          const token = old.value.context;
-          const required = state.use(current, authorization, "use", token);
-
-          if (required === undefined || (yield* sql`select 1 where ${required}`).length !== 1)
-            return yield* rejected();
-          if (old.snapshot.state === "Refreshing")
-            return yield* prepareOAuthNative({ _tag: "Busy" }, prepare);
-          if (
-            old.snapshot.state !== "Active" ||
             token.configuration.profile.refresh === "unsupported" ||
-            token.metadata.refreshUseUntilMillis === undefined ||
-            current.now >= token.metadata.refreshUseUntilMillis
+            token.metadata.refreshUseUntilMillis === undefined
           )
             return yield* prepareOAuthNative({ _tag: "ReauthorizationRequired" }, prepare);
-          if (
-            current.now <
-            token.metadata.useUntilMillis - token.configuration.profile.refreshAheadMillis
-          )
-            return yield* prepareOAuthNative({ _tag: "Busy" }, prepare);
           invariant(
             Number.isSafeInteger(original.lifetimeMillis) &&
               original.lifetimeMillis >= 1000 &&
               original.lifetimeMillis <= 300000 &&
-              original.nextTokenVersion !== token.tokenVersion,
+              original.nextTokenVersion !== token.tokenVersion &&
+              validConnectedMetadata(token, token.metadata.obtainedAtMillis),
           );
+          const encoded = state.stored.encode(stored);
 
-          const deadline = Math.min(
-            current.now + original.lifetimeMillis,
+          const upper = Math.min(
             token.metadata.refreshUseUntilMillis,
             authorization.expiresAtMillis,
           );
 
-          const claim = M.snapshotOAuthSync(M.OAuthConnectedRefreshClaim, {
-            grant: old.value,
-            claimId: original.claimId,
-            nextTokenVersion: original.nextTokenVersion,
-            claimedAtMillis: current.now,
-            claimExpiresAtMillis: deadline,
-          });
+          const due =
+            token.metadata.useUntilMillis - token.configuration.profile.refreshAheadMillis;
 
-          const target = sql.and([
-            state.key(key, current.nativeId),
+          const base = sql.and([
+            state.key(key, nativeId),
             state.exact(g.grantVersion, token.grantVersion),
             state.exact(g.tokenVersion, token.tokenVersion),
+            state.exact(g.snapshot, encoded),
             state.exact(g.state, "Active"),
+            sql`${grant.column(g.refreshClaimId)} is null`,
             required,
-            sql`${now} >= ${current.now} and ${now} < ${deadline}`,
+            sql`${now} >= ${token.metadata.obtainedAtMillis} and ${now} >= ${due} and ${now} < ${upper}`,
           ]);
 
-          invariant(
-            (yield* state.change(
-              sql`${grant.update({ [g.state]: "Refreshing", [g.refreshClaimId]: claim.claimId, [g.refreshNextTokenVersion]: claim.nextTokenVersion, [g.refreshClaimedAt]: mapping.clock.encodeInstant(claim.claimedAtMillis), [g.refreshClaimExpiresAt]: mapping.clock.encodeInstant(deadline) })} where ${target}`,
-            )) === 1,
-          );
-          yield* state.finish(
-            "oauth-refresh-claim",
-            sql.and([
-              required,
-              sql`${now} < ${deadline}`,
-              present(
-                key,
-                current.nativeId,
-                old.encoded,
-                sql.and([
-                  state.exact(g.state, "Refreshing"),
-                  state.exact(g.refreshClaimId, claim.claimId),
-                ]),
-              ),
-            ]),
-          );
+          let claimedAtMillis: number, claimExpiresAtMillis: number;
+
+          if (planned || mysql) {
+            // A fixed batch cannot return its future clock sample. Its planned
+            // sample is written exactly and guarded by the original horizon.
+            const clock = yield* sql`select ${now} as instant`;
+
+            claimedAtMillis = Number(clock[0]?.instant);
+            invariant(Number.isSafeInteger(claimedAtMillis));
+            claimExpiresAtMillis = Math.min(claimedAtMillis + original.lifetimeMillis, upper);
+            if (claimedAtMillis >= upper)
+              return yield* prepareOAuthNative({ _tag: "ReauthorizationRequired" }, prepare);
+            const statement = sql`${grant.update({ [g.state]: "Refreshing", [g.refreshClaimId]: original.claimId, [g.refreshNextTokenVersion]: original.nextTokenVersion, [g.refreshClaimedAt]: mapping.clock.encodeInstant(claimedAtMillis), [g.refreshClaimExpiresAt]: mapping.clock.encodeInstant(claimExpiresAtMillis) })} where ${base} and ${now} >= ${claimedAtMillis} and ${now} < ${claimExpiresAtMillis}`;
+
+            const changed = planned
+              ? yield* state.change(statement)
+              : yield* executeSqlChange(sql, statement);
+
+            if (changed !== 1)
+              return yield* refreshMiss(key, nativeId, encoded, required, upper, prepare);
+          } else {
+            const sample = sql`(select instant from refresh_clock)`;
+            const deadline = sql`case when ${sample} + ${original.lifetimeMillis} < ${upper} then ${sample} + ${original.lifetimeMillis} else ${upper} end`;
+            const statement = sql`with refresh_clock as materialized (select ${now} as instant) ${grant.update({ [g.state]: "Refreshing", [g.refreshClaimId]: original.claimId, [g.refreshNextTokenVersion]: original.nextTokenVersion, [g.refreshClaimedAt]: tables.expression(mapping.clock.fromMillis(sample)), [g.refreshClaimExpiresAt]: tables.expression(mapping.clock.fromMillis(deadline)) })} where ${base} and ${sample} >= ${due} and ${sample} >= ${token.metadata.obtainedAtMillis} and ${sample} < ${upper} returning ${grant.fields("claimed_")}`;
+            const rows = yield* statement;
+
+            if (rows.length === 0)
+              return yield* refreshMiss(key, nativeId, encoded, required, upper, prepare);
+            invariant(rows.length === 1);
+            const row = grant.decode(rows[0]!, "claimed_");
+
+            invariant(
+              row[g.snapshot] === encoded &&
+                row[g.refreshClaimId] === original.claimId &&
+                row[g.refreshNextTokenVersion] === original.nextTokenVersion,
+            );
+            claimedAtMillis = mapping.clock.decodeInstant(row[g.refreshClaimedAt]);
+            claimExpiresAtMillis = mapping.clock.decodeInstant(row[g.refreshClaimExpiresAt]);
+          }
+
+          const claim = M.snapshotOAuthSync(M.OAuthConnectedRefreshClaim, {
+            grant: stored,
+            claimId: original.claimId,
+            nextTokenVersion: original.nextTokenVersion,
+            claimedAtMillis,
+            claimExpiresAtMillis,
+          });
+
+          if (Option.isSome(external))
+            yield* state.finish(
+              "oauth-refresh-claim",
+              sql.and([
+                required,
+                sql`${now} < ${claimExpiresAtMillis}`,
+                present(
+                  key,
+                  nativeId,
+                  encoded,
+                  sql.and([
+                    state.exact(g.state, "Refreshing"),
+                    state.exact(g.refreshClaimId, claim.claimId),
+                    state.exact(g.refreshNextTokenVersion, claim.nextTokenVersion),
+                    sql`${tables.expression(mapping.clock.toMillis(grant.column(g.refreshClaimedAt)))} = ${claimedAtMillis}`,
+                    sql`${tables.expression(mapping.clock.toMillis(grant.column(g.refreshClaimExpiresAt)))} = ${claimExpiresAtMillis}`,
+                  ]),
+                ),
+              ]),
+            );
 
           return yield* prepareOAuthNative({ _tag: "Claimed", claim }, prepare);
         }),
+        mysql ? "transaction" : "statement",
       ),
     settleRefresh: (original, prepare) =>
-      run(
+      atomic(
         Effect.gen(function* () {
           const claim = M.snapshotOAuthSync(M.OAuthConnectedRefreshClaim, original.claim);
 
@@ -592,35 +686,15 @@ export const makeNativeOAuthConnectedServices = Effect.fnUntraced(function* (
             grantId: token.grantId,
           };
 
-          const current = yield* state.capture(token.subjectId, batch === undefined);
-          const rejected = () => prepareOAuthNative({ _tag: "Rejected" } as const, prepare);
+          const nativeId = yield* mapping.subjectId.toNative(token.subjectId);
+          const required = state.use(nativeId, authorization, "use", token);
 
-          if (
-            current === undefined ||
-            current.now < claim.claimedAtMillis ||
-            current.now >= claim.claimExpiresAtMillis
-          )
-            return yield* rejected();
-          const required = state.use(current, authorization, "use", token);
-
-          if (required === undefined || (yield* sql`select 1 where ${required}`).length !== 1)
-            return yield* rejected();
-          const old = yield* state.readGrant(key, current.nativeId, batch === undefined);
-
-          if (
-            old === undefined ||
-            old.encoded !== state.stored.encode(claim.grant) ||
-            old.snapshot.state !== "Refreshing" ||
-            old.row[g.refreshClaimId] !== claim.claimId ||
-            old.row[g.refreshNextTokenVersion] !== claim.nextTokenVersion ||
-            mapping.clock.decodeInstant(old.row[g.refreshClaimedAt]) !== claim.claimedAtMillis ||
-            mapping.clock.decodeInstant(old.row[g.refreshClaimExpiresAt]) !==
-              claim.claimExpiresAtMillis
-          )
-            return yield* rejected();
-          let values: Readonly<Record<string, unknown>>;
+          if (required === undefined)
+            return yield* prepareOAuthNative({ _tag: "Rejected" }, prepare);
           let deadline = Math.min(claim.claimExpiresAtMillis, authorization.expiresAtMillis);
-          let encoded = old.encoded;
+          let lower = claim.claimedAtMillis;
+          let values: Readonly<Record<string, unknown>>;
+          let encoded = state.stored.encode(claim.grant);
 
           if (outcome._tag === "Refreshed") {
             const next = outcome.grant.context;
@@ -634,14 +708,14 @@ export const makeNativeOAuthConnectedServices = Effect.fnUntraced(function* (
                 sameIdentity(next.identity, token.identity) &&
                 sameConfiguration(next.configuration, token.configuration) &&
                 next.metadata.obtainedAtMillis >= claim.claimedAtMillis &&
-                validConnectedMetadata(next, current.now) &&
+                validConnectedMetadata(next, next.metadata.obtainedAtMillis) &&
                 (next.metadata.refreshUseUntilMillis === undefined ||
                   (token.metadata.refreshUseUntilMillis !== undefined &&
                     next.metadata.refreshUseUntilMillis <= token.metadata.refreshUseUntilMillis)),
             );
             deadline = Math.min(deadline, next.metadata.useUntilMillis);
-            if (current.now >= deadline) return yield* rejected();
-            values = state.values(outcome.grant, current.nativeId, old.identityKey);
+            lower = next.metadata.obtainedAtMillis;
+            values = state.values(outcome.grant, nativeId, yield* oauthIdentityKey(token.identity));
             encoded = state.stored.encode(outcome.grant);
           } else
             values = {
@@ -657,33 +731,43 @@ export const makeNativeOAuthConnectedServices = Effect.fnUntraced(function* (
             };
 
           const target = sql.and([
-            state.key(key, current.nativeId),
+            state.key(key, nativeId),
             state.exact(g.grantVersion, token.grantVersion),
             state.exact(g.tokenVersion, token.tokenVersion),
+            state.exact(g.snapshot, state.stored.encode(claim.grant)),
             state.exact(g.state, "Refreshing"),
             state.exact(g.refreshClaimId, claim.claimId),
             state.exact(g.refreshNextTokenVersion, claim.nextTokenVersion),
+            sql`${tables.expression(mapping.clock.toMillis(grant.column(g.refreshClaimedAt)))} = ${claim.claimedAtMillis}`,
+            sql`${tables.expression(mapping.clock.toMillis(grant.column(g.refreshClaimExpiresAt)))} = ${claim.claimExpiresAtMillis}`,
             required,
-            sql`${now} >= ${claim.claimedAtMillis} and ${now} < ${deadline}`,
+            sql`${now} >= ${lower} and ${now} < ${deadline}`,
           ]);
 
-          invariant((yield* state.change(sql`${grant.update(values)} where ${target}`)) === 1);
-          yield* state.finish(
-            "oauth-refresh-settled",
-            sql.and([
-              required,
-              sql`${now} < ${deadline}`,
-              present(
-                key,
-                current.nativeId,
-                encoded,
-                state.exact(
-                  g.state,
-                  outcome._tag === "Refreshed" ? "Active" : "ReauthorizationRequired",
+          const statement = sql`${grant.update(values)} where ${target}`;
+
+          const changed = planned
+            ? yield* state.change(statement)
+            : yield* executeSqlChange(sql, statement);
+
+          if (changed !== 1) return yield* prepareOAuthNative({ _tag: "Rejected" }, prepare);
+          if (Option.isSome(external))
+            yield* state.finish(
+              "oauth-refresh-settled",
+              sql.and([
+                required,
+                sql`${now} < ${deadline}`,
+                present(
+                  key,
+                  nativeId,
+                  encoded,
+                  state.exact(
+                    g.state,
+                    outcome._tag === "Refreshed" ? "Active" : "ReauthorizationRequired",
+                  ),
                 ),
-              ),
-            ]),
-          );
+              ]),
+            );
 
           return yield* prepareOAuthNative(outcome, prepare);
         }),
@@ -692,8 +776,19 @@ export const makeNativeOAuthConnectedServices = Effect.fnUntraced(function* (
       run(
         Effect.gen(function* () {
           const input = M.snapshotOAuthSync(M.OAuthCleanupInput, original);
-          const flows = yield* flow.cleanup(input.moduleId, input.limit);
-          let removed = flows.removed;
+          let removed = 0;
+
+          // Expired rows own the public limit. Releasing their now-unreferenced
+          // ownership is bounded ancillary teardown in this same commit.
+          const candidates: Array<{
+            table: SqlTable;
+            keys: readonly [string, ...string[]];
+            due: Fragment;
+            order: ReadonlyArray<Fragment>;
+            key: Fragment;
+            identityKey: string;
+            nativeId: unknown;
+          }> = [];
 
           if (removed < input.limit) {
             const due = sql.and([
@@ -705,27 +800,32 @@ export const makeNativeOAuthConnectedServices = Effect.fnUntraced(function* (
               yield* sql`select ${grant.fields("due_")} from ${grant.name} where ${due} order by ${grant.column(g.expiresAt)}, ${grant.column(g.grantId)} limit ${input.limit - removed}`;
 
             for (const raw of rows) {
-              const row = grant.decode(raw, "due_");
-              const nativeId = row[g.subjectId];
-              const subjectId = yield* mapping.subjectId.toSubject(nativeId);
+              const row = grant.decode(raw, "due_"),
+                nativeId = row[g.subjectId];
+
               const value = yield* state.decode(row, nativeId);
 
-              invariant(
-                (yield* state.change(
-                  sql`delete from ${grant.name} where ${state.key({ moduleId: input.moduleId, subjectId, grantId: value.value.context.grantId }, nativeId)} and ${due}`,
-                )) === 1,
-              );
-              yield* state.releaseOwnership(
-                value.identityKey,
+              candidates.push({
+                table: grant,
+                keys: [g.moduleId, g.grantId],
+                due,
+                order: [grant.column(g.expiresAt), grant.column(g.grantId)],
+                key: state.key(
+                  {
+                    moduleId: input.moduleId,
+                    subjectId: value.value.context.subjectId,
+                    grantId: value.value.context.grantId,
+                  },
+                  nativeId,
+                ),
+                identityKey: value.identityKey,
                 nativeId,
-                referenced(value.identityKey, nativeId),
-              );
-              removed++;
+              });
             }
           }
-          if (removed < input.limit && mapping.revocation.mode === "provider") {
-            const j = mapping.revocation.job;
-            const job = tables(j.table);
+          if (removed + candidates.length < input.limit && mapping.revocation.mode === "provider") {
+            const j = mapping.revocation.job,
+              job = tables(j.table);
 
             const due = sql.and([
               exactSqlText(sql, job.column(j.moduleId), job.value(j.moduleId, input.moduleId)),
@@ -733,28 +833,87 @@ export const makeNativeOAuthConnectedServices = Effect.fnUntraced(function* (
             ]);
 
             const rows =
-              yield* sql`select ${job.fields("job_")} from ${job.name} where ${due} order by ${job.column(j.retentionUntil)}, ${job.column(j.jobId)} limit ${input.limit - removed}`;
+              yield* sql`select ${job.fields("job_")} from ${job.name} where ${due} order by ${job.column(j.retentionUntil)}, ${job.column(j.jobId)} limit ${input.limit - removed - candidates.length}`;
 
             for (const raw of rows) {
               const row = job.decode(raw, "job_");
 
-              const identityKey = yield* Schema.decodeUnknownEffect(Schema.String)(
-                row[j.identityKey],
-              );
-
-              invariant(
-                (yield* state.change(
-                  sql`delete from ${job.name} where ${exactSqlText(sql, job.column(j.jobId), job.value(j.jobId, row[j.jobId]))} and ${due}`,
-                )) === 1,
-              );
-              yield* state.releaseOwnership(
-                identityKey,
-                row[j.subjectId],
-                referenced(identityKey, row[j.subjectId]),
-              );
-              removed++;
+              candidates.push({
+                table: job,
+                keys: [j.jobId],
+                due,
+                order: [job.column(j.retentionUntil), job.column(j.jobId)],
+                key: exactSqlText(sql, job.column(j.jobId), job.value(j.jobId, row[j.jobId])),
+                identityKey: yield* Schema.decodeUnknownEffect(Schema.String)(row[j.identityKey]),
+                nativeId: row[j.subjectId],
+              });
             }
           }
+          const owners = new Map<string, unknown>();
+
+          for (const candidate of candidates) {
+            const logical = yield* mapping.subjectId.toSubject(candidate.nativeId);
+
+            invariant(
+              mapping.subjectId.equals(
+                candidate.nativeId,
+                yield* mapping.subjectId.toNative(logical),
+              ),
+            );
+            owners.set(logical, candidate.nativeId);
+          }
+          // Collect the complete bounded owner set before locking; every cleanup
+          // invocation takes these subject locks in the same physical order.
+          if (
+            owners.size > 0 &&
+            batch === undefined &&
+            !sql.onDialectOrElse({ sqlite: () => true, orElse: () => false })
+          ) {
+            const s = mapping.subject,
+              subject = state.subject;
+
+            yield* sql`select ${subject.column(s.id)} from ${subject.name} where ${sql.or([...owners.values()].map((nativeId) => sql`${subject.column(s.id)} = ${subject.value(s.id, nativeId)}`))} order by ${subject.column(s.id)} for update`;
+          }
+          // Small fixed groups bound driver parameters even for codecs and
+          // application reference predicates. No cleanup statement is per row.
+          for (let start = 0; start < candidates.length;) {
+            const first = candidates[start]!;
+
+            const selected = candidates
+              .slice(start, start + 8)
+              .filter((candidate) => candidate.table === first.table);
+
+            start += selected.length;
+
+            const result = yield* cleanupSqlRows(
+              [
+                {
+                  table: first.table,
+                  keys: first.keys,
+                  due: sql.and([first.due, sql.or(selected.map((candidate) => candidate.key))]),
+                  order: first.order,
+                },
+              ],
+              selected.length,
+              batch !== undefined,
+            );
+
+            removed += result.removed;
+
+            const release = sql.or(
+              selected.map((candidate) =>
+                sql.and([
+                  state.ownerCondition(candidate.identityKey, candidate.nativeId),
+                  sql`not (${referenced(candidate.identityKey, candidate.nativeId)})`,
+                ]),
+              ),
+            );
+
+            yield* state.execute(sql`delete from ${state.ownership.name} where ${release}`);
+          }
+
+          if (removed < input.limit)
+            removed += (yield* flow.cleanup(input.moduleId, input.limit - removed)).removed;
 
           return yield* prepareOAuthNative({ removed, hasMore: removed === input.limit }, prepare);
         }),

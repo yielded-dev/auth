@@ -75,6 +75,7 @@ export const makeNativeEmailReader = Effect.fnUntraced(function* (
     readonly sourceCredentialId?: string;
     readonly sourceIdentifier?: LoginIdentifier;
     readonly single?: boolean;
+    readonly validity?: Fragment;
   }) {
     const native = yield* mapping.subjectId.toNative(input.subjectId);
     let source = input.sourceIdentifier;
@@ -104,7 +105,7 @@ export const makeNativeEmailReader = Effect.fnUntraced(function* (
       left join ${sourceCredential.name} on ${input.sourceCredentialId === undefined ? sql`1 = 0` : sql.and([exact(sourceCredential, c.moduleId, input.moduleId), exact(sourceCredential, c.credentialId, input.sourceCredentialId)])}
       left join ${sourceAuthority.name} on ${input.sourceCredentialId === undefined ? sql`1 = 0` : sql.and([id(sourceAuthority, a.subjectId, native), exact(sourceAuthority, a.credentialId, input.sourceCredentialId)])}
       left join ${authority.name} on ${id(authority, a.subjectId, native)} and ${id(authority, a.status, a.activeStatusValue)}
-      where ${id(subject, s.id, native)} limit 65`;
+      where ${id(subject, s.id, native)} and ${input.validity ?? sql`1 = 1`} limit 65`;
 
     ensureEmail(rows.length <= 64);
     const first = rows[0];

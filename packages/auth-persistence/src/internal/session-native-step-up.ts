@@ -93,9 +93,9 @@ export const makeNativeSessionStepUpServices = Effect.fnUntraced(function* <Clai
     mode: "transaction" | "statement" = "transaction",
   ) =>
     batch === undefined
-      ? executor.coordinate(normalizeSessionOperation(work), mode)
+      ? executor.operation(normalizeSessionOperation(work), mode)
       : executor
-          .coordinateBatch(normalizeSessionOperation(work))
+          .operationBatch(normalizeSessionOperation(work))
           .pipe(Effect.provideService(SqlBatchCommit, batch));
 
   const decode = Effect.fnUntraced(function* (stored: StoredSessionPending) {

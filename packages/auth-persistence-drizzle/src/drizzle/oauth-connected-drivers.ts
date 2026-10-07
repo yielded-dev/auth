@@ -1,5 +1,4 @@
 import type { LifecycleHooks } from "@yielded/auth/Hooks";
-import type { OAuthUnavailable } from "@yielded/auth/OAuth";
 import { OAuthConnectedPersistence, OAuthConnectedRevocations } from "@yielded/auth/OAuth";
 import type { Table } from "drizzle-orm";
 import { type Crypto, Effect, Context } from "effect";
@@ -28,7 +27,7 @@ export const makeOAuthConnectedTarget = <
   Database,
   Family extends Table,
   Extra = {},
-  Synchronous extends boolean = false,
+  Provided extends D1BatchStatements = never,
 >(
   databaseService: Context.Service<DatabaseId, Database>,
   configuration: OAuthTargetConfiguration,
@@ -53,11 +52,11 @@ export const makeOAuthConnectedTarget = <
       readonly mapping: OAuthConnectedMapping<S, AC, O, F, G, N, J> & Extra;
       readonly transaction?: never;
     },
-    body: Effect.Effect<A, E, Synchronous extends true ? NoInfer<OAuthConnectedPersistence> : R>,
+    body: Effect.Effect<A, E, R>,
   ): Effect.Effect<
     A,
     OAuthCoordinatorError<E> | DatabaseError,
-    | (Synchronous extends true ? never : Exclude<R, OAuthConnectedPersistence>)
+    | Exclude<R, OAuthConnectedPersistence | Provided>
     | Crypto.Crypto
     | LifecycleHooks
     | DatabaseRequirements
@@ -84,15 +83,11 @@ export const makeOAuthConnectedTarget = <
       readonly mapping: OAuthConnectedMapping<S, AC, O, F, G, N, J> & Extra;
       readonly transaction: SuppliedService<TxId, NoInfer<TransactionOf<D>>, TxShape>;
     },
-    body: Effect.Effect<
-      A,
-      E,
-      Synchronous extends true ? NoInfer<OAuthConnectedPersistence | TxId> : R
-    >,
+    body: Effect.Effect<A, E, R>,
   ): Effect.Effect<
     A,
     OAuthCoordinatorError<E> | DatabaseError,
-    | (Synchronous extends true ? never : Exclude<R, OAuthConnectedPersistence | TxId>)
+    | Exclude<R, OAuthConnectedPersistence | TxId | Provided>
     | Crypto.Crypto
     | LifecycleHooks
     | DatabaseRequirements
@@ -165,11 +160,11 @@ export const makeOAuthConnectedTarget = <
       readonly mapping: OAuthConnectedRevocationMapping<O, F, J, N> & Extra;
       readonly transaction?: never;
     },
-    body: Effect.Effect<A, E, Synchronous extends true ? NoInfer<OAuthConnectedRevocations> : R>,
+    body: Effect.Effect<A, E, R>,
   ): Effect.Effect<
     A,
     OAuthCoordinatorError<E> | DatabaseError,
-    | (Synchronous extends true ? never : Exclude<R, OAuthConnectedRevocations>)
+    | Exclude<R, OAuthConnectedRevocations | Provided>
     | Crypto.Crypto
     | LifecycleHooks
     | DatabaseRequirements
@@ -193,15 +188,11 @@ export const makeOAuthConnectedTarget = <
       readonly mapping: OAuthConnectedRevocationMapping<O, F, J, N> & Extra;
       readonly transaction: SuppliedService<TxId, NoInfer<TransactionOf<D>>, TxShape>;
     },
-    body: Effect.Effect<
-      A,
-      E,
-      Synchronous extends true ? NoInfer<OAuthConnectedRevocations | TxId> : R
-    >,
+    body: Effect.Effect<A, E, R>,
   ): Effect.Effect<
     A,
     OAuthCoordinatorError<E> | DatabaseError,
-    | (Synchronous extends true ? never : Exclude<R, OAuthConnectedRevocations | TxId>)
+    | Exclude<R, OAuthConnectedRevocations | TxId | Provided>
     | Crypto.Crypto
     | LifecycleHooks
     | DatabaseRequirements
@@ -281,92 +272,6 @@ export const makeOAuthConnectedTarget = <
       makeTargetOAuthConnectedRevocationServices(mapping, configuration).pipe(
         Effect.provideServiceEffect(NativeDatabase, nativeDatabase(databaseService)),
       ),
-    coordinateOAuthConnected,
-    coordinateOAuthConnectedRevocations,
-  };
-};
-
-export const makeD1OAuthConnectedTarget = <DatabaseId, Database, Family extends Table, Extra>(
-  databaseService: Context.Service<DatabaseId, Database>,
-  configuration: OAuthTargetConfiguration,
-) => {
-  function coordinateOAuthConnected<
-    S extends Family,
-    AC extends Family,
-    O extends Family,
-    F extends Family,
-    G extends Family,
-    N,
-    J extends Family,
-    A,
-    E,
-    R,
-    DatabaseError,
-    DatabaseRequirements,
-  >(
-    acquire: Effect.Effect<Database, DatabaseError, DatabaseRequirements>,
-    options: {
-      readonly mapping: OAuthConnectedMapping<S, AC, O, F, G, N, J> & Extra;
-    },
-    body: Effect.Effect<A, E, R>,
-  ): Effect.Effect<
-    A,
-    OAuthCoordinatorError<E> | DatabaseError,
-    | Exclude<Exclude<R, OAuthConnectedPersistence>, D1BatchStatements>
-    | Crypto.Crypto
-    | LifecycleHooks
-    | DatabaseRequirements
-  > {
-    return Effect.flatMap(nativeDatabase(acquire), (database) =>
-      coordinateTargetOAuthConnected<
-        Database,
-        A,
-        E | OAuthUnavailable,
-        Exclude<R, OAuthConnectedPersistence>
-      >(database, options.mapping, configuration, (_tx, services) =>
-        Effect.provideService(body, OAuthConnectedPersistence, services.oauthConnectedPersistence),
-      ).pipe(Effect.provideService(NativeDatabase, database)),
-    );
-  }
-  function coordinateOAuthConnectedRevocations<
-    O extends Family,
-    F extends Family,
-    J extends Family,
-    N,
-    A,
-    E,
-    R,
-    DatabaseError,
-    DatabaseRequirements,
-  >(
-    acquire: Effect.Effect<Database, DatabaseError, DatabaseRequirements>,
-    options: { readonly mapping: OAuthConnectedRevocationMapping<O, F, J, N> & Extra },
-    body: Effect.Effect<A, E, R>,
-  ): Effect.Effect<
-    A,
-    OAuthCoordinatorError<E> | DatabaseError,
-    | Exclude<Exclude<R, OAuthConnectedRevocations>, D1BatchStatements>
-    | Crypto.Crypto
-    | LifecycleHooks
-    | DatabaseRequirements
-  > {
-    return Effect.flatMap(nativeDatabase(acquire), (database) =>
-      coordinateTargetOAuthConnectedRevocations<
-        Database,
-        A,
-        E | OAuthUnavailable,
-        Exclude<R, OAuthConnectedRevocations>
-      >(database, options.mapping, configuration, (_tx, services) =>
-        Effect.provideService(body, OAuthConnectedRevocations, services.oauthConnectedRevocations),
-      ).pipe(Effect.provideService(NativeDatabase, database)),
-    );
-  }
-
-  return {
-    ...makeOAuthConnectedTarget<DatabaseId, Database, Family, Extra>(
-      databaseService,
-      configuration,
-    ),
     coordinateOAuthConnected,
     coordinateOAuthConnectedRevocations,
   };

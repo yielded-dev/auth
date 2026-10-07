@@ -22,10 +22,6 @@ export type TotpMapping<
   SQL
 >;
 
-export interface D1TotpMapping {
-  readonly d1: { readonly primary: true };
-}
-
 export interface TotpPersistenceServices {
   readonly totpPersistence: TotpPersistence["Service"];
 }

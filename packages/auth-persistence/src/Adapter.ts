@@ -1,5 +1,6 @@
-/** Shared mapping metadata, authentication decisions and workflow capabilities.
- * Each backend owns its SQL statements, codecs and native transaction scope. */
+/** Adapter integration has two levels: typed table mappings, or NativeSqlTables
+ * with the shared strategy factories. Drivers supply physical codecs, SQL
+ * expressions and transaction/batch capabilities to one commit owner. */
 export {
   type EmailSubjectReadTable,
   type EmailSubjectTable,
@@ -129,23 +130,9 @@ export {
 
 export { requireStandalone } from "./internal/standalone";
 
-export {
-  makeOAuthProxyPersistence,
-  oauthProxyColumns,
-  type OAuthProxySqlTable,
-} from "./internal/oauth-proxy";
-
-export {
-  decodeStepUpIntent,
-  encodeStepUpIntent,
-  stepUpIntentLive,
-  validateStepUpPlan,
-  sameStepUpRevision,
-  stepUpRotationMatches,
-} from "./internal/step-up-state";
+export { makeOAuthProxyPersistence, type OAuthProxySqlTable } from "./internal/oauth-proxy";
 
 export { PersistenceMappingError, isMappedConstraintConflict } from "./internal/mapping-error";
-export type { QueryFailure } from "./internal/query-failure";
 export type { TableModel, SqlExpression } from "./internal/table-model";
 
 export { PersistenceConfigurationError } from "./internal/configuration";
@@ -170,60 +157,16 @@ export {
   type StorageValidation,
 } from "./internal/storage-validation";
 
-export { preservesRevision, allocateSessionValue } from "./internal/session-policy";
-
-export type { PersistenceStoreError, PersistenceOwner } from "./internal/persistence-owner";
-
 export type { MappingInput } from "./internal/configuration";
 
-export {
-  passkeyKey,
-  passkeyCredentialKey,
-  passkeyTargetRevision,
-  passkeyStorage,
-  passkeyCeremonyStorage,
-  passkeyCredentialStorage,
-  passkeyProfileStorage,
-  passkeyRevisionStorage,
-  samePasskeyCredential,
-  samePasskeyRevision,
-  passkeyAssertionPurposes,
-  passkeyKnownSubject,
-  passkeyMatchesAccess,
-  assessPasskeyAction,
-  validPasskeyActionEvidence,
-  type PasskeyActionFacts,
-} from "./internal/passkey-policy";
-
-export type { PasskeyFeature } from "./internal/configuration";
-export type { ComposedPasskeyInput, Backend } from "./internal/persistence";
-
-export {
-  passkeyCanonicalJson,
-  passkeyDigest,
-  passkeyEnrollmentDigest,
-  passkeyRemoveDigest,
-} from "./internal/passkey-actions";
-
-export {
-  passkeyOperationInputs,
-  passkeyManagementInputs,
-  passkeyManagementResults,
-} from "./internal/passkey-inputs";
+export type { Backend } from "./internal/persistence";
 
 export {
   makeNativeSqlTables,
   nativeSqlAlias,
-  sqlMapping,
   type NativeSqlTables,
   type SqlTable,
 } from "./internal/native-sql-table";
-
-export { randomId, digest } from "./internal/crypto";
-
-export { makePasswordCredentials } from "./internal/password-credentials";
-
-export { makeManagedPasskeys } from "./internal/passkey-managed";
 
 export {
   makeNativePasskeyServices,
@@ -252,11 +195,8 @@ export {
   makeSqlCommitExecutor,
   SqlBatchCommit,
   SqlNativeCommit,
-  appendSqlBatchStatement,
   captureSqlBatchStatements,
 } from "./internal/sql-commit";
-
-export { samePasswordCredentialSnapshot } from "./internal/password-credentials";
 
 export { storageKeyPlans } from "./internal/storage-plans";
 
@@ -295,7 +235,6 @@ export {
 
 export {
   type OAuthConnectedAction,
-  type OAuthConnectedSubjectTable,
   type OAuthConnectedGrantTable,
   type OAuthConnectedRevocationJobTable,
   type OAuthConnectedPolicyInput,
@@ -330,9 +269,17 @@ export {
 } from "./internal/oauth/native-revocations";
 
 export { captureOAuthMapping } from "./internal/oauth/state";
-export * from "./internal/oauth/native-layers";
 
-export { makeNativeProofStore, makeNativeProofServices } from "./internal/proof-native";
+export {
+  oauthAccountsPersistenceLayer,
+  oauthSignInPersistenceLayer,
+  oauthRegistrationIntentsLayer,
+  oauthConnectedPersistenceLayer,
+  oauthConnectedRevocationsLayer,
+  oauthRegistrationAuthorityLayer,
+} from "./internal/oauth/native-layers";
+
+export { makeNativeProofServices } from "./internal/proof-native";
 
 export { makeNativePasswordServices } from "./internal/password-native";
 

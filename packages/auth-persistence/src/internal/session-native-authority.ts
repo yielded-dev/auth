@@ -140,9 +140,9 @@ export const makeNativeAuthenticationAuthorityServices = Effect.fnUntraced(funct
 
   const native = <A, E, R>(work: Effect.Effect<A, E, R>) =>
     batch === undefined
-      ? executor.coordinate(normalizeSessionOperation(work))
+      ? executor.operation(normalizeSessionOperation(work))
       : executor
-          .coordinateBatch(normalizeSessionOperation(work))
+          .operationBatch(normalizeSessionOperation(work))
           .pipe(Effect.provideService(SqlBatchCommit, batch));
 
   const authenticationAuthority: AuthenticationAuthority["Service"] = {

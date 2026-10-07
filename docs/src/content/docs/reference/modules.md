@@ -122,9 +122,10 @@ Direct paths narrow module loading; they do not change installed package depende
 `@yielded/auth-persistence` exports the named `AuthPersistence` facade for direct
 Effect SQL and has no Drizzle dependency or declarations. The Drizzle companion's
 driver modules export the same facade; its root exposes the Drizzle mapping contracts.
-Adapter authors can use `@yielded/auth-persistence/Adapter` for shared auth workflows,
-storage contracts, and mapping policy. Each backend owns its native queries and
-transaction execution.
+Adapter authors use `@yielded/auth-persistence/Adapter` at two levels: mapped table
+contracts or `NativeSqlTables`. Managed, Drizzle, and direct SQL tables feed the
+same strategy implementation; the driver supplies column codecs, SQL expressions,
+and its native transaction or D1 batch boundary.
 The root also exports `OAuthProxyPersistence` for the
 [callback proxy's durable handoffs](./oauth#callback-proxy).
 Drizzle's SQLite/D1 and PostgreSQL driver modules expose the same facade with

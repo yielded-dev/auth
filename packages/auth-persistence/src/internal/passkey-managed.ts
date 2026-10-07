@@ -20,8 +20,15 @@ import {
   makePasskeyNativeManagement,
   type NativePasskeyManagementMapping,
 } from "./passkey-native-write";
-import type { ComposedPasskeyInput } from "./persistence";
 import { storageTables, type StorageRole } from "./storage-tables";
+
+export interface ComposedPasskeyInput {
+  readonly storage: MappingInput;
+  readonly namespace: string;
+  readonly dialect: "pg" | "sqlite";
+  readonly features: ReadonlyArray<PasskeyFeature>;
+  readonly passwordModules: ReadonlyArray<string>;
+}
 
 const profileJson = Schema.fromJsonString(M.PasskeyProfile);
 

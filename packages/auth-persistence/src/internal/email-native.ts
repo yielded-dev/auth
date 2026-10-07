@@ -304,12 +304,16 @@ export const makeNativeEmailAddressServices = Effect.fnUntraced(function* (
         }
 
         const proof = yield* makeNativeProofStore(tables, proofs, batch !== undefined),
-          decision = yield* proof.redeemLocked(redemption);
+          redeemed = yield* proof.redeemLocked(redemption);
 
         yield* registerSqlCommitReceipt(
-          original.redemption.prepare(decision, yield* CurrentCommitJournal, (value) => value),
+          original.redemption.prepare(
+            redeemed.decision,
+            yield* CurrentCommitJournal,
+            (value) => value,
+          ),
         );
-        if (decision !== "redeemed") return yield* prepare("rejected", project);
+        if (redeemed.decision !== "redeemed") return yield* prepare("rejected", project);
 
         const allocate = () =>
           allocateEmailValue(mode, mapping.allocateRevision, mapping.allocateRevisionSync);
@@ -420,6 +424,7 @@ export const makeNativeEmailAddressServices = Effect.fnUntraced(function* (
           ensure(i.d1CurrentCondition !== undefined);
 
           const conditions = [
+            redeemed.validUntil,
             freshness,
             factorCondition(revision),
             sql`exists(select 1 from ${subject.name} where ${id(subject, s.id, native)} and ${exact(subject, s.securityRevision, nextSecurityRevision)} and ${activeSubject})`,
@@ -443,6 +448,7 @@ export const makeNativeEmailAddressServices = Effect.fnUntraced(function* (
             name: "email-address-authority",
             check: Effect.gen(function* () {
               const final = yield* reader.read({
+                validity: redeemed.validUntil,
                 moduleId: input.moduleId,
                 subjectId: revision.subjectId,
                 identifier: input.target,

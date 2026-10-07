@@ -67,14 +67,11 @@ export {
   type RequiredSubjectProvisioningConstraints,
   type SubjectIdCodec,
   type SubjectProvisioningTables,
-  column,
   identityServicesLayer,
   isMappedConstraintConflict,
-  provisioningFingerprint,
   requiredExternalIdentityConstraints,
   requiredIdentityConstraints,
   requiredSubjectProvisioningConstraints,
-  updateValues,
 } from "./drizzle/model";
 
 export {
@@ -171,7 +168,6 @@ export {
   type OAuthConnectedRevocationJobTable,
   type OAuthConnectedRevocationMapping,
   type OAuthConnectedSqlPolicy,
-  type OAuthConnectedSubjectTable,
   requiredOAuthConnectedConstraints,
   requiredOAuthConnectedRevocationConstraints,
 } from "./drizzle/oauth-connected-model";
@@ -208,7 +204,6 @@ export { proofPersistenceLayer } from "./drizzle/proof-target";
 export {
   type TotpMapping,
   type TotpMappingSource,
-  type D1TotpMapping,
   type TotpPersistenceServices,
   requiredTotpConstraints,
   totpPersistenceLayer,
@@ -232,7 +227,6 @@ export { passkeyManagementPersistenceLayer } from "./drizzle/passkey/write-targe
 export {
   type PhoneMapping,
   type PhoneMappingSource,
-  type D1PhoneMapping,
   type PhonePersistenceServices,
   requiredPhoneConstraints,
   phonePersistenceLayer,

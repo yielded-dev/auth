@@ -101,18 +101,23 @@ outside them.
   policy. The policy binds the actual factor and authentication time to the action;
   persistence rechecks current subject and credential authority at commit. A passkey
   user who forgets their password signs in with the passkey and then changes it.
-
 - OAuth linking retains one exact begin authorization, including verified private
   session evidence when application policy accepts recent step-up. Linking preserves
   sessions; unlinking rechecks remaining login methods and invalidates according to
   the configured session mode. Callback consumption precedes provider exchange, and
   unknown exchange or session-issuance outcomes require a new ceremony. Refresh
-  retains an exact versioned claim with no expired takeover.
+  retains an exact versioned claim with no expired takeover. Token-use policy sees
+  the captured grant and current authority before tokens are unsealed; writes
+  check accepted action bindings, revisions, and deadlines without retiming proofs.
 - Passkey enrollment retains one begin authorization and re-assesses it at commit.
   Challenges retain their selected RP profile through expiry during rolling deploys.
   Verified challenges are consumed before independent session issuance; failed or
   uncertain issuance requires a new ceremony. Enrollment preserves existing sessions;
   removal increments the security revision and applies session invalidation.
+- Protected mutations and application writes must share the adapter's explicit
+  commit owner. Final checks run after application work; D1 requires declared
+  mutable policy inputs. Cleanup is bounded and module-scoped, preserves live
+  proofs, and never makes an uncertain external operation safe to retry.
 
 ## Security updates and compatibility
 

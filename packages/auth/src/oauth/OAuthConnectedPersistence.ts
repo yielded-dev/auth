@@ -57,13 +57,12 @@ export class OAuthConnectedPersistence extends Context.Service<
       },
       prepare: PrepareOAuthCommit<typeof M.OAuthConnectedDisconnectDecision.Type, A>,
     ) => Mutation<A>;
-    /** Exact Active/version CAS to Refreshing. No expired takeover. A lost claim
-     * response authorizes no provider exchange. Deadline uses the database clock. */
+    /** Match the original sealed snapshot, Active state and grant/token versions
+     * in one conditional claim. No expired takeover or prerequisite grant reread.
+     * A lost response authorizes no exchange. Deadline uses the database clock. */
     readonly claimRefresh: <A>(
       input: {
-        readonly key: M.OAuthConnectedGrantKey;
-        readonly grantVersion: M.OAuthConnectedTarget["grantVersion"];
-        readonly tokenVersion: M.OAuthConnectedTarget["tokenVersion"];
+        readonly grant: M.OAuthConnectedStoredGrant;
         readonly authorization: M.OAuthConnectedUseAuthorization;
         readonly claimId: typeof OAuthClaimId.Type;
         readonly nextTokenVersion: M.OAuthConnectedRefreshClaim["nextTokenVersion"];

@@ -1,5 +1,4 @@
 import type * as M from "@yielded/auth/OAuth";
-import type { AuthenticationRequirement } from "@yielded/auth/Sessions";
 
 import type { TableModel as Table, SqlExpression } from "../table-model";
 import type { SubjectIdCodec } from "./common";
@@ -15,16 +14,6 @@ import type {
 
 type Column<T extends Table> = T["column"];
 export type OAuthConnectedAction = M.OAuthConnectedActionChallenge["action"];
-
-export interface OAuthConnectedSubjectTable<
-  S extends Table,
-  Expression extends SqlExpression = SqlExpression,
-> extends OAuthSubjectReadTable<S, Expression> {
-  readonly decodeActionRequirement: (
-    row: S["select"],
-    action: OAuthConnectedAction,
-  ) => AuthenticationRequirement;
-}
 
 /** Immutable sealed data plus the exact refresh compare-and-set fields. */
 export interface OAuthConnectedGrantTable<G extends Table, N> {
@@ -125,7 +114,7 @@ export interface OAuthConnectedMapping<
   SignIn extends Table = Table,
 > {
   readonly ownership: OAuthOwnershipTable<O, N>;
-  readonly subject: OAuthConnectedSubjectTable<S, Expression>;
+  readonly subject: OAuthSubjectReadTable<S, Expression>;
   readonly authority: OAuthAuthorityReadTable<AC, Expression>;
   readonly subjectId: SubjectIdCodec<N>;
   readonly flow: OAuthFlowTable<F>;
