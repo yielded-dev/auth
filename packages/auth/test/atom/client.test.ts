@@ -105,14 +105,23 @@ test.each(["confirmation", "replacement", "unseeded"] as const)(
     ),
 );
 
-// Requested regression: session verification must still retire account work,
-// and unrelated replacements must clear completed and pending session reads.
-test("retires account work and session values across unrelated replacements", () =>
+// d1f2799 also restarts custom queries that discover the account. Their own
+// transition must retire account work; unrelated replacements clear their results.
+test("subject queries retire account work and discard unrelated account results", () =>
   Effect.runPromise(
     Effect.scoped(
       Effect.gen(function* () {
         const contract = AuthContract.make("test/session-replacement", {
           claims: Schema.Struct({}),
+          actions: (sessions) => ({
+            discover: AuthContract.action({
+              payload: Schema.Void,
+              success: Schema.NullOr(sessions.Session),
+              error: Schema.Never,
+              mode: "query",
+              subject: { fromSuccess: (value) => value?.subjectId ?? null },
+            }),
+          }),
         });
 
         const session = {
@@ -191,24 +200,24 @@ test("retires account work and session values across unrelated replacements", ()
         yield* AtomRegistry.mount(registry, workflow);
         registry.set(workflow, undefined);
         yield* Deferred.await(workflowEntered);
-        yield* AtomRegistry.mount(registry, auth.session);
-        expect((yield* AtomRegistry.getResult(registry, auth.session))?.subjectId).toBe("member");
+        yield* AtomRegistry.mount(registry, auth.discover);
+        expect((yield* AtomRegistry.getResult(registry, auth.discover))?.subjectId).toBe("member");
         expect(calls).toBe(1);
         expect(finalized).toEqual([null]);
         expect(registry.get(workflow)).toMatchObject({ _tag: "Failure", waiting: false });
         expect(yield* AtomRegistry.getResult(registry, account)).toBe("member");
 
         phase = "pending";
-        registry.refresh(auth.session);
+        registry.refresh(auth.discover);
         yield* Deferred.await(entered);
         phase = "replacement";
         yield* lifetime.replaceSubject("other");
-        expect(registry.get(auth.session)).toMatchObject({ _tag: "Initial" });
+        expect(registry.get(auth.discover)).toMatchObject({ _tag: "Initial" });
         yield* Deferred.succeed(stale, undefined);
-        expect(AsyncResult.value(registry.get(auth.session))._tag).toBe("None");
+        expect(AsyncResult.value(registry.get(auth.discover))._tag).toBe("None");
         yield* Deferred.succeed(replacement, undefined);
         expect(
-          (yield* AtomRegistry.getResult(registry, auth.session, { suspendOnWaiting: true }))
+          (yield* AtomRegistry.getResult(registry, auth.discover, { suspendOnWaiting: true }))
             ?.subjectId,
         ).toBe("other");
         expect(yield* lifetime.get).toMatchObject({ subject: "other", generation: 2 });
@@ -217,12 +226,12 @@ test("retires account work and session values across unrelated replacements", ()
 
         phase = "signed-out";
         yield* lifetime.replaceSubject(null);
-        expect(AsyncResult.value(registry.get(auth.session))).not.toMatchObject({
+        expect(AsyncResult.value(registry.get(auth.discover))).not.toMatchObject({
           _tag: "Some",
           value: { subjectId: "other" },
         });
         expect(
-          yield* AtomRegistry.getResult(registry, auth.session, { suspendOnWaiting: true }),
+          yield* AtomRegistry.getResult(registry, auth.discover, { suspendOnWaiting: true }),
         ).toBe(null);
         expect(calls).toBe(4);
       }),

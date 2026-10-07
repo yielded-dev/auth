@@ -73,7 +73,8 @@ export type AuthAtoms<
   readonly session: QueryAtom<Actions["getSession"], E>;
   readonly client: ClientDefinition<Id, Actions, R>;
   /** Account-scoped queries, effects, state and workflows. Named auth mutations
-   * and getSession use the host lifetime so their own account change can settle. */
+   * and subject-discovering queries use the host lifetime so their own account
+   * change can settle. */
   readonly runtime: Atom.AtomRuntime<
     ClientService<Id, Actions> | AuthAtomLifetime | DecoderServices<Actions>,
     E | OperationHttpError
@@ -348,10 +349,10 @@ export const make = <
       if (action.mode === "mutation") return [[name, mutation(name)]];
 
       const query = Atom.family((input: RouteInput<Actions[string]["route"]>) => {
-        // Session verification establishes the account whose registry it retires.
-        // Keep that request with the host, while retiring unrelated session reads.
+        // A subject-discovering read must outlive the account registry it retires.
+        // Other transitions still clear its result and restart the request.
         const source =
-          name === "getSession"
+          action.subject !== undefined
             ? host.atom((get) =>
                 Effect.gen(function* () {
                   const binding = yield* AuthAtomBinding;
