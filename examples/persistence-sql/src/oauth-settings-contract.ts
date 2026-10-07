@@ -56,6 +56,7 @@ export const SettingsApi = AuthContract.make("oauth-settings", {
 // Only public attempt metadata survives a redirect; no code, state, or bearer.
 export const Attempt = Schema.Struct({
   kind: Schema.Literals(["sign-in", "link"]),
+  callbackId: Schema.Literals(["github", "github-select"]),
   flowId: Operations.RequestBindingFlowId,
   expiresAtMillis: Schema.Int,
 });

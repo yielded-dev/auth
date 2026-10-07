@@ -31,6 +31,8 @@ export class Rejected extends Schema.TaggedError<Rejected>()("OAuthServerRejecte
     "invalid_target",
     "unauthorized_client",
     "access_denied",
+    "login_required",
+    "consent_required",
   ]),
 }) {}
 
@@ -97,7 +99,10 @@ export const TokenResponse = Schema.Struct({
   access_token: Text,
   token_type: Schema.Literal("Bearer"),
   expires_in: Schema.Natural,
-  refresh_token: Text,
+  refresh_token: Schema.optionalKey(Text),
+  id_token: Schema.optionalKey(
+    Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(16384)),
+  ),
   scope: Text,
 });
 
@@ -135,9 +140,59 @@ export const Authorization = Schema.Struct({
   scopes: Scopes,
   challenge: Random,
   state: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(2048))),
+  nonce: Schema.optionalKey(Text),
+  prompt: Schema.optionalKey(Schema.Literals(["none", "login", "consent", "select_account"])),
+  maxAgeSeconds: Schema.optionalKey(Schema.Natural),
+  requestedAtMillis: Schema.optionalKey(Schema.Natural),
 });
 
 export type Authorization = typeof Authorization.Type;
+
+/** Verified application authentication, never values supplied by an OAuth client. */
+export const Authentication = Schema.Struct({
+  subjectId: SubjectId,
+  sessionId: Text,
+  securityRevision: Text,
+  authenticatedAtMillis: Schema.Natural,
+  expiresAtMillis: Schema.Natural,
+});
+
+export type Authentication = typeof Authentication.Type;
+
+/** Application-approved claims. Scope filtering happens before credential delivery. */
+export const OpenIdProfile = Schema.Struct({
+  name: Schema.optionalKey(Text.check(Schema.isMaxLength(256))),
+  preferred_username: Schema.optionalKey(Text.check(Schema.isMaxLength(256))),
+  email: Schema.optionalKey(Text.check(Schema.isMaxLength(320))),
+  email_verified: Schema.optionalKey(Schema.Boolean),
+});
+
+export type OpenIdProfile = typeof OpenIdProfile.Type;
+
+export const OpenIdMetadata = Schema.Struct({
+  issuer: Text,
+  authorization_endpoint: Text,
+  token_endpoint: Text,
+  userinfo_endpoint: Text,
+  jwks_uri: Text,
+  revocation_endpoint: Text,
+  response_types_supported: Schema.Array(Schema.Literal("code")),
+  response_modes_supported: Schema.Array(Schema.Literal("query")),
+  grant_types_supported: Schema.Array(Schema.Literal("authorization_code")),
+  subject_types_supported: Schema.Array(Schema.Literal("public")),
+  id_token_signing_alg_values_supported: Schema.Array(Schema.Literal("RS256")),
+  token_endpoint_auth_methods_supported: Schema.Array(Schema.String),
+  token_endpoint_auth_signing_alg_values_supported: Schema.Array(Jwk.AsymmetricAlgorithm),
+  code_challenge_methods_supported: Schema.Array(Schema.Literal("S256")),
+  authorization_response_iss_parameter_supported: Schema.Literal(true),
+  scopes_supported: Scopes,
+  claims_supported: Schema.Array(Text),
+  claims_parameter_supported: Schema.Literal(false),
+  request_parameter_supported: Schema.Literal(false),
+  request_uri_parameter_supported: Schema.Literal(false),
+});
+
+export const UserInfo = Schema.Struct({ sub: SubjectId, ...OpenIdProfile.fields });
 
 /** One record owns consent, code redemption and the entire refresh family.
  * Revocation is monotonic; a stale CAS must never reactivate a revoked grant.
@@ -148,6 +203,7 @@ export const Record = Schema.Struct({
   status: Schema.Literals(["Pending", "Consent", "Code", "Active", "Revoked"]),
   authorization: Authorization,
   subjectId: Schema.optionalKey(SubjectId),
+  authentication: Schema.optionalKey(Authentication),
   expiresAtMillis: Schema.Natural,
 });
 

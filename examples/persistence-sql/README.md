@@ -58,8 +58,9 @@ when prompted; an older valid session still permits ordinary account reads.
 ## OAuth account settings
 
 Run the browser journey with a GitHub OAuth App. Create an app in
-[GitHub developer settings](https://github.com/settings/developers), or add the
-callback to an existing app without replacing callbacks used by another consumer.
+[GitHub developer settings](https://github.com/settings/developers). Register an
+exact callback entry; when reusing an app, retain the callbacks required by its
+other consumers. See [GitHub's callback rules](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/authorizing-oauth-apps#redirect-urls).
 Set the callback URL to `http://localhost:4185/oauth-settings/callback` for local
 use, or `https://YOUR_HOST/oauth-settings/callback` for a hosted preview.
 
@@ -133,6 +134,15 @@ callback consumes one attempt, clears code/state from browser history, and never
 automatically retries an uncertain exchange. Session storage contains only the
 attempt kind, public flow ID and expiry. Start again after expiry or cancellation;
 after an uncertain response, inspect the current inventory before a new action.
+
+## Hosted Yielded sign-in
+
+The deployed service at `auth.yielded.dev` lives in
+[`yielded-dev/site/apps/auth`](https://github.com/yielded-dev/site/tree/main/apps/auth).
+That application owns the GitHub → Yielded → Agent journey, account policy,
+signing keys, and Cloudflare deployment. This leaf remains a standalone OAuth
+account-settings example. The reusable OpenID server stays in `@yielded/auth`;
+see the [shared sign-in guide](../../docs/src/content/docs/guide/oauth.mdx#shared-sign-in-across-applications).
 
 ## OAuth lifecycle
 

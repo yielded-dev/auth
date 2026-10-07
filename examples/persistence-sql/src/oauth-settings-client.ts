@@ -28,17 +28,27 @@ const attempt = Atom.kvs({
   defaultValue: () => null,
 });
 
-export const begin = runtime.fn<typeof Attempt.Type.kind>()(
+export const begin = runtime.fn<"sign-in" | "link" | "switch">()(
   Effect.fn("OAuthSettings.begin")(function* (kind, get) {
     get.set(notice, null);
-    const input = { provider: "github", callbackId: "github", returnTarget: "/oauth-settings" };
+
+    const input = {
+      provider: "github",
+      callbackId: kind === "sign-in" ? ("github" as const) : ("github-select" as const),
+      returnTarget: "/oauth-settings",
+    };
 
     const started =
       kind === "link"
         ? yield* get.setResult(auth.linkAccount, { ...input, flowId: crypto.randomUUID() })
         : yield* get.setResult(auth.signIn, input);
 
-    get.set(attempt, { kind, flowId: started.flowId, expiresAtMillis: started.expiresAtMillis });
+    get.set(attempt, {
+      kind: kind === "link" ? "link" : "sign-in",
+      callbackId: input.callbackId,
+      flowId: started.flowId,
+      expiresAtMillis: started.expiresAtMillis,
+    });
     yield* Effect.sync(() => location.assign(Redacted.value(started.authorizationUrl)));
   }),
 );
@@ -90,7 +100,7 @@ export const complete = runtime.fn<void>()(
     const input = {
       flowId: saved.flowId,
       provider: "github",
-      callbackId: "github",
+      callbackId: saved.callbackId,
       response: yield* Schema.encodeEffect(OAuth.OAuthCallbackResponse)(response),
     };
 
@@ -112,7 +122,7 @@ export const complete = runtime.fn<void>()(
       get.set(
         notice,
         "_tag" in result && result._tag === "Cancelled"
-          ? "Sign-in cancelled. Choose Sign in to try again."
+          ? "Sign-in cancelled. Start again with a linked GitHub account."
           : "Signed in. Account changes are available for five minutes.",
       );
     }

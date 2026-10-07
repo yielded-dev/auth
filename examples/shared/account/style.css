@@ -1,4 +1,4 @@
-/* Yielded's shared paper/ink palette and Auth accent. */
+/* Match the canonical yielded Agent login: paper/ink, Plex, grid and card geometry. */
 :root {
   --font-sans: "IBM Plex Sans Variable", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "IBM Plex Mono", ui-monospace, monospace;
@@ -9,16 +9,19 @@
   --muted: #4f535e;
   --border: #e3e4e0;
   --border-strong: #cfd1cb;
-  --accent: #9a4a00;
-  --on-accent: #ffffff;
-  --error: #a32f24;
+  --accent: #5b3fd1;
+  --faint: #80848f;
+  --grid: rgba(21, 22, 26, 0.05);
+  --error: #b3361e;
   --success: #3f6b00;
   color-scheme: light;
   font-family: var(--font-sans);
   color: var(--text);
   background: var(--bg);
   font-synthesis: none;
+  font-size: 15px;
   line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
 }
 @media (prefers-color-scheme: dark) {
   :root {
@@ -29,9 +32,10 @@
     --muted: #b3b5aa;
     --border: #2c2e28;
     --border-strong: #3d3f38;
-    --accent: #ffb45e;
-    --on-accent: #121310;
-    --error: #ffab9b;
+    --accent: #b9a4ff;
+    --faint: #7d8076;
+    --grid: rgba(243, 241, 232, 0.045);
+    --error: #ff8f7a;
     --success: #c6f36a;
     color-scheme: dark;
   }
@@ -41,6 +45,22 @@
 }
 body {
   margin: 0;
+  position: relative;
+  isolation: isolate;
+  min-height: 100dvh;
+}
+body::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background-image:
+    linear-gradient(var(--grid) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+  background-size: 32px 32px;
+  background-position: center -1px;
+  mask-image: radial-gradient(ellipse 70% 60% at 50% 40%, #000 30%, transparent 80%);
+  pointer-events: none;
 }
 button,
 input {
@@ -58,19 +78,21 @@ button:disabled {
 }
 :focus-visible {
   outline: 2px solid var(--accent);
-  outline-offset: 4px;
+  outline-offset: 2px;
 }
 main {
-  max-width: 1120px;
+  width: min(100% - 48px, 1200px);
+  min-height: 100dvh;
   margin: auto;
-  padding: 0 40px 40px;
+  display: flex;
+  flex-direction: column;
 }
 header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  min-height: 96px;
-  gap: 24px;
+  min-height: 64px;
+  gap: 16px;
   border-bottom: 1px solid var(--border);
 }
 .wordmark {
@@ -79,8 +101,8 @@ header {
 }
 .wordmark img {
   display: block;
-  width: 178px;
-  height: auto;
+  height: 22px;
+  width: auto;
 }
 .local-indicator,
 .eyebrow,
@@ -104,26 +126,38 @@ footer,
   border-radius: 50%;
 }
 .intro {
-  margin: 56px 0 36px;
+  margin: 48px 0 28px;
 }
 .eyebrow {
-  font-size: 11px;
-  letter-spacing: 0.1em;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
   color: var(--accent);
-  margin: 0 0 16px;
+  margin: 0 0 14px;
+  overflow-wrap: anywhere;
+}
+.eyebrow::before {
+  content: "";
+  flex-shrink: 0;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 22%, transparent);
 }
 h1 {
-  font-size: clamp(36px, 4.8vw, 58px);
-  line-height: 1.08;
-  letter-spacing: -0.045em;
+  font-size: 32px;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
   font-weight: 600;
-  margin: 0 0 20px;
+  margin: 0 0 10px;
   overflow-wrap: anywhere;
 }
 h1 span {
   color: var(--muted);
 }
-.intro > p:last-child {
+.intro > p:last-child:not(.notice) {
   color: var(--muted);
   font-size: 16px;
   margin: 0;
@@ -136,7 +170,7 @@ h1 span {
 }
 .panel {
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: 14px;
   background: var(--surface);
   min-width: 0;
 }
@@ -187,12 +221,12 @@ input {
   display: block;
   width: 100%;
   border: 1px solid var(--border-strong);
-  border-radius: 6px;
-  background: var(--bg);
+  border-radius: 8px;
+  background: var(--sunken);
   color: var(--text);
   padding: 11px 12px;
   font-size: 15px;
-  min-height: 46px;
+  min-height: 44px;
 }
 input::placeholder {
   color: var(--muted);
@@ -229,23 +263,23 @@ input + .label-row {
 .secondary {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  border-radius: 6px;
-  min-height: 46px;
+  justify-content: center;
+  gap: 9px;
+  border-radius: 8px;
+  min-height: 44px;
   padding: 11px 16px;
-  font-size: 14px;
-  font-weight: 600;
+  font-size: 14.5px;
+  font-weight: 500;
   text-decoration: none;
 }
 .primary {
   width: 100%;
-  border: 1px solid var(--accent);
-  color: var(--on-accent);
-  background: var(--accent);
+  border: 0;
+  color: var(--bg);
+  background: var(--text);
 }
 .primary:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--accent) 88%, var(--text));
+  background: color-mix(in srgb, var(--text) 86%, var(--bg));
 }
 .primary span {
   font-size: 18px;
@@ -311,7 +345,7 @@ form > .secondary {
   font-size: 14px;
   padding: 14px 16px;
   border: 1px solid currentColor;
-  border-radius: 6px;
+  border-radius: 8px;
   line-height: 1.6;
 }
 .error {
@@ -371,15 +405,14 @@ form > .secondary {
 }
 footer {
   display: flex;
-  justify-content: space-between;
-  align-items: center;
+  justify-content: center;
   flex-wrap: wrap;
-  gap: 16px;
-  margin-top: 32px;
-  padding-top: 24px;
-  border-top: 1px solid var(--border);
-  font-size: 11px;
-  color: var(--muted);
+  gap: 8px 20px;
+  margin-top: auto;
+  padding: 32px 0;
+  font-size: 12px;
+  color: var(--faint);
+  text-align: center;
 }
 footer p {
   margin: 0;
@@ -451,32 +484,73 @@ footer a:hover {
   color: var(--muted);
   font-size: 13px;
 }
+.login-content {
+  flex: 1;
+  display: grid;
+  place-items: center;
+  padding: 56px 0 32px;
+}
+.login-card {
+  width: min(100%, 420px);
+  padding: 32px;
+}
+.login-card h1 {
+  font-size: 26px;
+}
+.login-card .description {
+  font-size: 14.5px;
+}
+.login-card form {
+  display: grid;
+  gap: 10px;
+}
+.login-note {
+  margin: 20px 0 0;
+  color: var(--faint);
+  font-size: 12.5px;
+}
+.login-back {
+  padding: 6px 10px;
+  border-radius: 8px;
+  color: var(--muted);
+  font-size: 14px;
+  text-decoration: none;
+}
+.login-back:hover {
+  color: var(--text);
+  background: var(--surface);
+}
+.account-content {
+  width: min(100%, 960px);
+  margin: 0 auto;
+  padding-bottom: 32px;
+}
 @media (max-width: 720px) {
   main {
-    padding: 0 20px 28px;
-  }
-  header {
-    min-height: 88px;
-    gap: 16px;
-    flex-wrap: wrap;
-    padding: 20px 0;
-  }
-  .intro {
-    margin: 36px 0 28px;
+    width: calc(100% - 32px);
   }
   .workspace {
     grid-template-columns: minmax(0, 1fr);
     gap: 20px;
-  }
-  .sign-in,
-  .welcome,
-  .session-panel {
-    padding: 24px;
   }
   .local-indicator {
     font-size: 10px;
   }
   input {
     font-size: 16px;
+  }
+}
+@media (max-width: 520px) {
+  .wordmark img {
+    height: 20px;
+  }
+  .login-content {
+    padding: 32px 0 24px;
+  }
+  .panel {
+    padding: 26px 20px;
+  }
+  .intro {
+    margin: 32px 0 24px;
   }
 }

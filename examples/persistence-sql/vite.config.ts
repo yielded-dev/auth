@@ -1,6 +1,23 @@
+import { readFileSync } from "node:fs";
+
 import { defineConfig } from "vite-plus";
 
 export default defineConfig({
+  plugins: [
+    {
+      name: "yielded-brand-assets",
+      generateBundle() {
+        for (const mode of ["ink", "paper"])
+          this.emitFile({
+            type: "asset",
+            fileName: `brand/auth-${mode}.svg`,
+            source: readFileSync(
+              new URL(`../../.github/assets/lockup-auth-${mode}.svg`, import.meta.url),
+            ),
+          });
+      },
+    },
+  ],
   build: { rolldownOptions: { input: ["index.html", "oauth-settings.html"] } },
   run: {
     tasks: {
