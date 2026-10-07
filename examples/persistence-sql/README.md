@@ -58,9 +58,9 @@ when prompted; an older valid session still permits ordinary account reads.
 ## OAuth account settings
 
 Run the browser journey with a GitHub OAuth App. Create an app in
-[GitHub developer settings](https://github.com/settings/developers). A GitHub OAuth
-App has one callback URL; use a separate development app when its existing callback
-serves another consumer.
+[GitHub developer settings](https://github.com/settings/developers). Register an
+exact callback entry; when reusing an app, retain the callbacks required by its
+other consumers. See [GitHub's callback rules](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/authorizing-oauth-apps#redirect-urls).
 Set the callback URL to `http://localhost:4185/oauth-settings/callback` for local
 use, or `https://YOUR_HOST/oauth-settings/callback` for a hosted preview.
 
@@ -141,8 +141,10 @@ Set `YIELDED_AGENT_CLIENT_SECRET` to enable the OpenID server in the same app.
 Agent must supply that exact secret as `AUTH_YIELDED_CLIENT_SECRET`, register
 provider `yielded` with issuer `AUTH_ORIGIN`, and use client ID `yielded-agent`.
 `YIELDED_AGENT_ORIGIN` defaults to `https://agent.yielded.dev`; its registered
-callback is `${YIELDED_AGENT_ORIGIN}/travel/auth/yielded/callback`. The GitHub app
-still has just the Auth callback `${AUTH_ORIGIN}/oauth-settings/callback`.
+callback is `${YIELDED_AGENT_ORIGIN}/travel/auth/yielded/callback`. Shared sign-in
+uses the GitHub callback `${AUTH_ORIGIN}/oauth-settings/callback`. If the same
+GitHub app also serves Agent's direct GitHub fallback, retain that exact callback
+entry too; the OpenID callback belongs to Auth's client registration, not GitHub's.
 
 Run the same `start:oauth` command. Start at Agent's login page, choose **Continue
 with Yielded**, sign in through GitHub if needed, and confirm **Continue to Yielded
@@ -185,9 +187,10 @@ the respective key-file JSON. Read them through your secret manager, not shell
 history or public build variables. Browser assets contain no secrets.
 
 Cloudflare owns the hostname's DNS and certificate in the configured Yielded zone.
-Use a Worker custom domain: Agent's same-zone `fetch` calls can reach it without
-a service binding, whereas a Worker route cannot receive those calls. Remove a
-conflicting CNAME before attaching the domain.
+Use a [Worker custom domain](https://developers.cloudflare.com/workers/configuration/routing/custom-domains/):
+Agent's same-zone `fetch` calls can reach it without a service binding, whereas a
+Worker route cannot receive those calls. Remove conflicting DNS records for this
+hostname before attaching the domain.
 The GitHub callback is `https://auth.yielded.dev/oauth-settings/callback`; discovery
 is `https://auth.yielded.dev/.well-known/openid-configuration`. The documentation
 site at `yielded.dev/auth/` remains a separate deployment.
