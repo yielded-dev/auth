@@ -1,4 +1,4 @@
-import { Context, type Effect, type Redacted, Schema } from "effect";
+import { Context, type Effect, type Redacted, Schema, type Scope } from "effect";
 
 import type { AuthenticationFailed, OperationError } from "./Errors";
 
@@ -22,6 +22,38 @@ export type EncryptInput = typeof EncryptInput.Type;
 export const DecryptInput = Schema.Struct({ ...context, ciphertext: Schema.Uint8Array });
 export type DecryptInput = typeof DecryptInput.Type;
 
+/** Native AES keys can be imported once for repeated encryption and decryption. */
+export const KeyInput = Schema.Struct({
+  algorithm: Schema.Literal("AES-256-GCM"),
+  key: context.key,
+});
+
+export type KeyInput = typeof KeyInput.Type;
+
+export const KeyEncryptInput = Schema.Struct({
+  nonce: context.nonce,
+  additionalData: context.additionalData,
+  plaintext: EncryptInput.fields.plaintext,
+});
+
+export type KeyEncryptInput = typeof KeyEncryptInput.Type;
+
+export const KeyDecryptInput = Schema.Struct({
+  nonce: context.nonce,
+  additionalData: context.additionalData,
+  ciphertext: DecryptInput.fields.ciphertext,
+});
+
+export type KeyDecryptInput = typeof KeyDecryptInput.Type;
+
+/** A nonextractable AES-256-GCM key owned by the import's Scope. */
+export interface Key {
+  readonly encrypt: (input: KeyEncryptInput) => Effect.Effect<Uint8Array, OperationError>;
+  readonly decrypt: (
+    input: KeyDecryptInput,
+  ) => Effect.Effect<Redacted.Redacted<Uint8Array>, OperationError | AuthenticationFailed>;
+}
+
 /**
  * Both algorithms use a 32-byte key and append a 16-byte tag to ciphertext.
  * AES-GCM uses a 12-byte nonce; XChaCha uses 24. The caller MUST supply a unique
@@ -31,6 +63,8 @@ export type DecryptInput = typeof DecryptInput.Type;
 export class Aead extends Context.Service<
   Aead,
   {
+    /** Snapshot once; scope closure joins native work and rejects later use. */
+    readonly importKey: (input: KeyInput) => Effect.Effect<Key, OperationError, Scope.Scope>;
     readonly encrypt: (input: EncryptInput) => Effect.Effect<Uint8Array, OperationError>;
     readonly decrypt: (
       input: DecryptInput,

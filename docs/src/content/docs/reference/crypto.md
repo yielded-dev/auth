@@ -126,13 +126,23 @@ and the resulting PKCS8 use `Redacted`. Keys are limited to 16 KiB of DER.
 Auth envelopes are outside this package. SHA-1 HMAC is available
 for existing protocols such as TOTP.
 
-`Hmac.sign` and `verify` accept raw keys per operation. For repeated use,
-`Hmac.importKey({ algorithm, key })` validates and snapshots a nonextractable key
-once, returning `sign(data)` and `verify(data, tag)`. Import requires `Scope`;
-closing it waits for native calls and makes later operations fail with
-`CryptoUnavailable`. Custom `Hmac` implementations must implement this scoped
-import contract as well as raw-key operations. The caller retains ownership of
-the original key bytes.
+Raw-key operations import keys on each call. For repeated use, import a key once
+in the Scope that owns the work:
+
+| Service     | Import                                         | Returned operations                                                                                 |
+| ----------- | ---------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `Hmac`      | `importKey({ algorithm, key })`                | `sign(data)`, `verify(data, tag)`                                                                   |
+| `Aead`      | `importKey({ algorithm: "AES-256-GCM", key })` | `encrypt({ nonce, plaintext, additionalData? })`, `decrypt({ nonce, ciphertext, additionalData? })` |
+| `Signature` | `importPrivateKey({ algorithm, privateKey })`  | `sign(data)`                                                                                        |
+| `Signature` | `importPublicKey({ algorithm, publicKey })`    | `verify(data, signature)`                                                                           |
+
+Imports validate and snapshot nonextractable native keys. Algorithm and usage
+stay fixed on each handle; AES still requires a unique nonce per encryption.
+The caller retains ownership of the original bytes and can change them after
+import completes. Keep the import's Scope open while using its handle: closing
+it waits for native calls and makes later operations fail with `CryptoUnavailable`.
+Custom service implementations must support these scoped imports as well as
+raw-key operations. XChaCha continues to use raw-key operations.
 
 ## Backends and resource limits
 
@@ -159,9 +169,12 @@ validation, PHC parsing and rehash policy.
 `KdfAdmission.layer()` defaults to one running derivation, sixteen queued requests
 and a five-second acquisition wait. Waiting can be interrupted. Once native work
 starts, interruption waits for the work and cleanup to finish before releasing
-capacity. Portable Argon2id accepts interruption between bounded batches and
-clears its memory and scratch buffers before releasing admission. It remains on
-the calling thread. `KdfAdmission.run` preserves the work's interruptibility;
+capacity. Portable Argon2id targets eight-millisecond time slices, checking elapsed
+time every 256 blocks and yielding after at most 2,048 blocks even when the host
+clock is frozen during computation, as on Workers. These are cooperative limits,
+not a wall-time guarantee. It accepts interruption between slices and clears its
+memory and scratch buffers before releasing admission. It remains on the calling
+thread. `KdfAdmission.run` preserves the work's interruptibility;
 custom backends must protect any nonabortable native work until it finishes.
 Nested `run` calls reuse admission only in the same fiber and on the same service
 instance. A child fiber acquires independently.

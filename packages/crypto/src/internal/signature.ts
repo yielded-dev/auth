@@ -4,13 +4,18 @@ import { Base64Url } from "effect/encoding";
 import { InvalidInput } from "../Errors";
 import {
   type Algorithm,
+  type PrivateKey,
+  PrivateKeyInput,
   PrivateKeyParameters,
+  type PublicKey,
+  PublicKeyInput,
   PublicKeyParameters,
   SignInput,
   Signature,
   VerifyInput,
 } from "../Signature";
 import { copy, decode, importError, nativeError, withSecret } from "./common";
+import { makeScopedKey } from "./scoped-key";
 
 const derBytes = Schema.Uint8Array.check(Schema.isMinLength(1), Schema.isMaxLength(16384));
 
@@ -121,6 +126,55 @@ export const makeSignature = (subtle: SubtleCrypto): Signature["Service"] => {
   });
 
   return Signature.of({
+    importPrivateKey: Effect.fnUntraced(function* (input) {
+      const value = yield* decode(PrivateKeyInput, input, "key");
+      const algorithm = value.algorithm;
+
+      const use = yield* makeScopedKey(
+        withSecret(value.privateKey, (material) => importKey(algorithm, "pkcs8", material)),
+      );
+
+      return {
+        sign: Effect.fnUntraced(function* (input) {
+          const data = yield* decode(Schema.Uint8Array, input, "data").pipe(Effect.flatMap(copy));
+
+          const result = yield* use((key) =>
+            Effect.tryPromise({
+              try: () => subtle.sign(operationAlgorithm(algorithm), key, data),
+              catch: nativeError,
+            }),
+          );
+
+          return new Uint8Array(result);
+        }),
+      } satisfies PrivateKey;
+    }),
+    importPublicKey: Effect.fnUntraced(function* (input) {
+      const value = yield* decode(PublicKeyInput, input, "key");
+      const algorithm = value.algorithm;
+      const material = yield* copy(value.publicKey);
+      const use = yield* makeScopedKey(importKey(algorithm, "spki", material));
+
+      return {
+        verify: Effect.fnUntraced(function* (input, signature) {
+          const data = yield* decode(Schema.Uint8Array, input, "data").pipe(Effect.flatMap(copy));
+
+          const tag = yield* decode(Schema.Uint8Array, signature, "data").pipe(
+            Effect.flatMap(copy),
+          );
+
+          return yield* use((key) => {
+            if ((algorithm === "ECDSA-P256-SHA256" || algorithm === "Ed25519") && tag.length !== 64)
+              return Effect.succeed(false);
+
+            return Effect.tryPromise({
+              try: () => subtle.verify(operationAlgorithm(algorithm), key, tag, data),
+              catch: nativeError,
+            });
+          });
+        }),
+      } satisfies PublicKey;
+    }),
     encodePublicKey: Effect.fnUntraced(function* (input) {
       const parameters = yield* decode(PublicKeyParameters, input, "key");
       const key = yield* importComponents(parameters, "verify");

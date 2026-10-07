@@ -1,4 +1,4 @@
-import { Context, type Effect, type Redacted, Schema } from "effect";
+import { Context, type Effect, type Redacted, Schema, type Scope } from "effect";
 
 import type { OperationError } from "./Errors";
 
@@ -50,22 +50,47 @@ export const PrivateKeyParameters = Schema.Union([
 
 export type PrivateKeyParameters = typeof PrivateKeyParameters.Type;
 
-export const SignInput = Schema.Struct({
+export const PrivateKeyInput = Schema.Struct({
   algorithm: Algorithm,
   privateKey: Schema.Redacted(Schema.Uint8Array, { disallowJsonEncode: true }),
+});
+
+export type PrivateKeyInput = typeof PrivateKeyInput.Type;
+
+export const PublicKeyInput = Schema.Struct({
+  algorithm: Algorithm,
+  publicKey: Schema.Uint8Array,
+});
+
+export type PublicKeyInput = typeof PublicKeyInput.Type;
+
+export const SignInput = Schema.Struct({
+  ...PrivateKeyInput.fields,
   data: Schema.Uint8Array,
 });
 
 export type SignInput = typeof SignInput.Type;
 
 export const VerifyInput = Schema.Struct({
-  algorithm: Algorithm,
-  publicKey: Schema.Uint8Array,
+  ...PublicKeyInput.fields,
   data: Schema.Uint8Array,
   signature: Schema.Uint8Array,
 });
 
 export type VerifyInput = typeof VerifyInput.Type;
+
+/** A nonextractable signing key with its algorithm fixed at import. */
+export interface PrivateKey {
+  readonly sign: (data: Uint8Array) => Effect.Effect<Uint8Array, OperationError>;
+}
+
+/** A verification key with its algorithm fixed at import. */
+export interface PublicKey {
+  readonly verify: (
+    data: Uint8Array,
+    signature: Uint8Array,
+  ) => Effect.Effect<boolean, OperationError>;
+}
 
 /**
  * Private keys are PKCS8 DER; public keys are SPKI DER. ECDSA signatures are
@@ -75,6 +100,14 @@ export type VerifyInput = typeof VerifyInput.Type;
 export class Signature extends Context.Service<
   Signature,
   {
+    /** Snapshot PKCS8 once; the imported key is usable only inside its owning Scope. */
+    readonly importPrivateKey: (
+      input: PrivateKeyInput,
+    ) => Effect.Effect<PrivateKey, OperationError, Scope.Scope>;
+    /** Snapshot SPKI once; scope closure joins native work and rejects later use. */
+    readonly importPublicKey: (
+      input: PublicKeyInput,
+    ) => Effect.Effect<PublicKey, OperationError, Scope.Scope>;
     readonly encodePublicKey: (
       input: PublicKeyParameters,
     ) => Effect.Effect<Uint8Array, OperationError>;
