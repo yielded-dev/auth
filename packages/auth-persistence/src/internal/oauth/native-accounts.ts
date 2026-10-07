@@ -101,7 +101,12 @@ export const makeNativeOAuthAccountsServices = Effect.fnUntraced(function* (
           );
 
           const s = mapping.subject;
-          const orderedId = sqlTextBytes(sql, credential.column(c.credentialId));
+          const orderedId = yield* sqlTextBytes(credential.column(c.credentialId));
+
+          const cursorCondition =
+            input.cursor === undefined
+              ? sql``
+              : sql`and ${orderedId} > ${yield* sqlTextBytes(credential.value(c.credentialId, input.cursor))}`;
 
           // Bound candidate work before resolving identities. Each final read uses
           // its columns' own codecs and rechecks live ownership/authority/policy.
@@ -114,7 +119,7 @@ export const makeNativeOAuthAccountsServices = Effect.fnUntraced(function* (
               and exists(select 1 from ${state.subject.name}
                 where ${state.subject.column(s.id)} = ${state.subject.value(s.id, nativeId)}
                   and ${tables.expression(s.activeCondition)})
-              ${input.cursor === undefined ? sql`` : sql`and ${orderedId} > ${sqlTextBytes(sql, credential.value(c.credentialId, input.cursor))}`}
+              ${cursorCondition}
             order by ${orderedId} limit ${input.limit + 1}`;
 
           const selected = rows.slice(0, input.limit);
