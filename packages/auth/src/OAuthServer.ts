@@ -7,7 +7,7 @@ export {
 } from "./oauth/server/server";
 
 export type { IdentitySigningKeys } from "./oauth/server/openid";
-export { ConsentRenderer, type Consent } from "./oauth/server/consent";
+export { ConsentRenderer, OpenIdConsent, type Consent } from "./oauth/server/consent";
 
 export {
   Access,

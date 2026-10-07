@@ -172,7 +172,7 @@ the shared account; each application owns its permissions, data and local sessio
 
 <FlowMap
   title="Shared identity, application-owned sessions"
-  description="GitHub authenticates the Yielded account at auth.yielded.dev. After explicit consent, Agent verifies an OpenID code exchange and creates its own host-only session. Future applications register separate clients and callbacks."
+  description="GitHub authenticates the Yielded account at auth.yielded.dev. After application approval, Agent verifies an OpenID code exchange and creates its own host-only session. Future applications register separate clients and callbacks."
   columns={3}
   nodes={[
     { id: "github", at: [1, 1], owner: "external", title: "GitHub" },
@@ -195,7 +195,10 @@ your sign-in workflow returns to `server.paths.authorize` after authentication.
 
 The [runnable browser example](https://github.com/yielded-dev/auth/tree/main/examples/persistence-sql#shared-yielded-sign-in)
 shows GitHub → Yielded Auth → Agent with Effect Atom workflows and a SQLite
-Durable Object deployment. It explicitly confirms the account and destination.
+Durable Object deployment. An application-owned `OpenIdConsent` policy approves
+only Agent’s registered callback and basic identity scopes, so ordinary sign-in
+returns automatically. Explicit account selection and additional permissions still
+show consent. Without this optional service, the library requires interaction.
 Signing out of Auth stops future identity access; an existing Agent session ends
 when Agent signs it out. See the [OpenID reference](../reference/oauth#shared-openid-sign-in)
 for the supported profile and key lifecycle.

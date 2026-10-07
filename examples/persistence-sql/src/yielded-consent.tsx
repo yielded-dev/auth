@@ -17,7 +17,7 @@ export const consentLayer = (stylesheet: string, displayName: string) =>
                 <link rel="stylesheet" href={stylesheet} />
               </head>
               <body>
-                <main>
+                <main className="login-page">
                   <header>
                     <a className="wordmark" href="/oauth-settings">
                       <picture>
@@ -28,46 +28,43 @@ export const consentLayer = (stylesheet: string, displayName: string) =>
                         <img src="/brand/auth-ink.svg" alt="Yielded Auth" width="178" height="28" />
                       </picture>
                     </a>
-                    <span className="local-indicator">YIELDED ACCOUNT</span>
+                    <a className="login-back" href="/oauth-settings">
+                      Manage your account ↗
+                    </a>
                   </header>
-                  <section className="intro">
-                    <p className="eyebrow">SHARED SIGN-IN</p>
-                    <h1>
-                      Continue to <span>{consent.clientName}.</span>
-                    </h1>
-                    <p>One Yielded identity. Each app owns its own access and session.</p>
-                  </section>
-                  <section className="panel">
-                    <h2>Continue as {displayName}</h2>
-                    <p className="description">
-                      {consent.clientName} will receive your Yielded account ID and display name.
-                      Your GitHub credentials stay with Auth.
-                    </p>
-                    <p className="hint">
-                      Account: {consent.subjectId} · Destination:{" "}
-                      {new URL(consent.redirectUri).host}
-                    </p>
-                    {new URL(consent.redirectUri).protocol === "http:" && (
-                      <p className="notice">
-                        This is a local application. Continue only if you started this sign-in.
+                  <div className="login-content">
+                    <section className="panel login-card">
+                      <p className="eyebrow">{new URL(consent.redirectUri).host}</p>
+                      <h1>Continue to {consent.clientName}</h1>
+                      <p className="description">Signed in as {displayName}.</p>
+                      <p className="hint">
+                        {consent.clientName} is requesting access to your Yielded identity (
+                        {consent.scopes.join(", ")}). Your GitHub credentials stay with Auth.
                       </p>
-                    )}
-                    <form method="post" action={consent.action}>
-                      <input type="hidden" name="csrf" value={consent.csrf} />
-                      <button className="primary submit" name="decision" value="approve">
-                        Continue to {consent.clientName} →
-                      </button>
-                      <div className="button-row">
+                      {new URL(consent.redirectUri).protocol === "http:" && (
+                        <p className="notice">
+                          This is a local application. Continue only if you started this sign-in.
+                        </p>
+                      )}
+                      <form method="post" action={consent.action}>
+                        <input type="hidden" name="csrf" value={consent.csrf} />
+                        <button className="primary" name="decision" value="approve">
+                          Continue to {consent.clientName} →
+                        </button>
                         <button className="secondary" name="decision" value="deny">
                           Cancel
                         </button>
-                        <a href={consent.loginPath}>Use another account</a>
-                      </div>
-                    </form>
-                  </section>
+                      </form>
+                      <a
+                        className="text-button restart"
+                        href={`${consent.loginPath}?select_account=1`}
+                      >
+                        Use another account
+                      </a>
+                    </section>
+                  </div>
                   <footer>
-                    <p>Yielded Auth · Shared sign-in</p>
-                    <a href="/oauth-settings">Manage your account ↗</a>
+                    <p>Your Yielded account. Each app keeps its own session.</p>
                   </footer>
                 </main>
               </body>

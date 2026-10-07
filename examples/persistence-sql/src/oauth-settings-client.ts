@@ -32,14 +32,14 @@ const attempt = Atom.kvs({
   defaultValue: () => null,
 });
 
-export const begin = runtime.fn<typeof Attempt.Type.kind>()(
+export const begin = runtime.fn<"sign-in" | "link" | "switch">()(
   Effect.fn("OAuthSettings.begin")(function* (kind, get) {
     get.set(notice, null);
 
     const input = {
       provider: "github",
-      callbackId: "github",
-      returnTarget: kind === "sign-in" && get(sharedSignIn) ? authorizationPath : "/oauth-settings",
+      callbackId: kind === "sign-in" ? ("github" as const) : ("github-select" as const),
+      returnTarget: kind !== "link" && get(sharedSignIn) ? authorizationPath : "/oauth-settings",
     };
 
     const started =
@@ -47,7 +47,12 @@ export const begin = runtime.fn<typeof Attempt.Type.kind>()(
         ? yield* get.setResult(auth.linkAccount, { ...input, flowId: crypto.randomUUID() })
         : yield* get.setResult(auth.signIn, input);
 
-    get.set(attempt, { kind, flowId: started.flowId, expiresAtMillis: started.expiresAtMillis });
+    get.set(attempt, {
+      kind: kind === "link" ? "link" : "sign-in",
+      callbackId: input.callbackId,
+      flowId: started.flowId,
+      expiresAtMillis: started.expiresAtMillis,
+    });
     yield* Effect.sync(() => location.assign(Redacted.value(started.authorizationUrl)));
   }),
 );
@@ -99,7 +104,7 @@ export const complete = runtime.fn<void>()(
     const input = {
       flowId: saved.flowId,
       provider: "github",
-      callbackId: "github",
+      callbackId: saved.callbackId,
       response: yield* Schema.encodeEffect(OAuth.OAuthCallbackResponse)(response),
     };
 
@@ -128,8 +133,27 @@ export const complete = runtime.fn<void>()(
       get.set(
         notice,
         "_tag" in result && result._tag === "Cancelled"
-          ? "Sign-in cancelled. Choose Sign in to try again."
+          ? "Sign-in cancelled. You can continue with this account or start again with GitHub."
           : "Signed in. Account changes are available for five minutes.",
+      );
+    }
+  }),
+);
+
+/** Only the authorization server's sign-in handoff auto-starts the provider.
+ * Callback cancellation/errors stay visible and never start another attempt.
+ */
+export const initialize = runtime.fn<void>()(
+  Effect.fn("OAuthSettings.initialize")(function* (_, get) {
+    const url = new URL(location.href);
+
+    if (url.pathname === "/oauth-settings/callback")
+      return yield* get.setResult(complete, undefined);
+    if (url.pathname === "/sign-in") {
+      yield* Effect.sync(() => history.replaceState(null, "", "/sign-in"));
+      yield* get.setResult(
+        begin,
+        url.searchParams.get("select_account") === "1" ? "switch" : "sign-in",
       );
     }
   }),

@@ -147,15 +147,19 @@ GitHub app also serves Agent's direct GitHub fallback, retain that exact callbac
 entry too; the OpenID callback belongs to Auth's client registration, not GitHub's.
 
 Run the same `start:oauth` command. Start at Agent's login page, choose **Continue
-with Yielded**, sign in through GitHub if needed, and confirm **Continue to Yielded
-Agent**. Cancel returns an actionable cancellation to Agent. Choose **Use another
-account** to return to the Auth sign-in page. The account-settings page remains at
+with Yielded**, and return directly if an Auth session is active. Otherwise Auth
+starts GitHub sign-in automatically and returns after completion. GitHub controls
+its own login and approval prompts. Choose **Use another Yielded account** in Agent
+to select an account explicitly; **Use another account** at Auth opens GitHub’s
+account picker. Cancellation stays visible without automatically restarting. The account-settings page remains at
 `/oauth-settings`; `/sign-in` continues the pending shared sign-in request.
 
 [The composition](src/oauth-settings-application.ts) combines `OAuthServer.makeOpenId`
 with the existing session verifier and SQL owner. [The identity service](src/yielded-identity.ts)
 checks session revocation and the current subject security revision before code
-redemption and UserInfo access. The app exposes only a stable account ID and
+redemption and UserInfo access. Its `OpenIdConsent` policy approves only client
+`yielded-agent`, the exact registered callback, and `openid profile`. Additional
+claims or explicit consent/account-selection requests remain interactive. The app exposes only a stable account ID and
 `YIELDED_DISPLAY_NAME` (default `Yielded member`). It provisions one configured
 GitHub owner; public registration and a multi-user directory are outside this example.
 

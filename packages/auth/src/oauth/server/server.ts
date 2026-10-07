@@ -26,7 +26,7 @@ import {
   MetadataConfiguration,
   type MetadataOptions,
 } from "./clients";
-import { ConsentRenderer, escapeHtml } from "./consent";
+import { ConsentRenderer, OpenIdConsent, escapeHtml } from "./consent";
 import {
   Access,
   Authentication,
@@ -322,6 +322,11 @@ const makeServer = <const Id extends string, R>(
           () => ConsentRenderer.default,
         );
 
+        const openIdConsent = Option.getOrElse(
+          yield* Effect.serviceOption(OpenIdConsent),
+          () => OpenIdConsent.default,
+        );
+
         const identity = yield* identitySource;
 
         if ((identity.openId === undefined) !== (options.identityKeys === undefined))
@@ -435,6 +440,25 @@ const makeServer = <const Id extends string, R>(
         ) {
           if (!(yield* store.compareAndSet(namespace, grantId, before.version, after)))
             return yield* reject("invalid_grant");
+        });
+
+        const approve = Effect.fnUntraced(function* (
+          grantId: string,
+          before: Record,
+          next: Record,
+        ) {
+          const approved: Record = {
+            ...next,
+            status: "Code",
+            version: yield* random,
+            expiresAtMillis: (yield* now) + 60_000,
+          };
+
+          const code = yield* encode("code", grantId, approved.version, approved.expiresAtMillis);
+
+          yield* commit(grantId, before, approved);
+
+          return callback(approved.authorization, { code: Redacted.value(code) });
         });
 
         const cookie = (credential: string, maxAge: number) =>
@@ -813,6 +837,24 @@ const makeServer = <const Id extends string, R>(
                 )
                   return yield* Unavailable.make({});
               }
+              if (
+                web.method === "GET" &&
+                openId !== undefined &&
+                authentication !== undefined &&
+                authorization.prompt !== "consent" &&
+                authorization.prompt !== "select_account" &&
+                (yield* openIdConsent.approved({
+                  clientId: authorization.clientId,
+                  redirectUri: authorization.redirectUri,
+                  scopes: authorization.scopes,
+                  authentication,
+                }))
+              )
+                return yield* approve(token.grantId, record, {
+                  ...record,
+                  subjectId,
+                  authentication,
+                });
               if (authorization.prompt === "none")
                 return callback(authorization, { error: "consent_required" });
               yield* Schema.decodeEffect(SubjectId)(subjectId).pipe(
@@ -885,18 +927,7 @@ const makeServer = <const Id extends string, R>(
                 return callback(record.authorization, { error: "access_denied" });
               }
 
-              const next: Record = {
-                ...record,
-                status: "Code",
-                version: yield* random,
-                expiresAtMillis: (yield* now) + 60_000,
-              };
-
-              const code = yield* encode("code", token.grantId, next.version, next.expiresAtMillis);
-
-              yield* commit(token.grantId, record, next);
-
-              return callback(record.authorization, { code: Redacted.value(code) });
+              return yield* approve(token.grantId, record, record);
             }
             if (web.method === "POST" && url.pathname === paths.token) {
               const body = yield* form(request);

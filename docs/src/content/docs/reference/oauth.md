@@ -218,23 +218,30 @@ time; viewing consent is not a new authentication. Expected dependency failures
 use `OAuthServer.Unavailable`. Applications own account provisioning and must not
 join accounts merely because two providers report the same email.
 
-| Route (ID `yielded`)                    | Behavior                                         |
-| --------------------------------------- | ------------------------------------------------ |
-| `GET /.well-known/openid-configuration` | Issuer, endpoints and supported profile          |
-| `GET /oauth/yielded/jwks`               | Public signing keys only                         |
-| `GET/POST /oauth/yielded/authorize`     | Bound consent and explicit approve/deny          |
-| `POST /oauth/yielded/token`             | Single-use code redemption; ID and access tokens |
-| `GET/POST /oauth/yielded/userinfo`      | Bearer header authentication and scoped profile  |
-| `POST /oauth/yielded/revoke`            | Revoke the token's grant                         |
+| Route (ID `yielded`)                    | Behavior                                                 |
+| --------------------------------------- | -------------------------------------------------------- |
+| `GET /.well-known/openid-configuration` | Issuer, endpoints and supported profile                  |
+| `GET /oauth/yielded/jwks`               | Public signing keys only                                 |
+| `GET/POST /oauth/yielded/authorize`     | Verified session, policy approval or interactive consent |
+| `POST /oauth/yielded/token`             | Single-use code redemption; ID and access tokens         |
+| `GET/POST /oauth/yielded/userinfo`      | Bearer header authentication and scoped profile          |
+| `POST /oauth/yielded/revoke`            | Revoke the token's grant                                 |
 
 Request `openid`, optionally `profile` and `email`; `resource` is unnecessary.
 The callback must match the registration and code redemption must include it.
 `nonce` is returned unchanged in the signed ID token. The supported single
 `prompt` values are `login`, `select_account`, `consent`, and `none`; `max_age`
-requires sufficiently recent authentication. Interactive requests always show
-consent. `none` returns `login_required` or `consent_required` because remembered
-consent is not implemented. Unsupported request objects, claims parameters and
-response modes are rejected.
+requires sufficiently recent authentication. By default, requests show consent;
+`none` returns `login_required` or `consent_required` without showing UI.
+
+Supply `OAuthServer.OpenIdConsent` to recognize prior or administrative approval.
+Its `approved({ clientId, redirectUri, scopes, authentication })` Effect receives a
+validated registration and current browser authentication. Approve only exact
+clients, callbacks and claims allowed by application policy; failure stays closed.
+An approved request issues a code through the same single-use grant transition,
+including for `prompt=none`. Explicit `consent` and `select_account` prompts always
+remain interactive. The default service approves nothing and stores no consent.
+Unsupported request objects, claims parameters and response modes are rejected.
 
 ID tokens last at most five minutes and access tokens at most ten, both bounded
 by the originating session's expiry. Code redemption and UserInfo check current

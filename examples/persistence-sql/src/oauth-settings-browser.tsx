@@ -11,7 +11,7 @@ import { Brand } from "../../shared/account/brand";
 import {
   auth,
   begin,
-  complete,
+  initialize,
   continueSignIn,
   cursor,
   linkedAccounts,
@@ -49,7 +49,7 @@ function Failure({ result }: { readonly result: AsyncResult.AsyncResult<unknown,
 function Settings() {
   const session = useAtomValue(auth.session);
   const [beginResult, start] = useAtom(begin);
-  const completion = useAtomValue(complete);
+  const completion = useAtomValue(initialize);
   const [outResult, out] = useAtom(signOut);
   const message = useAtomValue(notice);
   const signingIn = useAtomValue(sharedSignIn);
@@ -57,101 +57,88 @@ function Settings() {
   const signedIn = session._tag === "Success" ? session.value : null;
   const busy = beginResult.waiting || completion.waiting || outResult.waiting;
 
+  const compact = signingIn || !signedIn;
+
   return (
-    <main>
+    <main className={compact ? "login-page" : "account-page"}>
       <header>
         <Brand href="/oauth-settings" />
-        <span className="local-indicator">
-          {signingIn ? "YIELDED ACCOUNT" : "ACCOUNT SETTINGS"}
-        </span>
+        <a className="login-back" href="https://yielded.dev/auth/">
+          About Yielded Auth ↗
+        </a>
       </header>
-      <section className="intro">
-        <p className="eyebrow">{signingIn ? "SHARED SIGN-IN" : "CONNECTED ACCOUNTS"}</p>
-        {signingIn ? (
+      <div className={compact ? "login-content" : "account-content"}>
+        <section className={compact ? "panel login-card" : "intro"}>
+          <p className="eyebrow">auth.yielded.dev{signingIn ? "/sign-in" : "/oauth-settings"}</p>
           <h1>
-            Your Yielded <span>account.</span>
+            {busy ? "Signing you in" : signingIn ? "Your Yielded account" : "Your sign-in methods"}
           </h1>
-        ) : (
-          <h1>
-            Your ways <span>to sign in.</span>
-          </h1>
-        )}
-        <p>
-          {signingIn
-            ? "Sign in, then choose whether to continue to the requesting app."
-            : "Link an identity you control. Keep a way back into your account."}
-        </p>
-      </section>
-      {message && (
-        <p className="notice success" role="status">
-          {message}
-        </p>
-      )}
-      <Failure result={completion} />
-      <Failure result={beginResult} />
-      <Failure result={outResult} />
-      <div className="workspace">
-        <section className="panel sign-in">
-          <h2>{signedIn ? "Account settings" : "Sign in"}</h2>
-          {session._tag === "Initial" || session.waiting ? (
-            <p role="status">Checking your session…</p>
-          ) : signedIn ? (
-            <>
-              <p className="description">Signed in as {signedIn.claims.displayName}.</p>
-              {signingIn && (
-                <button className="primary" disabled={busy} onClick={() => proceed()}>
+          <p className="description">
+            {busy
+              ? "One moment. You’ll be on your way shortly."
+              : signingIn
+                ? "One account for Yielded. Continue with GitHub to sign in."
+                : "Link an identity you control. Keep a way back into your account."}
+          </p>
+          {message && (
+            <p className="notice success" role="status">
+              {message}
+            </p>
+          )}
+          <Failure result={completion} />
+          <Failure result={beginResult} />
+          <Failure result={outResult} />
+          <Failure result={session} />
+          {compact &&
+            (session._tag === "Initial" || session.waiting || busy ? (
+              <p className="hint" role="status">
+                {busy ? "Connecting securely…" : "Checking your session…"}
+              </p>
+            ) : signedIn ? (
+              <>
+                <p className="hint">Signed in as {signedIn.claims.displayName}.</p>
+                <button className="primary" onClick={() => proceed()}>
                   Continue with this account →
                 </button>
-              )}
+                <button className="text-button restart" onClick={() => start("switch")}>
+                  Use another account
+                </button>
+              </>
+            ) : (
+              <button className="primary submit" onClick={() => start("sign-in")}>
+                Continue with GitHub →
+              </button>
+            ))}
+          {compact && <p className="login-note">Your GitHub credentials stay with Yielded Auth.</p>}
+        </section>
+        {!compact && signedIn && (
+          <div className="workspace">
+            <section className="panel sign-in">
+              <h2>{signedIn.claims.displayName}</h2>
+              <p className="description">Manage the identities that can open your account.</p>
               <p className="hint">
-                Account changes require sign-in within the last five minutes. Linking keeps this
-                session; removing a method signs out every session.
+                Account changes require sign-in within the last five minutes. Removing a method
+                signs out every Auth session.
               </p>
-              <p className="hint">Choose another GitHub account when linking a new identity.</p>
               <button className="primary" disabled={busy} onClick={() => start("link")}>
-                Link another account <span aria-hidden="true">→</span>
+                Link another account →
               </button>
               <div className="button-row">
-                <button className="secondary" disabled={busy} onClick={() => start("sign-in")}>
+                <button className="secondary" disabled={busy} onClick={() => start("switch")}>
                   Sign in again
                 </button>
                 <button className="secondary" disabled={busy} onClick={() => out()}>
-                  Sign out
+                  Sign out of Auth
                 </button>
               </div>
-            </>
-          ) : (
-            <>
-              <p className="description">Use an identity already linked to this account.</p>
-              <button className="primary submit" disabled={busy} onClick={() => start("sign-in")}>
-                Sign in with GitHub <span aria-hidden="true">→</span>
-              </button>
-              <Failure result={session} />
-            </>
-          )}
-        </section>
-        {signedIn ? (
-          <Links />
-        ) : (
-          <section className="panel welcome">
-            <p className="eyebrow">LOGIN IDENTITIES</p>
-            <h2>
-              One account.
-              <br />
-              More ways in.
-            </h2>
-            <p>
-              After signing in, see the identities that can open your account, add another, or
-              remove one you no longer use.
-            </p>
-          </section>
+            </section>
+            <Links />
+          </div>
         )}
       </div>
       <footer>
-        <p>Yielded Auth · GitHub account linking</p>
-        <a href="https://yielded.dev/auth/guide/examples/">
-          Explore the examples <span aria-hidden="true">↗</span>
-        </a>
+        <p>Your Yielded account. Each app keeps its own session.</p>
+        <a href="https://yielded.dev/auth/guide/examples/">Explore the examples ↗</a>
       </footer>
     </main>
   );
@@ -238,9 +225,9 @@ function Links() {
 
 const registry = AtomRegistry.make();
 // Mount once outside React so StrictMode/rerenders cannot repeat code exchange.
-const stopCompletion = registry.mount(complete);
+const stopCompletion = registry.mount(initialize);
 
-registry.set(complete, undefined);
+registry.set(initialize, undefined);
 const root = document.getElementById("root");
 
 if (root === null) throw new Error("Missing account settings root");

@@ -1,7 +1,28 @@
 import { Context, Effect, Layer } from "effect";
 
 import type { SubjectId } from "../../Schema";
-import type { Unavailable } from "./models";
+import type { Authentication, Unavailable } from "./models";
+
+/** Application-owned prior approval for an exact OpenID client, callback and
+ * claims. Called only after verifying the current browser authentication.
+ * Explicit consent/account-selection prompts always remain interactive.
+ */
+export class OpenIdConsent extends Context.Service<
+  OpenIdConsent,
+  {
+    readonly approved: (input: {
+      readonly clientId: string;
+      readonly redirectUri: string;
+      readonly scopes: ReadonlyArray<string>;
+      readonly authentication: Authentication;
+    }) => Effect.Effect<boolean, Unavailable>;
+  }
+>()("effect-auth/OAuthServer/OpenIdConsent") {
+  static readonly default = OpenIdConsent.of({ approved: () => Effect.succeed(false) });
+
+  /** Require interactive consent; no client or scope has implicit approval. */
+  static readonly defaultLayer = Layer.succeed(OpenIdConsent, OpenIdConsent.default);
+}
 
 export interface Consent {
   readonly clientName: string;

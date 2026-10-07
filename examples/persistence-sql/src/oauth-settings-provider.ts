@@ -14,14 +14,12 @@ export const providerLayer = (options: {
         clientSecret: options.clientSecret,
       }).configure({
         provider: OAuth.OAuthProviderKey.make("github"),
-        callbacks: [
-          {
-            callbackId: OAuth.OAuthCallbackId.make("github"),
-            redirectUri: OAuth.OAuthRedirectUri.make(
-              `${options.origin.origin}/oauth-settings/callback`,
-            ),
-          },
-        ],
+        callbacks: ["github", "github-select"].map((callbackId) => ({
+          callbackId: OAuth.OAuthCallbackId.make(callbackId),
+          redirectUri: OAuth.OAuthRedirectUri.make(
+            `${options.origin.origin}/oauth-settings/callback`,
+          ),
+        })),
       });
 
       return {
@@ -31,8 +29,9 @@ export const providerLayer = (options: {
             Effect.map((prepared) => {
               const url = new URL(Redacted.value(prepared.authorizationUrl));
 
-              // Let the user select another identity when linking accounts.
-              url.searchParams.set("prompt", "select_account");
+              // Account selection is explicit, including when linking a new identity.
+              if (input.callbackId === "github-select")
+                url.searchParams.set("prompt", "select_account");
 
               return { ...prepared, authorizationUrl: Redacted.make(url.href) };
             }),

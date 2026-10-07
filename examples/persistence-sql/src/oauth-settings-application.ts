@@ -1,4 +1,4 @@
-import { Hooks, Http, OAuth } from "@yielded/auth";
+import { Hooks, Http, OAuth, OAuthServer } from "@yielded/auth";
 import { Effect, Layer, type Redacted } from "effect";
 import { FetchHttpClient } from "effect/http";
 
@@ -80,6 +80,16 @@ export const settingsApplication = (config: SettingsConfiguration) => {
                 Layer.provide(identityLayer(`${prefix}session`, config.displayName)),
                 Layer.provide(YieldedGrantsLive),
                 Layer.provide(consentLayer(config.stylesheet, config.displayName)),
+                Layer.provide(
+                  Layer.succeed(OAuthServer.OpenIdConsent, {
+                    approved: ({ clientId, redirectUri, scopes }) =>
+                      Effect.succeed(
+                        clientId === "yielded-agent" &&
+                          redirectUri === `${agent.origin.origin}/travel/auth/yielded/callback` &&
+                          scopes.every((scope) => scope === "openid" || scope === "profile"),
+                      ),
+                  }),
+                ),
                 Layer.provide(live),
                 Layer.provide(storage),
               ),
