@@ -98,12 +98,14 @@ export const makeAead = (subtle: SubtleCrypto, xchacha?: XChaCha): Aead["Service
         decrypt: Effect.fnUntraced(function* (input) {
           const value = yield* decode(KeyDecryptInput, input, "data");
           const nonce = yield* decode(aesNonce, value.nonce, "nonce").pipe(Effect.flatMap(copy));
-
-          if (value.ciphertext.length < 16) return yield* AuthenticationFailed.make({});
           const additionalData = yield* copy(value.additionalData ?? new Uint8Array());
           const data = yield* copy(value.ciphertext);
 
-          const plaintext = yield* use((key) => decryptAes(key, { nonce, additionalData, data }));
+          const plaintext = yield* use((key) =>
+            data.length < 16
+              ? Effect.fail(AuthenticationFailed.make({}))
+              : decryptAes(key, { nonce, additionalData, data }),
+          );
 
           return Redacted.make(plaintext);
         }),
