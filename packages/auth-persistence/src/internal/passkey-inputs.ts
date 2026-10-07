@@ -54,21 +54,3 @@ export const passkeyManagementInputs = {
     invalidation: SessionInvalidationWindow,
   }),
 };
-
-export const passkeyManagementResults = {
-  enrolled: Schema.Union([
-    Schema.TaggedStruct("Enrolled", { credential: M.PasskeyCredentialSummary }),
-    Schema.TaggedStruct("Rejected", {}),
-  ]),
-  renamed: Schema.Union([
-    Schema.TaggedStruct("Renamed", {
-      credential: M.PasskeyCredentialSummary,
-    }),
-    Schema.TaggedStruct("Rejected", {}),
-  ]),
-  removed: Schema.Union([
-    Schema.TaggedStruct("Removed", { result: M.PasskeyRemoved }),
-    Schema.TaggedStruct("Rejected", {}),
-    Schema.TaggedStruct("LastSignInMethod", {}),
-  ]),
-};

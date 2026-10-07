@@ -1,7 +1,6 @@
 import { CurrentCommitJournal } from "@yielded/auth/Hooks";
 import * as M from "@yielded/auth/Passkey";
 import { Crypto, Effect, Option, Schema } from "effect";
-import { SqlClient } from "effect/sql/SqlClient";
 import { SqlError } from "effect/sql/SqlError";
 
 import { sqlBatchAssertion } from "./d1-planning";
@@ -23,7 +22,6 @@ import {
 } from "./passkey-policy";
 import { exactSqlText } from "./sql-change";
 import {
-  appendSqlBatchStatement,
   CurrentSqlCommit,
   makeSqlCommitExecutor,
   registerSqlCommitReceipt,
@@ -40,14 +38,7 @@ export const preparePasskeyNative = <Value, A>(
 ) =>
   Effect.gen(function* () {
     const journal = yield* CurrentCommitJournal;
-    const owner = yield* CurrentSqlCommit;
 
-    // A D1 batch needs one physical statement even when the decision writes nothing.
-    if (owner.mode === "batch" && owner.statements.length === 0) {
-      const sql = yield* SqlClient;
-
-      yield* appendSqlBatchStatement(sql`select 1`);
-    }
     const receipt = prepare(value, journal);
 
     passkeyNativeInvariant(receipt?._tag === "PreparedCommit" && Effect.isEffect(receipt.read));

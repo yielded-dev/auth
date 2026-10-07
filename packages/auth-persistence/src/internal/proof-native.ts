@@ -400,13 +400,7 @@ export const makeNativeProofServices = Effect.fnUntraced(function* (
   const prepare = <Value, A>(value: Value, project: P.PrepareProofCommit<Value, A>) =>
     Effect.gen(function* () {
       const journal = yield* CurrentCommitJournal;
-      const owner = yield* CurrentSqlCommit;
 
-      if (owner.mode === "batch" && owner.statements.length === 0) {
-        const sql = yield* SqlClient;
-
-        yield* appendSqlBatchStatement(sql`select 1`);
-      }
       const receipt = project(value, journal);
 
       invariant(receipt?._tag === "PreparedCommit" && Effect.isEffect(receipt.read));

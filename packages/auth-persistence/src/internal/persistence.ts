@@ -65,7 +65,6 @@ export interface Backend<T extends object, R, Database extends object = object> 
   readonly describe: (table: T) => StorageTable;
   readonly acquire: Effect.Effect<Database, PersistenceConfigurationError, R | SqlClient.SqlClient>;
   readonly nativeTables: (database: Database) => NativeSqlTables;
-  readonly maxParameters: (database: Database) => number | undefined;
 }
 
 const configError = (reason: string) => PersistenceConfigurationError.make({ reason });
@@ -286,12 +285,6 @@ export const createPersistence = <T extends object, R, Database extends object =
         yield* validateStorageBatch(dialect, validations);
         const mappings = yield* makeMappings(storage);
 
-        const standalone = <E>(error: () => E) =>
-          requireStandalone(error, client.transactionService);
-
-        const maximumParameters = backend.maxParameters(database);
-        const limits = maximumParameters === undefined ? {} : { maxParameters: maximumParameters };
-
         const nativeTables = backend.nativeTables(database);
         const sessionMapping = mappings.sessions(auth.claims, auth.sessions.moduleId);
         const pendingMapping = mappings.pending(auth.claims, auth.sessions.moduleId);
@@ -340,22 +333,12 @@ export const createPersistence = <T extends object, R, Database extends object =
           Context.add(auth.sessions.SessionCleanup, sessionCleanup),
         );
 
-        const proofConfiguration = proofs
-          ? {
-              mapping: mappings.proofs(),
-              configuration: {
-                mode: "interactive" as const,
-                locking: dialect === "pg",
-                ...limits,
-                standaloneGuard: standalone(() => ProofUnavailable.make({})),
-              },
-            }
-          : undefined;
+        const proofMapping = proofs ? mappings.proofs() : undefined;
 
-        if (proofConfiguration !== undefined) {
+        if (proofMapping !== undefined) {
           const services = yield* makeNativeProofServices(
             backend.nativeTables(database),
-            proofConfiguration.mapping,
+            proofMapping,
           );
 
           context = Context.add(context, ProofPersistence, services.proofPersistence);
@@ -367,7 +350,7 @@ export const createPersistence = <T extends object, R, Database extends object =
           const services = yield* makeNativePasswordServices(
             backend.nativeTables(database),
             mapping,
-            proofConfiguration?.mapping,
+            proofMapping,
           );
 
           context = Context.add(context, PasswordPersistence, services.passwordPersistence);
@@ -396,7 +379,7 @@ export const createPersistence = <T extends object, R, Database extends object =
             (yield* makeNativeEmailAddressServices(
               backend.nativeTables(database),
               mappings.emails(),
-              proofConfiguration?.mapping,
+              proofMapping,
             )).emailAddressPersistence,
           );
 

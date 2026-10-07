@@ -2,7 +2,6 @@ import {
   SessionStepUpInvalid,
   SessionUnavailable,
   AuthenticationEvidence,
-  type AuthenticationRevision,
   SessionMetadata,
   SessionStepUpIntent,
   SessionStepUpRequirement,
@@ -10,6 +9,8 @@ import {
   type StatefulSessionRecord,
 } from "@yielded/auth/Sessions";
 import { DateTime, Effect, Schema } from "effect";
+
+import { sameSessionRevision } from "./session-native-state";
 
 export const stepUpIntentCodec = Schema.fromJsonString(SessionStepUpIntent);
 const BoundedSnapshot = Schema.String.check(Schema.isMaxLength(131072));
@@ -24,17 +25,6 @@ export const decodeStepUpIntent = (snapshot: string) =>
   Schema.decodeEffect(BoundedSnapshot)(snapshot).pipe(
     Effect.flatMap(Schema.decodeEffect(stepUpIntentCodec)),
     Effect.mapError(() => SessionUnavailable.make({})),
-  );
-
-export const sameStepUpRevision = (left: AuthenticationRevision, right: AuthenticationRevision) =>
-  left.subjectId === right.subjectId &&
-  left.securityRevision === right.securityRevision &&
-  left.credentials.length === right.credentials.length &&
-  new Set(left.credentials.map((c) => c.credentialId)).size === left.credentials.length &&
-  left.credentials.every((item) =>
-    right.credentials.some(
-      (other) => item.credentialId === other.credentialId && item.revision === other.revision,
-    ),
   );
 
 export const stepUpIntentLive = (
@@ -86,7 +76,7 @@ export const validateStepUpPlan = Effect.fn("DrizzleStepUp.validatePlan")(functi
     intent.sourceKind !== replacement._tag ||
     intent.sourceSessionId !== original.session.sessionId ||
     intent.sourceCredentialVersion !== original.credentialVersion ||
-    !sameStepUpRevision(intent.revision, original.provenance.evidence.revision) ||
+    !sameSessionRevision(intent.revision, original.provenance.evidence.revision) ||
     intent.revision.subjectId !== evidence.revision.subjectId ||
     intent.revision.securityRevision !== evidence.revision.securityRevision ||
     intent.flowId !== evidence.flowId ||

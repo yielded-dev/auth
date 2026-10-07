@@ -15,7 +15,6 @@ export {
   ProofBinding,
   ProofDeliveryId,
   ProofDeliveryOutcome,
-  ProofDeliveryStatus,
   ProofId,
   ProofInstant,
   ProofPurpose,

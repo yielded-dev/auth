@@ -1,8 +1,9 @@
 import type { TokenDigest } from "@yielded/auth/Schema";
+import type { PendingAuthenticationKind } from "@yielded/auth/Sessions";
 import { Effect } from "effect";
 
 import type { NativeSqlTables } from "./native-sql-table";
-import { makeNativeSessionPending, type SessionPendingKind } from "./session-native-pending";
+import { makeNativeSessionPending } from "./session-native-pending";
 import {
   makeNativeSessionAuthorityState,
   type NativeSessionAuthorityMapping,
@@ -20,7 +21,7 @@ export const makeNativeSessionPendingReader = Effect.fnUntraced(function* (
   const state = yield* makeNativeSessionAuthorityState(tables, mapping, batch);
   const pending = yield* makeNativeSessionPending(tables, mapping, batch);
 
-  const read = Effect.fnUntraced(function* (kind: SessionPendingKind, digest: TokenDigest) {
+  const read = Effect.fnUntraced(function* (kind: PendingAuthenticationKind, digest: TokenDigest) {
     const { sql, now } = state,
       { p, table } = pending;
 

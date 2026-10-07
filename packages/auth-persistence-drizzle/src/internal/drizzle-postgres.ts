@@ -79,5 +79,4 @@ export const postgresPersistence = <R>(acquire: Effect.Effect<object, never, R |
     makeTable,
     describe,
     acquire: nativeDatabase(acquire),
-    maxParameters: (database) => database.maxParameters,
   });

@@ -194,10 +194,7 @@ export const makeNativePasswordServices = Effect.fnUntraced(function* (
   const prepare = <V, A>(value: V, project: P.PreparePasswordCommit<V, A>) =>
     Effect.gen(function* () {
       const journal = yield* CurrentCommitJournal;
-      const owner = yield* CurrentSqlCommit;
 
-      if (owner.mode === "batch" && owner.statements.length === 0)
-        yield* appendSqlBatchStatement(sql`select 1`);
       const receipt = project(value, journal);
 
       ensure(receipt?._tag === "PreparedCommit" && Effect.isEffect(receipt.read));

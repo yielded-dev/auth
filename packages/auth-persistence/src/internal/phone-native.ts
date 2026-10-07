@@ -119,10 +119,7 @@ export const makeNativePhoneServices = Effect.fnUntraced(function* (
   ) =>
     Effect.gen(function* () {
       const result = project(decision, yield* CurrentCommitJournal);
-      const owner = yield* CurrentSqlCommit;
 
-      if (owner.mode === "batch" && owner.statements.length === 0)
-        yield* appendSqlBatchStatement(sql`select 1`);
       yield* registerSqlCommitReceipt(result);
 
       return result;

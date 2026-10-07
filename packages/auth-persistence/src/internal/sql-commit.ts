@@ -118,7 +118,8 @@ export const registerSqlBatchPostcondition = (condition: {
     });
   });
 
-/** A caught rollback cannot leave a discarded receipt in a successful owner. */
+/** A caught rollback cannot leave a discarded receipt in a successful owner. A D1
+ * batch needs one physical statement even when the decision writes nothing. */
 export const registerSqlCommitReceipt = <A>(
   receipt: PreparedCommit<A>,
 ): Effect.Effect<void, SqlCommitOwnerError, CurrentSqlCommit> =>
@@ -126,6 +127,8 @@ export const registerSqlCommitReceipt = <A>(
     if (!scope.active) return Effect.fail(closed());
 
     return Effect.sync(() => {
+      if (scope.mode === "batch" && scope.statements.length === 0)
+        scope.statements.push(scope.client`select 1`);
       scope.receipts.push(receipt.read.pipe(Effect.asVoid));
     });
   });

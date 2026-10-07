@@ -7,7 +7,6 @@ import type { Statement } from "effect/sql/Statement";
 
 /** Only installed driver handles are erased; domain values keep their schemas. */
 export interface NativePhysicalDatabase {
-  readonly maxParameters?: number;
   readonly $client: SqlClient & {
     readonly batch: (
       statements: ReadonlyArray<Statement<unknown>>,
@@ -47,7 +46,6 @@ export interface NativeSqlQuery<A = ReadonlyArray<any>> extends Effect.Effect<
 }
 
 export interface NativeSqlDatabase {
-  readonly maxParameters?: number;
   readonly select: (...args: ReadonlyArray<any>) => NativeSqlQuery;
   readonly insert: (...args: ReadonlyArray<any>) => NativeSqlQuery;
   readonly update: (...args: ReadonlyArray<any>) => NativeSqlQuery;
