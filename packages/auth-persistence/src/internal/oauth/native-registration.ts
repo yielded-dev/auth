@@ -105,7 +105,11 @@ const makeIntent = Effect.fnUntraced(function* (
       access.requestBindingExpiresAtMillis !== context.requestBindingExpiresAtMillis ||
       access.credentialDigest !== value.credentialDigest ||
       engineNow < value.issuedAtMillis ||
-      engineNow >= value.expiresAtMillis
+      // A bound decision stays replayable through retention after the intent expires.
+      engineNow >=
+        (inspection.application._tag === "Unbound"
+          ? value.expiresAtMillis
+          : value.retentionUntilMillis)
     )
       return undefined;
 
@@ -196,7 +200,7 @@ export const makeNativeOAuthRegistrationIntentServices = Effect.fnUntraced(funct
           if (
             value.identity.provider !== context.provider ||
             value.identity.issuer !== context.issuer ||
-            value.verifiedAtMillis < context.issuedAtMillis ||
+            value.issuedAtMillis < context.issuedAtMillis ||
             value.verifiedAtMillis > value.issuedAtMillis ||
             value.issuedAtMillis >= value.expiresAtMillis ||
             value.expiresAtMillis > context.requestBindingExpiresAtMillis ||

@@ -152,6 +152,11 @@ export interface SqlCommitExecutor<Failure> {
   readonly read: <A, E, R>(
     effect: Effect.Effect<A, E, R>,
   ) => Effect.Effect<A, Failure, Exclude<Exclude<R, SqlClient.SqlClient>, LifecycleHooks>>;
+  /** Session verification only: runs on the caller's transaction connection when
+   * one is ambient. Other reads reject ambient transactions before any result. */
+  readonly verify: <A, E, R>(
+    effect: Effect.Effect<A, E, R>,
+  ) => Effect.Effect<A, Failure, Exclude<Exclude<R, SqlClient.SqlClient>, LifecycleHooks>>;
   /** Preserve expected operation failures without admitting application suffix work. */
   readonly operation: <A, E, R>(
     effect: Effect.Effect<A, E, R>,
@@ -346,6 +351,9 @@ export const makeSqlCommitExecutor = Effect.fnUntraced(function* <Failure>(
     return provide(report(admit.pipe(Effect.andThen(effect))));
   };
 
+  const verify = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+    Option.isSome(captured) ? read(effect) : provide(report(effect));
+
   const coordinate = <A, E, R>(
     effect: Effect.Effect<A, E, R>,
     mode: SqlCommitMode,
@@ -379,6 +387,7 @@ export const makeSqlCommitExecutor = Effect.fnUntraced(function* <Failure>(
 
   return {
     read,
+    verify,
     operation: <A, E, R>(
       effect: Effect.Effect<A, E, R>,
       mode: "transaction" | "statement" = "transaction",

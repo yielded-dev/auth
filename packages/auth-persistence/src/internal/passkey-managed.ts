@@ -20,6 +20,7 @@ import {
   makePasskeyNativeManagement,
   type NativePasskeyManagementMapping,
 } from "./passkey-native-write";
+import { anySqlCondition } from "./sql-change";
 import { storageTables, type StorageRole } from "./storage-tables";
 
 export interface ComposedPasskeyInput {
@@ -202,7 +203,10 @@ const mappings = Effect.fnUntraced(function* (
                 )
               ) {
                 alternatives.push(sql`exists(select 1 from ${c.name} join ${f.name} on ${f.column("credentialId")} = ${c.column("credentialId")} and ${f.column("subjectId")} = ${f.value("subjectId", nativeId)} and ${f.column("revision")} = ${c.column("credentialRevision")} and ${eq("credentials", "active", true)}
-                where ${eq("passkeyCredentials", "subjectId", nativeId)} and ${c.column("credentialId")} <> ${c.value("credentialId", excluded)} and ${eq("passkeyCredentials", "active", true)} and ${eq("passkeyCredentials", "primarySignIn", true)} and ${eq("passkeyCredentials", "enrollmentUserVerified", true)} and ${sql.or(signInProfiles.map((profile) => eq("passkeyCredentials", "rpId", profile.rpId)))})`);
+                where ${eq("passkeyCredentials", "subjectId", nativeId)} and ${c.column("credentialId")} <> ${c.value("credentialId", excluded)} and ${eq("passkeyCredentials", "active", true)} and ${eq("passkeyCredentials", "primarySignIn", true)} and ${eq("passkeyCredentials", "enrollmentUserVerified", true)} and ${anySqlCondition(
+                  sql,
+                  signInProfiles.map((profile) => eq("passkeyCredentials", "rpId", profile.rpId)),
+                )})`);
               }
               if (
                 passwordModules.length > 0 &&
@@ -219,10 +223,13 @@ const mappings = Effect.fnUntraced(function* (
 
                 alternatives.push(sql`exists(select 1 from ${p.name} join ${f.name} on ${f.column("credentialId")} = ${p.column("credentialId")} and ${f.column("subjectId")} = ${f.value("subjectId", nativeId)} and ${f.column("revision")} = ${p.column("credentialRevision")} and ${eq("credentials", "active", true)}
                 join ${i.name} on ${eq("identifiers", "subjectId", nativeId)} and ${eq("identifiers", "active", true)} and ${eq("identifiers", "namespace", "email")}
-                where ${eq("passwords", "subjectId", nativeId)} and ${p.column("credentialId")} <> ${p.value("credentialId", excluded)} and ${sql.or(passwordModules.map((module) => eq("passwords", "moduleId", module)))})`);
+                where ${eq("passwords", "subjectId", nativeId)} and ${p.column("credentialId")} <> ${p.value("credentialId", excluded)} and ${anySqlCondition(
+                  sql,
+                  passwordModules.map((module) => eq("passwords", "moduleId", module)),
+                )})`);
               }
 
-              return sql.or(alternatives);
+              return anySqlCondition(sql, alternatives);
             }).pipe(
               Effect.mapError((cause) =>
                 PersistenceMappingError.make({ operation: "mapping", cause }),

@@ -64,6 +64,7 @@ export const makeNativeProofStore = Effect.fnUntraced(function* (
   const subject = tables(mapping.subject.table);
   const mysql = sql.onDialectOrElse({ mysql: () => true, orElse: () => false });
   const locking = sql.onDialectOrElse({ sqlite: () => sql``, orElse: () => sql`for update` });
+  const rowLocks = !batch && sql.onDialectOrElse({ sqlite: () => false, orElse: () => true });
   const now = tables.expression(mapping.clock.engineNowMillis);
   const millis = (key: string) => tables.expression(mapping.clock.toMillis(proof.column(key)));
   const instant = (value: Fragment) => tables.expression(mapping.clock.fromMillis(sql`(${value})`));
@@ -290,6 +291,11 @@ export const makeNativeProofStore = Effect.fnUntraced(function* (
             exact(p.verifierDigest, input.candidate.digest),
           ]),
     ]);
+
+    // No subject lock serializes an identifier-bound proof. Lock its row first so
+    // concurrent wrong guesses cannot all compare before any of them is charged.
+    if (input.binding._tag === "Identifier" && rowLocks)
+      yield* sql`select 1 from ${proof.name} where ${current} ${locking}`;
 
     const deletion = sql`delete from ${proof.name} where ${valid}`;
 

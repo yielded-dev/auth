@@ -18,6 +18,10 @@ export const executeSqlChange = (
     orElse: () => sql`${query} returning 1 as changed`.pipe(Effect.map((rows) => rows.length)),
   });
 
+/** Effect renders an empty OR as `1=1`; an empty set of alternatives matches nothing. */
+export const anySqlCondition = (sql: SqlClient, conditions: ReadonlyArray<Fragment>) =>
+  conditions.length === 0 ? sql`1 = 0` : sql.or(conditions);
+
 /** Keep the indexed predicate and reject collation aliases of security tokens. */
 export const exactSqlText = (sql: SqlClient, left: Fragment, right: Fragment) =>
   sql.and([

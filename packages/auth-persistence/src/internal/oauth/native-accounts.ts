@@ -8,7 +8,7 @@ import type { Fragment } from "effect/sql/Statement";
 import { type OAuthAccountsMapping, OAuthEligibilityFact } from "../models/oauth-model";
 import type { NativeSqlTables } from "../native-sql-table";
 import { makeConditionalSqlInsert } from "../session-native-record";
-import { exactSqlText } from "../sql-change";
+import { anySqlCondition, exactSqlText } from "../sql-change";
 import { makeSqlCommitExecutor, SqlBatchCommit, CurrentSqlCommit } from "../sql-commit";
 import type { SqlExpression, TableModel } from "../table-model";
 import { makeOAuthNativeFlow } from "./native-flow";
@@ -61,9 +61,6 @@ export const makeNativeOAuthAccountsServices = Effect.fnUntraced(function* (
   );
 
   const { sql, now, credential, authority } = state;
-
-  const any = (conditions: ReadonlyArray<Fragment>) =>
-    conditions.length === 0 ? sql`1 = 0` : sql.or(conditions);
 
   const c = mapping.credential;
   const a = mapping.authority;
@@ -475,22 +472,27 @@ export const makeNativeOAuthAccountsServices = Effect.fnUntraced(function* (
 
           if (!facts.some((fact) => fact.usablePrimary) || !satisfies(facts, requirement))
             return yield* prepareOAuthNative({ _tag: "LastSignInMethod" }, prepare);
-          const present = (entry: (typeof methods)[number]) => any(entry.conditions);
+
+          const present = (entry: (typeof methods)[number]) =>
+            anySqlCondition(sql, entry.conditions);
 
           // Preserve a usable remaining method through application work. These
           // predicates describe eligible credential identities, not observed rows.
           const remaining = sql.and([
-            any(methods.filter((entry) => entry.fact.usablePrimary).map(present)),
-            any(
+            anySqlCondition(sql, methods.filter((entry) => entry.fact.usablePrimary).map(present)),
+            anySqlCondition(
+              sql,
               requirement.alternatives.map((alternative) =>
                 sql.and([
                   ...alternative.factors.map((factor) =>
-                    any(
+                    anySqlCondition(
+                      sql,
                       methods.filter((entry) => entry.fact.factors.includes(factor)).map(present),
                     ),
                   ),
                   sql`(${sql.join(" + ", false)(methods.map((entry) => sql`case when ${present(entry)} then 1 else 0 end`))}) >= ${alternative.minimumCredentials}`,
-                  any(
+                  anySqlCondition(
+                    sql,
                     methods
                       .filter(
                         (entry) =>

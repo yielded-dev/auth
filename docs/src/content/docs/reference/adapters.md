@@ -579,9 +579,9 @@ under the same subject lock. Registration stores its original schema-encoded
 application payload on the challenge row and provisions synchronously on completion.
 
 Use `coordinatePasskeyManagement` or `coordinatePasskeyRegistration` when application
-writes share the transaction. Wrap any savepoint whose rollback you catch in its
-own `Hooks.coordinateCommit`; catching a bare `tx.transaction(...)` failure does
-not discard its staged receipts and events.
+writes share the transaction. A failed auth operation poisons that transaction:
+the outer commit fails even when the application catches the error, so retry in a
+fresh transaction.
 
 Standalone reads open no transaction. Credential lookup uses one SELECT when mapped
 references share compatible SQL types and ID encodings; custom codecs that transform
