@@ -1,7 +1,7 @@
 /* oxlint-disable no-explicit-any -- this private acquisition preserves the installed native transaction; public wrappers retain its exact type. */
 import type { SqlNativeCommit } from "@yielded/auth-persistence/Adapter";
 import { PersistenceMappingError } from "@yielded/auth-persistence/Adapter";
-import { EffectMysql2Transaction } from "drizzle-orm/effect-mysql2";
+import { EffectMysql2Transaction } from "drizzle-orm/effect-mysql2/session";
 import { Context, Effect, Option } from "effect";
 import { makeWithTransaction, type SqlClient } from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
