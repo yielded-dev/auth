@@ -64,7 +64,16 @@ import { PasskeyProtocol } from "./PasskeyProtocol";
 import { PasskeyMethodPolicy, validatePasskeyPolicy } from "./policy";
 import { freezePasskey, samePasskey, snapshotPasskey, snapshotPasskeySync } from "./snapshot";
 
-export const passkeyRateLimiterLayer = boundedMemoryRateLimiter("reject");
+/** Module-wide budgets stay per instance and are shared by every passkey facet. */
+class PasskeyModuleLimiter extends Context.Service<PasskeyModuleLimiter, RateLimiter.RateLimiter>()(
+  "effect-auth/PasskeyModuleLimiter",
+) {}
+
+// One memoized Layer per Auth graph, so all facets charge the same buckets.
+export const passkeyRateLimiterLayer = Layer.merge(
+  boundedMemoryRateLimiter("reject"),
+  Layer.effect(PasskeyModuleLimiter, localRateLimiter("reject")),
+);
 
 export const passkeyNoAmbient = Effect.fn("Passkey.noAmbient")(function* () {
   if (yield* hasCommitScope) return yield* PasskeyMethodUnsupported.make({});
@@ -160,8 +169,7 @@ export const makePasskeyCeremony = <const Id extends string, const Purpose exten
     const crypto = yield* Crypto.Crypto;
     const hooks = yield* LifecycleHooks;
     const shared = yield* RateLimiter.RateLimiter;
-    // The module-wide budget stays per instance; subject and target buckets share.
-    const local = yield* localRateLimiter("reject");
+    const local = yield* PasskeyModuleLimiter;
 
     const admit = (scope: "global" | "subject" | "target", key: string) =>
       (scope === "global" ? local : shared)

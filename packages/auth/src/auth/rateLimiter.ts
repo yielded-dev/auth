@@ -1,4 +1,5 @@
-import { Clock, Duration, Effect, Layer, Schema, Semaphore } from "effect";
+import { Clock, Crypto, Duration, Effect, Layer, Schema, Semaphore } from "effect";
+import { Base64Url } from "effect/encoding";
 import * as KeyValueStore from "effect/persistence/KeyValueStore";
 import * as RateLimiter from "effect/persistence/RateLimiter";
 
@@ -95,16 +96,19 @@ const Bucket = Schema.fromJsonString(
  * atomic: concurrent checks and replication lag can admit a few extra requests.
  * A read, write or decode failure denies the request. An idle bucket refills to
  * full when next read, so expiry only bounds storage: give entries a TTL at least
- * as long as the longest window. Supports the one-token buckets auth uses.
+ * as long as the longest window. Entries are keyed by a SHA-256 digest of the
+ * bucket key, a fixed short length that carries no identifiers. Supports the
+ * one-token buckets auth uses.
  */
 export const keyValueRateLimiterStore: Layer.Layer<
   RateLimiter.RateLimiterStore,
   never,
-  KeyValueStore.KeyValueStore
+  KeyValueStore.KeyValueStore | Crypto.Crypto
 > = Layer.effect(
   RateLimiter.RateLimiterStore,
   Effect.gen(function* () {
     const store = yield* KeyValueStore.KeyValueStore;
+    const crypto = yield* Crypto.Crypto;
     const unsupported = storeFailure("Auth rate limits support only one-token consumption");
 
     return RateLimiter.RateLimiterStore.of({
@@ -116,7 +120,12 @@ export const keyValueRateLimiterStore: Layer.Layer<
           if (request.allowOverflow || request.tokens !== 1) return yield* unsupported;
           const refillRateMillis = Duration.toMillis(request.refillRate);
           const now = yield* Clock.currentTimeMillis;
-          const stored = yield* store.get(request.key);
+
+          const key = `effect-auth-rate:${Base64Url.encode(
+            yield* crypto.digest("SHA-256", new TextEncoder().encode(request.key)),
+          )}`;
+
+          const stored = yield* store.get(key);
 
           const bucket =
             stored === undefined
@@ -141,12 +150,13 @@ export const keyValueRateLimiterStore: Layer.Layer<
             bucket.tokens !== before.tokens ||
             bucket.lastRefill !== before.lastRefill
           )
-            yield* store.set(request.key, yield* Schema.encodeEffect(Bucket)(bucket));
+            yield* store.set(key, yield* Schema.encodeEffect(Bucket)(bucket));
 
           return [remaining, Math.max(0, now - bucket.lastRefill)] as const;
         }).pipe(
           Effect.catchTags({
             KeyValueStoreError: () => storeFailure("Auth rate limit key-value store failed"),
+            PlatformError: () => storeFailure("Auth rate limit key digest failed"),
             SchemaError: () => storeFailure("Auth rate limit entry is malformed"),
           }),
         ),

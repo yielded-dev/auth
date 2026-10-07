@@ -185,8 +185,9 @@ and every auth limiter uses it: passwords, codes, phone, passkeys, and host ingr
 per instance; shared, one key would take every request's write and let any client
 exhaust everyone's allowance.
 
-`keyValueRateLimiterStore` keeps buckets in any Effect `KeyValueStore`. With
-Workers KV:
+`keyValueRateLimiterStore` keeps buckets in any Effect `KeyValueStore`, keyed by a
+SHA-256 digest, so entries fit KV's key limits and store no identifiers. It uses
+the Auth runtime's `Crypto` service. With Workers KV:
 
 ```ts
 import { Effect, Layer } from "effect";
