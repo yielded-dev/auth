@@ -47,7 +47,7 @@ export const makeTotpTarget = <DatabaseId, D extends NativeDriverDatabase>(
   const services = Effect.fnUntraced(function* (mapping: NativeTotpMapping) {
     const target = yield* nativeTarget(configuration);
 
-    return yield* target.provide(makeNativeTotpServices(target.tables, mapping, target.batch));
+    return yield* target.provide(makeNativeTotpServices(target.tables, mapping));
   });
 
   const mapping = <S extends Table, F extends Table, C extends Table, N, P extends Table>(

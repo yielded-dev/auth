@@ -1,4 +1,5 @@
 import type { LifecycleHooks } from "@yielded/auth/Hooks";
+import { AuthenticationAssurance } from "@yielded/auth/Operations";
 import {
   SessionConflict,
   SessionStepUpInvalid,
@@ -17,21 +18,16 @@ import { PersistenceMappingError, isMappedConstraintConflict } from "./mapping-e
 import type { SessionStepUpMapping } from "./models/step-up-model";
 import type { NativeSqlTables } from "./native-sql-table";
 import { sessionEvidenceDeadline } from "./session-native-authority";
-import {
-  makeNativeSessionPending,
-  prepareNativeSession,
-  type StoredSessionPending,
-} from "./session-native-pending";
-import { readNativeSessionPending } from "./session-native-pending-read";
+import { prepareNativeSession, type StoredSessionPending } from "./session-native-pending";
+import { makeNativeSessionPendingReader } from "./session-native-pending-read";
 import {
   makeNativeSessionRecords,
   sameSessionRecord,
-  conditionalSqlInsert,
+  makeConditionalSqlInsert,
 } from "./session-native-record";
 import {
-  makeNativeSessionAuthorityState,
   sameSessionRevision,
-  sessionFailure,
+  normalizeSessionOperation,
   sessionInvariant,
   sessionUnavailable,
 } from "./session-native-state";
@@ -67,14 +63,20 @@ const assuranceJson = Schema.encodeSync(Schema.fromJsonString(SessionMetadata.fi
 export const makeNativeSessionStepUpServices = Effect.fnUntraced(function* <Claims>(
   tables: NativeSqlTables,
   mapping: NativeSessionStepUpMapping<Claims>,
-  batch?: SqlBatchCommit["Service"],
 ): Effect.fn.Return<
   { readonly sessionStepUpPersistence: SessionStepUpPersistence<Claims> },
   never,
-  SqlClient | LifecycleHooks
+  SqlClient | LifecycleHooks | SqlBatchCommit
 > {
-  const state = yield* makeNativeSessionAuthorityState(tables, mapping, batch !== undefined);
-  const pending = yield* makeNativeSessionPending(tables, mapping, batch !== undefined);
+  const batch = yield* SqlBatchCommit;
+
+  const {
+    state,
+    pending,
+    read: readPending,
+  } = yield* makeNativeSessionPendingReader(tables, mapping, batch !== undefined);
+
+  const conditionalInsert = yield* makeConditionalSqlInsert();
 
   const records =
     mapping.source.kind === "Stateful"
@@ -91,9 +93,9 @@ export const makeNativeSessionStepUpServices = Effect.fnUntraced(function* <Clai
     mode: "transaction" | "statement" = "transaction",
   ) =>
     batch === undefined
-      ? executor.coordinate(work.pipe(Effect.mapError(sessionFailure)), mode)
+      ? executor.coordinate(normalizeSessionOperation(work), mode)
       : executor
-          .coordinateBatch(work.pipe(Effect.mapError(sessionFailure)))
+          .coordinateBatch(normalizeSessionOperation(work))
           .pipe(Effect.provideService(SqlBatchCommit, batch));
 
   const decode = Effect.fnUntraced(function* (stored: StoredSessionPending) {
@@ -246,13 +248,7 @@ export const makeNativeSessionStepUpServices = Effect.fnUntraced(function* <Clai
       executor
         .read(
           Effect.gen(function* () {
-            const selected = yield* readNativeSessionPending(
-              mapping,
-              state,
-              pending,
-              "StepUp",
-              digest,
-            );
+            const selected = yield* readPending("StepUp", digest);
 
             if (selected === undefined) return undefined;
 
@@ -320,8 +316,12 @@ export const makeNativeSessionStepUpServices = Effect.fnUntraced(function* <Clai
             profile = yield* sessionEvidenceDeadline(evidence, intent.requirement, current.now);
 
           if (
-            assuranceJson(profile.assessed.assurance) !==
-            assuranceJson(replacement.inspection.session.assurance)
+            assuranceJson(
+              AuthenticationAssurance.make({
+                ...base.assessed.assurance,
+                authenticatedAt: profile.assessed.assurance.authenticatedAt,
+              }),
+            ) !== assuranceJson(replacement.inspection.session.assurance)
           )
             return yield* SessionStepUpInvalid.make({});
 
@@ -405,7 +405,7 @@ export const makeNativeSessionStepUpServices = Effect.fnUntraced(function* <Clai
             };
 
             yield* pending.stage(
-              conditionalSqlInsert(sql, table, values, sql`${authority} and ${original.condition}`),
+              conditionalInsert(table, values, sql`${authority} and ${original.condition}`),
               1,
             );
             replacementCondition = sql`exists(select 1 from ${table.name} where ${state.exact(table, t.moduleId, mapping.moduleId)} and ${state.id(table, t.subjectId, current.native)} and ${state.id(table, t.sessionId, session)} and ${tables.expression(mapping.clock.toMillis(table.column(t.absoluteExpiresAt)))} >= ${DateTime.toEpochMillis(intent.sourceAbsoluteExpiresAt)})`;

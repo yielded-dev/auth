@@ -13,7 +13,11 @@ import { PersistenceMappingError } from "./mapping-error";
 import type { SignedSessionValidityMapping } from "./models/session-model";
 import type { NativeSqlTables, SqlTable } from "./native-sql-table";
 import { prepareNativeSession } from "./session-native-pending";
-import { sessionFailure, sessionInvariant, sessionUnavailable } from "./session-native-state";
+import {
+  normalizeSessionOperation,
+  sessionInvariant,
+  sessionUnavailable,
+} from "./session-native-state";
 import { allocateSessionValue } from "./session-policy";
 import { exactSqlText, executeSqlChange } from "./sql-change";
 import {
@@ -36,12 +40,13 @@ export type NativeSignedSessionValidityMapping = SignedSessionValidityMapping<
 export const makeNativeSignedSessionValidityServices = Effect.fnUntraced(function* (
   tables: NativeSqlTables,
   mapping: NativeSignedSessionValidityMapping,
-  batch?: SqlBatchCommit["Service"],
 ): Effect.fn.Return<
   { readonly signedSessionValidity: SignedSessionValidity },
   never,
-  SqlClient | LifecycleHooks
+  SqlClient | LifecycleHooks | SqlBatchCommit
 > {
+  const batch = yield* SqlBatchCommit;
+
   const sql = (yield* SqlClient).withoutTransforms(),
     executor = yield* makeSqlCommitExecutor(sessionUnavailable);
 
@@ -68,9 +73,9 @@ export const makeNativeSignedSessionValidityServices = Effect.fnUntraced(functio
 
   const native = <A, E, R>(work: Effect.Effect<A, E, R>) =>
     batch === undefined
-      ? executor.coordinate(work.pipe(Effect.mapError(sessionFailure)), "statement")
+      ? executor.coordinate(normalizeSessionOperation(work), "statement")
       : executor
-          .coordinateBatch(work.pipe(Effect.mapError(sessionFailure)))
+          .coordinateBatch(normalizeSessionOperation(work))
           .pipe(Effect.provideService(SqlBatchCommit, batch));
 
   const stage = Effect.fnUntraced(function* (statement: Fragment, expected?: number) {

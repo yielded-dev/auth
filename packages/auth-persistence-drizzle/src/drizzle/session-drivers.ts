@@ -67,7 +67,7 @@ export const makeSessionTarget = <DatabaseId, D extends NativeDriverDatabase>(
       const target = yield* nativeTarget(configuration);
 
       return yield* target.provide(
-        makeNativeAuthenticationAuthorityServices(target.tables, mapping, target.batch),
+        makeNativeAuthenticationAuthorityServices(target.tables, mapping),
       );
     });
 
@@ -174,9 +174,7 @@ export const makeSessionTarget = <DatabaseId, D extends NativeDriverDatabase>(
         return yield* unavailable();
       const target = yield* nativeTarget(configuration);
 
-      return yield* target.provide(
-        makeNativePendingAuthenticationServices(target.tables, mapping, target.batch),
-      );
+      return yield* target.provide(makeNativePendingAuthenticationServices(target.tables, mapping));
     });
 
   function coordinatePendingAuthentication<
@@ -280,9 +278,7 @@ export const makeSessionTarget = <DatabaseId, D extends NativeDriverDatabase>(
         return yield* unavailable();
       const target = yield* nativeTarget(configuration);
 
-      return yield* target.provide(
-        makeNativeStatefulSessionServices(target.tables, mapping, target.batch),
-      );
+      return yield* target.provide(makeNativeStatefulSessionServices(target.tables, mapping));
     });
 
   function coordinateStatefulSessions<
@@ -404,9 +400,7 @@ export const makeSessionTarget = <DatabaseId, D extends NativeDriverDatabase>(
         return yield* unavailable();
       const target = yield* nativeTarget(configuration);
 
-      return yield* target.provide(
-        makeNativeSignedSessionValidityServices(target.tables, mapping, target.batch),
-      );
+      return yield* target.provide(makeNativeSignedSessionValidityServices(target.tables, mapping));
     });
 
   function coordinateSignedSessionValidity<
@@ -507,9 +501,7 @@ export const makeSessionTarget = <DatabaseId, D extends NativeDriverDatabase>(
         return yield* unavailable();
       const target = yield* nativeTarget(configuration);
 
-      return yield* target.provide(
-        makeNativeSessionStepUpServices(target.tables, mapping, target.batch),
-      );
+      return yield* target.provide(makeNativeSessionStepUpServices(target.tables, mapping));
     });
 
   function coordinateSessionStepUp<
@@ -697,7 +689,6 @@ export const makeSessionTarget = <DatabaseId, D extends NativeDriverDatabase>(
             clockMapping(mapping) as unknown as Parameters<
               typeof makeNativeSessionCleanupServices
             >[1],
-            target.batch,
           ),
         );
       }).pipe(Effect.provideServiceEffect(NativeDatabase, nativeDatabase(databaseService))),

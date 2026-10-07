@@ -17,7 +17,7 @@ import type {
   SessionPendingInsert,
 } from "./models/session-model";
 import type { NativeSqlTables, SqlTable } from "./native-sql-table";
-import { conditionalSqlInsert } from "./session-native-record";
+import { makeConditionalSqlInsert } from "./session-native-record";
 import { sessionInvariant } from "./session-native-state";
 import { exactSqlText, executeSqlChange } from "./sql-change";
 import { appendSqlBatchStatement, CurrentSqlCommit, registerSqlCommitReceipt } from "./sql-commit";
@@ -51,6 +51,7 @@ export const makeNativeSessionPending = Effect.fnUntraced(function* (
   mapping: Mapping,
   batch = false,
 ) {
+  const conditionalInsert = yield* makeConditionalSqlInsert();
   const sql = (yield* SqlClient).withoutTransforms();
 
   const p = mapping.pending,
@@ -151,7 +152,7 @@ export const makeNativeSessionPending = Effect.fnUntraced(function* (
       [p.consumed]: false,
     };
 
-    yield* stage(conditionalSqlInsert(sql, table, row, condition), 1);
+    yield* stage(conditionalInsert(table, row, condition), 1);
   });
 
   const consumption = (kind: SessionPendingKind, input: PendingConsumption, native: unknown) =>

@@ -10,6 +10,7 @@ import {
   makeNativeAuthenticationAuthorityServices,
   type NativeAuthenticationAuthorityMapping,
 } from "./session-native-authority";
+import { SqlBatchCommit } from "./sql-commit";
 import { SqlExpression, compileSqlExpression } from "./sql-expression";
 import type { SqlTableModel } from "./sql-oauth-model";
 import { validateSqlStorage } from "./sql-storage-validation";
@@ -49,5 +50,7 @@ export const makeAuthenticationAuthorityServices = Effect.fnUntraced(function* <
           new SqlExpression((client) => compileSqlExpression(client, value)),
         ),
     },
-  } as unknown as NativeAuthenticationAuthorityMapping<Claims>);
+  } as unknown as NativeAuthenticationAuthorityMapping<Claims>).pipe(
+    Effect.provideService(SqlBatchCommit, undefined),
+  );
 });

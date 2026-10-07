@@ -38,18 +38,17 @@ export const sameSessionRecord = <Claims>(
   metadataJson(left) === metadataJson(right) &&
   provenanceJson(left.provenance) === provenanceJson(right.provenance);
 
-export const conditionalSqlInsert = (
-  sql: SqlClient,
-  table: SqlTable,
-  values: Readonly<Record<string, unknown>>,
-  condition: Fragment,
-) => {
-  const fields = Object.entries(values).filter(([, value]) => value !== undefined);
+export const makeConditionalSqlInsert = Effect.fnUntraced(function* () {
+  const sql = (yield* SqlClient).withoutTransforms();
 
-  sessionInvariant(fields.length > 0);
+  return (table: SqlTable, values: Readonly<Record<string, unknown>>, condition: Fragment) => {
+    const fields = Object.entries(values).filter(([, value]) => value !== undefined);
 
-  return sql`insert into ${table.name} (${sql.join(", ", false)(fields.map(([key]) => table.columnName(key)))}) select ${sql.join(", ", false)(fields.map(([key, value]) => table.value(key, value)))} where ${condition}`;
-};
+    sessionInvariant(fields.length > 0);
+
+    return sql`insert into ${table.name} (${sql.join(", ", false)(fields.map(([key]) => table.columnName(key)))}) select ${sql.join(", ", false)(fields.map(([key, value]) => table.value(key, value)))} where ${condition}`;
+  };
+});
 
 /** Security columns identify the row and own its live time bounds. In particular
  * issuedAt may be assigned by UPDATE's database clock without rewriting a JSON

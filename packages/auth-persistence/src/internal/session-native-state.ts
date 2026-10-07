@@ -1,3 +1,4 @@
+import { reportAuthFailure } from "@yielded/auth/Persistence";
 import type { SubjectId } from "@yielded/auth/Schema";
 import {
   type AuthenticationRequirement,
@@ -11,7 +12,7 @@ import {
   assessAuthentication,
   type AuthenticationEvidence,
 } from "@yielded/auth/Sessions";
-import { Effect, Schema, DateTime } from "effect";
+import { Cause, Effect, Schema, DateTime } from "effect";
 import { SqlClient } from "effect/sql/SqlClient";
 import type { Fragment } from "effect/sql/Statement";
 
@@ -50,6 +51,16 @@ export const sessionFailure = <E>(
   error: E,
 ): Extract<E, SessionDomainFailure> | SessionUnavailable =>
   isDomainFailure(error) ? (error as Extract<E, SessionDomainFailure>) : sessionUnavailable();
+
+export const normalizeSessionOperation = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+  effect.pipe(
+    Effect.tapError((error) =>
+      isDomainFailure(error)
+        ? Effect.void
+        : reportAuthFailure("auth-persistence", Cause.fail(error)),
+    ),
+    Effect.mapError(sessionFailure),
+  );
 
 export type NativeSessionAuthorityMapping = SessionAuthorityTables<
   AnyTableModel,

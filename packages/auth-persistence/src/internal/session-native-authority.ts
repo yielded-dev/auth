@@ -17,7 +17,7 @@ import type { NativeSqlTables } from "./native-sql-table";
 import { makeNativeSessionPending, prepareNativeSession } from "./session-native-pending";
 import {
   makeNativeSessionAuthorityState,
-  sessionFailure,
+  normalizeSessionOperation,
   sessionUnavailable,
   sameSessionRevision,
   assessSessionAt,
@@ -73,12 +73,13 @@ export const sessionEvidenceDeadline = Effect.fnUntraced(function* (
 export const makeNativeAuthenticationAuthorityServices = Effect.fnUntraced(function* <Claims>(
   tables: NativeSqlTables,
   mapping: NativeAuthenticationAuthorityMapping<Claims>,
-  batch?: SqlBatchCommit["Service"],
 ): Effect.fn.Return<
   { readonly authenticationAuthority: AuthenticationAuthority["Service"] },
   never,
-  SqlClient | LifecycleHooks
+  SqlClient | LifecycleHooks | SqlBatchCommit
 > {
+  const batch = yield* SqlBatchCommit;
+
   const state = yield* makeNativeSessionAuthorityState(tables, mapping, batch !== undefined);
   const executor = yield* makeSqlCommitExecutor(sessionUnavailable);
   const external = yield* Effect.serviceOption(CurrentSqlCommit);
@@ -139,9 +140,9 @@ export const makeNativeAuthenticationAuthorityServices = Effect.fnUntraced(funct
 
   const native = <A, E, R>(work: Effect.Effect<A, E, R>) =>
     batch === undefined
-      ? executor.coordinate(work.pipe(Effect.mapError(sessionFailure)))
+      ? executor.coordinate(normalizeSessionOperation(work))
       : executor
-          .coordinateBatch(work.pipe(Effect.mapError(sessionFailure)))
+          .coordinateBatch(normalizeSessionOperation(work))
           .pipe(Effect.provideService(SqlBatchCommit, batch));
 
   const authenticationAuthority: AuthenticationAuthority["Service"] = {

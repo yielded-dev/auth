@@ -14,12 +14,13 @@ import type { AnyTableModel } from "./table-model";
 export const makeNativeSessionCleanupServices = Effect.fnUntraced(function* (
   tables: NativeSqlTables,
   mapping: SessionCleanupMapping<AnyTableModel, AnyTableModel, unknown, unknown>,
-  batch?: SqlBatchCommit["Service"],
 ): Effect.fn.Return<
   { readonly sessionCleanup: SessionCleanup },
   never,
-  SqlClient | LifecycleHooks
+  SqlClient | LifecycleHooks | SqlBatchCommit
 > {
+  const batch = yield* SqlBatchCommit;
+
   const sql = (yield* SqlClient).withoutTransforms();
   const executor = yield* makeSqlCommitExecutor(sessionUnavailable);
   const now = tables.expression(mapping.clock.engineNowMillis);

@@ -13,11 +13,10 @@ import { sqlBatchAssertion } from "./d1-planning";
 import { PersistenceMappingError, isMappedConstraintConflict } from "./mapping-error";
 import type { PendingAuthenticationMapping } from "./models/session-model";
 import type { NativeSqlTables } from "./native-sql-table";
-import { makeNativeSessionPending, prepareNativeSession } from "./session-native-pending";
-import { readNativeSessionPending } from "./session-native-pending-read";
+import { prepareNativeSession } from "./session-native-pending";
+import { makeNativeSessionPendingReader } from "./session-native-pending-read";
 import {
-  makeNativeSessionAuthorityState,
-  sessionFailure,
+  normalizeSessionOperation,
   sessionUnavailable,
   sameSessionRevision,
   assessSessionAt,
@@ -45,14 +44,19 @@ export type NativePendingAuthenticationMapping<Claims> = PendingAuthenticationMa
 export const makeNativePendingAuthenticationServices = Effect.fnUntraced(function* <Claims>(
   tables: NativeSqlTables,
   mapping: NativePendingAuthenticationMapping<Claims>,
-  batch?: SqlBatchCommit["Service"],
 ): Effect.fn.Return<
   { readonly pendingAuthentication: PendingAuthentication<Claims> },
   never,
-  SqlClient | LifecycleHooks
+  SqlClient | LifecycleHooks | SqlBatchCommit
 > {
-  const state = yield* makeNativeSessionAuthorityState(tables, mapping, batch !== undefined);
-  const pending = yield* makeNativeSessionPending(tables, mapping, batch !== undefined);
+  const batch = yield* SqlBatchCommit;
+
+  const {
+    state,
+    pending,
+    read: readPending,
+  } = yield* makeNativeSessionPendingReader(tables, mapping, batch !== undefined);
+
   const executor = yield* makeSqlCommitExecutor(sessionUnavailable);
   const external = yield* Effect.serviceOption(CurrentSqlCommit);
 
@@ -64,9 +68,9 @@ export const makeNativePendingAuthenticationServices = Effect.fnUntraced(functio
     mode: "transaction" | "statement" = "transaction",
   ) =>
     batch === undefined
-      ? executor.coordinate(work.pipe(Effect.mapError(sessionFailure)), mode)
+      ? executor.coordinate(normalizeSessionOperation(work), mode)
       : executor
-          .coordinateBatch(work.pipe(Effect.mapError(sessionFailure)))
+          .coordinateBatch(normalizeSessionOperation(work))
           .pipe(Effect.provideService(SqlBatchCommit, batch));
 
   const verifyPayload = Effect.fnUntraced(function* (
@@ -90,7 +94,7 @@ export const makeNativePendingAuthenticationServices = Effect.fnUntraced(functio
   const read = Effect.fnUntraced(function* (
     digest: Parameters<PendingAuthentication<Claims>["read"]>[0]["digest"],
   ) {
-    const selected = yield* readNativeSessionPending(mapping, state, pending, "Login", digest);
+    const selected = yield* readPending("Login", digest);
 
     if (selected === undefined) return undefined;
     const record = yield* verifyPayload(selected.record);

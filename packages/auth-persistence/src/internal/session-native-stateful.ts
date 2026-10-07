@@ -22,14 +22,14 @@ import type { NativeSqlTables } from "./native-sql-table";
 import { sessionEvidenceDeadline } from "./session-native-authority";
 import { makeNativeSessionPending, prepareNativeSession } from "./session-native-pending";
 import {
-  conditionalSqlInsert,
+  makeConditionalSqlInsert,
   makeNativeSessionRecords,
   sameSessionRecord,
 } from "./session-native-record";
 import {
   makeNativeSessionAuthorityState,
   sameSessionRevision,
-  sessionFailure,
+  normalizeSessionOperation,
   sessionInvariant,
   sessionUnavailable,
 } from "./session-native-state";
@@ -58,16 +58,18 @@ export type NativeStatefulSessionMapping<Claims> = StatefulSessionMapping<
 export const makeNativeStatefulSessionServices = Effect.fnUntraced(function* <Claims>(
   tables: NativeSqlTables,
   mapping: NativeStatefulSessionMapping<Claims>,
-  batch?: SqlBatchCommit["Service"],
 ): Effect.fn.Return<
   {
     readonly statefulSessionPersistence: StatefulSessionPersistence<Claims>;
     readonly sessionRepository: SessionRepository;
   },
   never,
-  SqlClient | LifecycleHooks
+  SqlClient | LifecycleHooks | SqlBatchCommit
 > {
+  const batch = yield* SqlBatchCommit;
+
   const state = yield* makeNativeSessionAuthorityState(tables, mapping, batch !== undefined);
+  const conditionalInsert = yield* makeConditionalSqlInsert();
   const records = yield* makeNativeSessionRecords(tables, mapping);
   const executor = yield* makeSqlCommitExecutor(sessionUnavailable);
   const external = yield* Effect.serviceOption(CurrentSqlCommit);
@@ -88,9 +90,9 @@ export const makeNativeStatefulSessionServices = Effect.fnUntraced(function* <Cl
     mode: "transaction" | "statement" = "transaction",
   ) =>
     batch === undefined
-      ? executor.coordinate(work.pipe(Effect.mapError(sessionFailure)), mode)
+      ? executor.coordinate(normalizeSessionOperation(work), mode)
       : executor
-          .coordinateBatch(work.pipe(Effect.mapError(sessionFailure)))
+          .coordinateBatch(normalizeSessionOperation(work))
           .pipe(Effect.provideService(SqlBatchCommit, batch));
 
   const stage = Effect.fnUntraced(function* (statement: Fragment, expected?: number) {
@@ -272,7 +274,7 @@ export const makeNativeStatefulSessionServices = Effect.fnUntraced(function* <Cl
               [s.absoluteExpiresAt]: s.encodeInstant(record.absoluteExpiresAt),
             };
 
-            const changed = yield* stage(conditionalSqlInsert(sql, table, values, condition), 1);
+            const changed = yield* stage(conditionalInsert(table, values, condition), 1);
 
             if (changed !== 1) return yield* StaleAuthentication.make({});
             const final = sql`${condition} and ${yield* recordCondition(record, values)}${input.pending === undefined || pending === undefined ? sql`` : sql` and ${pending.consumedCondition("Login", input.pending, current.native)}`}`;

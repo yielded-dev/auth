@@ -19,7 +19,7 @@ import { PersistenceMappingError } from "./mapping-error";
 import type { TotpMapping } from "./models/totp-model";
 import type { NativeSqlTables, SqlTable } from "./native-sql-table";
 import { makeNativeSessionPending, prepareNativeSession } from "./session-native-pending";
-import { conditionalSqlInsert } from "./session-native-record";
+import { makeConditionalSqlInsert } from "./session-native-record";
 import { assessSessionAt, sameSessionRevision } from "./session-native-state";
 import { exactSqlText, executeSqlChange } from "./sql-change";
 import {
@@ -54,12 +54,14 @@ const reject: TotpDecision = { _tag: "Rejected" };
 export const makeNativeTotpServices = Effect.fnUntraced(function* (
   tables: NativeSqlTables,
   mapping: NativeTotpMapping,
-  batch?: SqlBatchCommit["Service"],
 ): Effect.fn.Return<
   { readonly totpPersistence: TotpPersistence["Service"] },
   never,
-  SqlClient | LifecycleHooks | Crypto.Crypto
+  SqlClient | LifecycleHooks | Crypto.Crypto | SqlBatchCommit
 > {
+  const batch = yield* SqlBatchCommit;
+  const conditionalInsert = yield* makeConditionalSqlInsert();
+
   const sql = (yield* SqlClient).withoutTransforms(),
     crypto = yield* Crypto.Crypto,
     executor = yield* makeSqlCommitExecutor(unavailable),
@@ -600,7 +602,7 @@ export const makeNativeTotpServices = Effect.fnUntraced(function* (
         ...values,
       };
 
-      yield* stage(conditionalSqlInsert(sql, factor, insert, writeGuard));
+      yield* stage(conditionalInsert(factor, insert, writeGuard));
     } else
       yield* stage(
         sql`${factor.update(values)} where ${exact(factor, f.scope, scope)} and ${exact(factor, f.version, current!.version)} and ${writeGuard}`,
