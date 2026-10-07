@@ -14,7 +14,7 @@ Your app owns accounts, claims, and permission policy.
 | Sign in with an existing account link                      | `OAuth.make()`                                                 |
 | Sign in and retain provider API access in the same consent | `OAuth.make({ access: profile })`                              |
 | Create an account after provider verification              | `OAuth.makeRegistration({ registration, registrationPolicy })` |
-| Link another login method                                  | `OAuth.makeAccounts({ policy })`                               |
+| List, link, and unlink login methods                       | `OAuth.makeAccounts({ policy })`                               |
 | Connect an API to an already authenticated account         | `OAuth.makeConnected({ policy })`                              |
 
 ## Sign in and retain provider access
@@ -134,6 +134,34 @@ upgrade session assurance. Provider tokens never enter browser results or sessio
 depends on the profile; optional provider revocation uses the maintenance worker.
 Disconnect stops future local use, while already released tokens may remain in flight.
 See [retained access](../reference/oauth#retained-access) for dependencies and recovery.
+
+## Show linked login methods
+
+Add `OAuth.makeAccounts({ policy })` under an `accounts` strategy, using the same
+namespace and login persistence as sign-in. List the current caller's identities:
+
+```ts
+const page = yield* auth.listLinkedAccounts("accounts", { limit: 20 });
+// page.items: { credentialId, provider, issuer, subject }[]
+```
+
+Pass an item's `credentialId` to `unlinkAccount`. These are login identities;
+`listAccountConnections` lists retained provider API grants. Linking preserves the
+session; unlinking applies the configured session invalidation.
+
+For HTTP and Effect Atom, declare the query in your shared contract:
+
+```ts
+listLinkedAccounts: AuthContract.oauthListLinkedAccounts({ strategy: "accounts" })
+```
+
+The bound Auth service and client then expose `listLinkedAccounts({ limit: 20 })`.
+`AuthAtom.make(AppClient)` supplies `auth.listLinkedAccounts({ limit: 20 })` as a
+query atom. Successful named link/unlink mutations invalidate named queries through
+its shared reactivity key; React only renders and dispatches. Keep all related
+operations in that contract. See the [client guide](./client.mdx) for custom query
+invalidation and [account reference](../reference/oauth#linked-login-inventory) for
+pagination and metadata policy.
 
 ## Local and preview environments
 

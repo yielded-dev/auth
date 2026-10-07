@@ -2,6 +2,8 @@ import { Schema } from "effect";
 
 import { HookDenied } from "../hooks/models";
 import { action } from "../operations/actions";
+import { AuthenticationRequired } from "../operations/errors";
+import { OAuthLinkedAccountsList, OAuthLinkedAccountsListResult } from "./accountsModels";
 import { OAuthGrantId, OAuthPermissionProfileKey } from "./permissionProfile";
 import { OAuthRegistrationRequired } from "./registrationModels";
 import { OAuthMethodUnsupported, OAuthRejected, OAuthUnavailable } from "./signInErrors";
@@ -72,4 +74,15 @@ export const completeSignIn = <S extends Schema.Codec<Completion, unknown, unkno
           ? value.completion.session.subjectId
           : undefined,
     },
+  });
+
+/** List the authenticated subject's login identities, independently of API grants. */
+export const listLinkedAccounts = (options?: { readonly strategy?: string }) =>
+  action({
+    payload: OAuthLinkedAccountsList,
+    success: OAuthLinkedAccountsListResult,
+    error: Schema.Union([AuthenticationRequired, OAuthUnavailable, OAuthMethodUnsupported]),
+    mode: "query",
+    method: "listLinkedAccounts",
+    ...options,
   });

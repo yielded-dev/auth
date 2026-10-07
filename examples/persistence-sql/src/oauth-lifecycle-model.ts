@@ -1,4 +1,4 @@
-import { Auth, OAuth, Sessions, Strava } from "@yielded/auth";
+import { Auth, AuthContract, OAuth, Sessions, Strava } from "@yielded/auth";
 import { Redacted, Schema } from "effect";
 import { Base64Url } from "effect/encoding";
 
@@ -17,8 +17,14 @@ export const keys = (byte: number) => ({
   keys: [{ id: "demo", material: Redacted.make(Base64Url.encode(new Uint8Array(32).fill(byte))) }],
 });
 
-export const AppAuth = Auth.make("sql-oauth-lifecycle", {
+export const AuthApi = AuthContract.make("sql-oauth-lifecycle", {
   claims: Schema.Struct({ role: Schema.Literal("member") }),
+  actions: () => ({
+    listLinkedAccounts: AuthContract.oauthListLinkedAccounts({ strategy: "accounts" }),
+  }),
+});
+
+export const AppAuth = Auth.make(AuthApi, {
   sessions: Sessions.stateless(),
   strategies: {
     oauth: OAuth.make({ namespace: moduleId, access: profile }),

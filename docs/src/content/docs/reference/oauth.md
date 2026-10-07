@@ -283,6 +283,47 @@ last-login-method checks, revision changes, and session invalidation. The
 positive-cache window. A second unlink of an absent credential is rejected;
 absence does not prove an earlier authorized removal.
 
+### Linked login inventory
+
+`OAuth.makeAccounts` exposes `listLinkedAccounts` on Auth and `operations.List` on
+the account module. `AuthContract.oauthListLinkedAccounts({ strategy: "accounts" })`
+binds a named HTTP/client query to that strategy. It requires an authenticated
+invocation; subject and module selectors never come from the public payload.
+
+| Schema                          | Fields                                          |
+| ------------------------------- | ----------------------------------------------- |
+| `OAuthLinkedAccountsList`       | `limit` (integer, 1–100), optional `cursor`     |
+| `OAuthLinkedAccount`            | `credentialId`, `provider`, `issuer`, `subject` |
+| `OAuthLinkedAccountsListResult` | `items`, optional continuation `cursor`         |
+
+The identity tuple is nonsecret display data and may contain personal information.
+`credentialId` is the stable input to `unlinkAccount`; it is neither a provider token
+nor a retained-grant ID. Display strings are untrusted. Profiles, tokens, request
+bindings, private evidence, and security revisions are excluded from the result.
+No provider request is made. Use `listAccountConnections` for retained API grants.
+
+Pass the returned cursor unchanged with the next request; it confers no authority
+and is scoped by the current caller and account module on every page. A missing
+cursor ends the traversal. Concurrent removal can leave a short or empty page with
+a cursor, and concurrent insertion may require restarting the traversal. The list
+is a current read, not a snapshot or permission to unlink later.
+
+`OAuthAccountsPersistence.list` receives `OAuthLinkedAccountsRead`, including the
+verified invocation. A replacement must recheck current subject/credential authority,
+identity ownership and metadata-access policy before returning each item. Denied
+metadata access returns an empty page. SQL and Drizzle account mappings require a
+`metadataAccess({ invocation, moduleId, subjectId })` SQL predicate; it runs alongside
+those checks. Bind application session/permission rules to current database rows.
+The existing [SQL lifecycle consumer](https://github.com/yielded-dev/auth/blob/main/examples/persistence-sql/src/oauth-lifecycle-consumer.ts)
+shows pagination and unlink through the public contract with both supported SQL dialects.
+
+`AuthAtom.make` automatically invalidates this named query after successful named
+mutations, including `completeAccountLink` and `unlinkAccount`. For additional
+application queries, use the same runtime factory and declare their reactivity keys
+on those mutations through `AuthAtom.make` options. A provider callback that returns
+a new page creates a new query lifetime; a callback in another window needs the
+application's usual cross-window notification or refetch policy.
+
 ### Connect an authenticated account
 
 Call `Connected.begin` directly with a flow ID, callback, Connect or Reconnect

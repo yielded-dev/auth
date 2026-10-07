@@ -2,6 +2,7 @@ import type { PreparedCommit } from "@yielded/auth/Hooks";
 import type {
   OAuthActionAuthorization,
   OAuthAccountRevision,
+  OAuthLinkedAccountsRead,
   OAuthRegistrationIntent,
   OAuthExternalIdentity,
   OAuthRegistrationAccess,
@@ -442,6 +443,15 @@ export interface OAuthAccountsMapping<
   readonly subjectId: SubjectIdCodec<N>;
   readonly clock: OAuthClock<Expression>;
   readonly constraints: typeof requiredOAuthSignInConstraints;
+  /** Self-contained SQL predicate rechecking this invocation's current permission
+   * to view login metadata. Evaluated in every releasing read, alongside active
+   * subject/credential authority and ownership. Do not trust public assurance as
+   * credential provenance; bind session policy to application-owned rows as needed. */
+  readonly metadataAccess: (input: {
+    readonly invocation: OAuthLinkedAccountsRead["invocation"];
+    readonly moduleId: string;
+    readonly subjectId: N;
+  }) => Expression;
   readonly eligibility: ReadonlyArray<OAuthEligibilityDescriptor<N, Expression, Descriptor>>;
   readonly cleanup: ReadonlyArray<OAuthCleanupDescriptor<N, Expression, Descriptor>>;
   readonly sessionInvalidation: "same-authority-immediate" | "original-absolute-expiry";

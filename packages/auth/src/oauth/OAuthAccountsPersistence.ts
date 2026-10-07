@@ -6,6 +6,8 @@ import type { SubjectId } from "../Schema";
 import type { SessionInvalidationWindow } from "../sessions/invalidation";
 import type {
   OAuthAccountRevision,
+  OAuthLinkedAccountsRead,
+  OAuthLinkedAccountsListResult,
   OAuthActionAuthorization,
   OAuthCredentialKey,
   OAuthLinkAccess,
@@ -29,6 +31,13 @@ import type {
 export class OAuthAccountsPersistence extends Context.Service<
   OAuthAccountsPersistence,
   {
+    /** Bounded, nonconsuming login inventory. Scope every read to invocation.subjectId
+     * and moduleId, recheck active subject/credential authority and identity ownership,
+     * and apply current application metadata policy before releasing any item.
+     * Denied metadata access returns an empty page. Pages are not a frozen snapshot. */
+    readonly list: (
+      input: OAuthLinkedAccountsRead,
+    ) => Effect.Effect<OAuthLinkedAccountsListResult, OAuthUnavailable>;
     readonly capture: (input: {
       readonly moduleId: typeof OAuthModuleId.Type;
       readonly subjectId: SubjectId;

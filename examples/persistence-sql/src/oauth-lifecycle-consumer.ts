@@ -145,11 +145,31 @@ export const exercise = Effect.gen(function* () {
   )
     return yield* DemoFailure.make({ step: "link preserves session and security revision" });
 
-  const links =
-    yield* sql`SELECT "credentialId" FROM oauth_login WHERE "subjectId" = ${session.subjectId} AND status = 'active'`;
+  const firstPage = yield* delivery.call(auth.listLinkedAccounts({ limit: 1 }), caller);
 
-  if (links.length !== 2) return yield* DemoFailure.make({ step: "linked login persisted" });
-  yield* Console.log(`link: credential=${linked.credentialId}; active login links=${links.length}`);
+  if (firstPage.items.length !== 1 || firstPage.cursor === undefined)
+    return yield* DemoFailure.make({ step: "linked login first page" });
+
+  const secondPage = yield* delivery.call(
+    auth.listLinkedAccounts({ limit: 1, cursor: firstPage.cursor }),
+    caller,
+  );
+
+  const links = [...firstPage.items, ...secondPage.items];
+
+  if (
+    secondPage.items.length !== 1 ||
+    secondPage.cursor !== undefined ||
+    new Set(links.map((item) => item.credentialId)).size !== 2 ||
+    !links.some((item) => item.credentialId === linked.credentialId && item.subject === "456")
+  )
+    return yield* DemoFailure.make({ step: "linked login pagination" });
+
+  const inventoryJson = yield* Schema.encodeEffect(
+    Schema.fromJsonString(Schema.Array(OAuth.OAuthLinkedAccount)),
+  )(links);
+
+  yield* Console.log(`listLinkedAccounts: ${inventoryJson}; pages=2; final cursor absent`);
 
   const listed = yield* delivery.call(auth.listAccountConnections({ limit: 20 }), caller);
 
@@ -175,12 +195,12 @@ export const exercise = Effect.gen(function* () {
   if (replay._tag !== "Failure" || replay.failure._tag !== "OAuthRejected")
     return yield* DemoFailure.make({ step: "unlink replay rejected" });
 
-  const remaining =
-    yield* sql`SELECT "credentialId" FROM oauth_login WHERE "subjectId" = ${session.subjectId} AND status = 'active'`;
+  const remaining = yield* delivery.call(auth.listLinkedAccounts({ limit: 20 }), caller);
 
-  if (remaining.length !== 1) return yield* DemoFailure.make({ step: "unlink" });
+  if (remaining.items.length !== 1 || remaining.items[0]?.subject !== "123")
+    return yield* DemoFailure.make({ step: "unlink" });
   yield* Console.log(
-    `unlink: active login links=${remaining.length}; removed credential replay rejected`,
+    `unlink: active login links=${remaining.items.length}; removed credential replay rejected`,
   );
 
   const otherDelivery = privateDelivery();

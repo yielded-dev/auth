@@ -17,12 +17,7 @@ import { LifecycleHooks } from "../hooks/LifecycleHooks";
 import { HookDenied, LifecycleEventId, lifecycleEvent, lifecycleSnapshot } from "../hooks/models";
 import { IdentityConflict, LastSignInMethod } from "../identity/models";
 import { reportAuthFailure } from "../internal/diagnostics";
-import {
-  AuthenticationAssurance,
-  AssuranceEvidence,
-  requireAuthenticated,
-  type AuthInvocation,
-} from "../operations/context";
+import { requireAuthenticated, type AuthInvocation } from "../operations/context";
 import type { AuthOperationResult, AuthCredentialCommand } from "../operations/credentials";
 import { AuthenticationRequired } from "../operations/errors";
 import { makeOperation, operationGroup } from "../operations/operation";
@@ -33,6 +28,10 @@ import { SessionInvalidationWindow, sessionInvalidationWindow } from "../session
 import type { makeSessionModule } from "../sessions/module";
 import {
   OAuthAccountRevision,
+  OAuthLinkedAccount,
+  OAuthLinkedAccountsList,
+  OAuthLinkedAccountsListResult,
+  OAuthLinkedAccountsRead,
   OAuthAccountsPolicy,
   OAuthActionAuthorization,
   OAuthActionChallenge,
@@ -91,25 +90,6 @@ const Failure = Schema.Union([
 
 type Failure = typeof Failure.Type;
 
-const invocationSchema = Schema.TaggedStruct("Authenticated", {
-  subjectId: OAuthAccountRevision.fields.subjectId,
-  sessionId: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(256))),
-  assurance: Schema.Struct({
-    ...AuthenticationAssurance.fields,
-    method: Schema.NonEmptyString.check(Schema.isMaxLength(128)),
-    factors: AuthenticationAssurance.fields.factors.check(Schema.isMaxLength(8)),
-    evidence: Schema.optionalKey(
-      Schema.NonEmptyArray(
-        Schema.Struct({
-          ...AssuranceEvidence.fields,
-          method: Schema.NonEmptyString.check(Schema.isMaxLength(128)),
-          factors: AssuranceEvidence.fields.factors.check(Schema.isMaxLength(8)),
-        }),
-      ).check(Schema.isMaxLength(64)),
-    ),
-  }),
-});
-
 const read = <A>(receipt: PreparedCommit<A>) =>
   receipt.read.pipe(Effect.mapError(() => OAuthUnavailable.make({})));
 
@@ -152,7 +132,7 @@ export interface AccountsModule<Id extends string> {
   readonly kind: "oauth-accounts";
 }
 
-/** Authenticated account mutations only; no Claims, registration, login completion
+/** Authenticated login inventory and account mutations; no Claims, registration, login completion
  * or connected-grant authority. Method eligibility and final action policy belong
  * to the same physical persistence authority as each mutation. */
 export const makeOAuthAccounts = <
@@ -169,6 +149,13 @@ export const makeOAuthAccounts = <
   const Accounts = Context.Service<
     AccountsModule<Id>,
     {
+      readonly list: (
+        invocation: AuthInvocation,
+        input: OAuthLinkedAccountsList,
+      ) => Effect.Effect<
+        OAuthLinkedAccountsListResult,
+        AuthenticationRequired | OAuthUnavailable | OAuthMethodUnsupported
+      >;
       readonly begin: (
         invocation: AuthInvocation,
         input: typeof OAuthLinkBegin.Type,
@@ -204,8 +191,16 @@ export const makeOAuthAccounts = <
       const policy = captured;
       const { issue: issueBinding, verify: verifyBinding } = yield* binding.RequestBinding;
 
-      const { capture, issue, consume, link, readCredential, unlink, cleanup } =
-        yield* OAuthAccountsPersistence;
+      const {
+        list: listRows,
+        capture,
+        issue,
+        consume,
+        link,
+        readCredential,
+        unlink,
+        cleanup,
+      } = yield* OAuthAccountsPersistence;
 
       const { verify: verifyAction } = yield* OAuthActionEvidence;
       const { prepareAuthorization, exchangeVerifiedIdentity } = yield* OAuthProtocol;
@@ -228,7 +223,7 @@ export const makeOAuthAccounts = <
         yield* noAmbient();
         const caller = yield* requireAuthenticated(invocation);
 
-        return yield* snapshotOAuth(invocationSchema, caller);
+        return yield* snapshotOAuth(OAuthLinkedAccountsRead.fields.invocation, caller);
       });
 
       const hash = Effect.fn("OAuthAccounts.hash")(function* (value: string) {
@@ -295,13 +290,13 @@ export const makeOAuthAccounts = <
       });
 
       const authorize = Effect.fn("OAuthAccounts.authorize")(function* (
-        caller: typeof invocationSchema.Type,
+        caller: OAuthLinkedAccountsRead["invocation"],
         expected: OAuthActionChallenge,
         proof: Redacted.Redacted<string> | undefined,
         maximumAgeMillis = policy.maximumEvidenceAgeMillis,
       ) {
         const grant = yield* verifyAction({
-          invocation: snapshotOAuthSync(invocationSchema, caller),
+          invocation: snapshotOAuthSync(OAuthLinkedAccountsRead.fields.invocation, caller),
           challenge: snapshotOAuthSync(OAuthActionChallenge, expected),
           ...(proof === undefined ? {} : { proof: Redacted.make(Redacted.value(proof)) }),
         });
@@ -720,6 +715,35 @@ export const makeOAuthAccounts = <
       );
 
       return Accounts.of({
+        list: Effect.fn("OAuthAccounts.list")(
+          function* (invocation, raw) {
+            const caller = yield* available(invocation);
+            const request = yield* snapshotOAuth(OAuthLinkedAccountsList, raw);
+
+            const result = yield* listRows({ ...request, moduleId: id, invocation: caller }).pipe(
+              Effect.flatMap((value) => snapshotOAuth(OAuthLinkedAccountsListResult, value)),
+            );
+
+            if (
+              result.items.length > request.limit ||
+              new Set(result.items.map((item) => item.credentialId)).size !== result.items.length ||
+              (result.cursor !== undefined && result.cursor === request.cursor)
+            )
+              return yield* OAuthUnavailable.make({});
+
+            // Explicit projection also excludes excess fields supplied by a replacement port.
+            return {
+              items: result.items.map(({ credentialId, provider, issuer, subject }) =>
+                OAuthLinkedAccount.make({ credentialId, provider, issuer, subject }),
+              ),
+              ...(result.cursor === undefined ? {} : { cursor: result.cursor }),
+            };
+          },
+          Effect.tapCause((cause) =>
+            Cause.hasDies(cause) ? reportAuthFailure("oauth-accounts", cause) : Effect.void,
+          ),
+          Effect.catchDefect(() => Effect.fail(OAuthUnavailable.make({}))),
+        ),
         begin,
         complete,
         unlink: remove,
@@ -744,6 +768,15 @@ export const makeOAuthAccounts = <
       });
     }),
   );
+
+  const List = makeOperation(`${moduleId}/accounts/list`, {
+    payload: OAuthLinkedAccountsList,
+    success: OAuthLinkedAccountsListResult,
+    error: Schema.Union([AuthenticationRequired, OAuthUnavailable, OAuthMethodUnsupported]),
+    access: "authenticated",
+    exposure: "public",
+    replay: "read-only",
+  });
 
   const Begin = makeOperation(`${moduleId}/accounts/link/begin`, {
     payload: OAuthLinkBegin,
@@ -776,6 +809,11 @@ export const makeOAuthAccounts = <
   });
 
   const handlersLayer = Layer.mergeAll(
+    List.handlerLayer(
+      Effect.fn("OAuthAccounts.List")(function* (input, invocation) {
+        return yield* (yield* Accounts).list(invocation, input);
+      }),
+    ),
     Begin.credentialHandlerLayer(
       Effect.fn("OAuthAccounts.Link.Begin")(function* (input, invocation) {
         return yield* (yield* Accounts).begin(invocation, input);
@@ -797,8 +835,8 @@ export const makeOAuthAccounts = <
     Accounts,
     binding,
     layer,
-    operations: Object.freeze({ Link: Object.freeze({ Begin, Complete }), Unlink }),
+    operations: Object.freeze({ List, Link: Object.freeze({ Begin, Complete }), Unlink }),
     handlersLayer,
-    group: operationGroup(Begin, Complete, Unlink),
+    group: operationGroup(List, Begin, Complete, Unlink),
   });
 };

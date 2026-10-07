@@ -781,6 +781,7 @@ export const makeOAuthMethod = <
       ...module,
       strategy: makeAuthStrategy(
         {
+          listLinkedAccounts: module.operations.List.invoke,
           linkAccount: module.operations.Link.Begin.invoke,
           completeAccountLink: module.operations.Link.Complete.invoke,
           unlinkAccount: module.operations.Unlink.invoke,

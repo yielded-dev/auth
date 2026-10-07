@@ -1,5 +1,5 @@
 import { Effect, Schema } from "effect";
-import type { SqlClient } from "effect/sql/SqlClient";
+import { SqlClient } from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
 import { join, type Fragment } from "effect/sql/Statement";
 
@@ -24,6 +24,19 @@ export const anySqlCondition: (conditions: ReadonlyArray<Fragment>) => Fragment 
   true,
   "1 = 0",
 );
+
+/** Exact text comparison and ordering, independent of the column's collation. */
+export const sqlTextBytes = Effect.fnUntraced(function* (
+  value: Fragment,
+): Effect.fn.Return<Fragment, never, SqlClient> {
+  const sql = (yield* SqlClient).withoutTransforms();
+
+  return sql.onDialectOrElse({
+    mysql: () => sql`binary ${value}`,
+    pg: () => sql`convert_to(cast(${value} as text), 'UTF8')`,
+    orElse: () => sql`cast(${value} as blob)`,
+  });
+});
 
 /** Keep the indexed predicate and reject collation aliases of security tokens. */
 export const exactSqlText = (sql: SqlClient, left: Fragment, right: Fragment) =>

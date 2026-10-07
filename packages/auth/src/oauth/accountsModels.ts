@@ -1,5 +1,6 @@
 import { Schema } from "effect";
 
+import { AuthenticationAssurance, AssuranceEvidence } from "../operations/context";
 import { RequestBindingFlowId } from "../operations/requestBinding";
 import { TokenDigest } from "../Schema";
 import { SessionInvalidationWindow } from "../sessions/invalidation";
@@ -12,6 +13,7 @@ import {
 } from "../sessions/models";
 import {
   OAuthCredentialSnapshot,
+  OAuthExternalIdentity,
   OAuthInstant,
   OAuthModuleId,
   OAuthSealedTransaction,
@@ -43,6 +45,57 @@ export const OAuthActionDigest = TokenDigest.check(
 
 export const OAuthAccountRevision = OAuthCredentialSnapshot.fields.revision;
 export type OAuthAccountRevision = typeof OAuthAccountRevision.Type;
+
+/** A login identity, distinct from a retained provider API grant. These exact
+ * nonsecret fields are safe for display; credentialId is the unlink target. */
+export const OAuthLinkedAccount = Schema.Struct({
+  credentialId: OAuthCredentialSnapshot.fields.credentialId,
+  ...OAuthExternalIdentity.fields,
+});
+
+export type OAuthLinkedAccount = typeof OAuthLinkedAccount.Type;
+
+export const OAuthLinkedAccountsList = Schema.Struct({
+  limit: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 100 })),
+  /** Opaque continuation within this caller and module; never grants access. */
+  cursor: Schema.optionalKey(OAuthCredentialSnapshot.fields.credentialId),
+});
+
+export type OAuthLinkedAccountsList = typeof OAuthLinkedAccountsList.Type;
+
+export const OAuthLinkedAccountsListResult = Schema.Struct({
+  items: Schema.Array(OAuthLinkedAccount).check(Schema.isMaxLength(100)),
+  cursor: OAuthLinkedAccountsList.fields.cursor,
+});
+
+export type OAuthLinkedAccountsListResult = typeof OAuthLinkedAccountsListResult.Type;
+
+/** Private persistence input. The invocation comes from verified Auth context,
+ * never the public payload. Recheck metadata policy and current ownership at read. */
+export const OAuthLinkedAccountsRead = Schema.Struct({
+  ...OAuthLinkedAccountsList.fields,
+  moduleId: OAuthModuleId,
+  invocation: Schema.TaggedStruct("Authenticated", {
+    subjectId: OAuthAccountRevision.fields.subjectId,
+    sessionId: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(256))),
+    assurance: Schema.Struct({
+      ...AuthenticationAssurance.fields,
+      method: Schema.NonEmptyString.check(Schema.isMaxLength(128)),
+      factors: AuthenticationAssurance.fields.factors.check(Schema.isMaxLength(8)),
+      evidence: Schema.optionalKey(
+        Schema.NonEmptyArray(
+          Schema.Struct({
+            ...AssuranceEvidence.fields,
+            method: Schema.NonEmptyString.check(Schema.isMaxLength(128)),
+            factors: AssuranceEvidence.fields.factors.check(Schema.isMaxLength(8)),
+          }),
+        ).check(Schema.isMaxLength(64)),
+      ),
+    }),
+  }),
+});
+
+export type OAuthLinkedAccountsRead = typeof OAuthLinkedAccountsRead.Type;
 
 const proof = Schema.optionalKey(
   Schema.RedactedFromValue(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(16384))),
