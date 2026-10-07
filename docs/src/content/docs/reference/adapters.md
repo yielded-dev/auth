@@ -499,7 +499,7 @@ Drizzle companion. These explicit factories are separate from the composed
 | `makeOAuthSignInServices`              | Single-use sign-in flows and existing login credentials         |
 | `makeOAuthRegistrationIntentServices`  | Verified identity to registration intent                        |
 | `makeOAuthRegistrationServices`        | Application provisioning, login credential, and durable receipt |
-| `makeOAuthAccountsServices`            | Linking and safe unlinking with exact-action evidence           |
+| `makeOAuthAccountsServices`            | Linked login inventory, linking, and safe unlinking             |
 | `makeOAuthConnectedServices`           | Retained grants, listing, use, refresh, and disconnect          |
 | `makeOAuthConnectedRevocationServices` | Durable provider-revocation work                                |
 
@@ -554,8 +554,18 @@ An external provider exchange cannot be rolled back with your database. A single
 or commit outcomes require a fresh ceremony. Refresh alone retains a durable
 external-work claim and never permits expired takeover. Linking preserves tuple
 uniqueness; unlinking rechecks remaining login methods and retained-grant references
-before releasing ownership. Login-credential listing is an application query over
-its mapped tables; connected-grant listing belongs to `OAuthConnectedPersistence`.
+before releasing ownership. `OAuthAccountsPersistence.list` reads linked login identities;
+connected-grant listing belongs to `OAuthConnectedPersistence`.
+
+Account mappings require a self-contained `metadataAccess` SQL predicate for the
+verified invocation, module, and native subject ID. It runs with current active
+subject, login credential, authority, and identity ownership checks before metadata
+is released. False returns an empty page. The public result includes only the
+credential ID and provider/issuer/subject tuple; optional application profile columns
+are not exposed. The shared implementation bounds candidate reads and resolves each
+selected credential through its own mapped codecs, including custom ID encodings.
+Direct SQL and the existing Drizzle account adapters use this same implementation;
+no schema migration is needed. Supply `list` on replacement persistence services.
 
 ## Passkeys
 
