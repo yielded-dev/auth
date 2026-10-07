@@ -159,9 +159,10 @@ public prerelease is installed as `@yielded/auth@beta`.
 
 ## CI and review
 
-Opening, reopening, updating, marking ready, or editing a PR runs CI, including
-title, description, and base changes. Every run reports the stable required `ready`
-check after its selected gates pass. A newer run supersedes older work on the same PR.
+Opening, reopening, pushing commits, or marking a PR ready runs CI. Title and
+description edits do not create runs, so they cannot supersede the required `ready`
+check. After changing a PR's base branch, close and reopen it to validate the new
+diff. A newer commit run supersedes older work on the same PR.
 
 Every pull request reports the required `ready` check. Contributor docs, changesets,
 and auxiliary workflows need formatting and workflow validation; published docs
