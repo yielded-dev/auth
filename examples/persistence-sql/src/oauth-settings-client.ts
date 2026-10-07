@@ -31,7 +31,7 @@ const attempt = Atom.kvs({
 export const begin = runtime.fn<typeof Attempt.Type.kind>()(
   Effect.fn("OAuthSettings.begin")(function* (kind, get) {
     get.set(notice, null);
-    const input = { provider: "strava", callbackId: "strava", returnTarget: "/oauth-settings" };
+    const input = { provider: "github", callbackId: "github", returnTarget: "/oauth-settings" };
 
     const started =
       kind === "link"
@@ -48,6 +48,7 @@ const CallbackQuery = Schema.Struct({
   code: Schema.optionalKey(Schema.String),
   error: Schema.optionalKey(Schema.String),
   scope: Schema.optionalKey(Schema.String),
+  iss: Schema.optionalKey(Schema.String),
 });
 
 export const complete = runtime.fn<void>()(
@@ -75,19 +76,21 @@ export const complete = runtime.fn<void>()(
             _tag: "Code",
             state: query.state,
             code: query.code,
+            ...(query.iss === undefined ? {} : { issuer: query.iss }),
             ...(query.scope === undefined ? {} : { scope: query.scope }),
           }
         : {
             _tag: "Error",
             state: query.state,
+            ...(query.iss === undefined ? {} : { issuer: query.iss }),
             error: query.error === "access_denied" ? "access-denied" : "rejected",
           },
     );
 
     const input = {
       flowId: saved.flowId,
-      provider: "strava",
-      callbackId: "strava",
+      provider: "github",
+      callbackId: "github",
       response: yield* Schema.encodeEffect(OAuth.OAuthCallbackResponse)(response),
     };
 

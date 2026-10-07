@@ -44,7 +44,7 @@ export const DemoHttpLive = Layer.succeed(
             refresh_token: `demo-refresh-${id}`,
             expires_at: Math.floor(DateTime.toEpochMillis(yield* DateTime.now) / 1000) + 21_600,
             athlete: { id, firstname: "Demo" },
-            scope: "read,activity:read_all",
+            scope: "activity:read_all",
           });
 
       return HttpClientResponse.fromWeb(

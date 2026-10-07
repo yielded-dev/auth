@@ -1,13 +1,13 @@
 import { BunHttpServer, BunRuntime, BunServices } from "@effect/platform-bun";
 import { Hooks, Http, OAuth } from "@yielded/auth";
-import { Config, Effect, FileSystem, Layer, Path, Redacted } from "effect";
-import { FetchHttpClient, HttpRouter, HttpServerResponse } from "effect/http";
+import { Config, Effect, FileSystem, Layer, Path } from "effect";
+import { FetchHttpClient, HttpMiddleware, HttpRouter, HttpServerResponse } from "effect/http";
 
 import { CryptoLive } from "../../shared/crypto";
 import { DatabaseLive } from "./data";
 import { SettingsActionsLive, SettingsAuth } from "./oauth-settings-auth";
 import { SettingsKeysLive } from "./oauth-settings-keys";
-import { demoRoutes, providerLayer } from "./oauth-settings-provider";
+import { providerLayer } from "./oauth-settings-provider";
 import { settingsStorage } from "./oauth-settings-storage";
 
 const server = Layer.unwrap(
@@ -18,17 +18,9 @@ const server = Layer.unwrap(
       Config.withDefault(new URL(`http://localhost:${port}`)),
     );
 
-    const demo = yield* Config.Boolean("OAUTH_DEMO").pipe(Config.withDefault(false));
-
-    if (demo && (origin.protocol !== "http:" || origin.hostname !== "localhost"))
-      return yield* OAuth.OAuthConfigurationError.make({ reason: "policy" });
-    const clientId = demo ? "1234" : yield* Config.String("STRAVA_CLIENT_ID");
-
-    const clientSecret = demo
-      ? Redacted.make("public-demo-client-secret")
-      : yield* Config.Redacted("STRAVA_CLIENT_SECRET");
-
-    const externalSubject = demo ? "123" : yield* Config.String("STRAVA_ATHLETE_ID");
+    const clientId = yield* Config.String("GITHUB_CLIENT_ID");
+    const clientSecret = yield* Config.Redacted("GITHUB_CLIENT_SECRET");
+    const externalSubject = yield* Config.String("GITHUB_USER_ID");
 
     const http = Http.make(SettingsAuth, {
       origin: origin.origin,
@@ -39,14 +31,14 @@ const server = Layer.unwrap(
       DatabaseLive,
       SettingsKeysLive,
       Hooks.LifecycleHooks.empty,
-      providerLayer({ origin, demo, clientId, clientSecret }),
+      providerLayer({ origin, clientId, clientSecret }),
       OAuth.OAuthReturnTargets.exactRoutes(["/oauth-settings"]),
       Layer.succeed(SettingsAuth.strategies.oauth.SessionClaims, {
         resolve: () => Effect.succeed({ displayName: "SQL example member" }),
       }),
     ).pipe(Layer.provideMerge(CryptoLive), Layer.provideMerge(FetchHttpClient.layer));
 
-    const storage = settingsStorage(externalSubject, demo).pipe(Layer.provideMerge(infrastructure));
+    const storage = settingsStorage(externalSubject).pipe(Layer.provideMerge(infrastructure));
 
     const live = SettingsAuth.layer.pipe(
       Layer.provide(SettingsActionsLive.pipe(Layer.provideMerge(storage))),
@@ -56,10 +48,7 @@ const server = Layer.unwrap(
     const path = yield* Path.Path;
     const root = new URL("../dist/", import.meta.url).pathname;
 
-    const html = (yield* fs.readFileString(path.join(root, "oauth-settings.html"))).replace(
-      "__OAUTH_DEMO__",
-      String(demo),
-    );
+    const html = yield* fs.readFileString(path.join(root, "oauth-settings.html"));
 
     const page = HttpServerResponse.text(html, {
       contentType: "text/html",
@@ -82,11 +71,11 @@ const server = Layer.unwrap(
           ),
         ),
       ),
-      demo ? demoRoutes(origin) : Layer.empty,
     ).pipe(Layer.provide(live));
 
     return HttpRouter.serve(routes, { disableLogger: true }).pipe(
       Layer.provide(BunHttpServer.layer({ hostname: "127.0.0.1", port })),
+      Layer.provide(Layer.succeed(HttpMiddleware.TracerDisabledWhen, () => true)),
     );
   }),
 ).pipe(Layer.provide(BunServices.layer));

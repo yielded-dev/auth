@@ -7,27 +7,18 @@ import { makeAccountsMapping } from "./oauth-lifecycle-storage";
 import { moduleId } from "./oauth-settings-auth";
 import { SettingsSessionsLive } from "./oauth-settings-sessions";
 
-export const settingsStorage = (externalSubject: string, demo: boolean) => {
+export const settingsStorage = (externalSubject: string) => {
   const storage = Layer.effectContext(
     Effect.gen(function* () {
       const base = yield* makeMappings({
         moduleId,
         subjectId: "settings-owner",
-        provider: "strava",
-        issuer: "https://www.strava.com",
+        provider: "github",
+        issuer: "https://github.com/login/oauth",
         externalSubject,
         provisionOnce: true,
       });
 
-      if (demo)
-        yield* makeMappings({
-          moduleId,
-          subjectId: "settings-other",
-          provider: "strava",
-          issuer: "https://www.strava.com",
-          externalSubject: "789",
-          provisionOnce: true,
-        });
       const mapping = yield* makeAccountsMapping();
 
       const accounts = yield* Mapping.makeOAuthAccountsServices({

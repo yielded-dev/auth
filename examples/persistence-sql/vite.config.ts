@@ -6,7 +6,6 @@ export default defineConfig({
     tasks: {
       "example:oauth-lifecycle": { command: "bun src/oauth-lifecycle.ts", cache: false },
       "start:oauth": { command: "vp build && bun src/oauth-settings-server.ts", cache: false },
-      "start:oauth-demo": { command: "OAUTH_DEMO=true vp run start:oauth", cache: false },
       start: { command: "vp build && bun src/server.ts", cache: false },
       "start:pg": { command: "PERSISTENCE_DIALECT=pg vp run start", cache: false },
     },

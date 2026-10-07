@@ -57,55 +57,47 @@ when prompted; an older valid session still permits ordinary account reads.
 
 ## OAuth account settings
 
-Run the browser journey without external credentials:
+Run the browser journey with a GitHub OAuth App. Create an app in
+[GitHub developer settings](https://github.com/settings/developers), or add the
+callback to an existing app without replacing callbacks used by another consumer.
+Set the callback URL to `http://localhost:4185/oauth-settings/callback` for local
+use, or `https://YOUR_HOST/oauth-settings/callback` for a hosted preview.
+
+Supply `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, and `GITHUB_USER_ID` through
+your server environment. The user ID is GitHub's numeric, stable ID (`gh api user
+--jq .id`), not a username. Then run:
 
 ```sh
-AUTH_DATA_DIR=/tmp/yielded-oauth-browser \
-  vp -C examples/persistence-sql run start:oauth-demo
-```
-
-Open <http://localhost:4185/oauth-settings>. Sign in as **Demo 123**, choose
-**Link another account**, and consent as **Demo 456**. Both identities appear
-in the public `listLinkedAccounts` query. Remove one, sign in with the remaining
-identity, then try removing the last one: the server refuses to lock you out.
-Cancel consent to leave the inventory unchanged. Linking **Demo 789**, which
-belongs to another local account, shows an ownership conflict with recovery steps.
-
-The consent page and provider HTTP replies are explicitly simulated. The browser,
-Strava protocol, callback completion, HttpOnly cookies, authorization policy and
-SQL transactions run normally. This is local workflow evidence, not validation of
-external Strava consent. Demo mode binds loopback and accepts only an HTTP
-`localhost` origin; never deploy its public identities or simulated transport.
-
-### Use Strava
-
-Create an application in [Strava API settings](https://www.strava.com/settings/api).
-Set its Authorization Callback Domain to your application's hostname (for local
-development, `localhost`). The exact callback URL for the default origin is
-`http://localhost:4185/oauth-settings/callback`; it must remain under the registered
-domain. See [Strava authentication](https://developers.strava.com/docs/authentication/).
-
-Supply `STRAVA_CLIENT_ID`, `STRAVA_CLIENT_SECRET`, and `STRAVA_ATHLETE_ID` through
-your server environment, then run:
-
-```sh
-AUTH_DATA_DIR=/tmp/yielded-oauth-live \
+AUTH_DATA_DIR=/tmp/yielded-oauth-github \
   vp -C examples/persistence-sql run start:oauth
 ```
 
-The athlete ID provisions the first local account on its first start; changing it
-later does not replace existing links. Sign in with
-that athlete, then link another Strava identity you control; switch accounts at
-Strava when needed. The example has no public registration or email-based account
-matching. Strava's application access limits also apply. `OAUTH_DEMO` defaults to
-false and must remain unset for real credentials. Use separate data directories
-for demo and real provider modes.
+Open <http://localhost:4185/oauth-settings> and sign in with the configured GitHub
+account. Choose **Link another account** and select a second GitHub account you
+control. Both appear in the public `listLinkedAccounts` query. Remove one, sign in
+with the remaining identity, then try removing the last one: the server refuses to
+lock you out. Cancel consent to leave the inventory unchanged. Linking an identity
+owned by another application account reports an ownership conflict with recovery
+steps; re-linking your current identity leaves its existing link intact.
+
+The configured user ID provisions the first account once. Changing it later does
+not replace existing links. This example has no public registration or email-based
+account matching. Use a fresh data directory when switching from the earlier
+Strava demo; its persisted provider identities are not GitHub identities.
 
 `AUTH_PORT` defaults to `4185`. For an HTTPS reverse proxy, set `AUTH_ORIGIN` to
-the external origin and register that callback domain; cookies become Secure.
-The server still binds `127.0.0.1`. Keep client secrets on the server. No provider
-grants are retained, and tokens never enter session claims, browser results,
-storage or logs.
+the external origin and register its exact callback URL; cookies become Secure.
+The server binds `127.0.0.1`, so the reverse proxy must run on the same host. A
+[Cloudflare Quick Tunnel](https://developers.cloudflare.com/tunnel/get-started/quick-tunnels/)
+can provide a temporary preview: start `cloudflared tunnel --url http://127.0.0.1:4185`,
+then use its HTTPS URL as `AUTH_ORIGIN`. Keep both processes running; a new tunnel
+URL requires a matching callback registration.
+
+GitHub requests `read:user` for sign-in. This app retains no provider grants and
+keeps client secrets on the server. Tokens never enter session claims, browser
+results, persistent storage or logs. Consent and code exchange use GitHub's real
+endpoints; there is no simulated browser provider. See
+[GitHub OAuth setup](../../docs/src/content/docs/guide/github.md).
 
 ### Policy, storage and client ownership
 

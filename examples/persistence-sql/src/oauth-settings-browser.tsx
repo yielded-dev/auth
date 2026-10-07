@@ -47,7 +47,6 @@ function Settings() {
   const completion = useAtomValue(complete);
   const [outResult, out] = useAtom(signOut);
   const message = useAtomValue(notice);
-  const demo = document.body.dataset.demo === "true";
   const signedIn = session._tag === "Success" ? session.value : null;
   const busy = beginResult.waiting || completion.waiting || outResult.waiting;
 
@@ -57,9 +56,7 @@ function Settings() {
         <a className="wordmark" href="/oauth-settings">
           <span>y</span>yielded<span className="wordmark-divider">/</span>auth
         </a>
-        <span className="local-indicator">
-          {demo ? "SIMULATED PROVIDER · LOCAL ONLY" : "STRAVA · ACCOUNT SETTINGS"}
-        </span>
+        <span className="local-indicator">GITHUB · ACCOUNT SETTINGS</span>
       </header>
       <section className="intro">
         <p className="eyebrow">EXAMPLE 03 / OAUTH</p>
@@ -88,6 +85,7 @@ function Settings() {
                 Account changes require sign-in within the last five minutes. Linking keeps this
                 session; removing a method signs out every session.
               </p>
+              <p className="hint">Choose another GitHub account when linking a new identity.</p>
               <button className="primary" disabled={busy} onClick={() => start("link")}>
                 Link another account <span>→</span>
               </button>
@@ -103,14 +101,8 @@ function Settings() {
           ) : (
             <>
               <p className="description">Use an identity already linked to this account.</p>
-              {demo && (
-                <p className="hint">
-                  Start with Demo 123. Demo 456 is available to link; Demo 789 belongs to a
-                  different account.
-                </p>
-              )}
               <button className="primary submit" disabled={busy} onClick={() => start("sign-in")}>
-                Sign in with Strava <span>→</span>
+                Sign in with GitHub <span>→</span>
               </button>
               <Failure result={session} />
             </>
@@ -138,7 +130,7 @@ function Settings() {
       </div>
       <footer>
         <p>Effect Atom · direct Effect SQL · private HttpOnly credentials</p>
-        <p>{demo ? "No external provider validation" : "Provider consent opens at Strava"}</p>
+        <p>Provider consent opens at GitHub</p>
       </footer>
     </main>
   );
