@@ -21,10 +21,11 @@ const server = Layer.unwrap(
     const clientId = yield* Config.String("GITHUB_CLIENT_ID");
     const clientSecret = yield* Config.Redacted("GITHUB_CLIENT_SECRET");
     const externalSubject = yield* Config.String("GITHUB_USER_ID");
+    const secure = origin.protocol === "https:";
 
     const http = Http.make(SettingsAuth, {
       origin: origin.origin,
-      cookie: { prefix: "oauth-settings-", secure: origin.protocol === "https:" },
+      cookie: { prefix: secure ? "__Host-oauth-settings-" : "oauth-settings-", secure },
     });
 
     const infrastructure = Layer.mergeAll(
