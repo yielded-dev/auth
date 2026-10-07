@@ -55,6 +55,93 @@ Hashing, Cloudflare delivery, forms, and Atom workflows also live in
 Adding a passkey requires authentication from the last five minutes. Sign in again
 when prompted; an older valid session still permits ordinary account reads.
 
+## OAuth account settings
+
+Run the browser journey without external credentials:
+
+```sh
+AUTH_DATA_DIR=/tmp/yielded-oauth-browser \
+  vp -C examples/persistence-sql run start:oauth-demo
+```
+
+Open <http://localhost:4185/oauth-settings>. Sign in as **Demo 123**, choose
+**Link another account**, and consent as **Demo 456**. Both identities appear
+in the public `listLinkedAccounts` query. Remove one, sign in with the remaining
+identity, then try removing the last one: the server refuses to lock you out.
+Cancel consent to leave the inventory unchanged. Linking **Demo 789**, which
+belongs to another local account, shows an ownership conflict with recovery steps.
+
+The consent page and provider HTTP replies are explicitly simulated. The browser,
+Strava protocol, callback completion, HttpOnly cookies, authorization policy and
+SQL transactions run normally. This is local workflow evidence, not validation of
+external Strava consent. Demo mode binds loopback and accepts only an HTTP
+`localhost` origin; never deploy its public identities or simulated transport.
+
+### Use Strava
+
+Create an application in [Strava API settings](https://www.strava.com/settings/api).
+Set its Authorization Callback Domain to your application's hostname (for local
+development, `localhost`). The exact callback URL for the default origin is
+`http://localhost:4185/oauth-settings/callback`; it must remain under the registered
+domain. See [Strava authentication](https://developers.strava.com/docs/authentication/).
+
+Supply `STRAVA_CLIENT_ID`, `STRAVA_CLIENT_SECRET`, and `STRAVA_ATHLETE_ID` through
+your server environment, then run:
+
+```sh
+AUTH_DATA_DIR=/tmp/yielded-oauth-live \
+  vp -C examples/persistence-sql run start:oauth
+```
+
+The athlete ID provisions the first local account on its first start; changing it
+later does not replace existing links. Sign in with
+that athlete, then link another Strava identity you control; switch accounts at
+Strava when needed. The example has no public registration or email-based account
+matching. Strava's application access limits also apply. `OAUTH_DEMO` defaults to
+false and must remain unset for real credentials. Use separate data directories
+for demo and real provider modes.
+
+`AUTH_PORT` defaults to `4185`. For an HTTPS reverse proxy, set `AUTH_ORIGIN` to
+the external origin and register that callback domain; cookies become Secure.
+The server still binds `127.0.0.1`. Keep client secrets on the server. No provider
+grants are retained, and tokens never enter session claims, browser results,
+storage or logs.
+
+### Policy, storage and client ownership
+
+[The server](src/oauth-settings-server.ts) composes direct SQL mappings with
+state-assisted signed sessions. Every session read checks the active subject and
+security revision in the same database that owns account changes. Unlink removes
+the credential and advances that revision in one transaction, invalidating every
+session immediately. The eligibility mapping refuses to remove the last usable
+primary sign-in method. Linking preserves the security revision and session.
+
+[The application policy](src/oauth-settings-auth.ts) accepts an actual verified
+session from the last five minutes, retaining its private factor identities,
+revisions and original proof times. An older session must sign in again. The link
+callback uses the authorization captured at begin and asks for no second proof.
+This policy treats recent provider sign-in as sufficient confirmation; applications
+requiring a separate factor should supply their own `OAuthActionEvidence`.
+
+`AUTH_DATA_DIR` holds `auth.sqlite` and `oauth-settings-keys.json`, whose independent
+random signing, transaction-encryption and binding keys are created with mode
+`0600`. Keep keys stable across restarts and protect their directory. Set
+`PERSISTENCE_DIALECT=pg` to use persistent PGlite in `postgres/` through the same
+SQL mappings. Provisioning runs only for a new subject, so restarting cannot
+restore a removed login. Reset only the chosen disposable directory and this
+example's browser cookies to start over; this removes all its identities, sessions,
+flows and keys. Deployed applications should own migrations, key rotation, expired
+flow/tombstone cleanup, account provisioning and provider access policy.
+
+[The shared contract](src/oauth-settings-contract.ts) exposes public package
+operations. [Effect Atom](src/oauth-settings-client.ts) owns sign-in, redirect
+metadata, callback completion, paginated listing and unlink. Named auth mutations
+invalidate the listing automatically. React only renders and dispatches. The
+callback consumes one attempt, clears code/state from browser history, and never
+automatically retries an uncertain exchange. Session storage contains only the
+attempt kind, public flow ID and expiry. Start again after expiry or cancellation;
+after an uncertain response, inspect the current inventory before a new action.
+
 ## OAuth lifecycle
 
 Run a native CLI consumer with direct Effect SQL storage:
@@ -71,7 +158,7 @@ The consumer signs in, retains an encrypted grant, links another login identity,
 lists grants, unlinks the login, rejects an absent-link retry, registers a new user,
 and signs that user in. It closes and reopens its SQL client, then lists and uses
 the original retained grant. Login links and provider API grants are separate:
-`listAccountConnections` lists grants; application SQL reads the login inventory.
+`listAccountConnections` lists grants; `listLinkedAccounts` reads login identities.
 
 The native Strava protocol uses simulated provider HTTP replies, so no provider
 account or secret is needed. The CLI privately receives demo action codes in place

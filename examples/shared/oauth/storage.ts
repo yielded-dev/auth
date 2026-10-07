@@ -15,6 +15,8 @@ export interface StorageOptions {
   readonly issuer: string;
   readonly externalSubject: string;
   readonly subjectId: string;
+  /** Seed only a new subject; restarting must not restore a removed login. */
+  readonly provisionOnce?: boolean;
   /** Override only with a clock using the same integer-millisecond representation. */
   readonly clock?: Mapping.OAuthClock;
 }
@@ -466,8 +468,11 @@ export const makeMappings = (options: StorageOptions) =>
       Effect.gen(function* () {
         for (const statement of migrations)
           yield* sqlClient.unsafe(postgres ? statement.replaceAll("INTEGER", "BIGINT") : statement);
-        yield* sqlClient`INSERT INTO oauth_subject (id, status, "securityRevision")
-            VALUES (${localSubject}, 'active', 'initial') ON CONFLICT DO NOTHING`;
+
+        const created = yield* sqlClient`INSERT INTO oauth_subject (id, status, "securityRevision")
+            VALUES (${localSubject}, 'active', 'initial') ON CONFLICT DO NOTHING RETURNING id`;
+
+        if (options.provisionOnce && created.length === 0) return;
         yield* sqlClient`INSERT INTO oauth_identity
             ("identityKey", provider, issuer, "externalSubject", "subjectId")
             VALUES (${key}, ${identity.provider}, ${identity.issuer}, ${identity.subject},
