@@ -1,6 +1,10 @@
 export {
   OAuthActionRequired,
   OAuthAccountsPolicy,
+  OAuthLinkedAccount,
+  OAuthLinkedAccountsList,
+  OAuthLinkedAccountsListResult,
+  OAuthLinkedAccountsRead,
   OAuthActionDigest,
   OAuthAccountRevision,
   OAuthLinkBegin,

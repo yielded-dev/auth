@@ -7,6 +7,7 @@ import {
 import type { SubjectId } from "@yielded/auth/Schema";
 import { Effect, Schema } from "effect";
 import { SqlClient } from "effect/sql";
+import type { Fragment } from "effect/sql/Statement";
 
 import type { OAuthSignInMapping } from "../models/oauth-model";
 import type { NativeSqlTables } from "../native-sql-table";
@@ -305,7 +306,10 @@ export const makeOAuthNativeState = Effect.fnUntraced(function* (
     return result;
   });
 
-  const readCredential = Effect.fnUntraced(function* (input: typeof OAuthCredentialKey.Type) {
+  const readCredential = Effect.fnUntraced(function* (
+    input: typeof OAuthCredentialKey.Type,
+    metadataAccess: Fragment = sql`true`,
+  ) {
     const nativeId = yield* mapping.subjectId.toNative(input.subjectId);
     let identityKey: unknown;
 
@@ -334,7 +338,7 @@ export const makeOAuthNativeState = Effect.fnUntraced(function* (
         and ${owner(o, mapping.ownership.subjectId)}
       join ${active("subject", "oauth_subject")} on ${owner(s, mapping.subject.id)}
       join ${active("authority", "oauth_authority")} on ${owner(a, mapping.authority.subjectId)}
-      where ${owner(c, mapping.credential.subjectId)}
+      where ${metadataAccess} and ${owner(c, mapping.credential.subjectId)}
         and ${exact(c.column(mapping.credential.moduleId), c.value(mapping.credential.moduleId, input.moduleId))}
         and ${exact(c.column(mapping.credential.credentialId), c.value(mapping.credential.credentialId, input.credentialId))}
       order by ${a.column(mapping.authority.credentialId)} limit 65`;

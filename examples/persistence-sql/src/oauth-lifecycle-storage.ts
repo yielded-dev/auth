@@ -58,7 +58,7 @@ const intent = {
   }),
 } satisfies Mapping.OAuthRegistrationIntentTable<typeof intents>;
 
-const mutableOwnership = {
+export const mutableOwnership = {
   ...ownership,
   encodeInsert: ({ identityKey, identity, subjectId }) => ({
     identityKey,
@@ -69,16 +69,74 @@ const mutableOwnership = {
   }),
 } satisfies Mapping.OAuthOwnershipTable<typeof identities, string>;
 
-const mutableCredential = {
+export const mutableCredential = {
   ...credential,
   removal: "delete",
   encodeInsert: (value) => ({ ...value, status: "active" }),
 } satisfies Mapping.OAuthCredentialTable<typeof logins, string>;
 
-const mutableAuthority = {
+export const mutableAuthority = {
   ...authority,
   encodeInsert: (value) => ({ ...value, status: "active" }),
 } satisfies Mapping.OAuthAuthorityTable<typeof authority.table, string>;
+
+/** Shared app-owned OAuth login mapping; callers select session and metadata policy. */
+export const makeAccountsMapping = Effect.fnUntraced(function* () {
+  const crypto = yield* Crypto.Crypto;
+
+  const uuid = crypto.randomUUIDv4.pipe(
+    Effect.mapError((cause) => PersistenceMappingError.make({ operation: "demo.allocate", cause })),
+  );
+
+  return {
+    subject: {
+      ...subject,
+      decodeAuthenticationRequirement: () => requirement,
+      nextSecurityRevision: (current) =>
+        Sessions.SecurityRevision.make(current === "initial" ? "1" : String(BigInt(current) + 1n)),
+    },
+    ownership: mutableOwnership,
+    credential: mutableCredential,
+    authority: mutableAuthority,
+    flow: signInFlow,
+    subjectId,
+    clock: Mapping.clock,
+    constraints: Mapping.requiredOAuthSignInConstraints,
+    // This demo permits any verified caller to view their own active login methods.
+    metadataAccess: () => sql`true`,
+    eligibility: [
+      Mapping.oauthEligibilityTable<typeof logins, string>({
+        table: logins,
+        subjectId: "subjectId",
+        credentialId: "credentialId",
+        revision: "credentialRevision",
+        scope: "demo-oauth-logins",
+        condition: () => eq(logins.columns.status, "active"),
+        decode: (row) => ({
+          credentialId: string(row.credentialId),
+          revision: Schema.decodeUnknownSync(Sessions.SecurityRevision)(row.credentialRevision),
+          usablePrimary: row.status === "active",
+          factors: ["possession"],
+          userVerified: false,
+          phishingResistant: false,
+        }),
+      }),
+    ],
+    cleanup: [],
+    sessionInvalidation: "original-absolute-expiry",
+    otherReferences: ({ identityKey, subjectId }) =>
+      sql`exists(select 1 from ${grants} where ${eq(grants.columns.identityKey, identityKey)} and ${eq(grants.columns.subjectId, subjectId)}) or exists(select 1 from ${revocations} where ${eq(revocations.columns.identityKey, identityKey)} and ${eq(revocations.columns.subjectId, subjectId)})`,
+    allocateCredentialId: uuid,
+    allocateRevision: uuid.pipe(Effect.map((value) => Sessions.SecurityRevision.make(value))),
+  } satisfies Mapping.OAuthAccountsMapping<
+    typeof subject.table,
+    typeof identities,
+    typeof logins,
+    typeof authority.table,
+    typeof signInFlow.table,
+    string
+  >;
+});
 
 /** App-owned migration and policy for this disposable CLI consumer only. */
 export const makeLifecycleStorage = Effect.gen(function* () {
@@ -145,52 +203,7 @@ export const makeLifecycleStorage = Effect.gen(function* () {
     string
   >;
 
-  const accounts = {
-    subject: {
-      ...subject,
-      decodeAuthenticationRequirement: () => requirement,
-      nextSecurityRevision: (current) =>
-        Sessions.SecurityRevision.make(current === "initial" ? "1" : String(BigInt(current) + 1n)),
-    },
-    ownership: mutableOwnership,
-    credential: mutableCredential,
-    authority: mutableAuthority,
-    flow: signInFlow,
-    subjectId,
-    clock: Mapping.clock,
-    constraints: Mapping.requiredOAuthSignInConstraints,
-    eligibility: [
-      Mapping.oauthEligibilityTable<typeof logins, string>({
-        table: logins,
-        subjectId: "subjectId",
-        credentialId: "credentialId",
-        revision: "credentialRevision",
-        scope: "demo-oauth-logins",
-        condition: () => eq(logins.columns.status, "active"),
-        decode: (row) => ({
-          credentialId: string(row.credentialId),
-          revision: Schema.decodeUnknownSync(Sessions.SecurityRevision)(row.credentialRevision),
-          usablePrimary: row.status === "active",
-          factors: ["possession"],
-          userVerified: false,
-          phishingResistant: false,
-        }),
-      }),
-    ],
-    cleanup: [],
-    sessionInvalidation: "original-absolute-expiry",
-    otherReferences: ({ identityKey, subjectId }) =>
-      sql`exists(select 1 from ${grants} where ${eq(grants.columns.identityKey, identityKey)} and ${eq(grants.columns.subjectId, subjectId)}) or exists(select 1 from ${revocations} where ${eq(revocations.columns.identityKey, identityKey)} and ${eq(revocations.columns.subjectId, subjectId)})`,
-    allocateCredentialId: uuid,
-    allocateRevision: uuid.pipe(Effect.map((value) => Sessions.SecurityRevision.make(value))),
-  } satisfies Mapping.OAuthAccountsMapping<
-    typeof subject.table,
-    typeof identities,
-    typeof logins,
-    typeof authority.table,
-    typeof signInFlow.table,
-    string
-  >;
+  const accounts = yield* makeAccountsMapping();
 
   const registrationIntents = yield* Mapping.makeOAuthRegistrationIntentServices({
     ownership: mutableOwnership,

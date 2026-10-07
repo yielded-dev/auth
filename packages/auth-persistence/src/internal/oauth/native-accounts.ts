@@ -86,6 +86,70 @@ export const makeNativeOAuthAccountsServices = Effect.fnUntraced(function* (
     ]);
 
   const service: M.OAuthAccountsPersistence["Service"] = {
+    list: (original) =>
+      read(
+        Effect.gen(function* () {
+          const input = M.snapshotOAuthSync(M.OAuthLinkedAccountsRead, original);
+          const nativeId = yield* mapping.subjectId.toNative(input.invocation.subjectId);
+
+          const metadataAccess = tables.expression(
+            mapping.metadataAccess({
+              invocation: input.invocation,
+              moduleId: input.moduleId,
+              subjectId: nativeId,
+            }),
+          );
+
+          const s = mapping.subject;
+
+          // Bound candidate work before resolving identities. Each final read uses
+          // its columns' own codecs and rechecks live ownership/authority/policy.
+          // A removed candidate can leave a short page; the cursor still advances.
+          const rows = yield* sql`select ${credential.fields("page_")} from ${credential.name}
+            where ${exactSqlText(sql, credential.column(c.moduleId), credential.value(c.moduleId, input.moduleId))}
+              and ${credential.column(c.subjectId)} = ${credential.value(c.subjectId, nativeId)}
+              and ${tables.expression(c.activeCondition)} and ${metadataAccess}
+              and exists(select 1 from ${state.subject.name}
+                where ${state.subject.column(s.id)} = ${state.subject.value(s.id, nativeId)}
+                  and ${tables.expression(s.activeCondition)})
+              ${input.cursor === undefined ? sql`` : sql`and ${credential.column(c.credentialId)} > ${credential.value(c.credentialId, input.cursor)}`}
+            order by ${credential.column(c.credentialId)} limit ${input.limit + 1}`;
+
+          const selected = rows.slice(0, input.limit);
+          const items: Array<M.OAuthLinkedAccount> = [];
+          let cursor: string | undefined;
+
+          for (const row of selected) {
+            const credentialId = yield* Schema.decodeUnknownEffect(
+              M.OAuthLinkedAccount.fields.credentialId,
+            )(credential.decode(row, "page_")[c.credentialId]);
+
+            cursor = credentialId;
+
+            const current = yield* state.readCredential(
+              {
+                moduleId: input.moduleId,
+                subjectId: input.invocation.subjectId,
+                credentialId,
+              },
+              metadataAccess,
+            );
+
+            if (current !== undefined)
+              items.push(
+                M.OAuthLinkedAccount.make({
+                  credentialId: current.credentialId,
+                  ...current.identity,
+                }),
+              );
+          }
+
+          return M.snapshotOAuthSync(M.OAuthLinkedAccountsListResult, {
+            items,
+            ...(rows.length > input.limit && cursor !== undefined ? { cursor } : {}),
+          });
+        }),
+      ),
     capture: (input) =>
       read(Effect.map(state.capture(input.subjectId, false), (current) => current?.revision)),
     issue: (original, prepare) =>
