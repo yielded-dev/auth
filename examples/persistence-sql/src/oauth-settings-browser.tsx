@@ -11,13 +11,11 @@ import { Brand } from "../../shared/account/brand";
 import {
   auth,
   begin,
-  initialize,
-  continueSignIn,
+  complete,
   cursor,
   linkedAccounts,
   notice,
   signOut,
-  sharedSignIn,
   unlink,
 } from "./oauth-settings-client";
 import { CallbackExpired } from "./oauth-settings-contract";
@@ -49,15 +47,13 @@ function Failure({ result }: { readonly result: AsyncResult.AsyncResult<unknown,
 function Settings() {
   const session = useAtomValue(auth.session);
   const [beginResult, start] = useAtom(begin);
-  const completion = useAtomValue(initialize);
+  const completion = useAtomValue(complete);
   const [outResult, out] = useAtom(signOut);
   const message = useAtomValue(notice);
-  const signingIn = useAtomValue(sharedSignIn);
-  const [, proceed] = useAtom(continueSignIn);
   const signedIn = session._tag === "Success" ? session.value : null;
   const busy = beginResult.waiting || completion.waiting || outResult.waiting;
 
-  const compact = signingIn || !signedIn;
+  const compact = !signedIn;
 
   return (
     <main className={compact ? "login-page" : "account-page"}>
@@ -69,16 +65,12 @@ function Settings() {
       </header>
       <div className={compact ? "login-content" : "account-content"}>
         <section className={compact ? "panel login-card" : "intro"}>
-          <p className="eyebrow">auth.yielded.dev{signingIn ? "/sign-in" : "/oauth-settings"}</p>
-          <h1>
-            {busy ? "Signing you in" : signingIn ? "Your Yielded account" : "Your sign-in methods"}
-          </h1>
+          <p className="eyebrow">{location.host}/oauth-settings</p>
+          <h1>{busy ? "Signing you in" : "Your sign-in methods"}</h1>
           <p className="description">
             {busy
               ? "One moment. You’ll be on your way shortly."
-              : signingIn
-                ? "One account for Yielded. Continue with GitHub to sign in."
-                : "Link an identity you control. Keep a way back into your account."}
+              : "Link an identity you control. Keep a way back into your account."}
           </p>
           {message && (
             <p className="notice success" role="status">
@@ -94,16 +86,6 @@ function Settings() {
               <p className="hint" role="status">
                 {busy ? "Connecting securely…" : "Checking your session…"}
               </p>
-            ) : signedIn ? (
-              <>
-                <p className="hint">Signed in as {signedIn.claims.displayName}.</p>
-                <button className="primary" onClick={() => proceed()}>
-                  Continue with this account →
-                </button>
-                <button className="text-button restart" onClick={() => start("switch")}>
-                  Use another account
-                </button>
-              </>
             ) : (
               <button className="primary submit" onClick={() => start("sign-in")}>
                 Continue with GitHub →
@@ -137,7 +119,7 @@ function Settings() {
         )}
       </div>
       <footer>
-        <p>Your Yielded account. Each app keeps its own session.</p>
+        <p>Your sign-in methods. Your account.</p>
         <a href="https://yielded.dev/auth/guide/examples/">Explore the examples ↗</a>
       </footer>
     </main>
@@ -225,9 +207,9 @@ function Links() {
 
 const registry = AtomRegistry.make();
 // Mount once outside React so StrictMode/rerenders cannot repeat code exchange.
-const stopCompletion = registry.mount(initialize);
+const stopCompletion = registry.mount(complete);
 
-registry.set(initialize, undefined);
+registry.set(complete, undefined);
 const root = document.getElementById("root");
 
 if (root === null) throw new Error("Missing account settings root");

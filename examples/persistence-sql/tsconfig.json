@@ -2,14 +2,13 @@
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "lib": ["ES2023", "DOM"],
-    "types": ["vite/client", "@cloudflare/workers-types"],
+    "types": ["vite/client"],
     "jsx": "react-jsx"
   },
   "include": [
     "src/**/*.ts",
     "src/**/*.tsx",
     "vite.config.ts",
-    "alchemy.oauth.ts",
     "../shared/account/**/*.ts",
     "../shared/account/**/*.tsx"
   ]

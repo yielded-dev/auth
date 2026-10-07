@@ -12,10 +12,6 @@ const SettingsClient = Client.make(SettingsApi, { baseUrl: location.origin });
 export const auth = AuthAtom.make(SettingsClient, { runtime: factory });
 export const notice = Atom.make<string | null>(null);
 export const cursor = Atom.make<string | undefined>(undefined);
-export const sharedSignIn = Atom.make(location.pathname === "/sign-in");
-const authorizationPath = "/oauth/yielded/authorize";
-
-export const continueSignIn = Atom.fnSync(() => location.assign(authorizationPath));
 
 export const linkedAccounts = Atom.make((get) => {
   const page = get(cursor);
@@ -39,7 +35,7 @@ export const begin = runtime.fn<"sign-in" | "link" | "switch">()(
     const input = {
       provider: "github",
       callbackId: kind === "sign-in" ? ("github" as const) : ("github-select" as const),
-      returnTarget: kind !== "link" && get(sharedSignIn) ? authorizationPath : "/oauth-settings",
+      returnTarget: "/oauth-settings",
     };
 
     const started =
@@ -123,37 +119,11 @@ export const complete = runtime.fn<void>()(
     } else {
       const result = yield* get.setResult(auth.completeSignIn, input);
 
-      if ("returnTarget" in result && result.returnTarget === authorizationPath) {
-        get.set(sharedSignIn, true);
-        if ("completion" in result && result.completion._tag === "Authenticated")
-          return yield* Effect.sync(() => location.replace(authorizationPath));
-        yield* Effect.sync(() => history.replaceState(null, "", "/sign-in"));
-      }
-
       get.set(
         notice,
         "_tag" in result && result._tag === "Cancelled"
-          ? "Sign-in cancelled. You can continue with this account or start again with GitHub."
+          ? "Sign-in cancelled. Start again with a linked GitHub account."
           : "Signed in. Account changes are available for five minutes.",
-      );
-    }
-  }),
-);
-
-/** Only the authorization server's sign-in handoff auto-starts the provider.
- * Callback cancellation/errors stay visible and never start another attempt.
- */
-export const initialize = runtime.fn<void>()(
-  Effect.fn("OAuthSettings.initialize")(function* (_, get) {
-    const url = new URL(location.href);
-
-    if (url.pathname === "/oauth-settings/callback")
-      return yield* get.setResult(complete, undefined);
-    if (url.pathname === "/sign-in") {
-      yield* Effect.sync(() => history.replaceState(null, "", "/sign-in"));
-      yield* get.setResult(
-        begin,
-        url.searchParams.get("select_account") === "1" ? "switch" : "sign-in",
       );
     }
   }),
@@ -176,9 +146,6 @@ export const signOut = runtime.fn<void>()(
     yield* get.setResult(auth.signOut, undefined);
     get.set(attempt, null);
     get.set(cursor, undefined);
-    get.set(
-      notice,
-      "Signed out of Yielded Auth. Existing Agent sessions are separate; sign out there to end them.",
-    );
+    get.set(notice, "Signed out.");
   }),
 );

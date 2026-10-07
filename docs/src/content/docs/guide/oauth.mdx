@@ -193,8 +193,8 @@ Supply durable grant storage, separate consent and RSA signing keys, and static
 client registrations. Keep the pending request in the server's private cookie;
 your sign-in workflow returns to `server.paths.authorize` after authentication.
 
-The [runnable browser example](https://github.com/yielded-dev/auth/tree/main/examples/persistence-sql#shared-yielded-sign-in)
-shows GitHub → Yielded Auth → Agent with Effect Atom workflows and a SQLite
+The [hosted sign-in application](https://github.com/yielded-dev/site/tree/main/apps/auth)
+owns GitHub → Yielded Auth → Agent with Effect Atom workflows and a SQLite
 Durable Object deployment. An application-owned `OpenIdConsent` policy approves
 only Agent’s registered callback and basic identity scopes, so ordinary sign-in
 returns automatically. Explicit account selection and additional permissions still

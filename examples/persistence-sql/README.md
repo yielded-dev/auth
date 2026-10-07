@@ -135,81 +135,14 @@ automatically retries an uncertain exchange. Session storage contains only the
 attempt kind, public flow ID and expiry. Start again after expiry or cancellation;
 after an uncertain response, inspect the current inventory before a new action.
 
-## Shared Yielded sign-in
+## Hosted Yielded sign-in
 
-Set `YIELDED_AGENT_CLIENT_SECRET` to enable the OpenID server in the same app.
-Agent must supply that exact secret as `AUTH_YIELDED_CLIENT_SECRET`, register
-provider `yielded` with issuer `AUTH_ORIGIN`, and use client ID `yielded-agent`.
-`YIELDED_AGENT_ORIGIN` defaults to `https://agent.yielded.dev`; its registered
-callback is `${YIELDED_AGENT_ORIGIN}/travel/auth/yielded/callback`. Shared sign-in
-uses the GitHub callback `${AUTH_ORIGIN}/oauth-settings/callback`. If the same
-GitHub app also serves Agent's direct GitHub fallback, retain that exact callback
-entry too; the OpenID callback belongs to Auth's client registration, not GitHub's.
-
-Run the same `start:oauth` command. Start at Agent's login page, choose **Continue
-with Yielded**, and return directly if an Auth session meets Agent's authentication
-age limit. Agent requests `max_age=240`, leaving a minute within its five-minute
-evidence policy to complete sign-in. For a missing or older session, Auth starts
-GitHub sign-in automatically and returns after completion. GitHub controls
-its own login and approval prompts. In Agent, expand **Other sign-in options** and
-choose **Use another Yielded account** to select an account explicitly;
-**Use another account** at Auth opens GitHub’s
-account picker. Cancellation stays visible without automatically restarting. The account-settings page remains at
-`/oauth-settings`; `/sign-in` continues the pending shared sign-in request.
-
-[The composition](src/oauth-settings-application.ts) combines `OAuthServer.makeOpenId`
-with the existing session verifier and SQL owner. [The identity service](src/yielded-identity.ts)
-checks session revocation and the current subject security revision before code
-redemption and UserInfo access. Its `OpenIdConsent` policy approves only client
-`yielded-agent`, the exact registered callback, and `openid profile`. Additional
-claims or explicit consent/account-selection requests remain interactive. The app exposes only a stable account ID and
-`YIELDED_DISPLAY_NAME` (default `Yielded member`). It provisions one configured
-GitHub owner; public registration and a multi-user directory are outside this example.
-
-Local startup creates `yielded-identity-keys.json` in `AUTH_DATA_DIR` with mode
-`0600`: a private RSA signing key, its public JWK, and a separate consent key.
-Keep this file and `oauth-settings-keys.json` stable and private. Only public JWKS
-is served. The same SQL database owns `yielded_oauth_server` grants and client
-assertion replay receipts; tokens and client secrets never enter those rows.
-Each application needs a separate client secret and exact callback registration.
-
-Auth and Agent use separate host-only sessions. Signing out of Auth revokes
-subsequent identity access; already established Agent sessions remain until Agent
-signs them out. Sync and docs can adopt separate OpenID clients later; this example
-registers only Agent. It does not supply global logout or claim OpenID certification.
-
-### Permanent Cloudflare host
-
-The existing leaf app also deploys as a Worker with a SQLite Durable Object:
-
-```sh
-vp -C examples/persistence-sql run deploy:oauth
-```
-
-[alchemy.oauth.ts](alchemy.oauth.ts) owns the separate `yielded-auth` production
-stack and the `auth.yielded.dev` custom domain. Supply Cloudflare account credentials,
-the GitHub variables above, `YIELDED_DISPLAY_NAME`, `YIELDED_AGENT_CLIENT_SECRET`,
-and two secret bindings: `AUTH_SETTINGS_KEYS` and `AUTH_IDENTITY_KEYS`, containing
-the respective key-file JSON. Read them through your secret manager, not shell
-history or public build variables. Browser assets contain no secrets.
-
-Cloudflare owns the hostname's DNS and certificate in the configured Yielded zone.
-Use a [Worker custom domain](https://developers.cloudflare.com/workers/configuration/routing/custom-domains/):
-Agent's same-zone `fetch` calls can reach it without a service binding, whereas a
-Worker route cannot receive those calls. Remove conflicting DNS records for this
-hostname before attaching the domain.
-The GitHub callback is `https://auth.yielded.dev/oauth-settings/callback`; discovery
-is `https://auth.yielded.dev/.well-known/openid-configuration`. The documentation
-site at `yielded.dev/auth/` remains a separate deployment.
-
-The binding `AUTH`, class `HostedAuth`, and instance `yielded-auth-v1` identify
-persistent state; keep them unchanged across deployments. The host supplies the
-full Durable Object storage to `@effect/sql-sqlite-do` so link/unlink and authority
-changes share one transaction owner. It uses the same provisioning and policy as
-local SQL. A fresh deployment provisions the initial owner; it does not import
-an existing local database. Migrate existing identities, revisions and revocations
-explicitly before moving an established installation. Back up data and keys before
-cutover. Request logs and traces are disabled to exclude OAuth credentials.
+The deployed service at `auth.yielded.dev` lives in
+[`yielded-dev/site/apps/auth`](https://github.com/yielded-dev/site/tree/main/apps/auth).
+That application owns the GitHub → Yielded → Agent journey, account policy,
+signing keys, and Cloudflare deployment. This leaf remains a standalone OAuth
+account-settings example. The reusable OpenID server stays in `@yielded/auth`;
+see the [shared sign-in guide](../../docs/src/content/docs/guide/oauth.mdx#shared-sign-in-across-applications).
 
 ## OAuth lifecycle
 
