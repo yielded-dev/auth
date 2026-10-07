@@ -10,7 +10,6 @@ import { Context, Effect, Layer } from "effect";
 import { NativeDatabase, nativeDatabase } from "./drizzle/native-database";
 import { sqlClientOAuthStandaloneGuard } from "./drizzle/oauth-target";
 import { sqlClientPasskeyStandaloneGuard } from "./drizzle/passkey/target";
-import { sqlClientSessionStandaloneGuard } from "./drizzle/session-target";
 
 /** The application-owned Drizzle database used to construct persistence services. */
 export class Database extends Context.Service<Database, EffectLibsqlDatabase<AnyRelations>>()(
@@ -32,12 +31,6 @@ import {
   makeSqliteIdentityServices,
   makeSqliteSubjectProvisioningServices,
 } from "./drizzle/sqlite-identity";
-import { makeSqliteSessionTarget, sqliteSessionConfiguration } from "./drizzle/sqlite-sessions";
-
-const sessionTarget = makeSqliteSessionTarget<Database, EffectLibsqlDatabase<AnyRelations>>(
-  Database,
-  (service) => sqliteSessionConfiguration("interactive", sqlClientSessionStandaloneGuard(service)),
-);
 
 const proofTarget = makeProofTarget(Database, {
   mode: "native",
@@ -73,19 +66,6 @@ export const {
 } = passwordTarget;
 
 export const { coordinateProofPersistence, makeProofPersistenceServices } = proofTarget;
-
-export const {
-  coordinateAuthenticationAuthority,
-  coordinatePendingAuthentication,
-  coordinateSignedSessionValidity,
-  coordinateStatefulSessions,
-  makeAuthenticationAuthorityServices,
-  makePendingAuthenticationServices,
-  makeSessionStepUpServices,
-  coordinateSessionStepUp,
-  makeSignedSessionValidityServices,
-  makeStatefulSessionServices,
-} = sessionTarget;
 
 export const commitMode = "interactive" as const;
 
@@ -180,21 +160,6 @@ export const {
   coordinatePasskeyRegistration,
 } = passkeyTarget;
 
-import { makeTotpTarget, sqlClientTotpStandaloneGuard } from "./drizzle/totp-target";
-
-const totpTarget = makeTotpTarget<
-  Database,
-  EffectLibsqlDatabase<AnyRelations>,
-  AnySQLiteTable<{ dialect: "sqlite" }>
->(Database, {
-  mode: "interactive",
-  dialect: "sqlite",
-  locking: false,
-  standaloneGuard: sqlClientTotpStandaloneGuard,
-});
-
-export const { makeTotpPersistenceServices, coordinateTotpPersistence } = totpTarget;
-
 import { makePhoneTarget } from "./drizzle/phone-drivers";
 
 export const { makePhonePersistenceServices, coordinatePhonePersistence } = makePhoneTarget(
@@ -216,3 +181,31 @@ export const AuthPersistence = {
 };
 
 export { OAuthProxyPersistence } from "./internal/drizzle-sqlite-oauth-proxy";
+
+import { makeSessionTarget } from "./drizzle/session-drivers";
+
+export const {
+  coordinateAuthenticationAuthority,
+  coordinatePendingAuthentication,
+  coordinateSignedSessionValidity,
+  coordinateStatefulSessions,
+  makeAuthenticationAuthorityServices,
+  makePendingAuthenticationServices,
+  makeSignedSessionValidityServices,
+  makeStatefulSessionServices,
+  makeSessionStepUpServices,
+  coordinateSessionStepUp,
+  makeSessionCleanupServices,
+} = makeSessionTarget(Database, {
+  mode: "native",
+  dialect: "sqlite",
+  transactionConstructor: PasskeyTransaction,
+});
+
+import { makeTotpTarget } from "./drizzle/totp-target";
+
+export const { makeTotpPersistenceServices, coordinateTotpPersistence } = makeTotpTarget(Database, {
+  mode: "native",
+  dialect: "sqlite",
+  transactionConstructor: PasskeyTransaction,
+});

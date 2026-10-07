@@ -97,9 +97,12 @@ export {
 
 export {
   type SessionIdCodec,
+  type SessionExecution,
+  type SessionPendingTables,
+  type SessionPendingInsert,
+  type SessionCleanupMapping,
   type SessionSubjectTables,
   type SessionAuthorityTables,
-  type SessionFlowTables,
   type StatefulSessionTables,
   type PendingAuthenticationTables,
   type SignedSessionValidityTables,
@@ -111,25 +114,17 @@ export {
   requiredPendingAuthenticationConstraints,
   requiredStatefulPendingConstraints,
   requiredSignedValidityConstraints,
-  type SessionConstraintClassifier,
   type AuthenticationAuthorityMapping,
   type StatefulSessionMapping,
   type PendingAuthenticationMapping,
   type SignedSessionValidityMapping,
-  type D1SessionClockMapping,
-  type D1AuthenticationAuthorityMapping,
-  type D1PendingAuthenticationMapping,
-  type D1StatefulSessionMapping,
-  type D1SignedSessionValidityMapping,
 } from "./internal/models/session-model";
 
 export {
-  type SessionStepUpIntentTables,
   type RequiredSessionStepUpConstraints,
   requiredSessionStepUpConstraints,
   type SessionStepUpSourceTables,
   type SessionStepUpMapping,
-  type D1SessionStepUpMapping,
 } from "./internal/models/step-up-model";
 
 export { requireStandalone } from "./internal/standalone";
@@ -153,22 +148,6 @@ export { PersistenceMappingError, isMappedConstraintConflict } from "./internal/
 export type { QueryFailure } from "./internal/query-failure";
 export type { TableModel, SqlExpression } from "./internal/table-model";
 
-export type {
-  SessionSqlOptions,
-  SessionTransactionOwner,
-  SessionWorkflowPolicy,
-  SessionSubjectAuthority,
-  SessionFlowRead,
-  SessionAuthorityRead,
-  SessionAuthorityReader,
-  SessionPendingRead,
-  SessionPendingStore,
-  SessionAuthorityStore,
-  StatefulSessionStore,
-  SessionVerificationRead,
-  SessionVerificationReader,
-} from "./internal/session-store";
-
 export { PersistenceConfigurationError } from "./internal/configuration";
 export { createPersistence } from "./internal/persistence";
 export { makeMappings as makeStorageMappings } from "./internal/storage-mapping";
@@ -190,15 +169,6 @@ export {
   type PhysicalStorageTable,
   type StorageValidation,
 } from "./internal/storage-validation";
-
-export {
-  makeAuthenticationAuthorityWorkflow,
-  makeStatefulSessionWorkflow,
-  captureSessionAuthority,
-  sessionEvidenceRequirement,
-  readSessionPending,
-  ownSessionCommit,
-} from "./internal/session-workflow";
 
 export { preservesRevision, allocateSessionValue } from "./internal/session-policy";
 
@@ -385,3 +355,38 @@ export {
   makeNativeEmailRegistrationServices,
   type EmailRegistrationAuthority,
 } from "./internal/email-registration-native";
+
+export {
+  makeNativeAuthenticationAuthorityServices,
+  type NativeAuthenticationAuthorityMapping,
+} from "./internal/session-native-authority";
+
+export {
+  makeNativePendingAuthenticationServices,
+  type NativePendingAuthenticationMapping,
+} from "./internal/session-native-login";
+
+export {
+  makeNativeStatefulSessionServices,
+  type NativeStatefulSessionMapping,
+} from "./internal/session-native-stateful";
+
+export {
+  makeNativeSignedSessionValidityServices,
+  type NativeSignedSessionValidityMapping,
+} from "./internal/session-native-validity";
+
+export {
+  makeNativeSessionStepUpServices,
+  type NativeSessionStepUpMapping,
+} from "./internal/session-native-step-up";
+
+export { makeNativeSessionCleanupServices } from "./internal/session-native-cleanup";
+
+export {
+  type TotpMapping,
+  type TotpMappingSource,
+  requiredTotpConstraints,
+} from "./internal/models/totp-model";
+
+export { makeNativeTotpServices, type NativeTotpMapping } from "./internal/totp-native";

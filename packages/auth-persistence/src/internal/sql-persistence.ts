@@ -5,7 +5,6 @@ import { PersistenceConfigurationError, type PersistenceApi } from "./configurat
 import { makeNativeSqlTables } from "./native-sql-table";
 import { makeManagedPasskeys } from "./passkey-managed";
 import { createPersistence } from "./persistence";
-import { makeSqlStatefulSessionOwner } from "./sql-session";
 import { Table } from "./sql-table";
 import type { StorageTable } from "./storage-tables";
 
@@ -25,7 +24,6 @@ export const AuthPersistence: PersistenceApi<Table> & { readonly table: typeof t
     }),
     nativeTables: makeNativeSqlTables,
     maxParameters: (client) => client.onDialectOrElse({ sqlite: () => 96, orElse: () => 16_000 }),
-    sessionOwner: (mapping, client) => Effect.succeed(makeSqlStatefulSessionOwner(client, mapping)),
     passkeys: (input, client) =>
       makeManagedPasskeys(input, makeNativeSqlTables(client)).pipe(
         Effect.provideService(SqlClient.SqlClient, client),

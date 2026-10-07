@@ -267,6 +267,7 @@ export const makeNativeOAuthAccountsServices = Effect.fnUntraced(function* (
             credentialId,
             credentialRevision,
             revision,
+            requirement: mapping.subject.decodeAuthenticationRequirement(current.subject),
           });
 
           return yield* prepareOAuthNative(

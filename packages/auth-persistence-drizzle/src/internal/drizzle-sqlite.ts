@@ -12,17 +12,12 @@ import {
   uniqueIndex,
   type SQLiteTable,
 } from "drizzle-orm/sqlite-core";
-import { Effect } from "effect";
+import type { Effect } from "effect";
 import type { SqlClient } from "effect/sql/SqlClient";
 
-import {
-  NativeDatabase,
-  nativeDatabase,
-  type NativeDatabaseHandle,
-} from "../drizzle/native-database";
+import { nativeDatabase, type NativeDatabaseHandle } from "../drizzle/native-database";
 import { makeDrizzleSqlTables } from "../drizzle/native-sql-table";
 import { makeComposedPasskeys } from "../drizzle/passkeys";
-import { makeStatefulSessionOwner } from "../drizzle/session-store";
 
 const makeTable = (definition: StorageTable) =>
   sqliteTable(
@@ -82,10 +77,6 @@ export const sqlitePersistence = <R>(acquire: Effect.Effect<object, never, R | S
     nativeTables: (database) => makeDrizzleSqlTables(database.$client, database),
     makeTable,
     describe,
-    sessionOwner: (mapping, database) =>
-      makeStatefulSessionOwner(mapping, database).pipe(
-        Effect.provideService(NativeDatabase, database),
-      ),
     acquire: nativeDatabase(acquire),
     maxParameters: (database) => database.maxParameters,
     passkeys: makeComposedPasskeys,

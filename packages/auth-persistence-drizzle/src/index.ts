@@ -79,11 +79,6 @@ export {
 
 export {
   type AuthenticationAuthorityMapping,
-  type D1AuthenticationAuthorityMapping,
-  type D1PendingAuthenticationMapping,
-  type D1SessionClockMapping,
-  type D1SignedSessionValidityMapping,
-  type D1StatefulSessionMapping,
   type PendingAuthenticationMapping,
   type PendingAuthenticationTables,
   type RequiredPendingAuthenticationConstraints,
@@ -91,9 +86,10 @@ export {
   type RequiredSignedValidityConstraints,
   type RequiredStatefulPendingConstraints,
   type SessionAuthorityTables,
-  type SessionConstraintClassifier,
-  type SessionFlowTables,
   type SessionIdCodec,
+  type SessionPendingTables,
+  type SessionPendingInsert,
+  type SessionCleanupMapping,
   type SessionSubjectTables,
   type SignedSessionValidityMapping,
   type SignedSessionValidityTables,
@@ -128,9 +124,7 @@ export {
 } from "./drizzle/passkey-model";
 
 export {
-  type D1SessionStepUpMapping,
   type RequiredSessionStepUpConstraints,
-  type SessionStepUpIntentTables,
   type SessionStepUpMapping,
   type SessionStepUpSourceTables,
   requiredSessionStepUpConstraints,
@@ -189,13 +183,6 @@ export {
 } from "./drizzle/passkey-registration-ceremony-model";
 
 export {
-  authenticationAuthorityLayer,
-  pendingAuthenticationLayer,
-  signedSessionValidityLayer,
-  statefulSessionLayers,
-} from "./drizzle/session-target";
-
-export {
   emailAddressPersistenceLayer,
   emailRegistrationLayer,
   emailSignInTargetsLayer,
@@ -226,8 +213,6 @@ export {
   requiredTotpConstraints,
   totpPersistenceLayer,
 } from "./drizzle/totp-model";
-
-export { encodeTotpRecord, decodeTotpRecord } from "./drizzle/totp-state";
 
 export {
   type PasskeyCredentialInsert,

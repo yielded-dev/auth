@@ -78,7 +78,6 @@ export const sessions = sqliteTable(
     sessionId: text("c_session_id").notNull(),
     subjectId: text("c_subject_id").notNull(),
     digest: text("c_digest").notNull(),
-    version: text("c_version").notNull(),
     securityRevision: text("c_security_revision").notNull(),
     issuedAt: integer("c_issued_at").notNull(),
     expiresAt: integer("c_expires_at").notNull(),
@@ -91,16 +90,23 @@ export const sessions = sqliteTable(
   ],
 );
 
-export const sessionFlows = sqliteTable(
-  "app_session_flows",
+export const pending = sqliteTable(
+  "app_pending",
   {
+    moduleId: text("c_module_id").notNull(),
+    kind: text("c_kind").notNull(),
+    digest: text("c_digest").notNull(),
+    version: text("c_version").notNull(),
     flowId: text("c_flow_id").notNull(),
     subjectId: text("c_subject_id").notNull(),
-    state: text("c_state").notNull(),
-    pendingDigest: text("c_pending_digest"),
-    dedupUntil: integer("c_dedup_until").notNull(),
+    bindingDigest: text("c_binding_digest").notNull(),
+    snapshot: text("c_snapshot").notNull(),
+    expiresAt: integer("c_expires_at").notNull(),
+    attemptLimit: integer("c_attempt_limit").notNull(),
+    failedAttempts: integer("c_failed_attempts").notNull(),
+    consumed: integer("c_consumed", { mode: "boolean" }).notNull(),
   },
-  (table) => [uniqueIndex("app_session_flows_key_0").on(table.flowId)],
+  (table) => [uniqueIndex("app_pending_key_0").on(table.digest)],
 );
 
 export const emailCredentials = sqliteTable(

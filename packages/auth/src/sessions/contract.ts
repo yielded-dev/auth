@@ -2,11 +2,11 @@ import { Schema } from "effect";
 
 import { HookDenied } from "../hooks/models";
 import { makeOperation, operationGroup } from "../operations/operation";
-import { TokenDigest } from "../Schema";
 import { SessionConfigurationError, SessionError, SessionSignOutUnavailable } from "./errors";
 import { SessionInvalidationWindow } from "./invalidation";
 import {
   AuthenticationEvidence,
+  AuthenticationRequirement,
   SessionCapabilities,
   SessionId,
   SessionMetadata,
@@ -87,7 +87,11 @@ export const makeSessionContract = <
   });
 
   const Complete = makeOperation(`${moduleId}/session/complete`, {
-    payload: Schema.Struct({ evidence: AuthenticationEvidence, claims: ClaimsCodec }),
+    payload: Schema.Struct({
+      evidence: AuthenticationEvidence,
+      requirement: AuthenticationRequirement,
+      claims: ClaimsCodec,
+    }),
     success: CompletionResult,
     error: Failure,
     access: "system",
@@ -105,7 +109,7 @@ export const makeSessionContract = <
   });
 
   const RejectPending = makeOperation(`${moduleId}/session/reject-pending`, {
-    payload: Schema.Struct({ credential: Credential, bindingDigest: TokenDigest }),
+    payload: Schema.Struct({ credential: Credential }),
     success: Schema.TaggedStruct("Rejected", {}),
     error: Failure,
     access: "system",

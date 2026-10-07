@@ -203,6 +203,7 @@ export const makePasskeyNativeRegistration = <R>(
             revision,
             value.displayName,
             nowMillis,
+            subjectRow,
           );
           yield* postcondition(
             "passkey-registration-subject",

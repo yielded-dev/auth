@@ -71,9 +71,11 @@ export const snapshotSessionAuthenticationProvenance = Effect.fn(
   return Object.freeze({ evidence: yield* snapshotAuthenticationEvidence(input.evidence) });
 });
 
+/** Assess once at the supplied owner clock; ordinary callers use the current clock. */
 export const assessAuthentication = Effect.fn("assessAuthentication")(function* (
   input: AuthenticationEvidence,
   configured: AuthenticationRequirement,
+  at?: DateTime.Utc,
 ) {
   if (input.proofs.length > 64 || input.revision.credentials.length > 64)
     return yield* StaleAuthentication.make({});
@@ -94,7 +96,7 @@ export const assessAuthentication = Effect.fn("assessAuthentication")(function* 
   }
   if (evidence.proofs.some((proof) => !revisions.has(proof.credentialId)))
     return yield* StaleAuthentication.make({});
-  const now = DateTime.toEpochMillis(yield* DateTime.now);
+  const now = DateTime.toEpochMillis(at ?? (yield* DateTime.now));
 
   for (const proof of evidence.proofs) {
     const age = now - DateTime.toEpochMillis(proof.verifiedAt);

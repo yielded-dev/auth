@@ -17,17 +17,6 @@ import {
 
 export { Database } from "./drizzle/mysql-database";
 
-export {
-  coordinateMysqlAuthenticationAuthority as coordinateAuthenticationAuthority,
-  coordinateMysqlPendingAuthentication as coordinatePendingAuthentication,
-  coordinateMysqlSignedSessionValidity as coordinateSignedSessionValidity,
-  coordinateMysqlStatefulSessions as coordinateStatefulSessions,
-  makeMysqlAuthenticationAuthorityServices as makeAuthenticationAuthorityServices,
-  makeMysqlPendingAuthenticationServices as makePendingAuthenticationServices,
-  makeMysqlSignedSessionValidityServices as makeSignedSessionValidityServices,
-  makeMysqlStatefulSessionServices as makeStatefulSessionServices,
-} from "./drizzle/mysql-sessions";
-
 import { makeProofTarget } from "./drizzle/proof-drivers";
 
 export const { coordinateProofPersistence, makeProofPersistenceServices } = makeProofTarget(
@@ -83,11 +72,6 @@ export const makeIdentityServices = <
   mapping: IdentityTables<Subject, Identifier, External, Request, NativeId>,
 ) => makeMysqlIdentityServices(mapping);
 
-export {
-  makeMysqlSessionStepUpServices as makeSessionStepUpServices,
-  coordinateMysqlSessionStepUp as coordinateSessionStepUp,
-} from "./drizzle/mysql-sessions";
-
 import { makeOAuthTarget } from "./drizzle/oauth-drivers";
 import { sqlClientOAuthStandaloneGuard } from "./drizzle/oauth-target";
 
@@ -119,7 +103,6 @@ export const {
 
 import { makePasskeyTarget } from "./drizzle/passkey-drivers";
 import { sqlClientPasskeyStandaloneGuard } from "./drizzle/passkey/target";
-import { mysqlTransaction } from "./drizzle/transaction-mysql";
 
 const passkeyTarget = makePasskeyTarget<
   Database,
@@ -144,23 +127,6 @@ export const {
   coordinatePasskeyRegistration,
 } = passkeyTarget;
 
-import { unavailable as totpUnavailable } from "./drizzle/totp-state";
-import { makeTotpTarget, sqlClientTotpStandaloneGuard } from "./drizzle/totp-target";
-
-const totpTarget = makeTotpTarget<
-  Database,
-  EffectMysql2Database<AnyRelations>,
-  AnyMySqlTable<{ dialect: "mysql" }>
->(Database, {
-  mode: "interactive",
-  dialect: "mysql",
-  locking: true,
-  standaloneGuard: sqlClientTotpStandaloneGuard,
-  transaction: (database, body) => mysqlTransaction(totpUnavailable, database, body),
-});
-
-export const { makeTotpPersistenceServices, coordinateTotpPersistence } = totpTarget;
-
 import { makePhoneTarget } from "./drizzle/phone-drivers";
 
 export const { makePhonePersistenceServices, coordinatePhonePersistence } = makePhoneTarget(
@@ -170,3 +136,26 @@ export const { makePhonePersistenceServices, coordinatePhonePersistence } = make
 
 /** Construct Drizzle from the driver's SQL-client Layer. */
 export const databaseLayer = Layer.effect(Database, makeWithDefaults({}));
+
+import { makeSessionTarget } from "./drizzle/session-drivers";
+
+export const {
+  coordinateAuthenticationAuthority,
+  coordinatePendingAuthentication,
+  coordinateSignedSessionValidity,
+  coordinateStatefulSessions,
+  makeAuthenticationAuthorityServices,
+  makePendingAuthenticationServices,
+  makeSignedSessionValidityServices,
+  makeStatefulSessionServices,
+  makeSessionStepUpServices,
+  coordinateSessionStepUp,
+  makeSessionCleanupServices,
+} = makeSessionTarget(Database, { mode: "native", dialect: "mysql" });
+
+import { makeTotpTarget } from "./drizzle/totp-target";
+
+export const { makeTotpPersistenceServices, coordinateTotpPersistence } = makeTotpTarget(Database, {
+  mode: "native",
+  dialect: "mysql",
+});

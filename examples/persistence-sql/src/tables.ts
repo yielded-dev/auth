@@ -82,7 +82,6 @@ export const sessions = AuthPersistence.table({
     sessionId: { name: "c_session_id", type: "text" },
     subjectId: { name: "c_subject_id", type: "text" },
     digest: { name: "c_digest", type: "text" },
-    version: { name: "c_version", type: "text" },
     securityRevision: { name: "c_security_revision", type: "text" },
     issuedAt: { name: "c_issued_at", type: "integer" },
     expiresAt: { name: "c_expires_at", type: "integer" },
@@ -92,16 +91,23 @@ export const sessions = AuthPersistence.table({
   unique: [["sessionId"], ["digest"]],
 });
 
-export const sessionFlows = AuthPersistence.table({
-  name: "app_session_flows",
+export const pending = AuthPersistence.table({
+  name: "app_pending",
   columns: {
+    moduleId: { name: "c_module_id", type: "text" },
+    kind: { name: "c_kind", type: "text" },
+    digest: { name: "c_digest", type: "text" },
+    version: { name: "c_version", type: "text" },
     flowId: { name: "c_flow_id", type: "text" },
     subjectId: { name: "c_subject_id", type: "text" },
-    state: { name: "c_state", type: "text" },
-    pendingDigest: { name: "c_pending_digest", type: "text", nullable: true },
-    dedupUntil: { name: "c_dedup_until", type: "integer" },
+    bindingDigest: { name: "c_binding_digest", type: "text" },
+    snapshot: { name: "c_snapshot", type: "text" },
+    expiresAt: { name: "c_expires_at", type: "integer" },
+    attemptLimit: { name: "c_attempt_limit", type: "integer" },
+    failedAttempts: { name: "c_failed_attempts", type: "integer" },
+    consumed: { name: "c_consumed", type: "boolean" },
   },
-  unique: [["flowId"]],
+  unique: [["digest"]],
 });
 
 export const emailCredentials = AuthPersistence.table({

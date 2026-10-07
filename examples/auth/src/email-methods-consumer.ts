@@ -116,7 +116,6 @@ interface State {
   identifiers: Map<string, Identifier>;
   proofs: ProofRows;
   sessions: Map<Sessions.SessionId, Sessions.StatefulSessionRecord<typeof Claims.Type>>;
-  flows: Set<string>;
 }
 
 const clone = (s: State): State => ({
@@ -124,7 +123,6 @@ const clone = (s: State): State => ({
   identifiers: new Map([...s.identifiers].map(([k, v]) => [k, { ...v }])),
   proofs: copyProofRows(s.proofs),
   sessions: new Map(s.sessions),
-  flows: new Set(s.flows),
 });
 
 /** Disposable sequential copy-on-write authority for the runnable journey. No
@@ -140,7 +138,6 @@ export const makeEmailConsumer = Effect.gen(function* () {
     identifiers: new Map(),
     proofs: new Map(),
     sessions: new Map(),
-    flows: new Set(),
   };
 
   let sequence = 0;
@@ -209,6 +206,12 @@ export const makeEmailConsumer = Effect.gen(function* () {
 
   const snapshot = (s: State, i: Identifier): Email.EmailCredentialSnapshot => ({
     moduleId: "example/email",
+    requirement: s.subjects.get(i.subjectId)?.mfa
+      ? {
+          ...requirement,
+          alternatives: [{ ...requirement.alternatives[0], minimumCredentials: 2 }],
+        }
+      : requirement,
     identifier: Identity.LoginIdentifier.make({ namespace: "email", value: i.email }),
     identifierRevision: Sessions.SecurityRevision.make(i.revision),
     verifiedAtMillis: i.verifiedAt,
@@ -468,8 +471,6 @@ export const makeEmailConsumer = Effect.gen(function* () {
             if (
               !assessed.satisfied ||
               input.pending ||
-              ((input.fresh !== true || input.handoffSourceSessionId !== undefined) &&
-                s.flows.has(input.evidence.flowId)) ||
               !current(s, input.evidence.revision) ||
               now >= DateTime.toEpochMillis(input.session.expiresAt)
             )
@@ -478,14 +479,11 @@ export const makeEmailConsumer = Effect.gen(function* () {
             const row = {
               ...input.session,
               sessionId: Sessions.SessionId.make(String(++sequence)),
-              version: Sessions.SecurityRevision.make(String(sequence)),
             };
 
             const result = prepare(row, journal);
 
             s.sessions.set(row.sessionId, row);
-            if (input.fresh !== true || input.handoffSourceSessionId !== undefined)
-              s.flows.add(input.evidence.flowId);
 
             return result;
           }),

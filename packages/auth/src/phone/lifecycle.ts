@@ -48,7 +48,12 @@ import {
   PhoneLifecyclePolicy,
   type PhoneActionAuthorization,
 } from "./lifecycleModels";
-import { PhoneNumber, PhoneOtpRejected, PhoneOtpUnavailable } from "./models";
+import {
+  PhoneCredentialSnapshot,
+  PhoneNumber,
+  PhoneOtpRejected,
+  PhoneOtpUnavailable,
+} from "./models";
 import { PhoneActionEvidence } from "./PhoneActionEvidence";
 import { defaultPhoneAdmissionLayer } from "./PhoneAdmission";
 import { PhoneDeliveryEligibility } from "./PhoneDeliveryEligibility";
@@ -456,13 +461,20 @@ export const makePhoneLifecycle = <
             ],
           };
 
+        const claimCredential = yield* Schema.encodeEffect(
+          Schema.toCodecJson(PhoneCredentialSnapshot),
+        )(credential).pipe(
+          Effect.flatMap(Schema.decodeEffect(Schema.toCodecJson(PhoneCredentialSnapshot))),
+          Effect.mapError(phoneFailure),
+        );
+
         const claims = yield* (yield* SessionClaims).resolve({
           subjectId: credential.revision.subjectId,
-          credential,
+          credential: claimCredential,
         });
 
         const established = yield* (yield* sessions.AuthenticationCompletion)
-          .prepare({ evidence, claims })
+          .prepare({ evidence, requirement: credential.requirement, claims })
           .pipe(
             Effect.flatMap((receipt) => receipt.read),
             Effect.mapError(phoneFailure),

@@ -43,19 +43,10 @@ CREATE TABLE `app_passwords` (
 	`c_normalization` text NOT NULL
 );
 --> statement-breakpoint
-CREATE TABLE `app_session_flows` (
-	`c_flow_id` text NOT NULL,
-	`c_subject_id` text NOT NULL,
-	`c_state` text NOT NULL,
-	`c_pending_digest` text,
-	`c_dedup_until` integer NOT NULL
-);
---> statement-breakpoint
 CREATE TABLE `app_sessions` (
 	`c_session_id` text NOT NULL,
 	`c_subject_id` text NOT NULL,
 	`c_digest` text NOT NULL,
-	`c_version` text NOT NULL,
 	`c_security_revision` text NOT NULL,
 	`c_issued_at` integer NOT NULL,
 	`c_expires_at` integer NOT NULL,
@@ -108,8 +99,6 @@ CREATE UNIQUE INDEX `app_passwords_key_0` ON `app_passwords` (`c_module_id`,`c_s
 --> statement-breakpoint
 CREATE UNIQUE INDEX `app_passwords_key_1` ON `app_passwords` (`c_module_id`,`c_credential_id`);
 --> statement-breakpoint
-CREATE UNIQUE INDEX `app_session_flows_key_0` ON `app_session_flows` (`c_flow_id`);
---> statement-breakpoint
 CREATE UNIQUE INDEX `app_sessions_key_0` ON `app_sessions` (`c_session_id`);
 --> statement-breakpoint
 CREATE UNIQUE INDEX `app_sessions_key_1` ON `app_sessions` (`c_digest`);
@@ -139,3 +128,21 @@ CREATE TABLE `app_proofs` (
 CREATE UNIQUE INDEX `app_proofs_key_0` ON `app_proofs` (`c_module_id`,`c_purpose`,`c_series_key`);
 --> statement-breakpoint
 CREATE UNIQUE INDEX `app_proofs_key_1` ON `app_proofs` (`c_module_id`,`c_proof_id`);
+
+--> statement-breakpoint
+CREATE TABLE `app_pending` (
+	`c_module_id` text NOT NULL,
+	`c_kind` text NOT NULL,
+	`c_digest` text NOT NULL,
+	`c_version` text NOT NULL,
+	`c_flow_id` text NOT NULL,
+	`c_subject_id` text NOT NULL,
+	`c_binding_digest` text NOT NULL,
+	`c_snapshot` text NOT NULL,
+	`c_expires_at` integer NOT NULL,
+	`c_attempt_limit` integer NOT NULL,
+	`c_failed_attempts` integer NOT NULL,
+	`c_consumed` integer NOT NULL
+);
+--> statement-breakpoint
+CREATE UNIQUE INDEX `app_pending_key_0` ON `app_pending` (`c_digest`);

@@ -111,7 +111,17 @@ export const makeSessionApi = <
         generation !== undefined &&
         Schema.is(SessionCacheGeneration)(Redacted.value(generation));
 
+      const original =
+        credential !== undefined && options?.fresh !== true
+          ? yield* sessions.capturedSession(credential).pipe(
+              Effect.provide(services),
+              Effect.provideService(sessions.SessionStrategy, strategy),
+              Effect.catchTag("SessionInvalid", () => Effect.succeed(Option.none())),
+            )
+          : Option.none();
+
       if (
+        Option.isNone(original) &&
         cacheable &&
         credential !== undefined &&
         cached !== undefined &&
@@ -128,10 +138,11 @@ export const makeSessionApi = <
 
       // Anchor cache freshness before storage: a delayed response must not start
       // a new revocation window after the authoritative snapshot was observed.
-      const checkedAt = yield* DateTime.now;
+      const checkedAt = Option.isSome(original) ? original.value.checkedAt : yield* DateTime.now;
 
-      const session =
-        credential === undefined
+      const session = Option.isSome(original)
+        ? original.value.session
+        : credential === undefined
           ? null
           : yield* verifySession(credential).pipe(
               Effect.catchTag("SessionInvalid", () => Effect.succeed(null)),

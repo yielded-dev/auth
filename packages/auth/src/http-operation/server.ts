@@ -23,6 +23,13 @@ import {
 import type { AuthRevealCommand } from "../operations/reveals";
 import { sessionCacheTransport } from "../sessions/cookieCache";
 import {
+  cacheSessionInvocation,
+  CurrentSessionInvocation,
+  SessionVerificationCapture,
+  withSessionInvocation,
+  withSessionRequest,
+} from "../sessions/invocation";
+import {
   type AnyRoute,
   HttpRequestBody,
   type RouteRequirements,
@@ -343,7 +350,9 @@ export const make = <
 
     const handleRequest = Effect.fn("OperationHttp.handle")(
       function* (request: Request, mutationCookies: Cookies.Cookie[]) {
-        const services = yield* Effect.context<Requirements>();
+        const services = (yield* Effect.context<Requirements>()).pipe(
+          Context.omit(CurrentSessionInvocation, SessionVerificationCapture),
+        );
 
         if (new TextEncoder().encode(request.url).byteLength > config.maximumUrlBytes)
           return yield* OperationHttpError.make({ reason: "too-large" });
@@ -485,13 +494,16 @@ export const make = <
         // and wire projection so ambient collectors can never receive secrets.
         const requestScope = yield* Effect.scope;
 
+        const resolveInvocation =
+          invocation.request === undefined
+            ? undefined
+            : yield* cacheSessionInvocation(invocation.request(request, security.credentials));
+
         const requestServices = services.pipe(
           Context.add(Scope.Scope, requestScope),
           Context.add(AuthRequest, {
             invocation: trusted,
-            ...(invocation.request === undefined
-              ? {}
-              : { resolveInvocation: invocation.request(request, security.credentials) }),
+            ...(resolveInvocation === undefined ? {} : { resolveInvocation }),
             credentials: security.credentials,
             actionMode: route.operation.replay === "read-only" ? "query" : "mutation",
             ...(security.sessionCacheGeneration === undefined
@@ -519,7 +531,12 @@ export const make = <
           Context.add(AuthRevealCommandCollectorService, collector),
         );
 
-        const resolved = yield* Effect.result(call.pipe(Effect.provide(requestServices)));
+        const resolved = yield* Effect.result(
+          withSessionInvocation(Effect.succeed(trusted), () =>
+            call.pipe(Effect.provide(requestServices)),
+          ),
+        );
+
         const headers = baseHeaders();
 
         if (
@@ -661,6 +678,7 @@ export const make = <
       const mutationCookies: Cookies.Cookie[] = [];
 
       return yield* handleRequest(request, mutationCookies).pipe(
+        withSessionRequest,
         Effect.catch((error) =>
           failResponse(
             Schema.is(OperationHttpError)(error)

@@ -8,13 +8,14 @@ import {
 import { TokenDigest } from "@yielded/auth/Schema";
 import {
   SecurityRevision,
+  AuthenticationEvidence,
   SessionId,
   SessionMetadata,
   SessionAuthenticationProvenance,
   SessionCredentialVersion,
   type StatefulSessionRecord,
 } from "@yielded/auth/Sessions";
-import { Crypto, DateTime, Effect, Redacted, Schema } from "effect";
+import { Crypto, DateTime, Effect, Redacted, Schema, Struct } from "effect";
 
 import type { MappingInput } from "./configuration";
 import { randomId } from "./crypto";
@@ -25,7 +26,7 @@ import {
   type AnyPasswordPersistenceMapping,
 } from "./models/password-model";
 import { requiredProofConstraints, type AnyProofPersistenceMapping } from "./models/proof-model";
-import type { StatefulSessionMapping } from "./models/session-model";
+import type { StatefulSessionMapping, PendingAuthenticationMapping } from "./models/session-model";
 import { makeStorageClock } from "./storage-clock";
 import { storageTables, type StorageRole } from "./storage-tables";
 import type { TableModel, SqlExpression } from "./table-model";
@@ -74,6 +75,7 @@ export const makeMappings = Effect.fnUntraced(function* (input: MappingInput) {
     securityRevision: s.securityRevision,
     isActiveStatus: (value: unknown) => Object.is(value, s.activeValue),
     d1ActiveStatusValue: s.activeValue,
+    activeStatusValue: s.activeValue,
     decodeRequirement: s.requirements,
     decodeActionRequirement: s.actionRequirements,
     nextSecurityRevision: () => allocate.pipe(Effect.map(SecurityRevision.make)),
@@ -85,6 +87,7 @@ export const makeMappings = Effect.fnUntraced(function* (input: MappingInput) {
     credentialId: "credentialId",
     revision: "revision",
     status: "active",
+    activeStatusValue: true,
     isActiveStatus: (value: unknown) => value === true,
     encodeInsert: (row: object) => ({ ...row, active: true }),
     encodeRevision: (revision: SecurityRevision) => ({ revision }),
@@ -215,7 +218,6 @@ export const makeMappings = Effect.fnUntraced(function* (input: MappingInput) {
     isIdentifierConflict: () => false,
     isCredentialConflict: () => false,
     authorityCredential: {
-      activeStatusValue: true,
       ...authorityCredential(),
       encodeActivation: (revision) => ({ revision, active: true }),
       encodeRetirement: (revision) => ({ revision, active: false }),
@@ -269,43 +271,110 @@ export const makeMappings = Effect.fnUntraced(function* (input: MappingInput) {
       encodeRetirement: ({ credentialRevision }) => ({ credentialRevision, active: false }),
       decode: ({ moduleId, subject: row, identifier, credential }) =>
         Effect.gen(function* () {
-          return yield* decode(EmailCredentialSnapshot, {
-            moduleId,
-            identifier: { namespace: identifier.namespace, value: identifier.value },
-            identifierRevision: identifier.revision,
-            verifiedAtMillis: yield* readInstant(identifier.verifiedAt),
-            credentialId: credential.credentialId,
-            credentialRevision: credential.credentialRevision,
-            revision: {
-              subjectId: yield* s.toSubject(row[s.id]),
-              securityRevision: row[s.securityRevision],
-              credentials: [
-                { credentialId: credential.credentialId, revision: credential.credentialRevision },
-              ],
+          return yield* decode(
+            Schema.Struct(Struct.omit(EmailCredentialSnapshot.fields, ["requirement"])),
+            {
+              moduleId,
+              identifier: { namespace: identifier.namespace, value: identifier.value },
+              identifierRevision: identifier.revision,
+              verifiedAtMillis: yield* readInstant(identifier.verifiedAt),
+              credentialId: credential.credentialId,
+              credentialRevision: credential.credentialRevision,
+              revision: {
+                subjectId: yield* s.toSubject(row[s.id]),
+                securityRevision: row[s.securityRevision],
+                credentials: [
+                  {
+                    credentialId: credential.credentialId,
+                    revision: credential.credentialRevision,
+                  },
+                ],
+              },
             },
-          });
+          );
         }),
     },
   });
 
+  const pending = <C extends Schema.Codec<unknown, unknown, never, never>>(
+    claims: C,
+    moduleId: string,
+  ): PendingAuthenticationMapping<C["Type"], TableModel, TableModel, TableModel, unknown> => {
+    const record = Schema.fromJsonString(
+      Schema.Struct({
+        digest: TokenDigest,
+        version: SecurityRevision,
+        evidence: AuthenticationEvidence,
+        expiresAt: Schema.DateTimeUtcFromMillis,
+        attemptLimit: Schema.Int.check(Schema.isGreaterThan(0)),
+        claims: Schema.Unknown,
+      }),
+    );
+
+    return {
+      ...authority(),
+      moduleId,
+      clock,
+      isConstraintConflict: () => false,
+      constraints: { pendingDigest: "unique(pending.digest)" },
+      pending: {
+        table: table("pending"),
+        moduleId: "moduleId",
+        kind: "kind",
+        digest: "digest",
+        version: "version",
+        flowId: "flowId",
+        subjectId: "subjectId",
+        bindingDigest: "bindingDigest",
+        snapshot: "snapshot",
+        expiresAt: "expiresAt",
+        attemptLimit: "attemptLimit",
+        failedAttempts: "failedAttempts",
+        consumed: "consumed",
+        encodeInstant: (date) => instant(DateTime.toEpochMillis(date)),
+        allocateVersion: allocate.pipe(Effect.map(SecurityRevision.make)),
+        encodeInsert: (value) => ({
+          ...value,
+          expiresAt: instant(DateTime.toEpochMillis(value.expiresAt)),
+          failedAttempts: 0,
+          consumed: false,
+        }),
+      },
+      login: {
+        encode: (value) =>
+          Schema.encodeEffect(claims)(value.claims).pipe(
+            Effect.flatMap((saved) => Schema.encodeEffect(record)({ ...value, claims: saved })),
+            Effect.mapError(failure),
+          ),
+        decode: (value) =>
+          decode(record, value).pipe(
+            Effect.flatMap((saved) =>
+              decode(claims, saved.claims).pipe(
+                Effect.map((decoded) => ({ ...saved, claims: decoded })),
+              ),
+            ),
+          ),
+      },
+    };
+  };
+
   const sessions = <C extends Schema.Codec<unknown, unknown, never, never>>(
     claims: C,
+    moduleId: string,
   ): StatefulSessionMapping<
     C["Type"],
     TableModel,
     TableModel,
     TableModel,
     TableModel,
-    TableModel,
     unknown,
-    string
+    unknown
   > => {
     const record = Schema.fromJsonString(
       Schema.Struct({
         ...SessionMetadata.fields,
         claims: Schema.Unknown,
         digest: TokenDigest,
-        version: SecurityRevision,
         provenance: SessionAuthenticationProvenance,
         credentialVersion: SessionCredentialVersion,
       }),
@@ -313,7 +382,6 @@ export const makeMappings = Effect.fnUntraced(function* (input: MappingInput) {
 
     const encodeRow = (value: StatefulSessionRecord<C["Type"]>) => ({
       digest: value.digest,
-      version: value.version,
       securityRevision: value.securityRevision,
       issuedAt: instant(DateTime.toEpochMillis(value.issuedAt)),
       expiresAt: instant(DateTime.toEpochMillis(value.expiresAt)),
@@ -324,66 +392,50 @@ export const makeMappings = Effect.fnUntraced(function* (input: MappingInput) {
       }),
     });
 
+    const login = pending(claims, moduleId);
+
     return {
       ...authority(),
+      moduleId,
+      clock,
       isConstraintConflict: () => false,
-      constraints: { sessionDigest: "unique(session.digest)", flowId: "unique(flow.flowId)" },
+      pending: { pending: login.pending, login: login.login },
+      constraints: {
+        sessionDigest: "unique(session.digest)",
+        pendingDigest: "unique(pending.digest)",
+      },
       sessionId: {
         toNative: (id) => Effect.succeed(id),
         toSession: (id) => decode(SessionId, id),
         equals: Object.is,
-      },
-      flow: {
-        table: table("sessionFlows"),
-        flowId: "flowId",
-        subjectId: "subjectId",
-        state: "state",
-        pendingDigest: "pendingDigest",
-        dedupUntil: "dedupUntil",
-        pendingStateValue: "pending",
-        establishedStateValue: "established",
-        encodeInstant: (date) => instant(DateTime.toEpochMillis(date)),
-        decodeInstant: (value) => readInstant(value).pipe(Effect.map(DateTime.makeUnsafe)),
-        encodePendingInsert: (row) => ({
-          flowId: row.evidence.flowId,
-          subjectId: row.subjectId,
-          state: "pending",
-          pendingDigest: row.pendingDigest,
-          dedupUntil: instant(DateTime.toEpochMillis(row.dedupUntil)),
-        }),
-        encodeEstablishedInsert: (row) => ({
-          flowId: row.evidence.flowId,
-          subjectId: row.subjectId,
-          state: "established",
-          pendingDigest: null,
-          dedupUntil: instant(DateTime.toEpochMillis(row.dedupUntil)),
-        }),
       },
       session: {
         table: table("sessions"),
         sessionId: "sessionId",
         subjectId: "subjectId",
         digest: "digest",
-        version: "version",
         securityRevision: "securityRevision",
         issuedAt: "issuedAt",
         expiresAt: "expiresAt",
         absoluteExpiresAt: "absoluteExpiresAt",
         encodeInstant: (date) => instant(DateTime.toEpochMillis(date)),
         allocateId: allocate,
-        allocateVersion: allocate.pipe(Effect.map(SecurityRevision.make)),
         encodeInsert: (value, ids) => ({ ...encodeRow(value), ...ids }),
         encodeRotation: encodeRow,
         decode: (row) =>
           Effect.gen(function* () {
-            const saved = yield* decode(record, row.record);
-            const decodedClaims = yield* decode(claims, saved.claims);
+            const saved = yield* decode(record, row.record),
+              decodedClaims = yield* decode(claims, saved.claims);
 
-            return { ...saved, claims: decodedClaims };
+            return {
+              ...saved,
+              issuedAt: DateTime.makeUnsafe(yield* readInstant(row.issuedAt)),
+              claims: decodedClaims,
+            };
           }),
       },
     };
   };
 
-  return { table, authority, proofs, passwords, emails, sessions, string };
+  return { table, authority, proofs, passwords, emails, sessions, pending, string };
 });

@@ -149,6 +149,8 @@ export const PasskeyEvidence = Schema.Struct({
 });
 
 export const PasskeyCredential = Schema.Struct({
+  /** Current policy from the same authoritative read as the revision vector. */
+  requirement: AuthenticationRequirement,
   credentialId: PasskeyCredentialId,
   rpId: PasskeyRpId,
   protocolCredentialId: PasskeyProtocolCredentialId,

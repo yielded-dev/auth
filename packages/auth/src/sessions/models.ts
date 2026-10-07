@@ -117,6 +117,25 @@ export interface SessionInspection<Claims> {
   readonly credentialVersion: SessionCredentialVersion;
 }
 
+/** Private guard from the same authoritative read as the inspection. */
+export const SessionGuard = Schema.Union([
+  Schema.TaggedStruct("Stateful", { digest: TokenDigest }),
+  Schema.TaggedStruct("StateAssistedSigned", {}),
+  Schema.TaggedStruct("StatelessSigned", {}),
+]);
+
+export type SessionGuard = typeof SessionGuard.Type;
+
+/** Trusted request-local source. Cookie-cache public sessions never create this value. */
+export interface SessionSource<Claims> {
+  readonly inspection: SessionInspection<Claims>;
+  readonly guard: SessionGuard;
+}
+
+/** Mandatory discriminator in the shared pending store; every port predicates it. */
+export const PendingAuthenticationKind = Schema.Literals(["Login", "StepUp"]);
+export type PendingAuthenticationKind = typeof PendingAuthenticationKind.Type;
+
 export const PendingConsumption = Schema.Struct({
   flowId: AuthenticationFlowId,
   digest: TokenDigest,

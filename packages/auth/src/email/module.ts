@@ -326,7 +326,11 @@ export const makeEmailSignInModule = <
             // Proof consumption has committed. Session failure burns this proof and
             // requires a fresh request; no cross-owner atomicity is claimed here.
             const established = yield* completion
-              .prepare({ evidence, claims: applicationClaims })
+              .prepare({
+                evidence,
+                requirement: current.target.value.requirement,
+                claims: applicationClaims,
+              })
               .pipe(Effect.flatMap(read), Effect.mapError(emailCompletionFailure));
 
             return {

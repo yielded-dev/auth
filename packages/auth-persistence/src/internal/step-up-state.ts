@@ -38,7 +38,7 @@ export const sameStepUpRevision = (left: AuthenticationRevision, right: Authenti
   );
 
 export const stepUpIntentLive = (
-  intent: SessionStepUpIntent,
+  intent: Omit<SessionStepUpIntent, "version">,
   kind: SessionStepUpIntent["sourceKind"],
   now: DateTime.Utc,
 ) => {
@@ -97,8 +97,6 @@ export const validateStepUpPlan = Effect.fn("DrizzleStepUp.validatePlan")(functi
       DateTime.toEpochMillis(original.session.expiresAt) ||
     DateTime.toEpochMillis(intent.sourceAbsoluteExpiresAt) !==
       DateTime.toEpochMillis(original.session.absoluteExpiresAt) ||
-    DateTime.toEpochMillis(intent.sourceAuthenticatedAt) !==
-      DateTime.toEpochMillis(replacement.inspection.session.assurance.authenticatedAt) ||
     DateTime.toEpochMillis(intent.sourceAbsoluteExpiresAt) !==
       DateTime.toEpochMillis(replacement.inspection.session.absoluteExpiresAt) ||
     evidenceEncoding(replacement.inspection.provenance.evidence) !== evidenceEncoding(evidence)
@@ -108,7 +106,6 @@ export const validateStepUpPlan = Effect.fn("DrizzleStepUp.validatePlan")(functi
     replacement._tag === "Stateful" &&
     (source.guard._tag !== "Stateful" ||
       source.guard.digest !== replacement.expectedDigest ||
-      source.guard.rowVersion !== replacement.expectedRowVersion ||
       replacement.inspection.session.sessionId !== intent.sourceSessionId)
   )
     return yield* SessionStepUpInvalid.make({});

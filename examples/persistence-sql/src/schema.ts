@@ -39,7 +39,7 @@ export const storage = Persistence.map({
     emailCredentials: tables.emailCredentials,
     proofs: tables.proofs,
     sessions: tables.sessions,
-    sessionFlows: tables.sessionFlows,
+    pending: tables.pending,
     ...passkeys,
   },
 });

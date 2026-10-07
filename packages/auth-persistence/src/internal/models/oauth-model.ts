@@ -46,6 +46,7 @@ export interface OAuthSubjectReadTable<
   readonly securityRevision: Column<S>;
   readonly isActiveStatus: (value: unknown) => boolean;
   readonly activeCondition: Expression;
+  readonly decodeAuthenticationRequirement: (row: S["select"]) => AuthenticationRequirement;
 }
 
 export interface OAuthSubjectTable<
@@ -56,7 +57,6 @@ export interface OAuthSubjectTable<
     row: S["select"],
     action: OAuthAction,
   ) => AuthenticationRequirement;
-  readonly decodeAuthenticationRequirement: (row: S["select"]) => AuthenticationRequirement;
   readonly nextSecurityRevision: (current: SecurityRevision) => SecurityRevision;
 }
 

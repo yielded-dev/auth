@@ -59,7 +59,6 @@ const initial = Effect.gen(function* () {
   "c_session_id" text not null,
   "c_subject_id" text not null,
   "c_digest" text not null,
-  "c_version" text not null,
   "c_security_revision" text not null,
   "c_issued_at" ${integerType} not null,
   "c_expires_at" ${integerType} not null,
@@ -68,13 +67,20 @@ const initial = Effect.gen(function* () {
   unique ("c_session_id"),
   unique ("c_digest")
 )`);
-  yield* sql.unsafe(`create table "app_session_flows" (
+  yield* sql.unsafe(`create table "app_pending" (
+  "c_module_id" text not null,
+  "c_kind" text not null,
+  "c_digest" text not null,
+  "c_version" text not null,
   "c_flow_id" text not null,
   "c_subject_id" text not null,
-  "c_state" text not null,
-  "c_pending_digest" text,
-  "c_dedup_until" ${integerType} not null,
-  unique ("c_flow_id")
+  "c_binding_digest" text not null,
+  "c_snapshot" text not null,
+  "c_expires_at" ${integerType} not null,
+  "c_attempt_limit" ${integerType} not null,
+  "c_failed_attempts" ${integerType} not null,
+  "c_consumed" ${booleanType} not null,
+  unique ("c_digest")
 )`);
 });
 

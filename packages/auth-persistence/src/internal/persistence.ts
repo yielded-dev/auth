@@ -35,18 +35,17 @@ import {
 } from "./configuration";
 import { makeNativeEmailAddressServices } from "./email-native";
 import { PersistenceMappingError } from "./mapping-error";
-import type { StatefulSessionMapping } from "./models/session-model";
 import type { NativeSqlTables } from "./native-sql-table";
 import { makeNativePasswordServices } from "./password-native";
 import { makeComposedPhoneTargets } from "./phone-composed";
 import { makeNativeProofServices } from "./proof-native";
 import { makeRegistrationAuthority } from "./registration";
 import type { PasswordRegistrationAuthority } from "./registration-contract";
-import type { SessionTransactionOwner, StatefulSessionStore } from "./session-store";
-import {
-  makeAuthenticationAuthorityWorkflow,
-  makeStatefulSessionWorkflow,
-} from "./session-workflow";
+import { makeNativeAuthenticationAuthorityServices } from "./session-native-authority";
+import { makeNativeSessionCleanupServices } from "./session-native-cleanup";
+import { makeNativePendingAuthenticationServices } from "./session-native-login";
+import { makeNativeStatefulSessionServices } from "./session-native-stateful";
+import { makeNativeSessionStepUpServices } from "./session-native-step-up";
 import { SqlBatchCommit } from "./sql-commit";
 import { requireStandalone } from "./standalone";
 import { makeMappings } from "./storage-mapping";
@@ -76,11 +75,6 @@ export interface Backend<T extends object, R, Database extends object = object> 
   readonly acquire: Effect.Effect<Database, PersistenceConfigurationError, R | SqlClient.SqlClient>;
   readonly nativeTables: (database: Database) => NativeSqlTables;
   readonly maxParameters: (database: Database) => number | undefined;
-  readonly sessionOwner: <Claims>(
-    // oxlint-disable-next-line no-explicit-any -- the backend validates its table metadata.
-    mapping: StatefulSessionMapping<Claims, any, any, any, any, any, any, any>,
-    database: Database,
-  ) => Effect.Effect<SessionTransactionOwner<StatefulSessionStore<Claims>>, never>;
   readonly passkeys: (
     input: ComposedPasskeyInput,
     database: Database,
@@ -133,7 +127,7 @@ export const createPersistence = <T extends object, R, Database extends object =
     const email = features.some((feature) => feature?.kind === "email" && feature.addresses);
     const proofs = phone || management || email;
 
-    const roles: StorageRole[] = ["identifiers", "credentials", "sessions", "sessionFlows"];
+    const roles: StorageRole[] = ["identifiers", "credentials", "sessions", "pending"];
 
     if (password) roles.push("passwords");
     if (email) roles.push("emailCredentials");
@@ -315,33 +309,52 @@ export const createPersistence = <T extends object, R, Database extends object =
         const maximumParameters = backend.maxParameters(database);
         const limits = maximumParameters === undefined ? {} : { maxParameters: maximumParameters };
 
-        const options = {
-          mode: "interactive" as const,
-          locking: dialect === "pg",
-          standaloneGuard: standalone(() => SessionUnavailable.make({})),
-        };
+        const nativeTables = backend.nativeTables(database);
+        const sessionMapping = mappings.sessions(auth.claims, auth.sessions.moduleId);
+        const pendingMapping = mappings.pending(auth.claims, auth.sessions.moduleId);
 
-        const sessionMapping = mappings.sessions(auth.claims);
-        const sessionOwner = yield* backend.sessionOwner(sessionMapping, database);
-
-        const sessionServices = yield* makeStatefulSessionWorkflow(
+        const sessionServices = yield* makeNativeStatefulSessionServices(
+          nativeTables,
           sessionMapping,
-          options,
-          sessionOwner,
         );
 
-        const authority = yield* makeAuthenticationAuthorityWorkflow<C["Type"]>(
-          { ...mappings.authority(), isConstraintConflict: () => false },
-          options,
-          sessionOwner,
+        const { authenticationAuthority } = yield* makeNativeAuthenticationAuthorityServices(
+          nativeTables,
+          sessionMapping,
         );
 
-        let context: Context.Context<never> = Context.make(AuthenticationAuthority, authority).pipe(
+        const { pendingAuthentication } = yield* makeNativePendingAuthenticationServices(
+          nativeTables,
+          pendingMapping,
+        );
+
+        const { sessionStepUpPersistence } = yield* makeNativeSessionStepUpServices(nativeTables, {
+          ...pendingMapping,
+          source: {
+            kind: "Stateful",
+            session: sessionMapping.session,
+            sessionId: sessionMapping.sessionId,
+            constraints: { sessionDigest: "unique(session.digest)" },
+          },
+        });
+
+        const { sessionCleanup } = yield* makeNativeSessionCleanupServices(
+          nativeTables,
+          pendingMapping,
+        );
+
+        let context: Context.Context<never> = Context.make(
+          AuthenticationAuthority,
+          authenticationAuthority,
+        ).pipe(
           Context.add(
             auth.sessions.StatefulSessionPersistence,
             sessionServices.statefulSessionPersistence,
           ),
           Context.add(auth.sessions.SessionRepository, sessionServices.sessionRepository),
+          Context.add(auth.sessions.PendingAuthentication, pendingAuthentication),
+          Context.add(auth.sessions.SessionStepUpPersistence, sessionStepUpPersistence),
+          Context.add(auth.sessions.SessionCleanup, sessionCleanup),
         );
 
         const proofConfiguration = proofs
@@ -498,6 +511,17 @@ export const createPersistence = <T extends object, R, Database extends object =
         );
 
         const repository = service(auth.sessions.SessionRepository, sessionUnavailable, false);
+        const pendingRead = service(auth.sessions.PendingAuthentication, sessionUnavailable, false);
+        const pendingMutation = service(auth.sessions.PendingAuthentication, sessionUnavailable);
+
+        const stepUpRead = service(
+          auth.sessions.SessionStepUpPersistence,
+          sessionUnavailable,
+          false,
+        );
+
+        const stepUpMutation = service(auth.sessions.SessionStepUpPersistence, sessionUnavailable);
+        const cleanup = service(auth.sessions.SessionCleanup, sessionUnavailable);
 
         let context: Context.Context<never> = Context.make(AuthenticationAuthority, {
           capture: (subjectId, credentialIds) =>
@@ -521,6 +545,25 @@ export const createPersistence = <T extends object, R, Database extends object =
           }),
           Context.add(auth.sessions.SessionRepository, {
             list: (input) => Effect.flatMap(repository, (s) => s.list(input)),
+          }),
+          Context.add(auth.sessions.PendingAuthentication, {
+            create: (input, now, prepare) =>
+              Effect.flatMap(pendingMutation, (s) => s.create(input, now, prepare)),
+            read: (input) => Effect.flatMap(pendingRead, (s) => s.read(input)),
+            reject: (input, prepare) =>
+              Effect.flatMap(pendingMutation, (s) => s.reject(input, prepare)),
+          }),
+          Context.add(auth.sessions.SessionStepUpPersistence, {
+            create: (input, now, prepare) =>
+              Effect.flatMap(stepUpMutation, (s) => s.create(input, now, prepare)),
+            read: (input) => Effect.flatMap(stepUpRead, (s) => s.read(input)),
+            reject: (input, prepare) =>
+              Effect.flatMap(stepUpMutation, (s) => s.reject(input, prepare)),
+            complete: (plan, prepare) =>
+              Effect.flatMap(stepUpMutation, (s) => s.complete(plan, prepare)),
+          }),
+          Context.add(auth.sessions.SessionCleanup, {
+            cleanup: (input) => Effect.flatMap(cleanup, (s) => s.cleanup(input)),
           }),
         );
 

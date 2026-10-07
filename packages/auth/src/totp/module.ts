@@ -9,7 +9,6 @@ import type { AuthOperationResult } from "../operations/credentials";
 import { operationGroup } from "../operations/operation";
 import type { AuthRevealCommand } from "../operations/reveals";
 import { assessAuthentication } from "../sessions/assurance";
-import { AuthenticationAuthority } from "../sessions/AuthenticationAuthority";
 import { sessionInvalidationWindow } from "../sessions/invalidation";
 import {
   AuthenticationEvidence,
@@ -17,6 +16,7 @@ import {
   AuthenticationRequirement,
 } from "../sessions/models";
 import type { makeSessionModule } from "../sessions/module";
+import { pendingAuthenticationContext } from "../sessions/PendingAuthentication";
 import {
   make as makeTotpContract,
   BeginInput,
@@ -37,11 +37,12 @@ import {
 import {
   type TotpEnrollmentStarted,
   type TotpManagementResult,
+  type TotpRecoveryRegenerated,
   type TotpRecoveryReset,
   TotpActionAuthorization,
   TotpActionChallenge,
   TotpPolicy,
-  type TotpSnapshot,
+  TotpSnapshot,
 } from "./models";
 import { TotpActionEvidence } from "./TotpActionEvidence";
 import { TotpCryptography } from "./TotpCryptography";
@@ -106,7 +107,6 @@ export const makeTotpModule = <
     const policy = yield* policySource,
       persistence = yield* TotpPersistence,
       actions = yield* TotpActionEvidence,
-      authority = yield* AuthenticationAuthority,
       completion = yield* sessions.AuthenticationCompletion,
       stepUp = yield* sessions.SessionStepUp,
       strategy = yield* sessions.SessionStrategy,
@@ -143,7 +143,23 @@ export const makeTotpModule = <
 
       if (result === undefined) return yield* TotpRejected.make({});
 
-      return result;
+      const fixed = yield* Schema.encodeEffect(Schema.toCodecJson(TotpSnapshot))(result).pipe(
+        Effect.flatMap(Schema.decodeEffect(Schema.toCodecJson(TotpSnapshot))),
+        Effect.mapError(() => TotpUnavailable.make({})),
+      );
+
+      // This schema contains only JSON records and arrays. Detach before freezing
+      // so action policies cannot change the captured revision or requirement.
+      const freeze = (value: unknown): void => {
+        if (value !== null && typeof value === "object") {
+          for (const item of Object.values(value)) freeze(item);
+          Object.freeze(value);
+        }
+      };
+
+      freeze(fixed);
+
+      return fixed;
     });
 
     const authenticated = Effect.fn("Totp.authenticated")(function* (invocation: AuthInvocation) {
@@ -185,9 +201,17 @@ export const makeTotpModule = <
       )
         return yield* TotpActionRequired.make({});
 
-      const requirement = yield* authority
-        .requirements(evidence)
-        .pipe(Effect.mapError(() => TotpActionRequired.make({})));
+      if (
+        evidence.revision.credentials.some(
+          (item) =>
+            !captured.revision.credentials.some(
+              (current) =>
+                current.credentialId === item.credentialId && current.revision === item.revision,
+            ),
+        )
+      )
+        return yield* TotpActionRequired.make({});
+      const requirement = captured.requirement;
 
       const central = yield* assessAuthentication(evidence, {
         ...requirement,
@@ -233,7 +257,6 @@ export const makeTotpModule = <
           snapshot: captured,
           moduleId,
           subjectId: captured.revision.subjectId,
-          commandId,
           policy,
           action,
           ...(authorization === undefined ? {} : { authorization }),
@@ -298,13 +321,17 @@ export const makeTotpModule = <
       )
         return yield* TotpRejected.make({});
 
-      const revision = yield* authority.capture(record.subjectId, [record.credentialId]).pipe(
-        Effect.map((capture) => capture.revision),
-        Effect.mapError(mapFailure),
-      );
+      const revision = captured.revision;
 
       if (
         revision.securityRevision !== target.revision.securityRevision ||
+        target.revision.credentials.some(
+          (item) =>
+            !revision.credentials.some(
+              (current) =>
+                current.credentialId === item.credentialId && current.revision === item.revision,
+            ),
+        ) ||
         !revision.credentials.some(
           (item) => item.credentialId === record.credentialId && item.revision === record.revision,
         )
@@ -465,7 +492,7 @@ export const makeTotpModule = <
       regenerateRecoveryCodes: Effect.fn("Totp.regenerateRecoveryCodes")(function* (
         invocation: AuthInvocation,
         original: typeof ManageInput.Type,
-      ): Effect.fn.Return<AuthOperationResult<typeof TotpManagementResult.Type>, TotpFailure> {
+      ): Effect.fn.Return<AuthOperationResult<typeof TotpRecoveryRegenerated.Type>, TotpFailure> {
         const input = yield* decode(ManageInput, original),
           captured = yield* authenticated(invocation),
           authorization = yield* authorize(invocation, captured, "regenerate", input, ""),
@@ -480,7 +507,7 @@ export const makeTotpModule = <
         );
 
         return {
-          value: { enabled: true, invalidation },
+          value: { enabled: true },
           credentialCommands: [],
           revealCommands: [revealRecovery(codes.codes, input.commandId, now)],
         };
@@ -494,29 +521,23 @@ export const makeTotpModule = <
 
         if (invocation._tag !== "Guest") return yield* TotpRejected.make({});
 
-        const target = yield* completion
-            .pendingContext(input.pendingCredential)
-            .pipe(Effect.mapError(mapFailure)),
+        const pending = yield* completion
+          .inspectPending(input.pendingCredential)
+          .pipe(Effect.mapError(mapFailure));
+
+        const target = yield* pendingAuthenticationContext(pending.record).pipe(
+            Effect.mapError(mapFailure),
+          ),
           captured = yield* snapshot(target.revision.subjectId),
           evidence = yield* evidenceFor(captured, target, "totp");
 
         yield* commit(captured, yield* randomId(), {
           _tag: "Verify",
           matchedStep: yield* matched(captured, Redacted.value(input.code)),
-        }).pipe(
-          Effect.catchTag("TotpRejected", () =>
-            completion
-              .rejectPendingCredential(input.pendingCredential)
-              .pipe(
-                Effect.mapError(mapFailure),
-                Effect.flatMap(read),
-                Effect.andThen(TotpRejected.make({})),
-              ),
-          ),
-        );
+        });
 
         return yield* completion
-          .preparePending({ credential: input.pendingCredential, additional: evidence })
+          .preparePending({ pending, additional: evidence })
           .pipe(Effect.mapError(mapFailure), Effect.flatMap(read));
       }),
       verifyStepUp: Effect.fn("Totp.verifyStepUp")(function* (
@@ -528,9 +549,18 @@ export const makeTotpModule = <
 
         if (invocation._tag !== "Authenticated") return yield* TotpRejected.make({});
 
-        const target = yield* stepUp
-          .context(input.stepUpCredential)
+        const pending = yield* stepUp
+          .inspect(input.stepUpCredential)
           .pipe(Effect.mapError(mapFailure));
+
+        const target = pending.intent;
+
+        const source = yield* sessions
+          .inspectInvocation(invocation, input.sourceCredential)
+          .pipe(
+            Effect.provideService(sessions.SessionStrategy, strategy),
+            Effect.mapError(mapFailure),
+          );
 
         if (target.revision.subjectId !== invocation.subjectId) return yield* TotpRejected.make({});
 
@@ -540,22 +570,12 @@ export const makeTotpModule = <
         yield* commit(captured, yield* randomId(), {
           _tag: "Verify",
           matchedStep: yield* matched(captured, Redacted.value(input.code)),
-        }).pipe(
-          Effect.catchTag("TotpRejected", () =>
-            stepUp
-              .rejectCredential(input.stepUpCredential)
-              .pipe(
-                Effect.mapError(mapFailure),
-                Effect.flatMap(read),
-                Effect.andThen(TotpRejected.make({})),
-              ),
-          ),
-        );
+        });
 
         return yield* stepUp
           .prepareComplete({
-            sourceCredential: input.sourceCredential,
-            stepUpCredential: input.stepUpCredential,
+            source,
+            pending,
             additional: evidence,
           })
           .pipe(Effect.mapError(mapFailure), Effect.flatMap(read));
@@ -570,9 +590,13 @@ export const makeTotpModule = <
         if (invocation._tag !== "Guest" || !policy.allowRecoveryCodeForPending)
           return yield* TotpRejected.make({});
 
-        const target = yield* completion
-            .pendingContext(input.pendingCredential)
-            .pipe(Effect.mapError(mapFailure)),
+        const pending = yield* completion
+          .inspectPending(input.pendingCredential)
+          .pipe(Effect.mapError(mapFailure));
+
+        const target = yield* pendingAuthenticationContext(pending.record).pipe(
+            Effect.mapError(mapFailure),
+          ),
           captured = yield* snapshot(target.revision.subjectId),
           evidence = yield* evidenceFor(captured, target, "recovery-code");
 
@@ -584,20 +608,10 @@ export const makeTotpModule = <
             Redacted.value(input.code),
           ),
           reset: false,
-        }).pipe(
-          Effect.catchTag("TotpRejected", () =>
-            completion
-              .rejectPendingCredential(input.pendingCredential)
-              .pipe(
-                Effect.mapError(mapFailure),
-                Effect.flatMap(read),
-                Effect.andThen(TotpRejected.make({})),
-              ),
-          ),
-        );
+        });
 
         return yield* completion
-          .preparePending({ credential: input.pendingCredential, additional: evidence })
+          .preparePending({ pending, additional: evidence })
           .pipe(Effect.mapError(mapFailure), Effect.flatMap(read));
       }),
       recoverLostFactor: Effect.fn("Totp.recoverLostFactor")(function* (
@@ -610,9 +624,13 @@ export const makeTotpModule = <
         if (invocation._tag !== "Guest" || policy.lostFactorRecovery !== "reset-with-recovery-code")
           return yield* TotpRejected.make({});
 
-        const target = yield* completion
-            .pendingContext(input.pendingCredential)
-            .pipe(Effect.mapError(mapFailure)),
+        const pending = yield* completion
+          .inspectPending(input.pendingCredential)
+          .pipe(Effect.mapError(mapFailure));
+
+        const target = yield* pendingAuthenticationContext(pending.record).pipe(
+            Effect.mapError(mapFailure),
+          ),
           captured = yield* snapshot(target.revision.subjectId);
 
         yield* evidenceFor(captured, target, "recovery-code");
@@ -625,17 +643,7 @@ export const makeTotpModule = <
           ),
           reset: true,
           pending: target,
-        }).pipe(
-          Effect.catchTag("TotpRejected", () =>
-            completion
-              .rejectPendingCredential(input.pendingCredential)
-              .pipe(
-                Effect.mapError(mapFailure),
-                Effect.flatMap(read),
-                Effect.andThen(TotpRejected.make({})),
-              ),
-          ),
-        );
+        });
 
         return {
           value: { outcome: "reauthentication-required", invalidation },

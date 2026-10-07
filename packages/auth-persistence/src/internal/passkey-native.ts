@@ -346,7 +346,7 @@ const makePasskeyNativeCredentialService = (
             const row = credential.decode(selected, "c_");
 
             if (row[read.credential.credentialId] === null) continue;
-            const decoded = state.decodeCredential(row, revision);
+            const decoded = yield* state.decodeCredential(row, revision, subjectRow);
 
             if (decoded !== undefined) values.set(decoded.credentialId, decoded);
           }

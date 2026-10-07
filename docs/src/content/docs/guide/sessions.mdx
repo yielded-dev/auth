@@ -75,7 +75,8 @@ binding and the next fills the snapshot. Cache hits verify the cookie locally;
 they do not read Postgres or require a server-side cache.
 
 The limit is the shorter of five minutes and `renewAfter`. Features configured
-with `requireImmediateInvalidation: true` reject caching at startup.
+with `requireImmediateInvalidation: true` reject caching when they require server
+invalidation. Account linking and passkey enrollment do not invalidate sessions.
 Management, step-up, and mutations always read authoritative state. A mutation
 response invalidates the browser's snapshot; other clients and lost responses
 retain the bounded delay. See [cookie behavior](../reference/http#session-cache-cookies).
@@ -94,7 +95,10 @@ const required = yield* auth.requireSession();          // Fails when anonymous
 
 Missing, invalid, or expired credentials return `null`; storage failures remain
 failures. `requireSession()` allows caching and fails with `AuthenticationRequired`
-when anonymous. Reads do not renew credentials.
+when anonymous. Reads do not renew credentials. A handler that already resolved
+an authoritative caller reuses that same private source for ordinary session
+reads; `{ fresh: true }` requests a new inspection. Cookie snapshots never become
+private authentication evidence.
 
 The Effect client accepts the same options: `client.auth.getSession({ fresh: true })`.
 See the [client guide](./client#read-a-session-and-sign-out) for Atom usage.
@@ -142,13 +146,18 @@ Configure `completionLayer({ pendingLifetimeMillis, attemptLimit })` with
 `PendingAuthentication` persistence to support a second factor. A pending proof
 is not an authenticated session. [TOTP](./totp) shows the complete Layer setup.
 
-`SessionStrategy.inspect` returns private provenance for authorization decisions;
+`SessionStrategy.inspect` returns `{ inspection, guard }`: private provenance and
+the storage guard needed for an authorized change.
 ordinary verification results omit it. An action policy can call
 `AppAuth.sessions.inspectInvocation(invocation, credential)` to use the verification
 that admitted that exact action, preserving its original proof times and factors.
 It checks expiry again and performs a fresh inspection outside that invocation.
-Explicit `inspect` and `verify` calls always run the selected strategy again.
+Explicit `inspect` and `auth.verifySession` calls always run the selected strategy again.
 Mutation persistence still checks its current authority before commit.
 
 Step-up binds its challenge to the source session and credential revision and
-rechecks both before replacing the session.
+rechecks both before replacing the session. The replacement's `authenticatedAt`
+reflects the newly satisfied step-up profile, so a recent passkey can authorize a
+password change or account link. Each retained factor keeps its actual verification
+time, and the original absolute expiry stays fixed. A fresh authentication time
+alone does not make an old factor fresh.

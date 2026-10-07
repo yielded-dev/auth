@@ -1,5 +1,6 @@
 import { BrowserLogin, OperationHttp, OperationHttpServer, Operations } from "@yielded/auth";
 import { BrowserLoginPersistence } from "@yielded/auth-persistence";
+import { hooksLayer } from "@yielded/auth/Persistence";
 import { Config, Effect, Layer, Option } from "effect";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 
@@ -44,14 +45,16 @@ const invocation = OperationHttpServer.invocationLayer(
       return Operations.guest;
 
     const session = yield* (yield* AppAuth.sessions.SessionStrategy)
-      .verify(credentials.session)
+      .inspect(credentials.session)
       .pipe(
+        Effect.map((source) => source.inspection.session),
         Effect.mapError(() => OperationHttp.OperationHttpError.make({ reason: "credentials" })),
       );
 
     return {
       _tag: "Authenticated" as const,
       subjectId: session.subjectId,
+      sessionId: session.sessionId,
       assurance: session.assurance,
     };
   }),
@@ -121,7 +124,9 @@ export const browserLoginRoutes = (origin: URL) =>
         HttpRouter.provideRequest(
           Layer.mergeAll(
             AppAuth.sessions.sessionHandlersLayer,
-            browserLogin.layer.pipe(Layer.provide(BrowserLoginPersistence.layer)),
+            browserLogin.layer.pipe(
+              Layer.provide(BrowserLoginPersistence.layer.pipe(Layer.provide(hooksLayer))),
+            ),
           ),
         ),
         Layer.provide(Layer.mergeAll(configuration(origin), invocation)),
