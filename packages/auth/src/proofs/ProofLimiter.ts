@@ -2,7 +2,7 @@ import { Context, Duration, Effect, Layer } from "effect";
 import * as RateLimiter from "effect/persistence/RateLimiter";
 
 import { defaultLayer } from "../auth/defaults";
-import { boundedMemoryRateLimiter } from "../auth/rateLimiter";
+import { boundedMemoryRateLimiter, localRateLimiter } from "../auth/rateLimiter";
 import type { ProofAbuseScope } from "./abuse";
 import { ProofIngressDenied, ProofUnavailable } from "./errors";
 import type { ProofAbusePolicy, ProofBudget } from "./policy";
@@ -12,7 +12,8 @@ import type { ProofAbusePolicy, ProofBudget } from "./policy";
  * malformed candidate secrets. Host ingress separately limits malformed requests.
  * No refunds.
  * Defaults retain up to 10,000 active buckets and fail closed at capacity. Supply
- * a shared RateLimiterStore for coordination across replicas and restarts. */
+ * a shared RateLimiterStore for coordination across replicas and restarts; action
+ * buckets are always process-local. */
 export class ProofLimiter extends Context.Service<
   ProofLimiter,
   {
@@ -26,10 +27,15 @@ export class ProofLimiter extends Context.Service<
   static readonly layer = Layer.effect(
     this,
     Effect.gen(function* () {
-      const limiter = yield* RateLimiter.RateLimiter;
+      const shared = yield* RateLimiter.RateLimiter;
+      const local = yield* localRateLimiter("reject");
 
-      const consume = (key: ReadonlyArray<string>, budget: ProofBudget) =>
-        limiter
+      const consume = (
+        bucket: "action" | "identifier" | "subject",
+        key: ReadonlyArray<string>,
+        budget: ProofBudget,
+      ) =>
+        (bucket === "action" ? local : shared)
           .consume({
             key: JSON.stringify(["effect-auth/proof", ...key]),
             algorithm: "token-bucket",
@@ -51,15 +57,18 @@ export class ProofLimiter extends Context.Service<
           const base = [scope.moduleId, scope.purpose, kind];
 
           yield* consume(
+            "action",
             [...base, "action"],
             kind === "issue" ? policy.actionIssues : policy.actionAttempts,
           );
           yield* consume(
+            "identifier",
             [...base, "identifier", scope.identifier.namespace, scope.identifier.value],
             kind === "issue" ? policy.issues : policy.attempts,
           );
           if (scope.subjectId !== undefined)
             yield* consume(
+              "subject",
               [...base, "subject", scope.subjectId],
               kind === "issue" ? policy.subjectIssues : policy.subjectAttempts,
             );

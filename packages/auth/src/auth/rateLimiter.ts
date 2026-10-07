@@ -1,4 +1,5 @@
-import { Clock, Duration, Effect, Layer, Semaphore } from "effect";
+import { Clock, Duration, Effect, Layer, Schema, Semaphore } from "effect";
+import * as KeyValueStore from "effect/persistence/KeyValueStore";
 import * as RateLimiter from "effect/persistence/RateLimiter";
 
 import { defaultLayer } from "./defaults";
@@ -84,6 +85,81 @@ const boundedMemoryStore = (whenFull: "reject" | "evict") =>
       });
     }),
   );
+
+const Bucket = Schema.fromJsonString(
+  Schema.Struct({ tokens: Schema.Finite, lastRefill: Schema.Finite }),
+);
+
+/** Auth token buckets in any Effect `KeyValueStore`, such as Workers KV or Redis.
+ * Each check reads, refills, consumes and writes back one entry. That is not
+ * atomic: concurrent checks and replication lag can admit a few extra requests.
+ * A read, write or decode failure denies the request. An idle bucket refills to
+ * full when next read, so expiry only bounds storage: give entries a TTL at least
+ * as long as the longest window. Supports the one-token buckets auth uses.
+ */
+export const keyValueRateLimiterStore: Layer.Layer<
+  RateLimiter.RateLimiterStore,
+  never,
+  KeyValueStore.KeyValueStore
+> = Layer.effect(
+  RateLimiter.RateLimiterStore,
+  Effect.gen(function* () {
+    const store = yield* KeyValueStore.KeyValueStore;
+    const unsupported = storeFailure("Auth rate limits support only one-token consumption");
+
+    return RateLimiter.RateLimiterStore.of({
+      fixedWindow: () => unsupported,
+      adaptiveConsume: () => unsupported,
+      adaptiveFeedback: () => unsupported,
+      tokenBucket: (request) =>
+        Effect.gen(function* () {
+          if (request.allowOverflow || request.tokens !== 1) return yield* unsupported;
+          const refillRateMillis = Duration.toMillis(request.refillRate);
+          const now = yield* Clock.currentTimeMillis;
+          const stored = yield* store.get(request.key);
+
+          const bucket =
+            stored === undefined
+              ? { tokens: request.limit, lastRefill: now }
+              : { ...(yield* Schema.decodeEffect(Bucket)(stored)) };
+
+          const before = { ...bucket };
+          // Same arithmetic as Effect's memory store, persisted between checks.
+          const tokensToAdd = Math.floor((now - bucket.lastRefill) / refillRateMillis);
+
+          if (tokensToAdd > 0) {
+            bucket.tokens = Math.min(request.limit, bucket.tokens + tokensToAdd);
+            bucket.lastRefill += tokensToAdd * refillRateMillis;
+          }
+          if (bucket.tokens >= request.limit) bucket.lastRefill = now;
+          const remaining = bucket.tokens - request.tokens;
+
+          if (remaining >= 0) bucket.tokens = remaining;
+          // A rejected check on an unchanged bucket writes nothing.
+          if (
+            stored === undefined ||
+            bucket.tokens !== before.tokens ||
+            bucket.lastRefill !== before.lastRefill
+          )
+            yield* store.set(request.key, yield* Schema.encodeEffect(Bucket)(bucket));
+
+          return [remaining, Math.max(0, now - bucket.lastRefill)] as const;
+        }).pipe(
+          Effect.catchTags({
+            KeyValueStoreError: () => storeFailure("Auth rate limit key-value store failed"),
+            SchemaError: () => storeFailure("Auth rate limit entry is malformed"),
+          }),
+        ),
+    });
+  }),
+);
+
+/** A process-local `RateLimiter` that a supplied store never replaces. Fleet-wide
+ * budgets use it: in a shared store one key per action would take every request's
+ * write and let any client exhaust everyone's allowance. Per instance they shed load.
+ */
+export const localRateLimiter = (whenFull: "reject" | "evict") =>
+  RateLimiter.make.pipe(Effect.provide(boundedMemoryStore(whenFull), { local: true }));
 
 /** The default `RateLimiter` for one Auth limiter: a supplied `RateLimiter` or
  * `RateLimiterStore` wins, otherwise process-local token buckets for at most

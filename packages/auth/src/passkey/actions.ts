@@ -13,7 +13,7 @@ import {
 import { Base64Url } from "effect/encoding";
 import * as RateLimiter from "effect/persistence/RateLimiter";
 
-import { boundedMemoryRateLimiter } from "../auth/rateLimiter";
+import { boundedMemoryRateLimiter, localRateLimiter } from "../auth/rateLimiter";
 import { hasCommitScope, type PreparedCommit } from "../hooks/commit";
 import { LifecycleHooks } from "../hooks/LifecycleHooks";
 import { lifecycleSnapshot } from "../hooks/models";
@@ -159,10 +159,12 @@ export const makePasskeyCeremony = <const Id extends string, const Purpose exten
     const binder = yield* binding.RequestBinding;
     const crypto = yield* Crypto.Crypto;
     const hooks = yield* LifecycleHooks;
-    const limiter = yield* RateLimiter.RateLimiter;
+    const shared = yield* RateLimiter.RateLimiter;
+    // The module-wide budget stays per instance; subject and target buckets share.
+    const local = yield* localRateLimiter("reject");
 
     const admit = (scope: "global" | "subject" | "target", key: string) =>
-      limiter
+      (scope === "global" ? local : shared)
         .consume({
           key: `effect-auth:passkey:${JSON.stringify([moduleId, scope, key])}`,
           algorithm: "token-bucket",

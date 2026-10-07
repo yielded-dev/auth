@@ -173,23 +173,54 @@ High traffic or many distinct identifiers can exhaust this capacity.
 When full, the store reclaims buckets idle for a complete refill window, including
 time since their last rejected check. Active buckets are never evicted and no
 background cleanup fiber runs. Before increasing budgets, provide a store sized
-for the resulting active keys. Multi-instance deployments require a shared Effect
-`RateLimiterStore`, such as Redis, or a replacement `PasswordAttemptLimiter`:
+for the resulting active keys. The password attempt policy controls bucket sizes;
+KDF concurrency remains a separate service.
+
+### Share rate limits
+
+The default only protects a long-lived process. Each instance keeps its own counts,
+and a runtime built per request, such as a Worker that creates Auth on each fetch,
+keeps none: the limits never trigger. Supply one shared Effect `RateLimiterStore`
+and every auth limiter uses it: passwords, codes, phone, passkeys, and host ingress. Action, global message, and passkey module budgets always stay
+per instance; shared, one key would take every request's write and let any client
+exhaust everyone's allowance.
+
+`keyValueRateLimiterStore` keeps buckets in any Effect `KeyValueStore`. With
+Workers KV:
 
 ```ts
-import { Layer } from "effect";
-import { RateLimiter } from "effect/persistence";
-import { Password } from "@yielded/auth";
-import { RedisLive } from "./redis";
+import { Effect, Layer } from "effect";
+import { KeyValueStore } from "effect/persistence";
+import { keyValueRateLimiterStore } from "@yielded/auth/Persistence";
 
-const PasswordLimits = Password.PasswordAttemptLimiter.layer.pipe(
-  Layer.provide(RateLimiter.layerStoreRedis().pipe(Layer.provide(RedisLive))),
-);
+const workersKv = (kv: KVNamespace) => {
+  const call = <A>(method: string, run: () => Promise<A>) =>
+    Effect.tryPromise({
+      try: run,
+      catch: (cause) =>
+        new KeyValueStore.KeyValueStoreError({ method, message: "Workers KV failed", cause }),
+    });
+
+  return KeyValueStore.makeStringOnly({
+    get: (key) => call("get", async () => (await kv.get(key)) ?? undefined),
+    // At least the longest limit window; idle buckets refill when next read.
+    set: (key, value) => call("set", () => kv.put(key, value, { expirationTtl: 3600 })),
+    remove: (key) => call("remove", () => kv.delete(key)),
+    clear: call("clear", () => Promise.reject(new Error("unsupported"))),
+    size: call("size", () => Promise.reject(new Error("unsupported"))),
+  });
+};
+
+export const RateLimitsLive = (kv: KVNamespace) =>
+  keyValueRateLimiterStore.pipe(
+    Layer.provide(Layer.succeed(KeyValueStore.KeyValueStore, workersKv(kv))),
+  );
 ```
 
-Provide `PasswordLimits` to your Auth Layer. `RedisLive` supplies Effect's `Redis`
-service using your platform client. The password attempt policy controls bucket
-sizes; KDF concurrency remains a separate service.
+Provide `RateLimitsLive(env.RATE_LIMITS)` to your Auth Layer. Each check reads and
+writes one entry without atomicity, so concurrent requests and KV replication can
+admit a few extra attempts; a read or write failure denies the request. For exact
+limits, supply an atomic store such as `RateLimiter.layerStoreRedis()`.
 
 Sign-in reads the credential and captures authority before hashing, then checks
 current account status, credential revisions, and factor policy again when issuing

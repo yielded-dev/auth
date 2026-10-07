@@ -2,7 +2,7 @@ import { Context, Duration, Effect, Layer, Schema } from "effect";
 import * as RateLimiter from "effect/persistence/RateLimiter";
 
 import { defaultLayer } from "../auth/defaults";
-import { boundedMemoryRateLimiter } from "../auth/rateLimiter";
+import { boundedMemoryRateLimiter, localRateLimiter } from "../auth/rateLimiter";
 import { PhoneAdmissionPolicy, PhoneConfigurationError } from "./lifecycleModels";
 import { PhoneOtpUnavailable } from "./models";
 
@@ -16,7 +16,8 @@ export const defaultPhoneAdmissionPolicy: PhoneAdmissionPolicy = {
 /** Charge every network request/attempt and each request's global message budget,
  * including suppressed recipients. No replay receipts or refunds. Defaults use
  * bounded process-local token buckets that retain active entries and fail closed
- * at capacity; supply a shared RateLimiterStore across replicas. */
+ * at capacity; supply a shared RateLimiterStore across replicas. The global message
+ * budget is always process-local. */
 export class PhoneAdmission extends Context.Service<
   PhoneAdmission,
   {
@@ -35,10 +36,15 @@ export class PhoneAdmission extends Context.Service<
           Effect.mapError(() => PhoneConfigurationError.make({})),
         );
 
-        const limiter = yield* RateLimiter.RateLimiter;
+        const shared = yield* RateLimiter.RateLimiter;
+        const local = yield* localRateLimiter("reject");
 
-        const consume = (key: ReadonlyArray<string>, limit: number) =>
-          limiter.consume({
+        const consume = (
+          bucket: "network" | "messages",
+          key: ReadonlyArray<string>,
+          limit: number,
+        ) =>
+          (bucket === "messages" ? local : shared).consume({
             key: JSON.stringify(["effect-auth/phone", ...key]),
             algorithm: "token-bucket",
             limit,
@@ -50,11 +56,12 @@ export class PhoneAdmission extends Context.Service<
           admit: ({ moduleId, action, networkKey }) =>
             Effect.gen(function* () {
               yield* consume(
+                "network",
                 [moduleId, "network", action, networkKey],
                 action === "request" ? policy.networkRequests : policy.networkAttempts,
               );
               if (action === "request")
-                yield* consume([moduleId, "messages"], policy.maximumMessages);
+                yield* consume("messages", [moduleId, "messages"], policy.maximumMessages);
 
               return true;
             }).pipe(

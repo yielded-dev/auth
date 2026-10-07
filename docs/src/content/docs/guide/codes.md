@@ -117,8 +117,10 @@ token buckets for schema-valid requests, including suppressed or repeated issuan
 unknown targets, and malformed candidate secrets. Host ingress separately limits
 schema-invalid requests.
 Auth's default `ProofLimiter` retains at most 10,000 active buckets and fails closed
-at capacity. It is process-local; supply a shared Effect `RateLimiterStore` across
-replicas. Host ingress separately limits traffic before target lookup.
+at capacity. It is process-local, so it gives no protection across replicas or in
+per-request runtimes; [share rate limits](./passwords#share-rate-limits) for
+identifier and subject buckets. Action budgets stay per instance. Host ingress
+separately limits traffic before target lookup.
 
 Request again with the original binding after `resendCooldownMillis` to issue a new
 code. `requestId` is correlation only and does not recover an earlier receipt.

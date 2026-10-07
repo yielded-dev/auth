@@ -129,8 +129,8 @@ request every three minutes. It checks every request before account lookup,
 including retries and unknown addresses. Change the policy with
 `Proofs.HostIngressLimiter.layer({ limit: 40 })`, or provide your own service.
 
-The default store is local to the Auth runtime. Multiple server instances can use
-a shared Effect `RateLimiterStore`. Behind a proxy, provide the trusted client
+The default store is local to the Auth runtime, so multiple instances and
+per-request runtimes need a [shared store](./passwords#share-rate-limits). Behind a proxy, provide the trusted client
 identity per request; forwarded headers are not trusted automatically. See the
 [rate-limit reference](../reference/http#proof-request-rate-limits) for those overrides.
 

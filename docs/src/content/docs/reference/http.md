@@ -125,8 +125,10 @@ const AuthLive = AppAuth.layer.pipe(
 Both options must be positive integers. The default store is process-local, resets
 when it is recreated, and holds at most 10,000 network keys. At capacity it evicts the
 least recently checked key, which later starts with a full bucket. For
-shared enforcement across servers, provide an Effect `RateLimiterStore`, such as
-`RateLimiter.layerStoreRedis({ prefix: "auth:requests" })`, to the Auth Layer.
+shared enforcement across servers or per-request runtimes, provide an Effect
+`RateLimiterStore` to the Auth Layer, such as
+[`keyValueRateLimiterStore`](../guide/passwords#share-rate-limits) or
+`RateLimiter.layerStoreRedis({ prefix: "auth:requests" })`.
 An explicitly provided `RateLimiter` or `HostIngressLimiter` also replaces its
 default. Limit malformed traffic at the host before HTTP/RPC parsing.
 
