@@ -33,9 +33,11 @@ test.each(["confirmation", "replacement"] as const)(
 
           const entered = yield* Deferred.make<void>();
           const response = yield* Deferred.make<void>();
+          let calls = 0;
 
           const http = HttpClient.make((request) =>
             Effect.gen(function* () {
+              calls++;
               yield* Deferred.succeed(entered, undefined);
               yield* Deferred.await(response);
 
@@ -85,10 +87,93 @@ test.each(["confirmation", "replacement"] as const)(
 
           expect(session?.claims.name).toBe("confirmed");
           expect(states.includes("Initial")).toBe(mode === "replacement");
+          // d1f2799 also restarts the query that discovers the account.
+          expect(calls).toBe(mode === "replacement" ? 2 : 1);
         }),
       ),
     ),
 );
+
+// d1f2799 assigns subject-discovering queries to the registry they retire.
+// Control late responses to distinguish their own transition from replacement.
+test("subject queries settle once and discard responses from a replaced account", () =>
+  Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const contract = AuthContract.make("test/subject-query", {
+          claims: Schema.Struct({}),
+          actions: () => ({
+            discover: AuthContract.action({
+              payload: Schema.Void,
+              success: Schema.NullOr(Schema.String),
+              error: Schema.Never,
+              mode: "query",
+              subject: { fromSuccess: (value) => value },
+            }),
+          }),
+        });
+
+        const oldResponse = yield* Deferred.make<string>();
+        const newResponse = yield* Deferred.make<string>();
+        const entered = yield* Deferred.make<void>();
+        let response: Effect.Effect<string | null> = Effect.succeed("first");
+        let calls = 0;
+
+        const http = HttpClient.make((request) =>
+          Effect.gen(function* () {
+            calls++;
+            const pending = response;
+
+            if (calls === 2) yield* Deferred.succeed(entered, undefined);
+
+            return HttpClientResponse.fromWeb(
+              request,
+              Response.json({ _tag: "Success", value: yield* pending }),
+            );
+          }),
+        );
+
+        const AppClient = Client.make(contract, { baseUrl: "https://example.test" });
+
+        const auth = AuthAtom.make(AppClient, {
+          layer: AppClient.layer.pipe(Layer.provide(Layer.succeed(HttpClient.HttpClient, http))),
+        });
+
+        const registry = yield* Effect.acquireRelease(
+          Effect.sync(() => AtomRegistry.make()),
+          (value) => Effect.sync(() => value.dispose()),
+        );
+
+        const context = yield* AtomRegistry.getResult(registry, auth.runtime);
+        const lifetime = Context.get(context, AuthAtom.AuthAtomLifetime);
+
+        const result = AtomRegistry.getResult(registry, auth.discover, {
+          suspendOnWaiting: true,
+        }).pipe(Effect.timeout("1 second"));
+
+        yield* AtomRegistry.mount(registry, auth.discover);
+        expect(yield* result).toBe("first");
+        expect(calls).toBe(1);
+
+        response = Deferred.await(oldResponse);
+        registry.refresh(auth.discover);
+        yield* Deferred.await(entered);
+        response = Deferred.await(newResponse);
+        yield* lifetime.replaceSubject("second");
+        expect(AsyncResult.value(registry.get(auth.discover))).toEqual(Option.none());
+        yield* Deferred.succeed(oldResponse, "first");
+        yield* Deferred.succeed(newResponse, "second");
+        expect(yield* result).toBe("second");
+        expect(calls).toBe(3);
+
+        response = Effect.succeed(null);
+        registry.refresh(auth.discover);
+        expect(yield* result).toBeNull();
+        expect(calls).toBe(4);
+        expect((yield* lifetime.get).subject).toBeNull();
+      }),
+    ),
+  ));
 
 // https://github.com/yielded-dev/auth/commit/32be91d2
 // Force the scheduler gap between the caller's fence and credential admission;

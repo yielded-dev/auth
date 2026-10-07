@@ -117,7 +117,11 @@ lifetime; invalidation does not make them account-scoped.
 
 Named auth mutations survive their own sign-in or sign-out until the result
 settles. Unrelated account changes interrupt pending mutations and clear previous
-results. Custom workflows retire on account replacement, including when they
+results. Named queries that discover the account, including `getSession` and
+`requireSession`, finish that read without repeating it. An unrelated account
+change clears their results and starts a new read.
+
+Custom workflows retire on account replacement, including when they
 complete authentication; awaiting callers receive interruption. Use an
 application-owned lifetime for work that intentionally spans accounts.
 

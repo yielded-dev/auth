@@ -69,7 +69,8 @@ export type AuthAtoms<
 > = {
   readonly [Name in keyof Actions]: AuthActionAtom<Actions[Name], E>;
 } & {
-  /** Default getSession query, including any initial display data. */
+  /** Default getSession query, including any initial display data. Finishes its
+   * own account discovery without repeating the request. */
   readonly session: QueryAtom<Actions["getSession"], E>;
   readonly client: ClientDefinition<Id, Actions, R>;
   /** Account-scoped queries, effects, state and workflows. Named auth mutations
@@ -277,10 +278,15 @@ export const make = <
   const call = Effect.fn("AuthAtom.call")(function* <Name extends keyof Actions>(
     name: Name,
     input: RouteInput<Actions[Name]["route"]>,
+    origin?: object,
   ) {
     const instance = yield* client;
 
-    return yield* instance.auth[AuthClientTypeId].call(name, input);
+    return yield* instance.auth[AuthClientTypeId].call(
+      name,
+      input,
+      origin === undefined ? undefined : { origin },
+    );
   });
 
   const mutation = <Name extends keyof Actions>(name: Name) => {
@@ -348,9 +354,28 @@ export const make = <
       if (action.mode === "mutation") return [[name, mutation(name)]];
 
       const query = Atom.family((input: RouteInput<Actions[string]["route"]>) => {
-        const session = runtime
-          .atom(call(name, input))
-          .pipe(factory.withReactivity(queryKeys), Atom.withServerValueInitial);
+        // A subject-discovering read must outlive the account registry it retires.
+        // Other transitions still clear its result and restart the request.
+        const source =
+          action.subject === undefined
+            ? runtime.atom(call(name, input))
+            : host.atom((get) =>
+                Effect.gen(function* () {
+                  const binding = yield* AuthAtomBinding;
+                  const origin = {};
+
+                  get.addFinalizer(
+                    binding.subscribe((event) => {
+                      get.setSelf(AsyncResult.initial(true));
+                      if (event.origin !== origin) get.refreshSelf();
+                    }),
+                  );
+
+                  return yield* call(name, input, origin);
+                }),
+              );
+
+        const session = source.pipe(factory.withReactivity(queryKeys), Atom.withServerValueInitial);
 
         if (
           name !== "getSession" ||
