@@ -258,6 +258,7 @@ interface State {
   readonly nonce: Uint32Array;
   readonly words: Uint32Array;
   readonly stream: Uint8Array;
+  readonly streamView: DataView;
 }
 
 const readWords = (data: Uint8Array, words: Uint32Array): void => {
@@ -270,11 +271,14 @@ function withState<A>(key: Uint8Array, nonce: Uint8Array, operation: (state: Sta
   const original = new Uint32Array(8);
   const extendedNonce = new Uint32Array(4);
 
+  const stream = new Uint8Array(64);
+
   const state: State = {
     key: new Uint32Array(8),
     nonce: new Uint32Array(3),
     words: new Uint32Array(16),
-    stream: new Uint8Array(64),
+    stream,
+    streamView: new DataView(stream.buffer),
   };
 
   try {
@@ -300,7 +304,7 @@ function withState<A>(key: Uint8Array, nonce: Uint8Array, operation: (state: Sta
 
 const blockAt = (state: State, counter: number): void => {
   chachaCore(sigma, state.key, state.nonce, state.words, counter);
-  const view = new DataView(state.stream.buffer, state.stream.byteOffset, state.stream.byteLength);
+  const view = state.streamView;
 
   for (let i = 0; i < 16; i++) view.setUint32(i * 4, state.words[i], true);
 };

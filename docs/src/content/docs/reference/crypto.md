@@ -126,13 +126,23 @@ and the resulting PKCS8 use `Redacted`. Keys are limited to 16 KiB of DER.
 Auth envelopes are outside this package. SHA-1 HMAC is available
 for existing protocols such as TOTP.
 
-`Hmac.sign` and `verify` accept raw keys per operation. For repeated use,
-`Hmac.importKey({ algorithm, key })` validates and snapshots a nonextractable key
-once, returning `sign(data)` and `verify(data, tag)`. Import requires `Scope`;
-closing it waits for native calls and makes later operations fail with
-`CryptoUnavailable`. Custom `Hmac` implementations must implement this scoped
-import contract as well as raw-key operations. The caller retains ownership of
-the original key bytes.
+Raw-key operations import keys on each call. For repeated use, import a key once
+in the Scope that owns the work:
+
+| Service     | Import                                         | Returned operations                                                                                 |
+| ----------- | ---------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `Hmac`      | `importKey({ algorithm, key })`                | `sign(data)`, `verify(data, tag)`                                                                   |
+| `Aead`      | `importKey({ algorithm: "AES-256-GCM", key })` | `encrypt({ nonce, plaintext, additionalData? })`, `decrypt({ nonce, ciphertext, additionalData? })` |
+| `Signature` | `importPrivateKey({ algorithm, privateKey })`  | `sign(data)`                                                                                        |
+| `Signature` | `importPublicKey({ algorithm, publicKey })`    | `verify(data, signature)`                                                                           |
+
+Imports validate and snapshot nonextractable native keys. Algorithm and usage
+stay fixed on each handle; AES still requires a unique nonce per encryption.
+The caller retains ownership of the original bytes and can change them after
+import completes. Keep the import's Scope open while using its handle: closing
+it waits for native calls and makes later operations fail with `CryptoUnavailable`.
+Custom service implementations must support these scoped imports as well as
+raw-key operations. XChaCha continues to use raw-key operations.
 
 ## Backends and resource limits
 

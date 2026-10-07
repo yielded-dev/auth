@@ -1,8 +1,8 @@
-import { Effect, Exit, Fiber, Redacted, Schema, Scope } from "effect";
+import { Effect, Redacted, Schema } from "effect";
 
-import { CryptoUnavailable } from "../Errors";
 import { Hmac, Input, type Key, KeyInput, VerifyInput } from "../Hmac";
 import { copy, decode, importError, nativeError, withSecret } from "./common";
+import { makeScopedKey } from "./scoped-key";
 
 const keyBytes = Schema.Uint8Array.check(Schema.isMinLength(1));
 
@@ -12,37 +12,7 @@ export const makeHmac = (subtle: SubtleCrypto): Hmac["Service"] => {
 
     yield* decode(keyBytes, Redacted.value(value.key), "key");
 
-    // A sequential child joins every native call before dropping the key, even
-    // when the caller's Scope runs its other finalizers in parallel.
-    const scope = yield* Scope.fork(yield* Effect.scope, "sequential");
-    let imported: CryptoKey | undefined;
-
-    yield* Scope.addFinalizer(
-      scope,
-      Effect.sync(() => {
-        imported = undefined;
-      }),
-    );
-
-    const available = Effect.suspend(() =>
-      scope.state._tag === "Closed" ? Effect.fail(CryptoUnavailable.make({})) : Effect.void,
-    );
-
-    const run = <A, E>(operation: Effect.Effect<A, E>) =>
-      Effect.acquireUseRelease(
-        available.pipe(Effect.andThen(Effect.forkIn(operation, scope, { uninterruptible: false }))),
-        (fiber) =>
-          Effect.gen(function* () {
-            const exit = yield* Fiber.await(fiber);
-
-            yield* available;
-
-            return yield* exit;
-          }),
-        Fiber.interrupt,
-      );
-
-    yield* run(
+    const use = yield* makeScopedKey(
       withSecret(value.key, (material) =>
         Effect.tryPromise({
           try: () =>
@@ -51,41 +21,30 @@ export const makeHmac = (subtle: SubtleCrypto): Hmac["Service"] => {
               "verify",
             ]),
           catch: importError,
-        }).pipe(
-          Effect.tap((key) =>
-            Effect.sync(() => {
-              imported = key;
-            }),
-          ),
-          Effect.uninterruptible,
-        ),
+        }),
       ),
-    ).pipe(
-      Effect.onExit((exit) => (Exit.isFailure(exit) ? Scope.close(scope, exit) : Effect.void)),
     );
-
-    const use = <A>(operation: (key: CryptoKey) => Promise<A>) =>
-      run(
-        Effect.suspend(() => {
-          const key = imported;
-
-          return key === undefined
-            ? Effect.fail(CryptoUnavailable.make({}))
-            : Effect.tryPromise({ try: () => operation(key), catch: nativeError });
-        }).pipe(Effect.uninterruptible),
-      );
 
     return {
       sign: Effect.fnUntraced(function* (input) {
         const data = yield* decode(Schema.Uint8Array, input, "data").pipe(Effect.flatMap(copy));
 
-        return new Uint8Array(yield* use((key) => subtle.sign("HMAC", key, data)));
+        return new Uint8Array(
+          yield* use((key) =>
+            Effect.tryPromise({ try: () => subtle.sign("HMAC", key, data), catch: nativeError }),
+          ),
+        );
       }),
       verify: Effect.fnUntraced(function* (input, signature) {
         const data = yield* decode(Schema.Uint8Array, input, "data").pipe(Effect.flatMap(copy));
         const tag = yield* decode(Schema.Uint8Array, signature, "data").pipe(Effect.flatMap(copy));
 
-        return yield* use((key) => subtle.verify("HMAC", key, tag, data));
+        return yield* use((key) =>
+          Effect.tryPromise({
+            try: () => subtle.verify("HMAC", key, tag, data),
+            catch: nativeError,
+          }),
+        );
       }),
     } satisfies Key;
   });

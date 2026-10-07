@@ -30,9 +30,9 @@ constant-time execution.
 
 Secret inputs, derived bytes and decrypted plaintext use `Redacted`. Backend
 errors contain classifications without native causes or secret payloads. Keep
-each AEAD nonce unique for its key. `Hmac.importKey` snapshots a reusable,
-nonextractable key in the caller's Scope; closure joins native work and prevents
-further use. Signature operations use PKCS8/SPKI DER keys;
+each AEAD nonce unique for its key. HMAC, AES-GCM and signature services offer
+scoped imports for repeated key use. Handles snapshot nonextractable native keys;
+closure joins native work and prevents further use. Signature operations use PKCS8/SPKI DER keys;
 raw key components can be encoded through the native key parser.
 [JOSE](../jose/README.md) and password-hash serialization belong to other layers.
 
