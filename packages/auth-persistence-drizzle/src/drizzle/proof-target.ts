@@ -1,4 +1,3 @@
-import type { NativeDatabase } from "@yielded/auth-persistence/Adapter";
 import {
   coordinateCommit,
   hasCommitScope,
@@ -10,26 +9,22 @@ import { ProofUnavailable, ProofPersistence } from "@yielded/auth/Proofs";
 import { Effect, Layer } from "effect";
 import type * as SqlError from "effect/sql/SqlError";
 
-import {
-  CurrentProofSql,
-  makeSqlProofPersistence,
-  type ProofSqlConfiguration,
-  type ProofSqlDatabase,
-  type ProofSqlQuery,
-} from "./proof-sql";
+import type { NativeDatabase, NativeSqlDatabase, NativeSqlQuery } from "./native-database";
+import { CurrentProofSql, makeSqlProofPersistence, type ProofSqlConfiguration } from "./proof-sql";
 import { sqlClientStandaloneGuard, type TransactionService } from "./standalone-guard";
 import { validateDrizzleStorage } from "./storage-validation";
 
 export interface ProofTargetConfiguration {
   readonly mode: "interactive" | "synchronous";
   readonly locking: boolean;
+  readonly maxParameters?: number;
   readonly standaloneGuard: Effect.Effect<void, ProofUnavailable>;
   readonly coordinatorGuard?: Effect.Effect<void, ProofUnavailable>;
   readonly insertIfAbsent: (
-    query: ProofSqlQuery,
+    query: NativeSqlQuery,
     selfKey: string,
     selfValue: unknown,
-  ) => ProofSqlQuery;
+  ) => NativeSqlQuery;
 }
 
 interface TransactionOwner<Transaction> {
@@ -55,6 +50,9 @@ const options = (
 ): ProofSqlConfiguration => ({
   mode: configuration.mode,
   locking: configuration.locking,
+  ...(configuration.maxParameters === undefined
+    ? {}
+    : { maxParameters: configuration.maxParameters }),
 
   standaloneGuard: !coordinated ? configuration.standaloneGuard : Effect.void,
   insertIfAbsent: configuration.insertIfAbsent,
@@ -98,21 +96,19 @@ export const coordinateTargetProofPersistence = <Transaction, A, E, R>(
 
     yield* validateDrizzleStorage(mapping).pipe(Effect.mapError(() => ProofUnavailable.make({})));
 
-    const result = yield* coordinateCommit(
-      () =>
-        database.transaction((transaction) =>
-          Effect.gen(function* () {
-            return yield* owner(transaction, {
-              proofPersistence: yield* makeSqlProofPersistence(
-                mapping,
-                options(configuration, true),
-              ).pipe(
-                Effect.provideService(CurrentProofSql, transaction as unknown as ProofSqlDatabase),
-              ),
-            });
-          }),
-        ),
-      { mode: configuration.mode },
+    const result = yield* coordinateCommit(() =>
+      database.transaction((transaction) =>
+        Effect.gen(function* () {
+          return yield* owner(transaction, {
+            proofPersistence: yield* makeSqlProofPersistence(
+              mapping,
+              options(configuration, true),
+            ).pipe(
+              Effect.provideService(CurrentProofSql, transaction as unknown as NativeSqlDatabase),
+            ),
+          });
+        }),
+      ),
     ).pipe(Effect.provideService(LifecycleHooks, hooks));
 
     return result.value;

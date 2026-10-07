@@ -1,7 +1,7 @@
 import type { SecurityRevision, SessionStepUpIntent } from "@yielded/auth/Sessions";
 import type { DateTime, Effect } from "effect";
 
-import type { TableModel as Table, SqlExpression } from "../query-operations";
+import type { TableModel as Table, SqlExpression } from "../table-model";
 import type { PersistenceMappingError } from "./common";
 import type {
   D1SessionClockMapping,

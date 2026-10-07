@@ -1,0 +1,31 @@
+import { Effect, Schema } from "effect";
+import type { SqlClient } from "effect/sql/SqlClient";
+import type { SqlError } from "effect/sql/SqlError";
+import type { Fragment } from "effect/sql/Statement";
+
+/** Native row counts are the authority for conditional writes. MySQL exposes
+ * its result header; PostgreSQL and SQLite return one row for every match. */
+export const executeSqlChange = (
+  sql: SqlClient,
+  query: Fragment,
+): Effect.Effect<number, SqlError | Schema.SchemaError> =>
+  sql.onDialectOrElse({
+    mysql: () =>
+      sql`${query}`.raw.pipe(
+        Effect.flatMap(Schema.decodeUnknownEffect(Schema.Struct({ affectedRows: Schema.Int }))),
+        Effect.map((result) => result.affectedRows),
+      ),
+    orElse: () => sql`${query} returning 1 as changed`.pipe(Effect.map((rows) => rows.length)),
+  });
+
+/** Keep the indexed predicate and reject collation aliases of security tokens. */
+export const exactSqlText = (sql: SqlClient, left: Fragment, right: Fragment) =>
+  sql.and([
+    sql`${left} = ${right}`,
+    sql.onDialectOrElse({
+      mysql: () => sql`binary ${left} = binary ${right}`,
+      pg: () =>
+        sql`convert_to(cast(${left} as text), 'UTF8') = convert_to(cast(${right} as text), 'UTF8')`,
+      orElse: () => sql`cast(${left} as blob) = cast(${right} as blob)`,
+    }),
+  ]);

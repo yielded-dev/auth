@@ -1,4 +1,3 @@
-import { NativeDatabase } from "@yielded/auth-persistence/Adapter";
 import type { LifecycleHooks } from "@yielded/auth/Hooks";
 import {
   OAuthAccountsPersistence,
@@ -8,7 +7,7 @@ import {
 import type { Table } from "drizzle-orm";
 import { type Crypto, Effect, Context } from "effect";
 
-import { nativeDatabase } from "./native-database";
+import { NativeDatabase, nativeDatabase } from "./native-database";
 import { makeOAuthConnectedTarget } from "./oauth-connected-drivers";
 import type {
   OAuthAccountsMapping,
@@ -161,12 +160,7 @@ export const makeOAuthTarget = <
   }
   function coordinateOAuthRegistrationIntents<
     Database extends D,
-    S extends T,
     O extends T,
-    C extends T,
-    AC extends T,
-    F extends T,
-    TA extends T,
     I extends T,
     N,
     A,
@@ -177,7 +171,7 @@ export const makeOAuthTarget = <
   >(
     acquire: Effect.Effect<Database, DatabaseError, DatabaseRequirements>,
     options: {
-      readonly mapping: OAuthRegistrationIntentMapping<S, O, C, AC, F, TA, I, N>;
+      readonly mapping: OAuthRegistrationIntentMapping<O, I, N>;
       readonly transaction?: never;
     },
     body: Effect.Effect<A, E, Synchronous extends true ? NoInfer<OAuthRegistrationIntents> : R>,
@@ -191,12 +185,7 @@ export const makeOAuthTarget = <
   >;
   function coordinateOAuthRegistrationIntents<
     Database extends D,
-    S extends T,
     O extends T,
-    C extends T,
-    AC extends T,
-    F extends T,
-    TA extends T,
     I extends T,
     N,
     A,
@@ -209,7 +198,7 @@ export const makeOAuthTarget = <
   >(
     acquire: Effect.Effect<Database, DatabaseError, DatabaseRequirements>,
     options: {
-      readonly mapping: OAuthRegistrationIntentMapping<S, O, C, AC, F, TA, I, N>;
+      readonly mapping: OAuthRegistrationIntentMapping<O, I, N>;
       readonly transaction: SuppliedService<TxId, NoInfer<TransactionOf<Database>>, TxShape>;
     },
     body: Effect.Effect<
@@ -227,12 +216,7 @@ export const makeOAuthTarget = <
   >;
   function coordinateOAuthRegistrationIntents<
     Database extends D,
-    S extends T,
     O extends T,
-    C extends T,
-    AC extends T,
-    F extends T,
-    TA extends T,
     I extends T,
     N,
     A,
@@ -245,7 +229,7 @@ export const makeOAuthTarget = <
   >(
     acquire: Effect.Effect<Database, DatabaseError, DatabaseRequirements>,
     options: {
-      readonly mapping: OAuthRegistrationIntentMapping<S, O, C, AC, F, TA, I, N>;
+      readonly mapping: OAuthRegistrationIntentMapping<O, I, N>;
       readonly transaction?: SuppliedService<TxId, NoInfer<TransactionOf<Database>>, TxShape>;
     },
     body: Effect.Effect<A, E, R>,
@@ -289,8 +273,6 @@ export const makeOAuthTarget = <
     C extends T,
     AC extends T,
     F extends T,
-    TA extends T,
-    U extends T,
     N,
     A,
     E,
@@ -300,7 +282,7 @@ export const makeOAuthTarget = <
   >(
     acquire: Effect.Effect<Database, DatabaseError, DatabaseRequirements>,
     options: {
-      readonly mapping: OAuthAccountsMapping<S, O, C, AC, F, TA, U, N>;
+      readonly mapping: OAuthAccountsMapping<S, O, C, AC, F, N>;
       readonly transaction?: never;
     },
     body: Effect.Effect<A, E, Synchronous extends true ? NoInfer<OAuthAccountsPersistence> : R>,
@@ -319,8 +301,6 @@ export const makeOAuthTarget = <
     C extends T,
     AC extends T,
     F extends T,
-    TA extends T,
-    U extends T,
     N,
     A,
     E,
@@ -332,7 +312,7 @@ export const makeOAuthTarget = <
   >(
     acquire: Effect.Effect<Database, DatabaseError, DatabaseRequirements>,
     options: {
-      readonly mapping: OAuthAccountsMapping<S, O, C, AC, F, TA, U, N>;
+      readonly mapping: OAuthAccountsMapping<S, O, C, AC, F, N>;
       readonly transaction: SuppliedService<TxId, NoInfer<TransactionOf<Database>>, TxShape>;
     },
     body: Effect.Effect<
@@ -355,8 +335,6 @@ export const makeOAuthTarget = <
     C extends T,
     AC extends T,
     F extends T,
-    TA extends T,
-    U extends T,
     N,
     A,
     E,
@@ -368,7 +346,7 @@ export const makeOAuthTarget = <
   >(
     acquire: Effect.Effect<Database, DatabaseError, DatabaseRequirements>,
     options: {
-      readonly mapping: OAuthAccountsMapping<S, O, C, AC, F, TA, U, N>;
+      readonly mapping: OAuthAccountsMapping<S, O, C, AC, F, N>;
       readonly transaction?: SuppliedService<TxId, NoInfer<TransactionOf<Database>>, TxShape>;
     },
     body: Effect.Effect<A, E, R>,
@@ -413,9 +391,7 @@ export const makeOAuthTarget = <
     O extends T,
     C extends T,
     AC extends T,
-    TA extends T,
     I extends T,
-    Rq extends T,
     N,
     A,
     E,
@@ -425,7 +401,7 @@ export const makeOAuthTarget = <
   >(
     acquire: Effect.Effect<Database, DatabaseError, DatabaseRequirements>,
     options: {
-      readonly mapping: OAuthRegistrationMapping<NoInfer<Registration>, S, O, C, AC, TA, I, Rq, N>;
+      readonly mapping: OAuthRegistrationMapping<NoInfer<Registration>, S, O, C, AC, I, N>;
       readonly target: SuppliedService<TargetId, OAuthRegistrationAuthority<Registration>>;
       readonly transaction?: never;
     },
@@ -446,9 +422,7 @@ export const makeOAuthTarget = <
     O extends T,
     C extends T,
     AC extends T,
-    TA extends T,
     I extends T,
-    Rq extends T,
     N,
     A,
     E,
@@ -460,7 +434,7 @@ export const makeOAuthTarget = <
   >(
     acquire: Effect.Effect<Database, DatabaseError, DatabaseRequirements>,
     options: {
-      readonly mapping: OAuthRegistrationMapping<NoInfer<Registration>, S, O, C, AC, TA, I, Rq, N>;
+      readonly mapping: OAuthRegistrationMapping<NoInfer<Registration>, S, O, C, AC, I, N>;
       readonly target: SuppliedService<TargetId, OAuthRegistrationAuthority<Registration>>;
       readonly transaction: SuppliedService<TxId, NoInfer<TransactionOf<Database>>, TxShape>;
     },
@@ -481,9 +455,7 @@ export const makeOAuthTarget = <
     O extends T,
     C extends T,
     AC extends T,
-    TA extends T,
     I extends T,
-    Rq extends T,
     N,
     A,
     E,
@@ -495,7 +467,7 @@ export const makeOAuthTarget = <
   >(
     acquire: Effect.Effect<Database, DatabaseError, DatabaseRequirements>,
     options: {
-      readonly mapping: OAuthRegistrationMapping<NoInfer<Registration>, S, O, C, AC, TA, I, Rq, N>;
+      readonly mapping: OAuthRegistrationMapping<NoInfer<Registration>, S, O, C, AC, I, N>;
       readonly target: SuppliedService<TargetId, OAuthRegistrationAuthority<Registration>>;
       readonly transaction?: SuppliedService<TxId, NoInfer<TransactionOf<Database>>, TxShape>;
     },
@@ -542,11 +514,9 @@ export const makeOAuthTarget = <
       C extends T,
       AC extends T,
       F extends T,
-      TA extends T,
-      U extends T,
       N,
     >(
-      mapping: OAuthAccountsMapping<S, O, C, AC, F, TA, U, N>,
+      mapping: OAuthAccountsMapping<S, O, C, AC, F, N>,
     ) =>
       makeTargetOAuthAccountsServices(mapping, configuration).pipe(
         Effect.provideServiceEffect(NativeDatabase, nativeDatabase(databaseService)),
@@ -557,17 +527,8 @@ export const makeOAuthTarget = <
       makeTargetOAuthSignInServices(mapping, configuration).pipe(
         Effect.provideServiceEffect(NativeDatabase, nativeDatabase(databaseService)),
       ),
-    makeOAuthRegistrationIntentServices: <
-      S extends T,
-      O extends T,
-      C extends T,
-      AC extends T,
-      F extends T,
-      TA extends T,
-      I extends T,
-      N,
-    >(
-      mapping: OAuthRegistrationIntentMapping<S, O, C, AC, F, TA, I, N>,
+    makeOAuthRegistrationIntentServices: <O extends T, I extends T, N>(
+      mapping: OAuthRegistrationIntentMapping<O, I, N>,
     ) =>
       makeTargetOAuthRegistrationIntentServices(mapping, configuration).pipe(
         Effect.provideServiceEffect(NativeDatabase, nativeDatabase(databaseService)),
@@ -578,12 +539,10 @@ export const makeOAuthTarget = <
       O extends T,
       C extends T,
       AC extends T,
-      TA extends T,
       I extends T,
-      R extends T,
       N,
     >(
-      mapping: OAuthRegistrationMapping<Registration, S, O, C, AC, TA, I, R, N>,
+      mapping: OAuthRegistrationMapping<Registration, S, O, C, AC, I, N>,
     ) =>
       makeTargetOAuthRegistrationServices<Registration>(mapping, configuration).pipe(
         Effect.provideServiceEffect(NativeDatabase, nativeDatabase(databaseService)),

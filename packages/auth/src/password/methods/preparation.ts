@@ -15,7 +15,7 @@ import {
   passwordUnexpected as unexpected,
 } from "./verification";
 
-/** Shared preparation preserves the current-password proof instant before new-password hashing. */
+/** Preserve the current-password proof instant before new-password hashing. */
 export const makePasswordPreparation = ({
   moduleId,
   policy,

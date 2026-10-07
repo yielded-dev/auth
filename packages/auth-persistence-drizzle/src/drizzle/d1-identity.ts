@@ -1,5 +1,5 @@
 import type { D1Client } from "@effect/sql-d1/D1Client";
-import { withStorageValidation, NativeDatabase } from "@yielded/auth-persistence/Adapter";
+import { withStorageValidation } from "@yielded/auth-persistence/Adapter";
 import {
   ExternalIdentityMutation,
   type ExternalIdentity,
@@ -35,7 +35,7 @@ import {
   type D1GeneratedIdentityMapping,
   type D1SubjectProvisioningMapping,
 } from "./model";
-import { nativeDatabase } from "./native-database";
+import { NativeDatabase, nativeDatabase } from "./native-database";
 import { validateDrizzleStorage } from "./storage-validation";
 
 type RuntimeDatabase = EffectSQLiteD1Database<any> & { readonly $client: D1Client };

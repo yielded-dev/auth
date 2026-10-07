@@ -1,4 +1,3 @@
-import { NativeDatabase } from "@yielded/auth-persistence/Adapter";
 import type { LifecycleHooks, HookConfigurationError } from "@yielded/auth/Hooks";
 import { type PasswordUnavailable, PasswordPersistence } from "@yielded/auth/Password";
 /* oxlint-disable no-explicit-any -- proof mapping tables are independently typed by the proof owner; this driver forwards them unchanged to the shared target. */
@@ -11,11 +10,11 @@ import type { AnySQLiteTable } from "drizzle-orm/sqlite-core";
 import { Effect, Context } from "effect";
 import type { SqlError } from "effect/sql/SqlError";
 
-import { nativeDatabase } from "./native-database";
+import { NativeDatabase, nativeDatabase } from "./native-database";
+import type { NativeSqlQuery } from "./native-database";
 import type { PasswordPersistenceMapping, PasswordRegistrationMapping } from "./password-model";
 import type { PasswordRegistrationAuthority } from "./password-registration";
 import { CurrentPasswordSql } from "./password-sql";
-import type { PasswordSqlQuery } from "./password-sql";
 import {
   coordinateTargetPasswordPersistence,
   coordinateTargetPasswordRegistration,
@@ -24,7 +23,6 @@ import {
   type PasswordTargetConfiguration,
 } from "./password-target";
 import type { ProofPersistenceMapping } from "./proof-model";
-import type { ProofSqlQuery } from "./proof-sql";
 import type { DatabaseValue as DODatabase } from "./sqlite-do-database";
 import {
   type TransactionService,
@@ -49,18 +47,21 @@ export const sqlitePasswordConfiguration = (
   standaloneGuard: PasswordTargetConfiguration["standaloneGuard"],
   proofStandaloneGuard: PasswordTargetConfiguration["proof"]["standaloneGuard"],
   coordinatorGuard?: PasswordTargetConfiguration["coordinatorGuard"],
+  maxParameters?: number,
 ): PasswordTargetConfiguration => ({
   mode,
   locking: false,
+  ...(maxParameters === undefined ? {} : { maxParameters }),
   standaloneGuard,
   ...(coordinatorGuard === undefined ? {} : { coordinatorGuard }),
-  insertIfAbsent: (query: PasswordSqlQuery) => query.onConflictDoNothing(),
-  generatedSubjectRows: (query: PasswordSqlQuery) => query.returning(),
+  insertIfAbsent: (query: NativeSqlQuery) => query.onConflictDoNothing(),
+  generatedSubjectRows: (query: NativeSqlQuery) => query.returning(),
   proof: {
     mode,
     locking: false,
+    ...(maxParameters === undefined ? {} : { maxParameters }),
     standaloneGuard: proofStandaloneGuard,
-    insertIfAbsent: (query: ProofSqlQuery) => query.onConflictDoNothing(),
+    insertIfAbsent: (query: NativeSqlQuery) => query.onConflictDoNothing(),
   },
 });
 

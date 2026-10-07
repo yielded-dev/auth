@@ -1,4 +1,3 @@
-import { NativeDatabase } from "@yielded/auth-persistence/Adapter";
 import type { LifecycleHooks, HookConfigurationError } from "@yielded/auth/Hooks";
 import { type ProofUnavailable, ProofPersistence } from "@yielded/auth/Proofs";
 import type { AnyRelations } from "drizzle-orm";
@@ -10,7 +9,7 @@ import type { AnySQLiteTable } from "drizzle-orm/sqlite-core";
 import { Effect, Context } from "effect";
 import type { SqlError } from "effect/sql/SqlError";
 
-import { nativeDatabase } from "./native-database";
+import { NativeDatabase, nativeDatabase } from "./native-database";
 import type { ProofPersistenceMapping } from "./proof-model";
 import { CurrentProofSql } from "./proof-sql";
 import {
@@ -52,9 +51,11 @@ export const sqliteProofConfiguration = (
   mode: "interactive" | "synchronous",
   standaloneGuard: Effect.Effect<void, ProofUnavailable>,
   coordinatorGuard?: Effect.Effect<void, ProofUnavailable>,
+  maxParameters?: number,
 ): ProofTargetConfiguration => ({
   mode,
   locking: false,
+  ...(maxParameters === undefined ? {} : { maxParameters }),
   standaloneGuard,
   insertIfAbsent: (query) => query.onConflictDoNothing(),
   ...(coordinatorGuard === undefined ? {} : { coordinatorGuard }),

@@ -89,14 +89,6 @@ const Passkey = Schema.Struct({
   summary: AuthPasskey.PasskeyCredentialSummary,
 });
 
-const Ceremony = Schema.Struct({
-  ceremony: AuthPasskey.PasskeyCeremony,
-  policy: AuthPasskey.PasskeyMethodPolicy,
-  state: Schema.Literals(["pending", "claimed", "verified", "rejected", "ambiguous"]),
-  claim: Schema.optionalKey(AuthPasskey.PasskeyClaim),
-  credential: Schema.optionalKey(AuthPasskey.PasskeyCredential),
-});
-
 /** Application records, not SQL roles. Every disk value is decoded before use. */
 export const Database = Schema.Struct({
   version: Schema.Literal(1),
@@ -127,33 +119,7 @@ export const Database = Schema.Struct({
   proofs: Schema.Array(Proof),
   continuations: Schema.Array(Continuation),
   passkeys: Schema.Array(Passkey),
-  handles: Schema.Array(
-    Schema.Struct({
-      rpId: Schema.String,
-      subjectId: AuthSchema.SubjectId,
-      handle: AuthPasskey.PasskeyUserHandle,
-    }),
-  ),
-  ceremonies: Schema.Array(Ceremony),
-  renames: Schema.Array(
-    Schema.Struct({
-      moduleId: Schema.String,
-      commandId: Schema.String,
-      subjectId: AuthSchema.SubjectId,
-      name: Schema.String,
-      result: AuthPasskey.PasskeyCredentialSummary,
-      retentionUntil: Schema.Int,
-    }),
-  ),
-  removals: Schema.Array(
-    Schema.Struct({
-      moduleId: Schema.String,
-      commandId: Schema.String,
-      subjectId: AuthSchema.SubjectId,
-      result: AuthPasskey.PasskeyRemoved,
-      retentionUntil: Schema.Int,
-    }),
-  ),
+  ceremonies: Schema.Array(AuthPasskey.PasskeyCeremony),
   mutations: Schema.Array(
     Schema.Struct({
       moduleId: Schema.String,
@@ -180,10 +146,7 @@ export const emptyDatabase = (): State => ({
   proofs: [],
   continuations: [],
   passkeys: [],
-  handles: [],
   ceremonies: [],
-  renames: [],
-  removals: [],
   mutations: [],
 });
 

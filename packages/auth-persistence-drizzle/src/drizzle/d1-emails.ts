@@ -1,6 +1,6 @@
 /* oxlint-disable no-explicit-any -- D1 batches bridge consumer-owned Drizzle tables. */
 import type { D1Client } from "@effect/sql-d1/D1Client";
-import { NativeDatabase } from "@yielded/auth-persistence/Adapter";
+import { sameEmailRevision, snapshotEmailMutation } from "@yielded/auth-persistence/Adapter";
 import {
   EmailAddressPersistence,
   EmailSignInTargets,
@@ -56,15 +56,13 @@ import {
   currentAddress,
   decodeEmailSnapshot,
   emailLookupQuery,
-  sameEmailRevision,
-  snapshotEmailMutation,
   validEmailSignInConstraints,
   validateEmailAuthority,
   type CurrentAddress,
-  type EmailSqlDatabase,
 } from "./email-sql";
 import { column, isMappedConstraintConflict, PersistenceMappingError, updateValues } from "./model";
-import { nativeDatabase } from "./native-database";
+import { NativeDatabase, nativeDatabase } from "./native-database";
+import type { NativeSqlDatabase } from "./native-database";
 import type { D1ProofPersistenceMapping } from "./proof-model";
 import { validateDrizzleStorage } from "./storage-validation";
 import type { SuppliedService } from "./SuppliedService";
@@ -778,22 +776,20 @@ const probeCompletion = Effect.fn("DrizzleD1.probeCompletion")(function* (
 
   const marker = `effect-auth-proof-guard:protected:${input.continuationId}`;
 
-  const once = coordinateCommit(
-    () =>
-      Effect.gen(function* () {
-        const compiled = yield* compileD1ProofCompletionPlan(
-          proofMapping,
-          plan,
-          { statements: [], appliedCondition: sql`false` },
-          () => false,
-        );
+  const once = coordinateCommit(() =>
+    Effect.gen(function* () {
+      const compiled = yield* compileD1ProofCompletionPlan(
+        proofMapping,
+        plan,
+        { statements: [], appliedCondition: sql`false` },
+        () => false,
+      );
 
-        if (compiled.statements.length === 0) return false;
-        yield* database.$client.batch(compiled.statements);
+      if (compiled.statements.length === 0) return false;
+      yield* database.$client.batch(compiled.statements);
 
-        return false;
-      }),
-    { mode: "batch" },
+      return false;
+    }),
   );
 
   return yield* once.pipe(
@@ -947,12 +943,10 @@ const registrationCompletionMatches = <Registration>(
   input.completion.input.binding._tag === "Identifier" &&
   sameIdentifier(input.completion.input.binding.identifier, input.identifier) &&
   mapping.constraints.request === requiredEmailRegistrationConstraints.request &&
-  mapping.constraints.pendingReference === requiredEmailRegistrationConstraints.pendingReference &&
-  (mapping.mode === "pending" ||
-    Object.entries(requiredEmailRegistrationConstraints).every(
-      ([key, value]) =>
-        mapping.constraints[key as keyof typeof requiredEmailRegistrationConstraints] === value,
-    ));
+  Object.entries(requiredEmailRegistrationConstraints).every(
+    ([key, value]) =>
+      mapping.constraints[key as keyof typeof requiredEmailRegistrationConstraints] === value,
+  );
 
 const registrationPlan = Effect.fn("Drizzle.registrationPlan")(function* <Registration, A>(
   mapping: RegistrationMapping<Registration> & { readonly d1: AddressMapping["d1"] },
@@ -973,7 +967,6 @@ const registrationPlan = Effect.fn("Drizzle.registrationPlan")(function* <Regist
     readonly identifierRevision?: SecurityRevision;
     readonly credentialRevision?: SecurityRevision;
     readonly nativeSubjectId?: unknown;
-    readonly pendingReference?: string;
   },
   prepare: (value: EmailRegistrationDecision, journal: CommitJournal) => PreparedCommit<A>,
 ) {
@@ -995,19 +988,15 @@ const registrationPlan = Effect.fn("Drizzle.registrationPlan")(function* <Regist
     !registrationCompletionMatches(mapping, input) ||
     !inspected.eligible ||
     inspected.fingerprint !== input.fingerprint ||
-    (mapping.mode === "atomic" &&
-      (mapping.provisioning.idMode === "generated" ||
-        mapping.subject.d1ActiveStatusValue === undefined ||
-        mapping.identifier.d1CurrentCondition === undefined ||
-        mapping.credential.d1ActiveStatusValue === undefined ||
-        mapping.authorityCredential.d1ActiveStatusValue === undefined))
+    mapping.provisioning.idMode === "generated" ||
+    mapping.subject.d1ActiveStatusValue === undefined ||
+    mapping.identifier.d1CurrentCondition === undefined ||
+    mapping.credential.d1ActiveStatusValue === undefined ||
+    mapping.authorityCredential.d1ActiveStatusValue === undefined
   )
     return { receipt: prepare({ _tag: "Rejected" }, journal), statements: [] };
 
-  const target =
-    mapping.mode === "atomic"
-      ? yield* readEmailRegistrationTarget(mapping, input.identifier, false)
-      : undefined;
+  const target = yield* readEmailRegistrationTarget(mapping, input.identifier, false);
 
   if (target?._tag === "Rejected")
     return { receipt: prepare({ _tag: "Rejected" }, journal), statements: [] };
@@ -1048,28 +1037,7 @@ const registrationPlan = Effect.fn("Drizzle.registrationPlan")(function* <Regist
 
   const registrationState = column(mapping.registration.table, mapping.registration.state);
 
-  if (mapping.mode === "pending") {
-    if (allocated.pendingReference === undefined)
-      return { receipt: prepare({ _tag: "Rejected" }, journal), statements: [] };
-    desired = { _tag: "ProvisioningPending", reference: allocated.pendingReference };
-    statements.push(
-      yield* statement(
-        database.insert(mapping.registration.table).values(
-          driverValues(
-            mapping.registration.encodeInsert(intent, {
-              state: "pending",
-              pendingReference: allocated.pendingReference,
-              retentionUntilMillis: transitionMillis + mapping.retentionMillis,
-            }),
-            [[mapping.registration.retentionUntil, retentionInstant]],
-          ),
-        ),
-      ),
-    );
-    applied = existsSql(
-      sql`select 1 from ${mapping.registration.table} where ${registrationModule}=${sql.param(input.moduleId, registrationModule)} and ${registrationCommand}=${sql.param(input.commandId, registrationCommand)} and ${registrationFingerprint}=${sql.param(input.fingerprint, registrationFingerprint)} and ${registrationState}='pending' and ${column(mapping.registration.table, mapping.registration.pendingReference)}=${sql.param(allocated.pendingReference, column(mapping.registration.table, mapping.registration.pendingReference))} and ${column(mapping.registration.table, mapping.registration.subjectId)} is null and ${column(mapping.registration.table, mapping.registration.retentionUntil)}=${sql.param(retentionInstant, column(mapping.registration.table, mapping.registration.retentionUntil))}`,
-    );
-  } else {
+  {
     if (
       allocated.nativeSubjectId === undefined ||
       allocated.credentialId === undefined ||
@@ -1242,7 +1210,7 @@ const registrationPlan = Effect.fn("Drizzle.registrationPlan")(function* <Regist
         sql`select 1 from ${mapping.authorityCredential.table} where ${aSubject}=${sql.param(nativeSubjectId, aSubject)} and ${aId}=${sql.param(allocated.credentialId, aId)} and ${aRevision}=${sql.param(allocated.credentialRevision, aRevision)} and ${column(mapping.authorityCredential.table, mapping.authorityCredential.status)}=${sql.param(mapping.authorityCredential.d1ActiveStatusValue, column(mapping.authorityCredential.table, mapping.authorityCredential.status))}`,
       ),
       existsSql(
-        sql`select 1 from ${mapping.registration.table} where ${registrationModule}=${sql.param(input.moduleId, registrationModule)} and ${registrationCommand}=${sql.param(input.commandId, registrationCommand)} and ${registrationFingerprint}=${sql.param(input.fingerprint, registrationFingerprint)} and ${registrationState}='registered' and ${column(mapping.registration.table, mapping.registration.subjectId)}=${sql.param(nativeSubjectId, column(mapping.registration.table, mapping.registration.subjectId))} and ${column(mapping.registration.table, mapping.registration.pendingReference)} is null and ${column(mapping.registration.table, mapping.registration.retentionUntil)}=${sql.param(retentionInstant, column(mapping.registration.table, mapping.registration.retentionUntil))}`,
+        sql`select 1 from ${mapping.registration.table} where ${registrationModule}=${sql.param(input.moduleId, registrationModule)} and ${registrationCommand}=${sql.param(input.commandId, registrationCommand)} and ${registrationFingerprint}=${sql.param(input.fingerprint, registrationFingerprint)} and ${registrationState}='registered' and ${column(mapping.registration.table, mapping.registration.subjectId)}=${sql.param(nativeSubjectId, column(mapping.registration.table, mapping.registration.subjectId))} and ${column(mapping.registration.table, mapping.registration.retentionUntil)}=${sql.param(retentionInstant, column(mapping.registration.table, mapping.registration.retentionUntil))}`,
       ),
     )!;
   }
@@ -1267,9 +1235,8 @@ const registrationPlan = Effect.fn("Drizzle.registrationPlan")(function* <Regist
     retryable: (cause: unknown) =>
       guardFailure(cause, marker) ||
       isMappedConstraintConflict(mapping.isRequestConflict, cause) ||
-      (mapping.mode === "atomic" &&
-        (isMappedConstraintConflict(mapping.isIdentifierConflict, cause) ||
-          isMappedConstraintConflict(mapping.isCredentialConflict, cause))),
+      isMappedConstraintConflict(mapping.isIdentifierConflict, cause) ||
+      isMappedConstraintConflict(mapping.isCredentialConflict, cause),
   };
 });
 
@@ -1298,7 +1265,7 @@ const makeRegistrationPlans = <Registration>(
         registration: inspectionRegistration,
       });
 
-      const atomic = mapping.mode === "atomic";
+      const atomic = true;
 
       const credentialId = atomic
         ? yield* allocate(mapping.allocateCredentialId, mapping.allocateCredentialIdSync)
@@ -1328,11 +1295,6 @@ const makeRegistrationPlans = <Registration>(
             )
           : undefined;
 
-      const pendingReference =
-        mapping.mode === "pending"
-          ? yield* allocate(mapping.allocatePendingReference, mapping.allocatePendingReferenceSync)
-          : undefined;
-
       return yield* registrationPlan(
         mapping,
         proofMapping,
@@ -1345,7 +1307,6 @@ const makeRegistrationPlans = <Registration>(
           ...(identifierRevision === undefined ? {} : { identifierRevision }),
           ...(credentialRevision === undefined ? {} : { credentialRevision }),
           ...(nativeSubjectId === undefined ? {} : { nativeSubjectId }),
-          ...(pendingReference === undefined ? {} : { pendingReference }),
         },
         prepare,
       );
@@ -1452,7 +1413,7 @@ export const makeD1EmailAddressServices = Effect.fnUntraced(function* <
       return yield* executeStandalone(plan, 2);
     }).pipe(
       Effect.provideService(CurrentD1PlanningDatabase, database),
-      Effect.provideService(CurrentEmailSql, database as unknown as EmailSqlDatabase),
+      Effect.provideService(CurrentEmailSql, database as unknown as NativeSqlDatabase),
       Effect.provideService(LifecycleHooks, hooks),
     );
 
@@ -1462,7 +1423,7 @@ export const makeD1EmailAddressServices = Effect.fnUntraced(function* <
         .target(input)
         .pipe(
           Effect.provideService(CurrentD1PlanningDatabase, database),
-          Effect.provideService(CurrentEmailSql, database as unknown as EmailSqlDatabase),
+          Effect.provideService(CurrentEmailSql, database as unknown as NativeSqlDatabase),
           Effect.provideService(LifecycleHooks, hooks),
           translateFailure,
         ),
@@ -1471,7 +1432,7 @@ export const makeD1EmailAddressServices = Effect.fnUntraced(function* <
         .checkCompletion(input)
         .pipe(
           Effect.provideService(CurrentD1PlanningDatabase, database),
-          Effect.provideService(CurrentEmailSql, database as unknown as EmailSqlDatabase),
+          Effect.provideService(CurrentEmailSql, database as unknown as NativeSqlDatabase),
           Effect.provideService(LifecycleHooks, hooks),
           translateFailure,
         ),
@@ -1545,7 +1506,7 @@ export const makeD1EmailRegistrationServices = Effect.fnUntraced(function* <
       return yield* executeStandalone(plan, 2);
     }).pipe(
       Effect.provideService(CurrentD1PlanningDatabase, database),
-      Effect.provideService(CurrentEmailSql, database as unknown as EmailSqlDatabase),
+      Effect.provideService(CurrentEmailSql, database as unknown as NativeSqlDatabase),
       Effect.provideService(LifecycleHooks, hooks),
     );
 
@@ -1555,7 +1516,7 @@ export const makeD1EmailRegistrationServices = Effect.fnUntraced(function* <
         .inspect(input)
         .pipe(
           Effect.provideService(CurrentD1PlanningDatabase, database),
-          Effect.provideService(CurrentEmailSql, database as unknown as EmailSqlDatabase),
+          Effect.provideService(CurrentEmailSql, database as unknown as NativeSqlDatabase),
           Effect.provideService(LifecycleHooks, hooks),
           translateFailure,
         ),
@@ -1627,112 +1588,102 @@ export function coordinateD1EmailAddress<
 
       if (yield* hasCommitScope) return yield* unavailable();
 
-      const result = yield* coordinateCommit(
-        () =>
-          Effect.gen(function* () {
-            const statements: Statement<any>[] = [];
-            let mutation: Planned<any> | undefined;
+      const result = yield* coordinateCommit(() =>
+        Effect.gen(function* () {
+          const statements: Statement<any>[] = [];
+          let mutation: Planned<any> | undefined;
 
-            const nativeCollector = D1BatchStatements.of({
-              append: (statement) => Effect.sync(() => statements.push(statement)),
-            });
+          const nativeCollector = D1BatchStatements.of({
+            append: (statement) => Effect.sync(() => statements.push(statement)),
+          });
 
-            const owner = yield* makeD1Owner(unavailable()).pipe(
-              Effect.provideService(D1BatchStatements, nativeCollector),
+          const owner = yield* makeD1Owner(unavailable()).pipe(
+            Effect.provideService(D1BatchStatements, nativeCollector),
+          );
+
+          const plans = makeAddressPlans(
+            options.mapping as unknown as AddressMapping,
+            options.proofMapping as unknown as ProofMapping,
+          );
+
+          const run = <Out, Err, Env>(plan: Effect.Effect<Planned<Out>, Err, Env>) =>
+            coordinateCommit(() =>
+              Effect.gen(function* () {
+                const journal = yield* CurrentCommitJournal;
+                const planned = yield* plan;
+
+                yield* owner.check;
+                if (mutation !== undefined) return yield* unavailable();
+                const guarded = { ...planned, journalGuard: journal.prepare(undefined) };
+
+                mutation = guarded;
+                statements.push(...guarded.statements);
+
+                return guarded.receipt;
+              }),
+            ).pipe(
+              Effect.map((result) => result.value),
+              Effect.provideService(CurrentD1PlanningDatabase, database),
+              Effect.provideService(CurrentEmailSql, database),
+              Effect.provideService(LifecycleHooks, hooks),
             );
 
-            const plans = makeAddressPlans(
-              options.mapping as unknown as AddressMapping,
-              options.proofMapping as unknown as ProofMapping,
-            );
-
-            const run = <Out, Err, Env>(plan: Effect.Effect<Planned<Out>, Err, Env>) =>
-              coordinateCommit(
-                () =>
-                  Effect.gen(function* () {
-                    const journal = yield* CurrentCommitJournal;
-                    const planned = yield* plan;
-
-                    yield* owner.check;
-                    if (mutation !== undefined) return yield* unavailable();
-                    const guarded = { ...planned, journalGuard: journal.prepare(undefined) };
-
-                    mutation = guarded;
-                    statements.push(...guarded.statements);
-
-                    return guarded.receipt;
-                  }),
-                { mode: "batch" },
-              ).pipe(
-                Effect.map((result) => result.value),
-                Effect.provideService(CurrentD1PlanningDatabase, database),
-                Effect.provideService(CurrentEmailSql, database as unknown as EmailSqlDatabase),
-                Effect.provideService(LifecycleHooks, hooks),
-              );
-
-            const service: EmailAddressPersistence["Service"] = {
-              target: (input) =>
-                owner.run(
-                  plans
-                    .target(input)
-                    .pipe(
-                      Effect.provideService(CurrentD1PlanningDatabase, database),
-                      Effect.provideService(
-                        CurrentEmailSql,
-                        database as unknown as EmailSqlDatabase,
-                      ),
-                      Effect.provideService(LifecycleHooks, hooks),
-                      translateFailure,
-                    ),
-                ),
-              checkCompletion: (input) =>
-                owner.run(
-                  plans
-                    .checkCompletion(input)
-                    .pipe(
-                      Effect.provideService(CurrentD1PlanningDatabase, database),
-                      Effect.provideService(
-                        CurrentEmailSql,
-                        database as unknown as EmailSqlDatabase,
-                      ),
-                      Effect.provideService(LifecycleHooks, hooks),
-                      translateFailure,
-                    ),
-                ),
-              verifyWithProof: (input, prepare) =>
-                owner.run(run(plans.verifyWithProof(input, prepare)).pipe(translateFailure)),
-              changeWithProof: (input, prepare) =>
-                owner.run(run(plans.changeWithProof(input, prepare)).pipe(translateFailure)),
-              cleanup: (input, prepare) =>
-                owner.run(run(plans.cleanup(input, prepare)).pipe(translateFailure)),
-            };
-
-            const provided = Context.make(EmailAddressPersistence, service).pipe(
-              Context.add(D1BatchStatements, owner.collector),
-            );
-
-            const value = yield* owner.close(Effect.provideContext(body, provided));
-
-            if (mutation?.journalGuard !== undefined) {
-              const status = yield* Effect.result(mutation.journalGuard.read);
-
-              if (status._tag === "Success" || status.failure._tag !== "CommitPending")
-                return yield* unavailable();
-            }
-            yield* database.$client.batch(statements).pipe(
-              Effect.catchCause((cause) =>
-                Effect.failCause(
-                  Cause.map(cause, (error) =>
-                    everyFailureMatches(cause, mutation?.retryable) ? unavailable() : error,
+          const service: EmailAddressPersistence["Service"] = {
+            target: (input) =>
+              owner.run(
+                plans
+                  .target(input)
+                  .pipe(
+                    Effect.provideService(CurrentD1PlanningDatabase, database),
+                    Effect.provideService(CurrentEmailSql, database),
+                    Effect.provideService(LifecycleHooks, hooks),
+                    translateFailure,
                   ),
+              ),
+            checkCompletion: (input) =>
+              owner.run(
+                plans
+                  .checkCompletion(input)
+                  .pipe(
+                    Effect.provideService(CurrentD1PlanningDatabase, database),
+                    Effect.provideService(CurrentEmailSql, database),
+                    Effect.provideService(LifecycleHooks, hooks),
+                    translateFailure,
+                  ),
+              ),
+            verifyWithProof: (input, prepare) =>
+              owner.run(run(plans.verifyWithProof(input, prepare)).pipe(translateFailure)),
+            changeWithProof: (input, prepare) =>
+              owner.run(run(plans.changeWithProof(input, prepare)).pipe(translateFailure)),
+            cleanup: (input, prepare) =>
+              owner.run(run(plans.cleanup(input, prepare)).pipe(translateFailure)),
+          };
+
+          const provided = Context.make(EmailAddressPersistence, service).pipe(
+            Context.add(D1BatchStatements, owner.collector),
+          );
+
+          const value = yield* owner.close(Effect.provideContext(body, provided));
+
+          if (mutation?.journalGuard !== undefined) {
+            const status = yield* Effect.result(mutation.journalGuard.read);
+
+            if (status._tag === "Success" || status.failure._tag !== "CommitPending")
+              return yield* unavailable();
+          }
+          yield* database.$client.batch(statements).pipe(
+            Effect.catchCause((cause) =>
+              Effect.failCause(
+                Cause.map(cause, (error) =>
+                  everyFailureMatches(cause, mutation?.retryable) ? unavailable() : error,
                 ),
               ),
-              translateFailure,
-            );
+            ),
+            translateFailure,
+          );
 
-            return value;
-          }),
-        { mode: "batch" },
+          return value;
+        }),
       ).pipe(Effect.provideService(LifecycleHooks, hooks));
 
       return result.value;
@@ -1802,96 +1753,89 @@ export function coordinateD1EmailRegistration<
 
       if (yield* hasCommitScope) return yield* unavailable();
 
-      const result = yield* coordinateCommit(
-        () =>
-          Effect.gen(function* () {
-            const statements: Statement<any>[] = [];
-            let mutation: Planned<any> | undefined;
+      const result = yield* coordinateCommit(() =>
+        Effect.gen(function* () {
+          const statements: Statement<any>[] = [];
+          let mutation: Planned<any> | undefined;
 
-            const nativeCollector = D1BatchStatements.of({
-              append: (statement) => Effect.sync(() => statements.push(statement)),
-            });
+          const nativeCollector = D1BatchStatements.of({
+            append: (statement) => Effect.sync(() => statements.push(statement)),
+          });
 
-            const owner = yield* makeD1Owner(unavailable()).pipe(
-              Effect.provideService(D1BatchStatements, nativeCollector),
+          const owner = yield* makeD1Owner(unavailable()).pipe(
+            Effect.provideService(D1BatchStatements, nativeCollector),
+          );
+
+          const plans = makeRegistrationPlans(
+            options.mapping as unknown as RegistrationMapping<Registration> & {
+              readonly d1: AddressMapping["d1"];
+            },
+            options.proofMapping as unknown as ProofMapping,
+          );
+
+          const run = <Out, Err, Env>(plan: Effect.Effect<Planned<Out>, Err, Env>) =>
+            coordinateCommit(() =>
+              Effect.gen(function* () {
+                const journal = yield* CurrentCommitJournal;
+                const planned = yield* plan;
+
+                yield* owner.check;
+                if (mutation !== undefined) return yield* unavailable();
+                const guarded = { ...planned, journalGuard: journal.prepare(undefined) };
+
+                mutation = guarded;
+                statements.push(...guarded.statements);
+
+                return guarded.receipt;
+              }),
+            ).pipe(
+              Effect.map((result) => result.value),
+              Effect.provideService(CurrentD1PlanningDatabase, database),
+              Effect.provideService(CurrentEmailSql, database),
+              Effect.provideService(LifecycleHooks, hooks),
             );
 
-            const plans = makeRegistrationPlans(
-              options.mapping as unknown as RegistrationMapping<Registration> & {
-                readonly d1: AddressMapping["d1"];
-              },
-              options.proofMapping as unknown as ProofMapping,
-            );
-
-            const run = <Out, Err, Env>(plan: Effect.Effect<Planned<Out>, Err, Env>) =>
-              coordinateCommit(
-                () =>
-                  Effect.gen(function* () {
-                    const journal = yield* CurrentCommitJournal;
-                    const planned = yield* plan;
-
-                    yield* owner.check;
-                    if (mutation !== undefined) return yield* unavailable();
-                    const guarded = { ...planned, journalGuard: journal.prepare(undefined) };
-
-                    mutation = guarded;
-                    statements.push(...guarded.statements);
-
-                    return guarded.receipt;
-                  }),
-                { mode: "batch" },
-              ).pipe(
-                Effect.map((result) => result.value),
-                Effect.provideService(CurrentD1PlanningDatabase, database),
-                Effect.provideService(CurrentEmailSql, database as unknown as EmailSqlDatabase),
-                Effect.provideService(LifecycleHooks, hooks),
-              );
-
-            const service: EmailRegistrationAuthority<Registration> = {
-              inspect: (input) =>
-                owner.run(
-                  plans
-                    .inspect(input)
-                    .pipe(
-                      Effect.provideService(CurrentD1PlanningDatabase, database),
-                      Effect.provideService(
-                        CurrentEmailSql,
-                        database as unknown as EmailSqlDatabase,
-                      ),
-                      Effect.provideService(LifecycleHooks, hooks),
-                      translateFailure,
-                    ),
-                ),
-              registerWithProof: (input, prepare) =>
-                owner.run(run(plans.registerWithProof(input, prepare)).pipe(translateFailure)),
-            };
-
-            const provided = Context.make(options.target, service).pipe(
-              Context.add(D1BatchStatements, owner.collector),
-            );
-
-            const value = yield* owner.close(Effect.provideContext(body, provided));
-
-            if (mutation?.journalGuard !== undefined) {
-              const status = yield* Effect.result(mutation.journalGuard.read);
-
-              if (status._tag === "Success" || status.failure._tag !== "CommitPending")
-                return yield* unavailable();
-            }
-            yield* database.$client.batch(statements).pipe(
-              Effect.catchCause((cause) =>
-                Effect.failCause(
-                  Cause.map(cause, (error) =>
-                    everyFailureMatches(cause, mutation?.retryable) ? unavailable() : error,
+          const service: EmailRegistrationAuthority<Registration> = {
+            inspect: (input) =>
+              owner.run(
+                plans
+                  .inspect(input)
+                  .pipe(
+                    Effect.provideService(CurrentD1PlanningDatabase, database),
+                    Effect.provideService(CurrentEmailSql, database),
+                    Effect.provideService(LifecycleHooks, hooks),
+                    translateFailure,
                   ),
+              ),
+            registerWithProof: (input, prepare) =>
+              owner.run(run(plans.registerWithProof(input, prepare)).pipe(translateFailure)),
+          };
+
+          const provided = Context.make(options.target, service).pipe(
+            Context.add(D1BatchStatements, owner.collector),
+          );
+
+          const value = yield* owner.close(Effect.provideContext(body, provided));
+
+          if (mutation?.journalGuard !== undefined) {
+            const status = yield* Effect.result(mutation.journalGuard.read);
+
+            if (status._tag === "Success" || status.failure._tag !== "CommitPending")
+              return yield* unavailable();
+          }
+          yield* database.$client.batch(statements).pipe(
+            Effect.catchCause((cause) =>
+              Effect.failCause(
+                Cause.map(cause, (error) =>
+                  everyFailureMatches(cause, mutation?.retryable) ? unavailable() : error,
                 ),
               ),
-              translateFailure,
-            );
+            ),
+            translateFailure,
+          );
 
-            return value;
-          }),
-        { mode: "batch" },
+          return value;
+        }),
       ).pipe(Effect.provideService(LifecycleHooks, hooks));
 
       return result.value;
@@ -1921,18 +1865,16 @@ const executeStandalone = <A, E, R>(
   Effect.suspend(() => {
     let retryable: ((cause: unknown) => boolean) | undefined;
 
-    const once = coordinateCommit(
-      () =>
-        Effect.gen(function* () {
-          const database = yield* CurrentD1PlanningDatabase;
-          const planned = yield* plan;
+    const once = coordinateCommit(() =>
+      Effect.gen(function* () {
+        const database = yield* CurrentD1PlanningDatabase;
+        const planned = yield* plan;
 
-          retryable = planned.retryable;
-          yield* database.$client.batch(planned.statements);
+        retryable = planned.retryable;
+        yield* database.$client.batch(planned.statements);
 
-          return planned.receipt;
-        }),
-      { mode: "batch" },
+        return planned.receipt;
+      }),
     ).pipe(Effect.map((result) => result.value));
 
     return once.pipe(

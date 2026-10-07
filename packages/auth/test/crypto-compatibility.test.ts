@@ -3,6 +3,7 @@ import * as OAuth from "@yielded/auth/OAuth";
 import * as Password from "@yielded/auth/Password";
 import * as Totp from "@yielded/auth/Totp";
 import { layerCryptoWeb } from "@yielded/auth/WebCrypto";
+import * as KdfAdmission from "@yielded/crypto/KdfAdmission";
 import * as Portable from "@yielded/crypto/Portable";
 import { Effect, Layer, Redacted, Schema } from "effect";
 import { Base64Url } from "effect/encoding";
@@ -10,7 +11,7 @@ import { expect } from "vite-plus/test";
 
 import fixtures from "./crypto-fixtures";
 
-const admission = Password.PasswordKdfAdmission.layer({ maxQueued: 0 });
+const admission = KdfAdmission.layer({ maxQueued: 0 });
 const backend = Portable.layer(globalThis.crypto.subtle).pipe(Layer.provideMerge(admission));
 const runtime = Layer.merge(backend, layerCryptoWeb);
 
@@ -113,7 +114,10 @@ it.effect("opens all stored OAuth envelope domains and rejects changed durable a
     ).toEqual(a.plain);
     expect(
       yield* signIn
-        .open({ context: { ...context, commandId: OAuth.OAuthCommandId.make("other") }, sealed })
+        .open({
+          context: { ...context, flowId: OAuth.OAuthSignInBegin.fields.flowId.make("other") },
+          sealed,
+        })
         .pipe(Effect.result),
     ).toMatchObject({ _tag: "Failure", failure: { _tag: "OAuthUnavailable" } });
     expect(
@@ -125,17 +129,17 @@ it.effect("opens all stored OAuth envelope domains and rejects changed durable a
       ),
     ).toEqual(b.plain);
     expect(
-      Schema.encodeSync(OAuth.OAuthConnectedTransactionSecrets)(
+      Schema.encodeSync(OAuth.OAuthTransactionSecrets)(
         yield* connected.open({
           context: Schema.decodeSync(OAuth.OAuthConnectedTransactionContext)(c.context),
-          sealed: Schema.decodeSync(OAuth.OAuthConnectedSealedTransaction)(c.sealed),
+          sealed: Schema.decodeSync(OAuth.OAuthSealedTransaction)(c.sealed),
         }),
       ),
     ).toEqual(c.plain);
     expect(
       Schema.encodeSync(OAuth.OAuthConnectedTokenMaterial)(
         yield* token.open({
-          context: Schema.decodeSync(OAuth.OAuthConnectedProtectionContext)(d.context),
+          context: Schema.decodeSync(OAuth.OAuthConnectedTokenContext)(d.context),
           sealed: Schema.decodeSync(OAuth.OAuthConnectedSealedTokens)(d.sealed),
         }),
       ),

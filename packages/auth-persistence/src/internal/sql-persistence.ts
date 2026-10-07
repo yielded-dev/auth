@@ -3,9 +3,14 @@ import { SqlClient } from "effect/sql";
 
 import { PersistenceConfigurationError, type PersistenceApi } from "./configuration";
 import { makeNativeSqlTables } from "./native-sql-table";
-import { makeComposedPasskeys } from "./passkeys";
+import { makeManagedPasskeys } from "./passkey-managed";
 import { createPersistence } from "./persistence";
-import { makeSqlDatabase, sqlQueryOperations } from "./sql-query";
+import { makeSqlEmailOwner } from "./sql-email";
+import { makeSqlPasswordOwner } from "./sql-password";
+import { makeSqlPhoneOwner } from "./sql-phone";
+import { makeSqlProofOwner } from "./sql-proof";
+import { makeSqlRegistrationOwner } from "./sql-registration";
+import { makeSqlStatefulSessionOwner } from "./sql-session";
 import { Table } from "./sql-table";
 import type { StorageTable } from "./storage-tables";
 
@@ -23,9 +28,22 @@ export const AuthPersistence: PersistenceApi<Table> & { readonly table: typeof t
       ),
       unique: table.unique,
     }),
-    operations: sqlQueryOperations,
-    nativeTables: (client) => makeNativeSqlTables(client),
-    passkeys: makeComposedPasskeys(sqlQueryOperations),
+    nativeTables: makeNativeSqlTables,
+    maxParameters: (client) => client.onDialectOrElse({ sqlite: () => 96, orElse: () => 16_000 }),
+    sessionOwner: (mapping, client) => Effect.succeed(makeSqlStatefulSessionOwner(client, mapping)),
+    proofOwner: (mapping, options, client) =>
+      Effect.succeed(makeSqlProofOwner(client, mapping, options)),
+    passwordOwner: (mapping, options, client, proofMapping) =>
+      Effect.succeed(makeSqlPasswordOwner(client, mapping, options, proofMapping)),
+    emailOwner: (mapping, options, client, proofMapping) =>
+      Effect.succeed(makeSqlEmailOwner(client, mapping, options, proofMapping)),
+    registrationOwner: (mapping, receipts, client) =>
+      Effect.succeed(makeSqlRegistrationOwner(client, mapping, receipts)),
+    phoneOwner: (storage, options, client) => makeSqlPhoneOwner(client, storage, options),
+    passkeys: (input, client) =>
+      makeManagedPasskeys(input, makeNativeSqlTables(client)).pipe(
+        Effect.provideService(SqlClient.SqlClient, client),
+      ),
     acquire: Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
 
@@ -40,7 +58,7 @@ export const AuthPersistence: PersistenceApi<Table> & { readonly table: typeof t
           reason: "Use an explicit adapter for this SQL dialect",
         });
 
-      return yield* makeSqlDatabase(dialect);
+      return sql;
     }),
   }),
   table,

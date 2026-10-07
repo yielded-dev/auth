@@ -58,19 +58,6 @@ export {
 } from "./drizzle/password-model";
 
 export {
-  type AnyPasswordPreparedPersistenceMapping,
-  type D1PasswordPreparedPersistenceMapping,
-  type D1PasswordPreparedProofMapping,
-  type PasswordPreparedAdmissionTable,
-  type PasswordPreparedIntentTable,
-  type PasswordPreparedPersistenceMapping,
-  type PasswordPreparedProofMapping,
-  type PasswordPreparedState,
-  type RequiredPasswordPreparedConstraints,
-  requiredPasswordPreparedConstraints,
-} from "./drizzle/password-prepared-model";
-
-export {
   type AnyProofPersistenceMapping,
   type D1ProofPersistenceMapping,
   type ProofAbuseEventTable,
@@ -99,7 +86,6 @@ export {
 } from "./drizzle/proof-model";
 
 export {
-  type CommitMode,
   type D1ExternalIdentityMapping,
   type D1GeneratedIdentityMapping,
   type D1SubjectProvisioningMapping,
@@ -152,37 +138,22 @@ export {
 
 export {
   type D1PasskeyMapping,
-  type PasskeyAdmissionTable,
   type PasskeyCeremonyMapping,
-  type PasskeyChargeInsert,
-  type PasskeyChargeKind,
-  type PasskeyChargeTable,
   type PasskeyClock,
   type PasskeyColumn,
   type PasskeyCredentialMapping,
-  type PasskeyCredentialOwnershipTable,
   type PasskeyCredentialReadTable,
   type PasskeyCredentialServices,
-  type PasskeyEnrollmentContextMapping,
-  type PasskeyEnrollmentContextServices,
   type PasskeyFactorReadTable,
   type PasskeyFlowInsert,
-  type PasskeyFlowState,
   type PasskeyFlowTable,
-  type PasskeyHandleOwnershipTable,
-  type PasskeyHandleReadTable,
-  type PasskeyHandleReservationTable,
   type PasskeyMappingSource,
-  type PasskeyModuleTable,
   type PasskeyPersistenceMapping,
   type PasskeyPersistenceServices,
-  type PasskeyPolicyGuard,
   type PasskeySubjectIdCodec,
   type PasskeySubjectReadTable,
   passkeyCredentialsLayer,
-  passkeyEnrollmentContextLayer,
   passkeyPersistenceLayer,
-  passkeyPolicyGuard,
   requiredPasskeyCredentialConstraints,
   requiredPasskeyPersistenceConstraints,
 } from "./drizzle/passkey-model";
@@ -210,60 +181,34 @@ export {
   type OAuthEligibilityDescriptor,
   type OAuthEligibilityFact,
   type OAuthEligibilityTable,
-  type OAuthFlowState,
   type OAuthFlowTable,
-  type OAuthMetadataPolicy,
-  type OAuthOwnershipMutation,
   type OAuthOwnershipReadTable,
   type OAuthOwnershipTable,
-  type OAuthReferenceGuardDescriptor,
-  type OAuthReferenceGuardTable,
   type OAuthRegistrationAuthority,
-  type OAuthRegistrationBase,
-  type OAuthRegistrationCommandTable,
-  type OAuthRegistrationEligibility,
   type OAuthRegistrationGuardDescriptor,
   type OAuthRegistrationGuardTable,
   type OAuthRegistrationIntentMapping,
   type OAuthRegistrationIntentTable,
   type OAuthRegistrationMapping,
-  type OAuthRegistrationState,
   type OAuthSignInMapping,
   type OAuthSubjectReadTable,
   type OAuthSubjectTable,
-  type OAuthTupleAuthorityTable,
-  type OAuthTupleState,
-  type OAuthUnlinkCommandTable,
   oauthCleanupTable,
   oauthEligibilityTable,
-  oauthReferenceGuardTable,
   oauthRegistrationGuardTable,
-  requiredOAuthAccountsConstraints,
   requiredOAuthRegistrationConstraints,
   requiredOAuthSignInConstraints,
-  requiredOAuthTupleConstraints,
 } from "./drizzle/oauth-model";
 
 export {
   type OAuthConnectedAction,
-  type OAuthConnectedAdmissionTable,
-  type OAuthConnectedAuthorityMapping,
-  type OAuthConnectedClientRegistrationTable,
-  type OAuthConnectedCohortTable,
-  type OAuthConnectedCommandTable,
-  type OAuthConnectedFlowTable,
   type OAuthConnectedGrantTable,
   type OAuthConnectedMapping,
-  type OAuthConnectedOrderCodec,
-  type OAuthConnectedOwnershipRead,
-  type OAuthConnectedPolicyGuard,
-  type OAuthConnectedPolicyGuardTable,
   type OAuthConnectedPolicyInput,
   type OAuthConnectedRevocationJobTable,
   type OAuthConnectedRevocationMapping,
   type OAuthConnectedSqlPolicy,
   type OAuthConnectedSubjectTable,
-  oauthConnectedPolicyGuard,
   requiredOAuthConnectedConstraints,
   requiredOAuthConnectedRevocationConstraints,
 } from "./drizzle/oauth-connected-model";
@@ -272,8 +217,6 @@ export {
   type PasskeyRegistrationCeremonyCapabilities,
   type PasskeyRegistrationCeremonyMapping,
   type PasskeyRegistrationCeremonyServices,
-  type PasskeyRegistrationIntentReadTable,
-  requiredPasskeyRegistrationCeremonyConstraints,
 } from "./drizzle/passkey-registration-ceremony-model";
 
 export {
@@ -304,7 +247,6 @@ export {
 } from "./drizzle/oauth-connected-target";
 
 export { passwordPersistenceLayer, passwordRegistrationLayer } from "./drizzle/password-target";
-export { passwordPreparedPersistenceLayer } from "./drizzle/password-prepared-target";
 export { proofPersistenceLayer } from "./drizzle/proof-target";
 
 export {
@@ -324,17 +266,14 @@ export {
   type PasskeyInvalidationInput,
   type PasskeyInvalidationMutation,
   passkeyInvalidationMutation,
-  type PasskeyCommandTable,
   type PasskeyManagementMapping,
-  requiredPasskeyManagementConstraints,
   type PasskeyManagementServices,
   type PasskeyRegistrationWriter,
   type PasskeyRegistrationServices,
   type PasskeyRegistrationMapping,
-  requiredPasskeyRegistrationWriteConstraints,
 } from "./drizzle/passkey-write-model";
 
-export { passkeyManagementPersistenceLayer } from "./drizzle/passkey-write-target";
+export { passkeyManagementPersistenceLayer } from "./drizzle/passkey/write-target";
 
 export {
   type PhoneMapping,

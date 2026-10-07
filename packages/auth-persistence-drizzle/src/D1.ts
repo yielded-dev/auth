@@ -97,13 +97,6 @@ export {
   coordinateD1SessionStepUp as coordinateSessionStepUp,
 } from "./drizzle/d1-sessions";
 
-export {
-  makeD1PasswordPreparedPersistenceServices as makePasswordPreparedPersistenceServices,
-  coordinateD1PasswordPreparedPersistence as coordinatePasswordPreparedPersistence,
-} from "./drizzle/d1-password-prepared";
-
-export { passwordPreparedPersistenceLayer } from "./drizzle/password-prepared-target";
-
 import { Effect, Layer } from "effect";
 
 import { makeD1OAuthConnectedTarget } from "./drizzle/oauth-connected-drivers";
@@ -131,7 +124,6 @@ export const {
 export {
   makePasskeyCredentialServices,
   makePasskeyPersistenceServices,
-  makePasskeyEnrollmentContextServices,
   makePasskeyRegistrationCeremonyServices,
   coordinatePasskeyPersistence,
   coordinatePasskeyRegistrationCeremony,

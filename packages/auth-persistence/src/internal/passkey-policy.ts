@@ -1,0 +1,268 @@
+import {
+  PasskeyUnavailable,
+  PasskeyCeremony,
+  PasskeyCredential,
+  PasskeyProfile,
+  PasskeyRevision,
+  snapshotPasskeySync,
+  type PasskeyAccess,
+  type PasskeyActionAuthorization,
+  type PasskeyManagementPolicy,
+  type PasskeyRequirement,
+} from "@yielded/auth/Passkey";
+import type { SubjectId } from "@yielded/auth/Schema";
+import { Crypto, DateTime, Effect, Schema } from "effect";
+
+const invariant: (value: unknown) => asserts value = (value) => {
+  if (!value) throw PasskeyUnavailable.make({});
+};
+
+const encoder = new TextEncoder();
+
+const decoder = new TextDecoder("utf-8", { fatal: true });
+
+/** RP tuples and admission scopes have no collation-dependent string identity. */
+export const passkeyKey = Effect.fnUntraced(function* (
+  kind: string,
+  fields: ReadonlyArray<string>,
+) {
+  const values = ["effect-auth/passkey/" + kind + "/v1", ...fields].map((field) => {
+    const bytes = encoder.encode(field);
+
+    invariant(decoder.decode(bytes) === field);
+
+    return bytes;
+  });
+
+  const packed = new Uint8Array(values.reduce((size, bytes) => size + 4 + bytes.length, 0));
+  const view = new DataView(packed.buffer);
+  let offset = 0;
+
+  for (const bytes of values) {
+    view.setUint32(offset, bytes.length, false);
+    packed.set(bytes, offset + 4);
+    offset += 4 + bytes.length;
+  }
+
+  const crypto = yield* Crypto.Crypto;
+  const hashed = yield* crypto.digest("SHA-256", packed);
+
+  return "v1:" + Array.from(hashed, (value) => value.toString(16).padStart(2, "0")).join("");
+});
+
+export const passkeyCredentialKey = (rpId: string, id: string) =>
+  passkeyKey("credential", [rpId, id]);
+
+/** Private passkeyStorage is decoded Type data, never a consumer wire transform. */
+export const passkeyStorage = <S extends Schema.Codec<unknown, unknown, never, never>>(
+  schema: S,
+  maximumBytes: number,
+) => {
+  const codec = Schema.fromJsonString(Schema.toCodecJson(Schema.toType(schema)));
+
+  const encode = (value: S["Type"]) => {
+    const text = "v1:" + Schema.encodeSync(codec)(snapshotPasskeySync(schema, value));
+
+    invariant(encoder.encode(text).length <= maximumBytes);
+
+    return text;
+  };
+
+  return {
+    encode,
+    decode: (text: unknown): S["Type"] => {
+      invariant(typeof text === "string" && text.startsWith("v1:"));
+      invariant(encoder.encode(text).length <= maximumBytes);
+      const value = snapshotPasskeySync(schema, Schema.decodeSync(codec)(text.slice(3)));
+
+      invariant(encode(value) === text);
+
+      return value;
+    },
+  };
+};
+
+// Legal 32 x 16 x 2048 origins require more than one MiB before JSON escaping.
+export const passkeyCeremonyStorage = passkeyStorage(PasskeyCeremony, 512 * 1024);
+
+export const passkeyCredentialStorage = passkeyStorage(PasskeyCredential, 512 * 1024);
+
+export const passkeyProfileStorage = passkeyStorage(PasskeyProfile, 256 * 1024);
+
+export const passkeyRevisionStorage = passkeyStorage(PasskeyRevision, 256 * 1024);
+
+export const samePasskeyCredential = (left: PasskeyCredential, right: PasskeyCredential) => {
+  const semantic = (value: PasskeyCredential) => ({
+    ...value,
+    counter: 0,
+    backupState: false,
+    revision: { ...value.revision, credentials: [] },
+  });
+
+  return (
+    passkeyCredentialStorage.encode(semantic(left)) ===
+    passkeyCredentialStorage.encode(semantic(right))
+  );
+};
+
+export const samePasskeyRevision = (
+  left: typeof PasskeyRevision.Type,
+  right: typeof PasskeyRevision.Type,
+) => {
+  const pairs = new Map(left.credentials.map((item) => [item.credentialId, item.revision]));
+
+  return (
+    left.subjectId === right.subjectId &&
+    left.securityRevision === right.securityRevision &&
+    pairs.size === left.credentials.length &&
+    new Set(right.credentials.map((item) => item.credentialId)).size === right.credentials.length &&
+    pairs.size === right.credentials.length &&
+    right.credentials.every((item) => pairs.get(item.credentialId) === item.revision)
+  );
+};
+
+export const passkeyAssertionPurposes = ["sign-in", "pending", "step-up", "action"] as const;
+
+const contextPurpose = {
+  SignIn: "sign-in",
+  Pending: "pending",
+  StepUp: "step-up",
+  Action: "action",
+  Enrollment: "enrollment",
+  Registration: "registration",
+} as const;
+
+export const passkeyKnownSubject = (ceremony: PasskeyCeremony): SubjectId | undefined =>
+  "target" in ceremony.context
+    ? ceremony.context.target.revision.subjectId
+    : ceremony.context._tag === "Enrollment"
+      ? ceremony.context.revision.subjectId
+      : undefined;
+
+export const validPasskeyCeremony = (ceremony: PasskeyCeremony) =>
+  ceremony.expiresAtMillis > ceremony.issuedAtMillis &&
+  ceremony.expiresAtMillis <= ceremony.requestBindingExpiresAtMillis &&
+  contextPurpose[ceremony.context._tag] === ceremony.purpose &&
+  new Set(ceremony.allowedCredentials.map((item) => item.id)).size ===
+    ceremony.allowedCredentials.length;
+
+export const passkeyMatchesAccess = (ceremony: PasskeyCeremony, access: PasskeyAccess) =>
+  ceremony.moduleId === access.moduleId &&
+  ceremony.purpose === access.purpose &&
+  ceremony.flowId === access.flowId &&
+  ceremony.requestBindingVerifier === access.requestBindingVerifier &&
+  ceremony.requestBindingExpiresAtMillis === access.requestBindingExpiresAtMillis;
+
+export interface PasskeyActionFacts {
+  readonly moduleId: string;
+  readonly revision: typeof PasskeyRevision.Type;
+  readonly nowMillis: number;
+  readonly currentRequirement: typeof PasskeyRequirement.Type;
+  readonly expected: {
+    readonly action: PasskeyActionAuthorization["challenge"]["action"];
+    readonly commandId: string;
+    readonly flowId: string;
+    readonly bindingDigest: string;
+    readonly revision: typeof PasskeyRevision.Type;
+  };
+  readonly originalRequirement?: typeof PasskeyRequirement.Type;
+}
+
+/** Reject stale bindings before evaluating application requirements. */
+export const validPasskeyActionEvidence = (
+  facts: Pick<PasskeyActionFacts, "moduleId" | "revision" | "expected" | "nowMillis">,
+  authorization: PasskeyActionAuthorization,
+) => {
+  const { challenge, evidence } = authorization;
+  const { expected, revision, nowMillis: now } = facts;
+
+  if (
+    challenge.moduleId !== facts.moduleId ||
+    challenge.action !== expected.action ||
+    challenge.commandId !== expected.commandId ||
+    challenge.flowId !== expected.flowId ||
+    challenge.bindingDigest !== expected.bindingDigest ||
+    evidence.flowId !== expected.flowId ||
+    evidence.bindingDigest !== expected.bindingDigest ||
+    !samePasskeyRevision(challenge.revision, expected.revision) ||
+    revision.subjectId !== expected.revision.subjectId ||
+    revision.securityRevision !== expected.revision.securityRevision ||
+    evidence.revision.subjectId !== revision.subjectId ||
+    evidence.revision.securityRevision !== revision.securityRevision
+  )
+    return false;
+  for (const requested of [expected.revision, evidence.revision])
+    if (
+      requested.credentials.some(
+        (item) =>
+          !revision.credentials.some(
+            (current) =>
+              current.credentialId === item.credentialId && current.revision === item.revision,
+          ),
+      )
+    )
+      return false;
+  if (
+    evidence.proofs.some(
+      (proof) =>
+        DateTime.toEpochMillis(proof.verifiedAt) > now ||
+        !evidence.revision.credentials.some((item) => item.credentialId === proof.credentialId),
+    )
+  )
+    return false;
+
+  return true;
+};
+
+/** SQL policy predicates remain native. This authorizes the exact evidence and
+ * returns the deadline every backend must retain through its final commit. */
+export const assessPasskeyAction = (
+  facts: PasskeyActionFacts,
+  authorization: PasskeyActionAuthorization,
+  policy: PasskeyManagementPolicy,
+) => {
+  if (!validPasskeyActionEvidence(facts, authorization)) return undefined;
+  const { evidence } = authorization;
+  const now = facts.nowMillis;
+  let expiresBefore = Infinity;
+
+  for (const requirement of [
+    authorization.requirement,
+    facts.currentRequirement,
+    ...(facts.originalRequirement === undefined ? [] : [facts.originalRequirement]),
+  ]) {
+    const age = Math.min(policy.maximumEvidenceAgeMillis, requirement.maximumAgeMillis);
+
+    const fresh = evidence.proofs.filter(
+      (proof) => now - DateTime.toEpochMillis(proof.verifiedAt) < age,
+    );
+
+    const factors = new Set(fresh.flatMap((proof) => proof.factors));
+
+    if (
+      !requirement.alternatives.some(
+        (alternative) =>
+          alternative.factors.every((factor) => factors.has(factor)) &&
+          new Set(fresh.map((proof) => proof.credentialId)).size >=
+            alternative.minimumCredentials &&
+          fresh.some(
+            (proof) =>
+              (!alternative.userVerified || proof.userVerified) &&
+              (!alternative.phishingResistant || proof.phishingResistant),
+          ),
+      )
+    )
+      return undefined;
+    for (const proof of fresh)
+      expiresBefore = Math.min(expiresBefore, DateTime.toEpochMillis(proof.verifiedAt) + age);
+  }
+
+  return { notBeforeMillis: now, expiresBeforeMillis: expiresBefore };
+};
+
+export const passkeyTargetRevision = (ceremony: PasskeyCeremony) =>
+  "target" in ceremony.context
+    ? ceremony.context.target.revision
+    : ceremony.context._tag === "Enrollment"
+      ? ceremony.context.revision
+      : undefined;

@@ -107,8 +107,7 @@ const bindAccess = <
     ...captured.options.policy,
     profiles: [profile],
     maximumEvidenceAgeMillis: 300_000,
-    refreshClaimLifetimeMillis: captured.options.policy.claimLifetimeMillis,
-    useAdmissionLifetimeMillis: 5_000,
+    refreshClaimLifetimeMillis: captured.options.policy.exchangeTimeoutMillis,
   });
 
   const connectedLayer = access.handlersLayer.pipe(

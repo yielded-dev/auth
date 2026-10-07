@@ -191,24 +191,22 @@ export const makePasswordConsumer = Effect.gen(function* () {
     Effect.gen(function* () {
       if (yield* Hooks.hasCommitScope) return yield* Password.PasswordUnavailable.make({});
 
-      return yield* Hooks.coordinateCommit(
-        (journal) =>
-          Effect.gen(function* () {
-            const now = DateTime.toEpochMillis(yield* DateTime.now);
+      return yield* Hooks.coordinateCommit((journal) =>
+        Effect.gen(function* () {
+          const now = DateTime.toEpochMillis(yield* DateTime.now);
 
-            return yield* Effect.try({
-              try: () => {
-                const next = clone(state);
-                const value = body(next, journal, now);
+          return yield* Effect.try({
+            try: () => {
+              const next = clone(state);
+              const value = body(next, journal, now);
 
-                state = next;
+              state = next;
 
-                return value;
-              },
-              catch: () => Password.PasswordUnavailable.make({}),
-            });
-          }),
-        { mode: "synchronous" },
+              return value;
+            },
+            catch: () => Password.PasswordUnavailable.make({}),
+          });
+        }),
       ).pipe(
         Effect.map((result) => result.value),
         Effect.mapError(() => Password.PasswordUnavailable.make({})),

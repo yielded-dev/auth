@@ -1,4 +1,4 @@
-import { NativeDatabase } from "@yielded/auth-persistence/Adapter";
+import { randomId } from "@yielded/auth-persistence/Adapter";
 import { LifecycleHooks } from "@yielded/auth/Hooks";
 import {
   TotpConfigurationError,
@@ -12,9 +12,8 @@ import type { Table } from "drizzle-orm";
 import { type Crypto, Context, Effect, Schema } from "effect";
 import type { Statement } from "effect/sql/Statement";
 
-import { randomId } from "./crypto";
 import type { PersistenceMappingError } from "./model";
-import { nativeDatabase } from "./native-database";
+import { NativeDatabase, nativeDatabase } from "./native-database";
 import { validateDrizzleStorage } from "./storage-validation";
 import type { SuppliedService } from "./SuppliedService";
 import {

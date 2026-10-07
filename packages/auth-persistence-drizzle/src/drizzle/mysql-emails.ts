@@ -1,4 +1,3 @@
-import { NativeDatabase } from "@yielded/auth-persistence/Adapter";
 import { EmailAddressPersistence, type EmailUnavailable } from "@yielded/auth/Email";
 import type { LifecycleHooks, HookConfigurationError } from "@yielded/auth/Hooks";
 /* oxlint-disable no-explicit-any -- proof mapping tables are independently typed by the proof owner; this driver forwards them unchanged to the shared target. */
@@ -15,7 +14,6 @@ import type {
 } from "./email-model";
 import type { EmailRegistrationAuthority } from "./email-registration";
 import { CurrentEmailSql } from "./email-sql";
-import type { EmailSqlQuery } from "./email-sql";
 import {
   coordinateTargetEmailAddress,
   coordinateTargetEmailRegistration,
@@ -25,9 +23,9 @@ import {
   sqlClientEmailStandaloneGuard,
 } from "./email-target";
 import { Database as DatabaseService } from "./mysql-database";
-import { nativeDatabase } from "./native-database";
+import { NativeDatabase, nativeDatabase } from "./native-database";
+import type { NativeSqlQuery } from "./native-database";
 import type { ProofPersistenceMapping } from "./proof-model";
-import type { ProofSqlQuery } from "./proof-sql";
 import { sqlClientProofStandaloneGuard } from "./proof-target";
 import {
   type TransactionService,
@@ -57,12 +55,12 @@ const configuration = (service: TransactionService | undefined) => ({
   mode: "interactive" as const,
   locking: true,
   standaloneGuard: sqlClientEmailStandaloneGuard(service),
-  generatedSubjectRows: (query: EmailSqlQuery) => query.$returningId(),
+  generatedSubjectRows: (query: NativeSqlQuery) => query.$returningId(),
   proof: {
     mode: "interactive" as const,
     locking: true,
     standaloneGuard: sqlClientProofStandaloneGuard(service),
-    insertIfAbsent: (query: ProofSqlQuery, selfKey: string, selfValue: unknown) =>
+    insertIfAbsent: (query: NativeSqlQuery, selfKey: string, selfValue: unknown) =>
       query.onDuplicateKeyUpdate({ set: { [selfKey]: selfValue } }),
   },
 });

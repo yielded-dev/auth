@@ -5,6 +5,7 @@ import * as Totp from "@yielded/auth/Totp";
 import { layerCryptoWeb } from "@yielded/auth/WebCrypto";
 import { Aead } from "@yielded/crypto/Aead";
 import { Kdf } from "@yielded/crypto/Kdf";
+import * as KdfAdmission from "@yielded/crypto/KdfAdmission";
 import * as Portable from "@yielded/crypto/Portable";
 import {
   Context,
@@ -25,9 +26,7 @@ import fixtures from "./crypto-fixtures";
 
 const runtime = Layer.merge(
   layerCryptoWeb,
-  Portable.layer(globalThis.crypto.subtle).pipe(
-    Layer.provideMerge(Password.PasswordKdfAdmission.layer()),
-  ),
+  Portable.layer(globalThis.crypto.subtle).pipe(Layer.provideMerge(KdfAdmission.layer())),
 );
 
 // At 5199d99, payload.ts seal borrowed keyring bytes before waiting for entropy;
@@ -225,7 +224,7 @@ for (const method of ["hash", "verify", "dummy"] as const) {
 
       const services = yield* Layer.build(
         Password.PasswordHashing.layer().pipe(
-          Layer.provide(Layer.succeed(Password.PasswordKdfAdmission, { run: (work) => work })),
+          Layer.provide(Layer.succeed(KdfAdmission.KdfAdmission, { run: (work) => work })),
           Layer.provide(
             Layer.succeed(Kdf, {
               argon2id: derive,

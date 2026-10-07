@@ -28,7 +28,6 @@ const registrations = sqliteTable("email_registrations", {
   fingerprint: text().notNull(),
   state: text().notNull(),
   subjectId: text("subject_id"),
-  pendingReference: text("pending_reference"),
   retentionUntil: integer("retention_until").notNull(),
 });
 
@@ -120,14 +119,12 @@ const mappings = Effect.gen(function* () {
       fingerprint: "fingerprint",
       state: "state",
       subjectId: "subjectId",
-      pendingReference: "pendingReference",
       retentionUntil: "retentionUntil",
       encodeInsert: (
         input: { moduleId: string; commandId: string; fingerprint: string },
         value: {
           state: string;
           nativeSubjectId?: string;
-          pendingReference?: string;
           retentionUntilMillis: number;
         },
       ) => ({
@@ -136,7 +133,6 @@ const mappings = Effect.gen(function* () {
         fingerprint: input.fingerprint,
         state: value.state,
         subjectId: value.nativeSubjectId ?? null,
-        pendingReference: value.pendingReference ?? null,
         retentionUntil: value.retentionUntilMillis,
       }),
       decodeReplay: () => Effect.succeed({ _tag: "Rejected" as const }),
@@ -161,7 +157,7 @@ const seed = Effect.gen(function* () {
 
   yield* client`create table email_registrations (
     module_id text not null, command_id text not null, fingerprint text not null,
-    state text not null, subject_id text, pending_reference text unique, retention_until integer not null,
+    state text not null, subject_id text, retention_until integer not null,
     unique(module_id, command_id))`;
   yield* client`create table application_data (subject_id text primary key, contents text not null)`;
   yield* client`insert into subjects values ('squatter', 1, 'old-security')`;

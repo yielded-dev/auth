@@ -1,16 +1,11 @@
-import { NativeDatabase } from "@yielded/auth-persistence/Adapter";
 import type { LifecycleHooks } from "@yielded/auth/Hooks";
-import {
-  OAuthConnectedPersistence,
-  OAuthConnectedRevocations,
-  OAuthUnavailable,
-} from "@yielded/auth/OAuth";
+import type { OAuthUnavailable } from "@yielded/auth/OAuth";
+import { OAuthConnectedPersistence, OAuthConnectedRevocations } from "@yielded/auth/OAuth";
 import type { Table } from "drizzle-orm";
 import { type Crypto, Effect, Context } from "effect";
 
-import { makeD1Owner } from "./d1-planning";
-import { D1BatchStatements } from "./D1BatchStatements";
-import { nativeDatabase } from "./native-database";
+import type { D1BatchStatements } from "./D1BatchStatements";
+import { NativeDatabase, nativeDatabase } from "./native-database";
 import type {
   OAuthConnectedMapping,
   OAuthConnectedRevocationMapping,
@@ -27,7 +22,6 @@ import type { SuppliedService } from "./SuppliedService";
 type TransactionOf<D> = D extends { readonly transaction: (...args: any[]) => any }
   ? Parameters<Parameters<D["transaction"]>[0]>[0]
   : never;
-const unavailable = () => OAuthUnavailable.make({});
 
 export const makeOAuthConnectedTarget = <
   DatabaseId,
@@ -43,14 +37,9 @@ export const makeOAuthConnectedTarget = <
     D extends Database,
     S extends Family,
     AC extends Family,
-    T extends Family,
     O extends Family,
     F extends Family,
     G extends Family,
-    C extends Family,
-    H extends Family,
-    UA extends Family,
-    DC extends Family,
     N,
     J extends Family,
     A,
@@ -61,7 +50,7 @@ export const makeOAuthConnectedTarget = <
   >(
     acquire: Effect.Effect<D, DatabaseError, DatabaseRequirements>,
     options: {
-      readonly mapping: OAuthConnectedMapping<S, AC, T, O, F, G, C, H, UA, DC, N, J> & Extra;
+      readonly mapping: OAuthConnectedMapping<S, AC, O, F, G, N, J> & Extra;
       readonly transaction?: never;
     },
     body: Effect.Effect<A, E, Synchronous extends true ? NoInfer<OAuthConnectedPersistence> : R>,
@@ -77,14 +66,9 @@ export const makeOAuthConnectedTarget = <
     D extends Database,
     S extends Family,
     AC extends Family,
-    T extends Family,
     O extends Family,
     F extends Family,
     G extends Family,
-    C extends Family,
-    H extends Family,
-    UA extends Family,
-    DC extends Family,
     N,
     J extends Family,
     A,
@@ -97,7 +81,7 @@ export const makeOAuthConnectedTarget = <
   >(
     acquire: Effect.Effect<D, DatabaseError, DatabaseRequirements>,
     options: {
-      readonly mapping: OAuthConnectedMapping<S, AC, T, O, F, G, C, H, UA, DC, N, J> & Extra;
+      readonly mapping: OAuthConnectedMapping<S, AC, O, F, G, N, J> & Extra;
       readonly transaction: SuppliedService<TxId, NoInfer<TransactionOf<D>>, TxShape>;
     },
     body: Effect.Effect<
@@ -117,14 +101,9 @@ export const makeOAuthConnectedTarget = <
     D extends Database,
     S extends Family,
     AC extends Family,
-    T extends Family,
     O extends Family,
     F extends Family,
     G extends Family,
-    C extends Family,
-    H extends Family,
-    UA extends Family,
-    DC extends Family,
     N,
     J extends Family,
     A,
@@ -137,7 +116,7 @@ export const makeOAuthConnectedTarget = <
   >(
     acquire: Effect.Effect<D, DatabaseError, DatabaseRequirements>,
     options: {
-      readonly mapping: OAuthConnectedMapping<S, AC, T, O, F, G, C, H, UA, DC, N, J> & Extra;
+      readonly mapping: OAuthConnectedMapping<S, AC, O, F, G, N, J> & Extra;
       readonly transaction?: SuppliedService<TxId, NoInfer<TransactionOf<D>>, TxShape>;
     },
     body: Effect.Effect<A, E, R>,
@@ -171,12 +150,8 @@ export const makeOAuthConnectedTarget = <
   }
   function coordinateOAuthConnectedRevocations<
     D extends Database,
-    T extends Family,
     O extends Family,
     F extends Family,
-    G extends Family,
-    C extends Family,
-    H extends Family,
     J extends Family,
     N,
     A,
@@ -187,7 +162,7 @@ export const makeOAuthConnectedTarget = <
   >(
     acquire: Effect.Effect<D, DatabaseError, DatabaseRequirements>,
     options: {
-      readonly mapping: OAuthConnectedRevocationMapping<T, O, F, G, C, H, J, N> & Extra;
+      readonly mapping: OAuthConnectedRevocationMapping<O, F, J, N> & Extra;
       readonly transaction?: never;
     },
     body: Effect.Effect<A, E, Synchronous extends true ? NoInfer<OAuthConnectedRevocations> : R>,
@@ -201,12 +176,8 @@ export const makeOAuthConnectedTarget = <
   >;
   function coordinateOAuthConnectedRevocations<
     D extends Database,
-    T extends Family,
     O extends Family,
     F extends Family,
-    G extends Family,
-    C extends Family,
-    H extends Family,
     J extends Family,
     N,
     A,
@@ -219,7 +190,7 @@ export const makeOAuthConnectedTarget = <
   >(
     acquire: Effect.Effect<D, DatabaseError, DatabaseRequirements>,
     options: {
-      readonly mapping: OAuthConnectedRevocationMapping<T, O, F, G, C, H, J, N> & Extra;
+      readonly mapping: OAuthConnectedRevocationMapping<O, F, J, N> & Extra;
       readonly transaction: SuppliedService<TxId, NoInfer<TransactionOf<D>>, TxShape>;
     },
     body: Effect.Effect<
@@ -237,12 +208,8 @@ export const makeOAuthConnectedTarget = <
   >;
   function coordinateOAuthConnectedRevocations<
     D extends Database,
-    T extends Family,
     O extends Family,
     F extends Family,
-    G extends Family,
-    C extends Family,
-    H extends Family,
     J extends Family,
     N,
     A,
@@ -255,7 +222,7 @@ export const makeOAuthConnectedTarget = <
   >(
     acquire: Effect.Effect<D, DatabaseError, DatabaseRequirements>,
     options: {
-      readonly mapping: OAuthConnectedRevocationMapping<T, O, F, G, C, H, J, N> & Extra;
+      readonly mapping: OAuthConnectedRevocationMapping<O, F, J, N> & Extra;
       readonly transaction?: SuppliedService<TxId, NoInfer<TransactionOf<D>>, TxShape>;
     },
     body: Effect.Effect<A, E, R>,
@@ -297,33 +264,19 @@ export const makeOAuthConnectedTarget = <
     makeOAuthConnectedServices: <
       S extends Family,
       AC extends Family,
-      T extends Family,
       O extends Family,
       F extends Family,
       G extends Family,
-      C extends Family,
-      H extends Family,
-      UA extends Family,
-      DC extends Family,
       N,
       J extends Family = never,
     >(
-      mapping: OAuthConnectedMapping<S, AC, T, O, F, G, C, H, UA, DC, N, J> & Extra,
+      mapping: OAuthConnectedMapping<S, AC, O, F, G, N, J> & Extra,
     ) =>
       makeTargetOAuthConnectedServices(mapping, configuration).pipe(
         Effect.provideServiceEffect(NativeDatabase, nativeDatabase(databaseService)),
       ),
-    makeOAuthConnectedRevocationServices: <
-      T extends Family,
-      O extends Family,
-      F extends Family,
-      G extends Family,
-      C extends Family,
-      H extends Family,
-      J extends Family,
-      N,
-    >(
-      mapping: OAuthConnectedRevocationMapping<T, O, F, G, C, H, J, N> & Extra,
+    makeOAuthConnectedRevocationServices: <O extends Family, F extends Family, J extends Family, N>(
+      mapping: OAuthConnectedRevocationMapping<O, F, J, N> & Extra,
     ) =>
       makeTargetOAuthConnectedRevocationServices(mapping, configuration).pipe(
         Effect.provideServiceEffect(NativeDatabase, nativeDatabase(databaseService)),
@@ -340,14 +293,9 @@ export const makeD1OAuthConnectedTarget = <DatabaseId, Database, Family extends 
   function coordinateOAuthConnected<
     S extends Family,
     AC extends Family,
-    T extends Family,
     O extends Family,
     F extends Family,
     G extends Family,
-    C extends Family,
-    H extends Family,
-    UA extends Family,
-    DC extends Family,
     N,
     J extends Family,
     A,
@@ -358,13 +306,13 @@ export const makeD1OAuthConnectedTarget = <DatabaseId, Database, Family extends 
   >(
     acquire: Effect.Effect<Database, DatabaseError, DatabaseRequirements>,
     options: {
-      readonly mapping: OAuthConnectedMapping<S, AC, T, O, F, G, C, H, UA, DC, N, J> & Extra;
+      readonly mapping: OAuthConnectedMapping<S, AC, O, F, G, N, J> & Extra;
     },
     body: Effect.Effect<A, E, R>,
   ): Effect.Effect<
     A,
     OAuthCoordinatorError<E> | DatabaseError,
-    | Exclude<R, OAuthConnectedPersistence | D1BatchStatements>
+    | Exclude<Exclude<R, OAuthConnectedPersistence>, D1BatchStatements>
     | Crypto.Crypto
     | LifecycleHooks
     | DatabaseRequirements
@@ -374,57 +322,15 @@ export const makeD1OAuthConnectedTarget = <DatabaseId, Database, Family extends 
         Database,
         A,
         E | OAuthUnavailable,
-        Exclude<R, OAuthConnectedPersistence | D1BatchStatements>
-      >(database, options.mapping, configuration, (_tx, services, append) =>
-        Effect.gen(function* () {
-          const original = services.oauthConnectedPersistence;
-
-          const nativeCollector = D1BatchStatements.of({
-            append: (statement) => Effect.sync(() => append(statement)),
-          });
-
-          const owner = yield* makeD1Owner(unavailable()).pipe(
-            Effect.provideService(D1BatchStatements, nativeCollector),
-          );
-
-          const service: OAuthConnectedPersistence["Service"] = {
-            claimSignIn: (input, prepare) => owner.run(original.claimSignIn(input, prepare)),
-            inspectSignIn: (input) => owner.run(original.inspectSignIn(input)),
-            settleSignIn: (input, prepare) => owner.run(original.settleSignIn(input, prepare)),
-            capture: (input) => owner.run(original.capture(input)),
-            issue: (input, prepare) => owner.run(original.issue(input, prepare)),
-            prepare: (input, prepare) => owner.run(original.prepare(input, prepare)),
-            inspectPrepared: (input) => owner.run(original.inspectPrepared(input)),
-            preflight: (input) => owner.run(original.preflight(input)),
-            claim: (input, prepare) => owner.run(original.claim(input, prepare)),
-            inspectGrant: (input) => owner.run(original.inspectGrant(input)),
-            settle: (input, prepare) => owner.run(original.settle(input, prepare)),
-            list: (input) => owner.run(original.list(input)),
-            inspectDisconnect: (input) => owner.run(original.inspectDisconnect(input)),
-            disconnect: (input, prepare) => owner.run(original.disconnect(input, prepare)),
-            inspectAccess: (input) => owner.run(original.inspectAccess(input)),
-            claimRefresh: (input, prepare) => owner.run(original.claimRefresh(input, prepare)),
-            settleRefresh: (input, prepare) => owner.run(original.settleRefresh(input, prepare)),
-            admitUse: (input, prepare) => owner.run(original.admitUse(input, prepare)),
-            cleanup: (input, prepare) => owner.run(original.cleanup(input, prepare)),
-          };
-
-          const provided = Context.make(OAuthConnectedPersistence, service).pipe(
-            Context.add(D1BatchStatements, owner.collector),
-          );
-
-          return yield* owner.close(Effect.provideContext(body, provided));
-        }),
+        Exclude<R, OAuthConnectedPersistence>
+      >(database, options.mapping, configuration, (_tx, services) =>
+        Effect.provideService(body, OAuthConnectedPersistence, services.oauthConnectedPersistence),
       ).pipe(Effect.provideService(NativeDatabase, database)),
     );
   }
   function coordinateOAuthConnectedRevocations<
-    T extends Family,
     O extends Family,
     F extends Family,
-    G extends Family,
-    C extends Family,
-    H extends Family,
     J extends Family,
     N,
     A,
@@ -434,12 +340,12 @@ export const makeD1OAuthConnectedTarget = <DatabaseId, Database, Family extends 
     DatabaseRequirements,
   >(
     acquire: Effect.Effect<Database, DatabaseError, DatabaseRequirements>,
-    options: { readonly mapping: OAuthConnectedRevocationMapping<T, O, F, G, C, H, J, N> & Extra },
+    options: { readonly mapping: OAuthConnectedRevocationMapping<O, F, J, N> & Extra },
     body: Effect.Effect<A, E, R>,
   ): Effect.Effect<
     A,
     OAuthCoordinatorError<E> | DatabaseError,
-    | Exclude<R, OAuthConnectedRevocations | D1BatchStatements>
+    | Exclude<Exclude<R, OAuthConnectedRevocations>, D1BatchStatements>
     | Crypto.Crypto
     | LifecycleHooks
     | DatabaseRequirements
@@ -449,30 +355,9 @@ export const makeD1OAuthConnectedTarget = <DatabaseId, Database, Family extends 
         Database,
         A,
         E | OAuthUnavailable,
-        Exclude<R, OAuthConnectedRevocations | D1BatchStatements>
-      >(database, options.mapping, configuration, (_tx, services, append) =>
-        Effect.gen(function* () {
-          const original = services.oauthConnectedRevocations;
-
-          const nativeCollector = D1BatchStatements.of({
-            append: (statement) => Effect.sync(() => append(statement)),
-          });
-
-          const owner = yield* makeD1Owner(unavailable()).pipe(
-            Effect.provideService(D1BatchStatements, nativeCollector),
-          );
-
-          const service: OAuthConnectedRevocations["Service"] = {
-            claim: (input, prepare) => owner.run(original.claim(input, prepare)),
-            settle: (input, prepare) => owner.run(original.settle(input, prepare)),
-          };
-
-          const provided = Context.make(OAuthConnectedRevocations, service).pipe(
-            Context.add(D1BatchStatements, owner.collector),
-          );
-
-          return yield* owner.close(Effect.provideContext(body, provided));
-        }),
+        Exclude<R, OAuthConnectedRevocations>
+      >(database, options.mapping, configuration, (_tx, services) =>
+        Effect.provideService(body, OAuthConnectedRevocations, services.oauthConnectedRevocations),
       ).pipe(Effect.provideService(NativeDatabase, database)),
     );
   }

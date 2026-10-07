@@ -173,24 +173,22 @@ export const makeEmailConsumer = Effect.gen(function* () {
     Effect.gen(function* () {
       if (yield* Hooks.hasCommitScope) return yield* Email.EmailUnavailable.make({});
 
-      return yield* Hooks.coordinateCommit(
-        (journal) =>
-          Effect.gen(function* () {
-            const now = DateTime.toEpochMillis(yield* DateTime.now);
+      return yield* Hooks.coordinateCommit((journal) =>
+        Effect.gen(function* () {
+          const now = DateTime.toEpochMillis(yield* DateTime.now);
 
-            return yield* Effect.try({
-              try: () => {
-                const next = clone(state);
-                const result = body(next, journal, now);
+          return yield* Effect.try({
+            try: () => {
+              const next = clone(state);
+              const result = body(next, journal, now);
 
-                state = next;
+              state = next;
 
-                return result;
-              },
-              catch: () => Email.EmailUnavailable.make({}),
-            });
-          }),
-        { mode: "synchronous" },
+              return result;
+            },
+            catch: () => Email.EmailUnavailable.make({}),
+          });
+        }),
       ).pipe(
         Effect.map((result) => result.value),
         Effect.mapError(() => Email.EmailUnavailable.make({})),

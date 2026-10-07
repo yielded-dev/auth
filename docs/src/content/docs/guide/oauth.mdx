@@ -131,7 +131,8 @@ receives a redacted token and is never retried by the library. Refresh does not
 upgrade session assurance. Provider tokens never enter browser results or sessions.
 
 `auth.disconnectAccount` uses the same connected-grant authority. Provider revocation
-depends on the profile; cohort revocation needs the shared maintenance worker.
+depends on the profile; optional provider revocation uses the maintenance worker.
+Disconnect stops future local use, while already released tokens may remain in flight.
 See [retained access](../reference/oauth#retained-access) for dependencies and recovery.
 
 ## Local and preview environments

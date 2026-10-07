@@ -5,6 +5,7 @@ import { hasCommitScope } from "../hooks/commit";
 import type { AuthInvocation } from "../operations/context";
 import { OperationForbidden } from "../operations/errors";
 import { makeOperation, operationGroup } from "../operations/operation";
+import { CleanupResult } from "../persistence/cleanup";
 import {
   captureConnectedPolicy,
   connectedBounded,
@@ -53,7 +54,7 @@ export const makeOAuthConnectedMaintenance = <const Id extends string>(
       readonly cleanup: (
         invocation: AuthInvocation,
         limit: number,
-      ) => Effect.Effect<typeof M.OAuthConnectedCleanupResult.Type, typeof Failure.Type>;
+      ) => Effect.Effect<CleanupResult, typeof Failure.Type>;
       readonly runRevocation: (
         invocation: AuthInvocation,
       ) => Effect.Effect<typeof RunResult.Type, typeof Failure.Type>;
@@ -81,13 +82,12 @@ export const makeOAuthConnectedMaintenance = <const Id extends string>(
         const input = yield* snapshotOAuth(OAuthCleanupInput, {
           moduleId: id,
           limit,
-          nowMillis: DateTime.toEpochMillis(yield* DateTime.now),
         });
 
         const receipt = yield* clean(input, (value, journal) => {
-          const result = snapshotOAuthSync(M.OAuthConnectedCleanupResult, value);
+          const result = snapshotOAuthSync(CleanupResult, value);
 
-          if (result.terminalized + result.removed > input.limit) throw OAuthUnavailable.make({});
+          if (result.removed > input.limit) throw OAuthUnavailable.make({});
 
           return journal.prepare(result);
         });
@@ -123,7 +123,7 @@ export const makeOAuthConnectedMaintenance = <const Id extends string>(
 
             if (
               owned.claimId !== claimId ||
-              owned.job.context.token.moduleId !== id ||
+              owned.job.grant.context.moduleId !== id ||
               owned.claimExpiresAtMillis !==
                 owned.claimedAtMillis + policy.refreshClaimLifetimeMillis ||
               owned.claimedAtMillis > DateTime.toEpochMillis(yield* DateTime.now)
@@ -131,17 +131,17 @@ export const makeOAuthConnectedMaintenance = <const Id extends string>(
               return yield* OAuthUnavailable.make({});
 
             const call = Effect.gen(function* () {
-              const context = owned.job.context.token;
+              const context = owned.job.grant.context;
 
               if (
-                context.configuration.profile.revocation !== "cohort" ||
+                context.configuration.profile.revocation !== "provider" ||
                 DateTime.toEpochMillis(yield* DateTime.now) >= owned.claimExpiresAtMillis
               )
                 return yield* OAuthUnavailable.make({});
 
               const material = yield* open({
-                context: owned.job.context,
-                sealed: owned.job.sealed,
+                context: owned.job.grant.context,
+                sealed: owned.job.grant.sealed,
               }).pipe(
                 Effect.flatMap((value) => snapshotOAuth(M.OAuthConnectedTokenMaterial, value)),
               );
@@ -173,17 +173,16 @@ export const makeOAuthConnectedMaintenance = <const Id extends string>(
                 ? ("Confirmed" as const)
                 : ("Unknown" as const);
 
+            // The provider call may finish during shutdown; allow at most five
+            // seconds for its private settlement before reporting unavailable.
             const final = yield* connectedBounded(
               settle({ claim: owned, outcome }, (value, journal) =>
                 journal.prepare(
                   snapshotOAuthSync(Schema.Struct({ settled: Schema.Boolean }), value),
                 ),
-              ),
-              policy.settlementTimeoutMillis,
-            ).pipe(
-              Effect.flatMap(connectedRead),
-              Effect.mapError(() => OAuthUnavailable.make({})),
-            );
+              ).pipe(Effect.flatMap(connectedRead)),
+              5_000,
+            ).pipe(Effect.mapError(() => OAuthUnavailable.make({})));
 
             if (Exit.isFailure(result)) {
               if (Cause.hasInterrupts(result.cause)) return yield* Effect.interrupt;
@@ -204,7 +203,7 @@ export const makeOAuthConnectedMaintenance = <const Id extends string>(
 
   const CleanupOperation = makeOperation(`${moduleId}/connected/maintenance/cleanup`, {
     payload: Cleanup,
-    success: M.OAuthConnectedCleanupResult,
+    success: CleanupResult,
     error: Failure,
     access: "system",
     exposure: "internal",

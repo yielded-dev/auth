@@ -32,7 +32,6 @@ export default {
         moduleId: "oauth",
         generation: 1,
         flowId: "flow",
-        commandId: "command",
         provider: "provider",
         protocol: "oidc",
         configurationGeneration: 1,
@@ -46,7 +45,7 @@ export default {
         requestBindingExpiresAtMillis: 50000,
         issuedAtMillis: 1000,
         expiresAtMillis: 40000,
-        claimLifetimeMillis: 10000,
+        exchangeTimeoutMillis: 10000,
       },
       plain: {
         namespace: "effect-auth/oauth-transaction-secrets/v1",
@@ -57,9 +56,9 @@ export default {
       sealed: {
         format: "oauth-xchacha20poly1305-v1",
         keyId: "key1",
-        nonce: "vE9IiGO6i5gSUXgIX19RLQt5MrYOsFHa",
+        nonce: "0zYbC6m33Uy0wpRZVPxCB5HBOjVBoeF-",
         ciphertext:
-          "7iGgZkOUePwqqXH7zsCoTGlYw53dIpKz7NxfB12_wDI-G6QgBmPmV_dL5AVLm7LGotReVznjoZc1-5X-aAeZBX5bUMIujMHIFy0lGlXIdkfTqhzfZvlAy677ApLCrcmypiG12wx5s8zjoJ2XuBXrUv0pFBu4zrnsaw91Zd1QmtjT3vEZFDBc3vWsingwBTSmj3i_ls6-ETlTSrbgGtB5J7oEnCHfTTrxje0gnLO2-1dsacxGXz3JEjFgggrQW3eIHBcAIJh4M_TS69dr428pBLxc7mUVnT_EpRbiGWr1d1djqA_FDLHQVL-4OnZZ8iaQCJItp90",
+          "HYQ2sdnnDd4rmS83kz4c5a-8J4VThuncLRbWz9aW35B0uDF7yrLnBTyUB_-JDB4ZghX-Q0Z9Ra47P83rAJcjvyjqZIha8DIsn0C5U-MyHAGqo6snqB9oGzF1GfJoCxIYcEHvmLT8HUbRcxikcspNTrSS3yjCH0DRaB_aibYC4ree-4mA5jnUESzoN6jp4i_8yKfgcmecAJicFRk8nI9xzMyt8Ur-Yy_4JZMcqYEb0cxcXWn5hCOk-2GDX-Y6jISGURfe7qegB2gYsgFZARUROBtSUc2qE78Yua5RI-jw4uiNoA2ZHt2ndUUFEZ4TTzZqQyDx0sw",
       },
     },
     link: {
@@ -68,7 +67,6 @@ export default {
         moduleId: "oauth",
         generation: 1,
         flowId: "flow",
-        commandId: "command",
         provider: "provider",
         protocol: "oidc",
         configurationGeneration: 1,
@@ -82,7 +80,6 @@ export default {
         requestBindingExpiresAtMillis: 50000,
         issuedAtMillis: 1000,
         expiresAtMillis: 40000,
-        claimLifetimeMillis: 10000,
         revision: {
           subjectId: "subject",
           securityRevision: "rev1",
@@ -94,6 +91,65 @@ export default {
           ],
         },
         maximumEvidenceAgeMillis: 60000,
+        exchangeTimeoutMillis: 10000,
+        authorization: {
+          challenge: {
+            moduleId: "oauth",
+            action: "link-begin",
+            flowId: "flow",
+            revision: {
+              subjectId: "subject",
+              securityRevision: "rev1",
+              credentials: [
+                {
+                  credentialId: "credential",
+                  revision: "rev1",
+                },
+              ],
+            },
+            intentDigest: "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc",
+            bindingDigest: "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc",
+          },
+          source: {
+            _tag: "Proof",
+          },
+          validUntilMillis: 61000,
+          evidence: {
+            revision: {
+              subjectId: "subject",
+              securityRevision: "rev1",
+              credentials: [
+                {
+                  credentialId: "credential",
+                  revision: "rev1",
+                },
+              ],
+            },
+            flowId: "flow",
+            bindingDigest: "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc",
+            proofs: [
+              {
+                method: "passkey",
+                credentialId: "credential",
+                factors: ["possession"],
+                userVerified: true,
+                phishingResistant: true,
+                verifiedAt: 1000,
+              },
+            ],
+          },
+          requirement: {
+            alternatives: [
+              {
+                factors: ["possession"],
+                userVerified: true,
+                phishingResistant: true,
+                minimumCredentials: 1,
+              },
+            ],
+            maximumAgeMillis: 60000,
+          },
+        },
       },
       plain: {
         namespace: "effect-auth/oauth-transaction-secrets/v1",
@@ -104,9 +160,9 @@ export default {
       sealed: {
         format: "oauth-xchacha20poly1305-v1",
         keyId: "key1",
-        nonce: "DwgjC3P7rNuTDyc944ZqW1yzdutWYsdf",
+        nonce: "Pv8o71-6q2ipyeCULlwRWMUaSVZS4CG3",
         ciphertext:
-          "H954OAPG0vGcgu5O3dH2XtcP7nvUsDEkJdyYnozi8RVkuAPV4qJlkEZz0ngwCUeWEOhSZXYLvs_BM4wuwCBZejJf1o-07Km98sCxAtHBGl6FCz0fcckogjWjn5J5Q7L8Q8LPC-9nEuQrRdgSAiiUqqxLq3Sjufd06Qy8CROCTeecPTW0N_qaxzNuJrw48TlRKxdTWzyPd63Ary_qWQOl1IynKd_lsYkMPOfuisqBWht9M8MtqIEjBAb_MEmqlLNaH4aTaUk7182z1rCvxjPNO4H5z6NTNq_fZZI6DUOOubfFEMZwNfuPj9_6_QgKJvdHfrloqHs",
+          "ehlBOb2xeoB_FFMhCUolbSDkG6QfJOjxsRvjIDQcUcKqCXzrHp_og65lHAvSFuBywjzEn0C-iaxZTwPhQWFBTjwHipzw03AtB3RA_bvEOxzuQPpLwvomBxMRxGoEwp6i-gvQpRID9uiDUyNBu9fUpiNDjCJHqXh9NLswGl9_cDTqd2L51WVLwst-OX-Qq6SKdtkjRiVMknYU7QMltFOAfVQdoynSyobGvtC62xIGxPWgwM8JdN6-Ke62fpzQeWMgnf0hUyC-FYg-8-VMRmJ5qKUMCTNXekzlIxyGfcXXeFByl1GYmfcQk4W2iboQL_BI7fzLuCo",
       },
     },
     connected: {
@@ -115,7 +171,6 @@ export default {
         moduleId: "oauth",
         generation: 1,
         flowId: "flow",
-        commandId: "command",
         provider: "provider",
         protocol: "oidc",
         configurationGeneration: 1,
@@ -129,7 +184,6 @@ export default {
         requestBindingExpiresAtMillis: 50000,
         issuedAtMillis: 1000,
         expiresAtMillis: 40000,
-        claimLifetimeMillis: 10000,
         revision: {
           subjectId: "subject",
           securityRevision: "rev1",
@@ -157,27 +211,83 @@ export default {
         },
         grantId: "grant",
         maximumEvidenceAgeMillis: 60000,
+        exchangeTimeoutMillis: 10000,
+        authorization: {
+          challenge: {
+            moduleId: "oauth",
+            action: "connected-begin",
+            flowId: "flow",
+            revision: {
+              subjectId: "subject",
+              securityRevision: "rev1",
+              credentials: [
+                {
+                  credentialId: "credential",
+                  revision: "rev1",
+                },
+              ],
+            },
+            intentDigest: "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc",
+            bindingDigest: "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc",
+          },
+          source: {
+            _tag: "Proof",
+          },
+          validUntilMillis: 61000,
+          evidence: {
+            revision: {
+              subjectId: "subject",
+              securityRevision: "rev1",
+              credentials: [
+                {
+                  credentialId: "credential",
+                  revision: "rev1",
+                },
+              ],
+            },
+            flowId: "flow",
+            bindingDigest: "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc",
+            proofs: [
+              {
+                method: "passkey",
+                credentialId: "credential",
+                factors: ["possession"],
+                userVerified: true,
+                phishingResistant: true,
+                verifiedAt: 1000,
+              },
+            ],
+          },
+          requirement: {
+            alternatives: [
+              {
+                factors: ["possession"],
+                userVerified: true,
+                phishingResistant: true,
+                minimumCredentials: 1,
+              },
+            ],
+            maximumAgeMillis: 60000,
+          },
+        },
       },
       plain: {
         namespace: "effect-auth/oauth-transaction-secrets/v1",
         state: "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE",
         pkceVerifier: "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI",
         oidcNonce: "AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM",
-        authorizationUrl:
-          "https://issuer.example/authorize?state=AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE",
       },
       sealed: {
         format: "oauth-xchacha20poly1305-v1",
         keyId: "key1",
-        nonce: "UumM-stnEjKdNUyWJbq1FRm5lGd_ZBMy",
+        nonce: "TK-QXoDkMEp1q70rkJZXdS26Y-UaD266",
         ciphertext:
-          "URHLK6ivllaAuqcfBCTgWQH0w_qlPlxVosC64k0pzqp6Y5Bwaq-3R9Y9yXhg4hEPbEB0znXFQMJU88YfQLyvIAkv_aRs03hcc07wFa9kZaHtr8WwnWN3CRKZ_CWq9FYOrOM79RZTIoX-R3rrCfx2_3Hb4B6QkXPD-loLBpxvcqVRY2Z0ZuSKxQv5aMgr3aJEaxvxAX2a03DFcDEuUK3OLUqP6f1k8NoM95mdD_XzAPw9K1cupZaqYv3TGbzIcvIP1f2Q7tkqyaG0hafRL8FX4UwhAtVeLGyq2Q8WGTt7XEmyq39n0aeNHUmFl-K8S-6SrsnExGaXUPvA4_P0WbC_wwuaz1CARvdQ3lNq4Ym0n4cwSvfxaYyTpRZmoaUDedghg9f5JRuaMN9k6lbKEryYPlDJ5gOb7L5G6TUWMK5P8BKc7XXj5csHXq1nbMZIruf9DQTclvtb4CDv-NivNg",
+          "0TPUZcTTj2Qu7bY4JcrjofVYvFQ4IGgkw2zUNW-9VZHKZieYBWo_3Yaps-IfHfW2qBRrwIV9hqM2hcewc_40wDR2sn5OHKMYVXiMYsG2GXwmz7JHcTP_UWzbEuhl2iWkcPExmhwfQ9qNnBVJKve0BpPG7CqmxUUxK4B30n9tXZAFImDhqGbpjXCylx5RgBMxQv-t2G4sW-BWKcK4j4qj1ina2fR5MUpiHlzT13Bw573vuEYwjN0MuDyBmsoLs3uiwd9LVS1mKtMI8xAbFoUU2_wjQyamYXeBfLdDCPOYnrxWaIpJfAaB1IV8_i7cMvgwtmMQy-c",
       },
     },
     token: {
       context: {
         namespace: "effect-auth/oauth-connected-token-context/v1",
-        exchangeOrder: "1",
         moduleId: "oauth",
         subjectId: "subject",
         identity: {
@@ -212,7 +322,6 @@ export default {
         grantId: "grant",
         grantVersion: "1",
         tokenVersion: "1",
-        cohortGeneration: "1",
         metadata: {
           scopes: ["openid"],
           resources: [],
@@ -235,10 +344,12 @@ export default {
       sealed: {
         format: "oauth-connected-xchacha20poly1305-v1",
         keyId: "key1",
-        nonce: "44L3lU7PCPaLhukiZYc25YYAmzI6LcEr",
+        nonce: "kSM2YBVrX7dk5QWZg8c-L8p14R2amCFT",
         ciphertext:
-          "GgmwqVtw-B7UoLEPSN7BZCjo7ZnE_6TA3Qj0-r2AEZw62BXPGhuRwahDptcMJdLoSCt9s2ovP6ObPXkrzpGdOrHFsLR5BRDV5EEfHaOAW3U4pQffAcZaD6ApCks3mPJ_JeQIez9wcvNCut4Um6IhpTVM6Ym0JtCYqg0DQ3gDM2zMYDtlcbc_q0WQZP73eExJJ6sax2trn2uVIWdC5AZ8Evo7h687ceEI7IufECXpjA9z_69oEjRJ-50r7NGyZn8MWvd-b8ScdxNgBzJah7nalIdRrgJl4DQKHDKlu666k0ZD61nRLSZnFYbd5nICT8PjtaYz",
+          "jV9wwYgu2SjsZ2XIHAJT16nIhWGFIMu09zarSROWY4Zd7Ryu9yqN1rZhnjxdSB5FXlxdYLtuaN9QVptP-vOzlRxijYDbovcqxPV3Fai6dmhRNDa27RMx7j_nobDmQwfigDyFSnCqIT3pWOLqJKOGUA4-NqDNxUWdE4RzNVp2P3E5w3JPzPmNJaMNt0ZF3dFHMI2hQKc0An-QImEq60Vfw030rKXK2lrdmv4-LoVVWRdWsyHtBm9Z1WozA-1DVZie92ofF-JlYUR41lZ8ulVJwY8eFhZ2RYKPfdHi-Z8eoHOpi9VxkLGkWMpIw7XDX3C5CHDo",
       },
     },
+    provenance:
+      "Regenerated after the pre-production OAuth state reset: single-use flow contexts retain accepted action authorization; connected token context has no cohort or exchange order.",
   },
 } as const;

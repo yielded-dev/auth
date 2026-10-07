@@ -70,12 +70,12 @@ Choose the backend at your application's composition root. This portable setup
 supplies Effect entropy/digests and owned KDF, AEAD, HMAC, and signature services:
 
 ```ts title="apps/server/crypto-live.ts"
-import { Password } from "@yielded/auth";
+import * as KdfAdmission from "@yielded/crypto/KdfAdmission";
 import * as Portable from "@yielded/crypto/Portable";
 import * as WebCrypto from "@yielded/crypto/WebCrypto";
 import { Layer } from "effect";
 
-const Admission = Password.PasswordKdfAdmission.layer();
+const Admission = KdfAdmission.layer();
 export const CryptoLive = Layer.merge(
   WebCrypto.layerCryptoWeb,
   Portable.layer(globalThis.crypto.subtle).pipe(Layer.provideMerge(Admission)),
@@ -100,9 +100,8 @@ their construction Scope open while using the returned operations; Auth Layers
 own this scope automatically. Token-only proof construction needs Effect
 `Crypto` without `Hmac` or `Scope`.
 
-The password admission Layer exposes both Auth's domain admission service and
-the generic `KdfAdmission` service. Use the same instance for the backend and
-password operations so their nested work shares a permit. Auth preserves its
+Use the same `KdfAdmission` Layer instance for the backend and password operations
+so their nested work shares a permit. Auth preserves its
 password limits, PHC/PBKDF2 encodings, TOTP recovery digests, and OAuth envelopes;
 changing the backend does not change stored credential bytes or keyring policy.
 

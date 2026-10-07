@@ -40,7 +40,7 @@ import type { Context } from "effect";
 import { Cause, DateTime, Effect, Layer, Redacted, Schema } from "effect";
 import { Base64Url } from "effect/encoding";
 
-import { captureSimpleWebAuthnProfiles } from "./configuration";
+import { captureSimpleWebAuthnProfiles, validateSimpleWebAuthnProfile } from "./configuration";
 import type { SimpleWebAuthnPasskeyProtocolOptions } from "./models";
 
 type Protocol = Context.Service.Shape<typeof PasskeyProtocol>;
@@ -511,7 +511,9 @@ export const makeSimpleWebAuthnPasskeyProtocol = Effect.fn("makeSimpleWebAuthnPa
         const fixed = yield* capture(registrationInput, input),
           ceremony = fixed.ceremony;
 
-        const profile = yield* select(ceremony.profile);
+        const profile = yield* validateSimpleWebAuthnProfile(ceremony.profile).pipe(
+          Effect.mapError(rejected),
+        );
 
         if (
           (ceremony.purpose !== "registration" || ceremony.context._tag !== "Registration") &&
@@ -610,8 +612,12 @@ export const makeSimpleWebAuthnPasskeyProtocol = Effect.fn("makeSimpleWebAuthnPa
           ceremony = fixed.ceremony,
           credential = fixed.credential;
 
-        const profile = yield* select(ceremony.profile),
-          original = yield* select(credential.profile);
+        const profile = yield* validateSimpleWebAuthnProfile(ceremony.profile).pipe(
+            Effect.mapError(rejected),
+          ),
+          original = yield* validateSimpleWebAuthnProfile(credential.profile).pipe(
+            Effect.mapError(rejected),
+          );
 
         const contexts = {
           "sign-in": "SignIn",

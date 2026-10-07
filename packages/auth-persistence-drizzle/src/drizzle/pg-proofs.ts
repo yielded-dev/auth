@@ -1,4 +1,3 @@
-import { NativeDatabase } from "@yielded/auth-persistence/Adapter";
 import type { LifecycleHooks, HookConfigurationError } from "@yielded/auth/Hooks";
 import { type ProofUnavailable, ProofPersistence } from "@yielded/auth/Proofs";
 import type { AnyRelations } from "drizzle-orm";
@@ -8,11 +7,11 @@ import type { AnyPgTable } from "drizzle-orm/pg-core";
 import { Effect, Context } from "effect";
 import type { SqlError } from "effect/sql/SqlError";
 
-import { nativeDatabase } from "./native-database";
+import { NativeDatabase, nativeDatabase } from "./native-database";
+import type { NativeSqlQuery } from "./native-database";
 import { Database as DatabaseService } from "./pg-database";
 import type { ProofPersistenceMapping } from "./proof-model";
 import { CurrentProofSql } from "./proof-sql";
-import type { ProofSqlQuery } from "./proof-sql";
 import {
   coordinateTargetProofPersistence,
   makeTargetProofPersistenceServices,
@@ -59,7 +58,7 @@ const configuration = (service: TransactionService | undefined) => ({
   mode: "interactive" as const,
   locking: true,
   standaloneGuard: sqlClientProofStandaloneGuard(service),
-  insertIfAbsent: (query: ProofSqlQuery) => query.onConflictDoNothing(),
+  insertIfAbsent: (query: NativeSqlQuery) => query.onConflictDoNothing(),
 });
 
 export const makePgProofPersistenceServices = <

@@ -28,7 +28,7 @@ const aad = Effect.fnUntraced(function* (context: OAuthLinkTransactionContext, k
     context,
   ]).pipe(Effect.mapError(() => OAuthUnavailable.make({})));
 
-  return yield* encodeUtf8(value, 16384);
+  return yield* encodeUtf8(value, 262144);
 });
 
 export const make = (keyring: OAuthTransactionKeyring) =>

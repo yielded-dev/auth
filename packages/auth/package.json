@@ -52,7 +52,6 @@
     "./Password": "./src/Password.ts",
     "./Email": "./src/Email.ts",
     "./Passkey": "./src/Passkey.ts",
-    "./PasskeyPassword": "./src/PasskeyPassword.ts",
     "./PhoneOtp": "./src/PhoneOtp.ts",
     "./SmsDelivery": "./src/SmsDelivery.ts",
     "./adapters/Twilio": "./src/Twilio.ts",

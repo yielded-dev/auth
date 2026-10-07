@@ -106,7 +106,6 @@ export const exercise = Effect.gen(function* () {
   const begin = yield* delivery.call(
     auth.linkAccount("accounts", {
       flowId: linkedFlow,
-      commandId: linkedCommand,
       provider: profile.provider,
       callbackId,
       returnTarget: "/account",
@@ -128,12 +127,23 @@ export const exercise = Effect.gen(function* () {
         state: yield* state(begin.authorizationUrl),
         scope: "activity:read_all",
       },
-      actionProof: Redacted.value(yield* actions.issue("link-complete", linkedCommand)),
     }),
     caller,
   );
 
   if (linked._tag !== "Linked") return yield* DemoFailure.make({ step: "link completion" });
+
+  const afterLink = yield* delivery.call(auth.requireSession(), caller);
+
+  const [authority] =
+    yield* sql`SELECT "securityRevision" FROM oauth_subject WHERE id = ${session.subjectId}`;
+
+  if (
+    afterLink.sessionId !== session.sessionId ||
+    delivery.credentials.session !== sessionToken ||
+    authority?.securityRevision !== session.securityRevision
+  )
+    return yield* DemoFailure.make({ step: "link preserves session and security revision" });
 
   const links =
     yield* sql`SELECT "credentialId" FROM oauth_login WHERE "subjectId" = ${session.subjectId} AND status = 'active'`;
@@ -156,15 +166,21 @@ export const exercise = Effect.gen(function* () {
   };
 
   yield* delivery.call(auth.unlinkAccount("accounts", unlinkInput), caller);
-  // Exact durable replay reuses the command and does not consume another code.
-  yield* delivery.call(auth.unlinkAccount("accounts", unlinkInput), caller);
+
+  // A missing credential is not evidence of a previous unlink by this caller.
+  const replay = yield* delivery
+    .call(auth.unlinkAccount("accounts", unlinkInput), caller)
+    .pipe(Effect.result);
+
+  if (replay._tag !== "Failure" || replay.failure._tag !== "OAuthRejected")
+    return yield* DemoFailure.make({ step: "unlink replay rejected" });
 
   const remaining =
     yield* sql`SELECT "credentialId" FROM oauth_login WHERE "subjectId" = ${session.subjectId} AND status = 'active'`;
 
-  if (remaining.length !== 1) return yield* DemoFailure.make({ step: "unlink durable replay" });
+  if (remaining.length !== 1) return yield* DemoFailure.make({ step: "unlink" });
   yield* Console.log(
-    `unlink: active login links=${remaining.length}; exact command replay accepted`,
+    `unlink: active login links=${remaining.length}; removed credential replay rejected`,
   );
 
   const otherDelivery = privateDelivery();
@@ -198,22 +214,38 @@ export const exercise = Effect.gen(function* () {
   if (!("_tag" in registrationRequired) || registrationRequired._tag !== "RegistrationRequired")
     return yield* DemoFailure.make({ step: "registration intent" });
 
-  const registered = yield* otherDelivery.call(
-    auth.register("registration", {
-      requestBinding: yield* otherDelivery.read("request-binding"),
-      credential: yield* otherDelivery.read("registration"),
-      flowId: registrationStart.flowId,
-      reference: registrationRequired.reference,
-      commandId: `registration-${runId}`,
-      registration: { displayName: "SQL OAuth demo" },
-    }),
-  );
+  const registrationInput = {
+    requestBinding: yield* otherDelivery.read("request-binding"),
+    credential: yield* otherDelivery.read("registration"),
+    flowId: registrationStart.flowId,
+    reference: registrationRequired.reference,
+    commandId: `registration-${runId}`,
+    registration: { displayName: "SQL OAuth demo" },
+  };
+
+  const registered = yield* otherDelivery.call(auth.register("registration", registrationInput));
+  const repeated = yield* otherDelivery.call(auth.register("registration", registrationInput));
+
+  if (repeated._tag !== "RegistrationAccepted" || otherDelivery.credentials.session !== undefined)
+    return yield* DemoFailure.make({ step: "registration outcome replay without session" });
+
+  const changed = yield* otherDelivery
+    .call(
+      auth.register("registration", {
+        ...registrationInput,
+        registration: { displayName: "changed" },
+      }),
+    )
+    .pipe(Effect.result);
+
+  if (changed._tag !== "Failure" || changed.failure._tag !== "IdentityConflict")
+    return yield* DemoFailure.make({ step: "registration rejects changed payload" });
 
   if (registered._tag !== "RegistrationAccepted")
     return yield* DemoFailure.make({ step: "registration" });
 
   const [registeredOwner] =
-    yield* sql`SELECT "subjectId" FROM oauth_identity WHERE "externalSubject" = ${externalId} AND state = 'Owned'`;
+    yield* sql`SELECT "subjectId" FROM oauth_identity WHERE "externalSubject" = ${externalId}`;
 
   if (registeredOwner === undefined)
     return yield* DemoFailure.make({ step: "registered subject and identity commit" });

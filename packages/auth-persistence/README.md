@@ -30,12 +30,9 @@ connection and migration runner.
 The composed Layer covers password sign-in and management, email address verification
 and changes, phone sign-in, and passkey sign-in and management with stateful sessions
 on PostgreSQL and SQLite. The `/Adapter` module exposes the shared mapping contracts
-and transaction kernels used by companion adapters.
-Its constructors acquire their database through the matching `Current*Sql` or
-`NativeDatabase` service, alongside Effect `Crypto` where required. Supply these
-services during construction;
-transaction coordinators supply their exact transaction when constructing bound
-services. Keep root database provision outside later operations, where the
-current SQL service identifies an active transaction.
+and workflow capabilities used by companion adapters. Shared workflows own
+policy, authority checks, and commit receipts; each backend owns its native
+queries and transaction-bound reads and writes. The direct adapter uses Effect
+SQL statements, while the Drizzle package uses application table mappings.
 See [persistence examples](../../docs/src/content/docs/reference/adapters.md#runnable-examples) for all
 four ownership models and their current limits.

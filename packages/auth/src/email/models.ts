@@ -48,5 +48,4 @@ export type EmailAddressDecision = "changed" | "rejected";
 
 export type EmailRegistrationDecision =
   | { readonly _tag: "Registered" }
-  | { readonly _tag: "Rejected" }
-  | { readonly _tag: "ProvisioningPending"; readonly reference: string };
+  | { readonly _tag: "Rejected" };

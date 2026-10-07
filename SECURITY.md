@@ -80,9 +80,30 @@ outside them.
   must bump the subject security revision. Conditional rehashing changes only the
   verifier and its version. Fresh password sign-ins are independent attempts;
   pending-factor completion and handoffs retain their replay guards.
+- Passkey begin and completion requests use bounded process-local token buckets
+  for global, subject and target budgets. Multi-instance deployments must provide a
+  shared Effect `RateLimiter` or `RateLimiterStore`. Hosts own network admission
+  and limits for malformed traffic.
 - Identity selection, account provisioning, transaction authority, and
   authorization policy belong to the application. Provider claims and email
-  addresses never select a subject on their own.
+  addresses never select a subject on their own. Provisioning completes synchronously
+  and idempotently by request ID before registration succeeds.
+- Password changes may accept recent passkey step-up through application action
+  policy. The policy binds the actual factor and authentication time to the action;
+  persistence rechecks current subject and credential authority at commit. A passkey
+  user who forgets their password signs in with the passkey and then changes it.
+
+- OAuth linking retains one exact begin authorization, including verified private
+  session evidence when application policy accepts recent step-up. Linking preserves
+  sessions; unlinking rechecks remaining login methods and invalidates according to
+  the configured session mode. Callback consumption precedes provider exchange, and
+  unknown exchange or session-issuance outcomes require a new ceremony. Refresh
+  retains an exact versioned claim with no expired takeover.
+- Passkey enrollment retains one begin authorization and re-assesses it at commit.
+  Challenges retain their selected RP profile through expiry during rolling deploys.
+  Verified challenges are consumed before independent session issuance; failed or
+  uncertain issuance requires a new ceremony. Enrollment preserves existing sessions;
+  removal increments the security revision and applies session invalidation.
 
 ## Security updates and compatibility
 

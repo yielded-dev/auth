@@ -11,7 +11,7 @@ import {
   is,
   Param,
   Placeholder,
-  type SQL,
+  SQL,
   Table,
   sql,
   type BuildQueryConfig,
@@ -155,105 +155,122 @@ export const makeDrizzleSqlTables = (
   const { database, dialect } = capture(capturedDatabase);
   const compile = compileWith(dialect);
 
-  return makeNativeSqlTables(client, (_client, physical): SqlTable => {
-    if (!is(physical, Table)) return invalid("Expected a Drizzle table");
-    const columns = getTableColumns(physical);
-    const entries = Object.entries(columns);
+  return makeNativeSqlTables(
+    client,
+    (_client, physical): SqlTable => {
+      if (!is(physical, Table)) return invalid("Expected a Drizzle table");
+      const columns = getTableColumns(physical);
+      const entries = Object.entries(columns);
 
-    const schema = is(physical, PgTable)
-      ? getPgTableConfig(physical).schema
-      : is(physical, MySqlTable)
-        ? getMysqlTableConfig(physical).schema
-        : undefined;
+      const schema = is(physical, PgTable)
+        ? getPgTableConfig(physical).schema
+        : is(physical, MySqlTable)
+          ? getMysqlTableConfig(physical).schema
+          : undefined;
 
-    const table = { name: getTableName(physical), ...(schema === undefined ? {} : { schema }) };
+      const table = { name: getTableName(physical), ...(schema === undefined ? {} : { schema }) };
 
-    const getColumn = (key: string) => {
-      const column = Object.hasOwn(columns, key) ? columns[key] : undefined;
+      const getColumn = (key: string) => {
+        const column = Object.hasOwn(columns, key) ? columns[key] : undefined;
 
-      if (column === undefined) return invalid("Missing Drizzle column");
+        if (column === undefined) return invalid("Missing Drizzle column");
 
-      return column;
-    };
-
-    const bind = (alias?: string): SqlTable => {
-      const reference = (key: string) => {
-        const column = getColumn(key);
-
-        return alias === undefined
-          ? sql`${column}`
-          : sql`${sql.identifier(alias)}.${sql.identifier(column.name)}`;
+        return column;
       };
 
-      return {
-        name: compile(
-          alias === undefined ? sql`${physical}` : sql`${physical} AS ${sql.identifier(alias)}`,
-        ),
-        as: bind,
-        column: (key) => compile(reference(key)),
-        unencodedTextColumn: (key) => {
+      const bind = (alias?: string): SqlTable => {
+        const reference = (key: string) => {
           const column = getColumn(key);
 
-          return ["PgText", "PgVarchar", "SQLiteText", "MySqlText", "MySqlVarChar"].includes(
-            column.columnType,
-          ) &&
-            Predicate.hasProperty(column.mapToDriverValue, "isNoop") &&
-            column.mapToDriverValue.isNoop === true &&
-            Predicate.hasProperty(column.mapFromDriverValue, "isNoop") &&
-            column.mapFromDriverValue.isNoop === true &&
-            (dialect.codecs === undefined ||
-              (Predicate.hasProperty(dialect.codecs, "get") &&
-                typeof dialect.codecs.get === "function" &&
-                (["cast", "normalize", "castParam", "normalizeParam"] as const).every(
-                  (kind) => dialect.codecs?.get(column, kind) === undefined,
-                )))
-            ? { table, name: column.name }
-            : undefined;
-        },
-        fields: (prefix) =>
-          compile(
-            sql.join(
-              entries.map(([key, column], index) => {
-                const selection =
-                  dialect.codecs === undefined
-                    ? reference(key)
-                    : dialect.codecs.apply(column, "cast", reference(key));
+          return alias === undefined
+            ? sql`${column}`
+            : sql`${sql.identifier(alias)}.${sql.identifier(column.name)}`;
+        };
 
-                return sql`${selection} as ${sql.identifier(nativeSqlAlias(prefix, index))}`;
-              }),
-              sql`, `,
+        const selection = (key: string) => {
+          const column = getColumn(key);
+
+          return dialect.codecs === undefined
+            ? reference(key)
+            : dialect.codecs.apply(column, "cast", reference(key));
+        };
+
+        return {
+          keys: entries.map(([key]) => key),
+          name: compile(
+            alias === undefined ? sql`${physical}` : sql`${physical} AS ${sql.identifier(alias)}`,
+          ),
+          as: bind,
+          column: (key) => compile(reference(key)),
+          columnName: (key) => compile(sql`${sql.identifier(getColumn(key).name)}`),
+          selectedColumn: (key) => compile(sql`${selection(key)}`),
+          unencodedTextColumn: (key) => {
+            const column = getColumn(key);
+
+            return ["PgText", "PgVarchar", "SQLiteText", "MySqlText", "MySqlVarChar"].includes(
+              column.columnType,
+            ) &&
+              Predicate.hasProperty(column.mapToDriverValue, "isNoop") &&
+              column.mapToDriverValue.isNoop === true &&
+              Predicate.hasProperty(column.mapFromDriverValue, "isNoop") &&
+              column.mapFromDriverValue.isNoop === true &&
+              (dialect.codecs === undefined ||
+                (Predicate.hasProperty(dialect.codecs, "get") &&
+                  typeof dialect.codecs.get === "function" &&
+                  (["cast", "normalize", "castParam", "normalizeParam"] as const).every(
+                    (kind) => dialect.codecs?.get(column, kind) === undefined,
+                  )))
+              ? { table, name: column.name }
+              : undefined;
+          },
+          fields: (prefix) =>
+            compile(
+              sql.join(
+                entries.map(
+                  ([key], index) =>
+                    sql`${selection(key)} as ${sql.identifier(nativeSqlAlias(prefix, index))}`,
+                ),
+                sql`, `,
+              ),
             ),
-          ),
-        decode: (row, prefix) =>
-          Object.fromEntries(
-            entries.map(([key, column], index) => {
-              const alias = nativeSqlAlias(prefix, index);
+          decode: (row, prefix) =>
+            Object.fromEntries(
+              entries.map(([key, column], index) => {
+                const alias = nativeSqlAlias(prefix, index);
 
-              if (!Object.hasOwn(row, alias)) return invalid("Missing SQL projection field");
-              const value = row[alias];
+                if (!Object.hasOwn(row, alias)) return invalid("Missing SQL projection field");
+                const value = row[alias];
 
-              return [
-                key,
-                value === null
-                  ? null
-                  : column.mapFromDriverValue(
-                      dialect.codecs === undefined
-                        ? value
-                        : dialect.codecs.apply(column, "normalize", value),
-                    ),
-              ];
-            }),
-          ),
-        value: (key, value) => {
-          const column = getColumn(key);
+                return [
+                  key,
+                  value === null
+                    ? null
+                    : column.mapFromDriverValue(
+                        dialect.codecs === undefined
+                          ? value
+                          : dialect.codecs.apply(column, "normalize", value),
+                      ),
+                ];
+              }),
+            ),
+          value: (key, value) => {
+            const column = getColumn(key);
 
-          return Statement.isFragment(value) ? value : compile(sql`${sql.param(value, column)}`);
-        },
-        insert: (values) => compile(database.insert(physical).values(writeValues(values)).getSQL()),
-        update: (values) => compile(database.update(physical).set(writeValues(values)).getSQL()),
+            return Statement.isFragment(value) ? value : compile(sql`${sql.param(value, column)}`);
+          },
+          insert: (values) =>
+            compile(database.insert(physical).values(writeValues(values)).getSQL()),
+          update: (values) => compile(database.update(physical).set(writeValues(values)).getSQL()),
+        };
       };
-    };
 
-    return bind();
-  });
+      return bind();
+    },
+    (value) => {
+      if (Statement.isFragment(value)) return value;
+      if (!is(value, SQL)) return invalid("Expected a Drizzle SQL expression");
+
+      return compile(value);
+    },
+  );
 };

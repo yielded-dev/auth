@@ -38,41 +38,6 @@ const initial = Effect.gen(function* () {
   unique ("c_module_id", "c_subject_id"),
   unique ("c_module_id", "c_credential_id")
 )`);
-  yield* sql.unsafe(`create table "app_password_attempts" (
-  "c_module_id" text not null,
-  "c_action" text not null,
-  "c_attempt_id" text not null,
-  "c_identifier_namespace" text not null,
-  "c_identifier_value" text not null,
-  "c_subject_id" text,
-  "c_credential_id" text,
-  "c_security_revision" text,
-  "c_credential_revision" text,
-  "c_verifier_version" text,
-  "c_identifier_binding_revision" text,
-  "c_admitted_at" ${integerType} not null,
-  "c_deadline" ${integerType} not null,
-  "c_retention_until" ${integerType} not null,
-  "c_state" text not null,
-  unique ("c_module_id", "c_attempt_id")
-)`);
-  yield* sql.unsafe(`create table "app_password_scopes" (
-  "c_module_id" text not null,
-  "c_action" text not null,
-  "c_scope_kind" text not null,
-  "c_scope_key" text not null,
-  unique ("c_module_id", "c_action", "c_scope_kind", "c_scope_key")
-)`);
-  yield* sql.unsafe(`create table "app_password_charges" (
-  "c_module_id" text not null,
-  "c_action" text not null,
-  "c_scope_kind" text not null,
-  "c_scope_key" text not null,
-  "c_attempt_id" text not null,
-  "c_occurred_at" ${integerType} not null,
-  "c_retention_until" ${integerType} not null,
-  unique ("c_module_id", "c_action", "c_scope_kind", "c_scope_key", "c_attempt_id")
-)`);
   yield* sql.unsafe(`create table "app_password_commands" (
   "c_module_id" text not null,
   "c_command_id" text not null,
@@ -244,7 +209,6 @@ const passkey = Effect.gen(function* () {
   "c_rp_id" text not null,
   "c_protocol_credential_id" text not null,
   "c_credential_key" text not null,
-  "c_handle_key" text not null,
   "c_user_handle" text not null,
   "c_public_key" text not null,
   "c_algorithm" ${integerType} not null,
@@ -256,97 +220,22 @@ const passkey = Effect.gen(function* () {
   "c_backup_eligible" ${booleanType} not null,
   "c_backup_state" ${booleanType} not null,
   "c_counter" ${integerType} not null,
-  "c_maximum_counter" ${integerType} not null,
   "c_name" text not null,
   "c_created_at" ${integerType} not null,
   "c_last_used_at" ${integerType},
   unique ("c_credential_id"),
   unique ("c_credential_key")
 )`);
-  yield* sql.unsafe(`create table "app_passkey_ownership" (
-  "c_credential_key" text not null,
-  "c_rp_id" text not null,
-  "c_protocol_credential_id" text not null,
-  "c_subject_id" text,
-  "c_credential_id" text,
-  "c_state" text not null,
-  "c_version" text not null,
-  "c_reservation_id" text,
-  unique ("c_credential_key")
-)`);
-  yield* sql.unsafe(`create table "app_passkey_handles" (
-  "c_handle_key" text not null,
-  "c_rp_id" text not null,
-  "c_user_handle" text not null,
-  "c_subject_id" text,
-  "c_state" text not null,
-  "c_version" text not null,
-  "c_reservation_id" text,
-  unique ("c_handle_key"),
-  unique ("c_rp_id", "c_subject_id")
-)`);
-  yield* sql.unsafe(`create table "app_passkey_modules" (
-  "c_module_id" text not null,
-  "c_active" ${booleanType} not null,
-  "c_policy_revision" text not null,
-  "c_policy" text not null,
-  unique ("c_module_id")
-)`);
   yield* sql.unsafe(`create table "app_passkey_flows" (
   "c_module_id" text not null,
   "c_flow_id" text not null,
-  "c_command_id" text not null,
   "c_purpose" text not null,
-  "c_state" text not null,
-  "c_version" text not null,
-  "c_generation" ${integerType} not null,
   "c_snapshot" text not null,
-  "c_policy_snapshot" text not null,
   "c_request_binding_verifier" text not null,
   "c_request_binding_expires_at" ${integerType} not null,
   "c_issued_at" ${integerType} not null,
   "c_expires_at" ${integerType} not null,
-  "c_retention_until" ${integerType} not null,
-  "c_claim_id" text,
-  "c_claimed_at" ${integerType},
-  "c_claim_expires_at" ${integerType},
-  "c_credential_snapshot" text,
-  "c_subject_scope" text,
-  "c_target_scope" text,
-  unique ("c_module_id", "c_flow_id"),
-  unique ("c_module_id", "c_command_id")
-)`);
-  yield* sql.unsafe(`create table "app_passkey_admissions" (
-  "c_authority_scope" text not null,
-  "c_module_id" text not null,
-  "c_version" text not null,
-  "c_owner_marker" text not null,
-  "c_admitted_at" ${integerType},
-  unique ("c_authority_scope", "c_module_id")
-)`);
-  yield* sql.unsafe(`create table "app_passkey_charges" (
-  "c_module_id" text not null,
-  "c_flow_id" text not null,
-  "c_purpose" text not null,
-  "c_kind" text not null,
-  "c_scope" text not null,
-  "c_original_window_millis" ${integerType} not null,
-  "c_admitted_at" ${integerType},
-  "c_retain_until" ${integerType},
-  "c_version" text not null,
-  "c_owner_marker" text not null,
-  unique ("c_module_id", "c_flow_id", "c_kind")
-)`);
-  yield* sql.unsafe(`create table "app_passkey_commands" (
-  "c_module_id" text not null,
-  "c_command_id" text not null,
-  "c_subject_id" text not null,
-  "c_credential_id" text not null,
-  "c_intent" text not null,
-  "c_decision" text not null,
-  "c_retention_until" ${integerType} not null,
-  "c_version" text not null,
-  unique ("c_module_id", "c_command_id")
+  unique ("c_module_id", "c_flow_id")
 )`);
 });
 
@@ -359,16 +248,6 @@ export const MigrationsLive = Layer.effectDiscard(
       "0003_passkeys": passkey,
       "0004_browser_login": Effect.flatMap(SqlClient.SqlClient, (sql) =>
         sql.unsafe(BrowserLoginPersistence.migration),
-      ),
-      "0005_separate_password_limits": Effect.gen(function* () {
-        const sql = yield* SqlClient.SqlClient;
-
-        yield* sql`drop table app_password_charges`;
-        yield* sql`drop table app_password_scopes`;
-      }),
-      "0006_remove_password_attempts": Effect.flatMap(
-        SqlClient.SqlClient,
-        (sql) => sql`drop table app_password_attempts`,
       ),
     }),
   }),

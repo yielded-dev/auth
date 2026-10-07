@@ -1,9 +1,9 @@
 import { EmailAddressPersistence, EmailUnavailable } from "@yielded/auth/Email";
-import { hasCommitScope, LifecycleHooks } from "@yielded/auth/Hooks";
+import type { LifecycleHooks } from "@yielded/auth/Hooks";
+import { hasCommitScope } from "@yielded/auth/Hooks";
 import {
   type PasskeyConfig,
   PasskeyCredentials,
-  PasskeyEnrollmentContext,
   PasskeyManagementPersistence,
   PasskeyPersistence,
   PasskeyUnavailable,
@@ -33,26 +33,32 @@ import {
   type PasskeyRequirement,
   type MappingInput,
 } from "./configuration";
-import { randomId } from "./crypto";
-import { makeEmailKernel, CurrentEmailSql, type EmailSqlDatabase } from "./email-kernel";
+import type { EmailWorkflowOptions } from "./email-policy";
+import type { EmailAddressStore } from "./email-store";
+import { makeEmailAddressWorkflow } from "./email-workflow";
 import { PersistenceMappingError } from "./mapping-error";
+import type { AnyEmailAddressMapping } from "./models/email-model";
+import type { AnyPasswordPersistenceMapping } from "./models/password-model";
+import type { AnyProofPersistenceMapping } from "./models/proof-model";
+import type { StatefulSessionMapping } from "./models/session-model";
 import type { NativeSqlTables } from "./native-sql-table";
-import {
-  makePasswordKernel,
-  CurrentPasswordSql,
-  type PasswordSqlDatabase,
-} from "./password-kernel";
-import { makePhoneKernel, CurrentPhoneTransaction } from "./phone-kernel";
-import {
-  makeProofKernel,
-  CurrentProofSql,
-  type ProofSqlDatabase,
-  type ProofSqlQuery,
-} from "./proof-kernel";
-import type { QueryOperations } from "./query-operations";
+import type { PasswordWorkflowOptions } from "./password-policy";
+import type { PasswordStore } from "./password-store";
+import { makePasswordWorkflow } from "./password-workflow";
+import type { PersistenceOwner } from "./persistence-owner";
+import type { PhoneStore } from "./phone-store";
+import { makePhoneWorkflow } from "./phone-workflow";
+import type { ProofWorkflowOptions } from "./proof-policy";
+import type { ProofStore } from "./proof-store";
+import { makeProofWorkflow } from "./proof-workflow";
 import { makeRegistrationAuthority } from "./registration";
 import type { PasswordRegistrationAuthority } from "./registration-contract";
-import { makeSessionKernel, CurrentSessionSql, type SessionSqlDatabase } from "./session-kernel";
+import type { PasswordRegistrationStore } from "./registration-store";
+import type { SessionTransactionOwner, StatefulSessionStore } from "./session-store";
+import {
+  makeAuthenticationAuthorityWorkflow,
+  makeStatefulSessionWorkflow,
+} from "./session-workflow";
 import { requireStandalone } from "./standalone";
 import { makeMappings } from "./storage-mapping";
 import {
@@ -66,34 +72,60 @@ import {
   withStorageValidation,
   type StorageValidation,
 } from "./storage-validation";
-import { makeTransactionExecutionKernel } from "./transaction-execution-kernel";
-import {
-  makeTransactionKernel,
-  NativeDatabase,
-  type TransactionNativeDatabase,
-} from "./transaction-kernel";
 
-export interface Backend<T extends object, R> {
+export interface ComposedPasskeyInput {
+  readonly storage: MappingInput;
+  readonly namespace: string;
+  readonly dialect: "pg" | "sqlite";
+  readonly features: ReadonlyArray<PasskeyFeature>;
+  readonly passwordModules: ReadonlyArray<string>;
+}
+
+export interface Backend<T extends object, R, Database extends object = object> {
   readonly makeTable: (definition: StorageTable) => T;
   readonly describe: (table: T) => StorageTable;
-  readonly acquire: Effect.Effect<object, PersistenceConfigurationError, R | SqlClient.SqlClient>;
-  readonly operations: QueryOperations;
-  readonly nativeTables: (client: SqlClient.SqlClient, database: object) => NativeSqlTables;
-  readonly passkeys: (input: {
-    readonly storage: MappingInput;
-    readonly namespace: string;
-    readonly dialect: "pg" | "sqlite";
-    readonly features: ReadonlyArray<PasskeyFeature>;
-    readonly passwordModules: ReadonlyArray<string>;
-  }) => Effect.Effect<
+  readonly acquire: Effect.Effect<Database, PersistenceConfigurationError, R | SqlClient.SqlClient>;
+  readonly nativeTables: (database: Database) => NativeSqlTables;
+  readonly maxParameters: (database: Database) => number | undefined;
+  readonly sessionOwner: <Claims>(
+    // oxlint-disable-next-line no-explicit-any -- the backend validates its table metadata.
+    mapping: StatefulSessionMapping<Claims, any, any, any, any, any, any, any>,
+    database: Database,
+  ) => Effect.Effect<SessionTransactionOwner<StatefulSessionStore<Claims>>, never>;
+  readonly proofOwner: (
+    mapping: AnyProofPersistenceMapping,
+    options: ProofWorkflowOptions & { readonly maxParameters?: number },
+    database: Database,
+  ) => Effect.Effect<PersistenceOwner<ProofStore>, never>;
+  readonly passwordOwner: (
+    mapping: AnyPasswordPersistenceMapping,
+    options: PasswordWorkflowOptions & { readonly maxParameters?: number },
+    database: Database,
+    proofMapping?: AnyProofPersistenceMapping,
+  ) => Effect.Effect<PersistenceOwner<PasswordStore>, never>;
+  readonly emailOwner: (
+    mapping: AnyEmailAddressMapping,
+    options: EmailWorkflowOptions & { readonly maxParameters?: number },
+    database: Database,
+    proofMapping?: AnyProofPersistenceMapping,
+  ) => Effect.Effect<PersistenceOwner<EmailAddressStore>, never>;
+  readonly registrationOwner: (
+    mapping: AnyPasswordPersistenceMapping,
+    receipts: object,
+    database: Database,
+  ) => Effect.Effect<PersistenceOwner<PasswordRegistrationStore>, never>;
+  readonly phoneOwner: (
+    storage: MappingInput,
+    options: { readonly dialect: "pg" | "sqlite"; readonly maxParameters?: number },
+    database: Database,
+  ) => Effect.Effect<Pick<PersistenceOwner<PhoneStore>, "transaction">, never, Crypto.Crypto>;
+  readonly passkeys: (
+    input: ComposedPasskeyInput,
+    database: Database,
+  ) => Effect.Effect<
     Context.Context<never>,
     PersistenceConfigurationError,
-    | PasskeyConfig
-    | LifecycleHooks
-    | SqlClient.SqlClient
-    | NativeDatabase
-    | CurrentProofSql
-    | Crypto.Crypto
+    PasskeyConfig | LifecycleHooks | SqlClient.SqlClient | Crypto.Crypto
   >;
 }
 
@@ -118,17 +150,9 @@ const timestampKeys = new Set([
   "dedupUntil",
 ]);
 
-export const createPersistence = <T extends object, R>(
-  backend: Backend<T, R>,
+export const createPersistence = <T extends object, R, Database extends object = object>(
+  backend: Backend<T, R, Database>,
 ): PersistenceApi<T, R> => {
-  const proofKernel = makeProofKernel(backend.operations);
-  const passwordKernel = makePasswordKernel(backend.operations, proofKernel, backend.nativeTables);
-  const emailKernel = makeEmailKernel(backend.operations, proofKernel);
-  const sessionKernel = makeSessionKernel(backend.operations, backend.nativeTables);
-  const transactionKernel = makeTransactionKernel(backend.operations);
-  const executionKernel = makeTransactionExecutionKernel(transactionKernel);
-  const phoneKernel = makePhoneKernel(backend.operations, transactionKernel);
-
   const make = <C extends ClaimsCodec, const Id extends string, const A extends Definition<C, Id>>(
     auth: A & Definition<C, Id>,
   ) => {
@@ -153,17 +177,7 @@ export const createPersistence = <T extends object, R>(
     if (management) roles.push("passwordRegistrations");
     if (email) roles.push("emailCredentials", "emailCommands");
     if (phone) roles.push("phoneState");
-    if (passkeys.length > 0)
-      roles.push(
-        "passkeyCredentials",
-        "passkeyOwnership",
-        "passkeyHandles",
-        "passkeyModules",
-        "passkeyFlows",
-        "passkeyAdmissions",
-        "passkeyCharges",
-      );
-    if (passkeys.some((feature) => feature.management)) roles.push("passkeyCommands");
+    if (passkeys.length > 0) roles.push("passkeyCredentials", "passkeyFlows");
     if (proofs)
       roles.push(
         "proofRequests",
@@ -295,7 +309,6 @@ export const createPersistence = <T extends object, R>(
     const services = Layer.effectContext(
       Effect.gen(function* () {
         const storage = yield* ConfigKey;
-        const hooks = yield* LifecycleHooks;
         const client = yield* SqlClient.SqlClient;
         const database = yield* backend.acquire;
 
@@ -349,12 +362,8 @@ export const createPersistence = <T extends object, R>(
         const standalone = <E>(error: () => E) =>
           requireStandalone(error, client.transactionService);
 
-        // Backend validation owns the foreign query-builder shape, never the decoded rows.
-        const native = database as ProofSqlDatabase &
-          PasswordSqlDatabase &
-          EmailSqlDatabase &
-          SessionSqlDatabase &
-          TransactionNativeDatabase;
+        const maximumParameters = backend.maxParameters(database);
+        const limits = maximumParameters === undefined ? {} : { maxParameters: maximumParameters };
 
         const options = {
           mode: "interactive" as const,
@@ -363,23 +372,19 @@ export const createPersistence = <T extends object, R>(
         };
 
         const sessionMapping = mappings.sessions(auth.claims);
+        const sessionOwner = yield* backend.sessionOwner(sessionMapping, database);
 
-        const sessionServices = yield* sessionKernel
-          .makeSqlStatefulSessions(sessionMapping, options)
-          .pipe(
-            Effect.provideService(CurrentSessionSql, native),
-            Effect.provideService(NativeDatabase, native),
-          );
+        const sessionServices = yield* makeStatefulSessionWorkflow(
+          sessionMapping,
+          options,
+          sessionOwner,
+        );
 
-        const authority = yield* sessionKernel
-          .makeSqlAuthenticationAuthority<C["Type"]>(
-            { ...mappings.authority(), isConstraintConflict: () => false },
-            options,
-          )
-          .pipe(
-            Effect.provideService(CurrentSessionSql, native),
-            Effect.provideService(NativeDatabase, native),
-          );
+        const authority = yield* makeAuthenticationAuthorityWorkflow<C["Type"]>(
+          { ...mappings.authority(), isConstraintConflict: () => false },
+          options,
+          sessionOwner,
+        );
 
         let context: Context.Context<never> = Context.make(AuthenticationAuthority, authority).pipe(
           Context.add(
@@ -395,40 +400,52 @@ export const createPersistence = <T extends object, R>(
               configuration: {
                 mode: "interactive" as const,
                 locking: dialect === "pg",
+                ...limits,
                 standaloneGuard: standalone(() => ProofUnavailable.make({})),
-                insertIfAbsent: (query: ProofSqlQuery) => query.onConflictDoNothing(),
               },
             }
           : undefined;
 
         if (proofConfiguration !== undefined) {
+          const proofOwner = yield* backend.proofOwner(
+            proofConfiguration.mapping,
+            proofConfiguration.configuration,
+            database,
+          );
+
           context = Context.add(
             context,
             ProofPersistence,
-            yield* proofKernel
-              .makeSqlProofPersistence(proofConfiguration.mapping, proofConfiguration.configuration)
-              .pipe(
-                Effect.provideService(CurrentProofSql, native),
-                Effect.provideService(NativeDatabase, native),
-              ),
+            yield* makeProofWorkflow(
+              proofConfiguration.mapping,
+              proofConfiguration.configuration,
+              proofOwner,
+            ),
           );
         }
 
         if (password) {
-          const persistence = yield* passwordKernel
-            .makeSqlPasswordPersistence(mappings.passwords(), {
-              mode: "interactive",
-              locking: dialect === "pg",
-              standaloneGuard: standalone(() => PasswordUnavailable.make({})),
-              insertIfAbsent: (query) => query.onConflictDoNothing(),
-              ...(proofConfiguration === undefined ? {} : { proof: proofConfiguration }),
-            })
-            .pipe(
-              Effect.provideService(CurrentPasswordSql, native),
-              Effect.provideService(NativeDatabase, native),
-            );
+          const mapping = mappings.passwords();
 
-          context = Context.add(context, PasswordPersistence, persistence);
+          const options: PasswordWorkflowOptions = {
+            mode: "interactive",
+            locking: dialect === "pg",
+            standaloneGuard: standalone(() => PasswordUnavailable.make({})),
+            ...(proofConfiguration === undefined ? {} : { proof: proofConfiguration.mapping }),
+          };
+
+          const owner = yield* backend.passwordOwner(
+            mapping,
+            { ...options, ...limits },
+            database,
+            proofConfiguration?.mapping,
+          );
+
+          context = Context.add(
+            context,
+            PasswordPersistence,
+            yield* makePasswordWorkflow(mapping, options, owner, backend.nativeTables(database)),
+          );
         }
         for (const [name, strategy] of Object.entries(auth.strategies)) {
           if (strategy.persistence?.kind !== "password" || !strategy.persistence.management)
@@ -438,164 +455,77 @@ export const createPersistence = <T extends object, R>(
           if (key === undefined)
             return yield* configError(`Missing subject provisioning for ${name}`);
 
+          const owner = yield* backend.registrationOwner(
+            mappings.passwords(),
+            mappings.table("passwordRegistrations"),
+            database,
+          );
+
           const registration = yield* makeRegistrationAuthority(
-            mappings,
-            backend.operations,
+            owner,
             standalone(() => PasswordUnavailable.make({})),
             ProvisioningKey,
             name,
-          ).pipe(Effect.provideService(CurrentPasswordSql, native));
+          );
 
           context = Context.add(context, key, registration);
         }
         if (email) {
+          const mapping = mappings.emails();
+
+          const options: EmailWorkflowOptions = {
+            mode: "interactive",
+            locking: dialect === "pg",
+            standaloneGuard: standalone(() => EmailUnavailable.make({})),
+            ...(proofConfiguration === undefined ? {} : { proof: proofConfiguration.mapping }),
+          };
+
+          const owner = yield* backend.emailOwner(
+            mapping,
+            { ...options, ...limits },
+            database,
+            proofConfiguration?.mapping,
+          );
+
           context = Context.add(
             context,
             EmailAddressPersistence,
-            yield* emailKernel
-              .makeSqlEmailAddressPersistence(mappings.emails(), {
-                mode: "interactive",
-                locking: dialect === "pg",
-                standaloneGuard: standalone(() => EmailUnavailable.make({})),
-                ...(proofConfiguration === undefined ? {} : { proof: proofConfiguration }),
-              })
-              .pipe(
-                Effect.provideService(CurrentEmailSql, native),
-                Effect.provideService(NativeDatabase, native),
-              ),
+            yield* makeEmailAddressWorkflow(mapping, options, owner),
           );
         }
         if (phone) {
-          const { column, eq } = backend.operations;
+          const owner = yield* backend.phoneOwner(storage, { dialect, ...limits }, database);
 
-          const mapping = (moduleId: string) => ({
-            moduleId,
-            subject: {
-              table: storage.subjects.table,
-              id: storage.subjects.id,
-              securityRevision: storage.subjects.securityRevision,
-              activeCondition: eq(
-                column(storage.subjects.table, storage.subjects.status),
-                storage.subjects.activeValue,
-              ),
-            },
-            subjectIds: {
-              toNative: storage.subjects.toNativeSync,
-              toSubject: storage.subjects.toSubjectSync,
-            },
-            identifier: {
-              table: mappings.table("identifiers"),
-              namespace: "namespace",
-              value: "value",
-              subjectId: "subjectId",
-              revision: "revision",
-              verifiedAt: "verifiedAt",
-              activeCondition: eq(column(mappings.table("identifiers"), "active"), true),
-            },
-            credential: {
-              table: mappings.table("credentials"),
-              id: "credentialId",
-              subjectId: "subjectId",
-              revision: "revision",
-              activeCondition: eq(column(mappings.table("credentials"), "active"), true),
-            },
-            state: {
-              table: mappings.table("phoneState"),
-              scope: "scope",
-              state: "state",
-              version: "version",
-              encodeInsert: (row: object) => row,
-            },
-            admission: {
-              windowMillis: 60_000,
-              networkRequests: 10,
-              networkAttempts: 100,
-              maximumMessages: 10,
-              requestRetentionMillis: 86_400_000,
-            },
-            engineNowMillis: backend.operations
-              .sql`${dialect === "pg" ? backend.operations.sql`cast(extract(epoch from clock_timestamp()) * 1000 as bigint)` : backend.operations.sql`cast(round((julianday('now') - 2440587.5) * 86400000) as integer)`}`,
-            encodeInstant: storage.encodeInstant,
-          });
-
-          const execution = yield* executionKernel
-            .makeTransactionExecution(
-              CurrentPhoneTransaction,
-              {
-                mode: "interactive",
-                dialect,
-                locking: dialect === "pg",
-                standaloneGuard: () => standalone(() => PhoneOtpUnavailable.make({})),
-              },
-              () => PhoneOtpUnavailable.make({}),
-              randomId,
-            )
-            .pipe(Effect.provideService(NativeDatabase, native));
-
-          const run = <Value, E, Requirements>(
-            work: Effect.Effect<Value, E, Requirements>,
-            mutation = true,
-          ) =>
-            execution.admit.pipe(
-              Effect.andThen(execution.run(work, mutation)),
-              Effect.provideService(LifecycleHooks, hooks),
-            );
-
-          const allowed = (moduleId: string) =>
-            features.some((feature) => feature?.kind === "phone" && feature.moduleId === moduleId);
-
-          const admission = PhoneAdmission.of({
-            admit: (request) =>
-              allowed(request.moduleId)
-                ? run(phoneKernel.admitPhone(mapping(request.moduleId), request))
-                : Effect.fail(PhoneOtpUnavailable.make({})),
-            cleanup: (request) =>
-              allowed(request.moduleId)
-                ? run(phoneKernel.cleanupPhoneAdmission(mapping(request.moduleId), request))
-                : Effect.fail(PhoneOtpUnavailable.make({})),
-          });
-
-          const targets = PhoneSignInTargets.of({
-            lookup: (request) =>
-              allowed(request.moduleId)
-                ? run(phoneKernel.lookupPhone(mapping(request.moduleId), request), false)
-                : Effect.fail(PhoneOtpUnavailable.make({})),
-          });
-
-          context = context.pipe(
-            Context.add(PhoneAdmission, admission),
-            Context.add(PhoneSignInTargets, targets),
+          context = Context.merge(
+            context,
+            yield* makePhoneWorkflow(
+              owner,
+              features.flatMap((feature) => (feature?.kind === "phone" ? [feature.moduleId] : [])),
+              standalone(() => PhoneOtpUnavailable.make({})),
+            ),
           );
         }
 
         if (passkeys.length > 0) {
           // Auth capability metadata determines whether PasskeyConfig is required.
-          const services = backend.passkeys({
-            storage,
-            namespace: auth.namespace,
-            dialect,
-            features: passkeys,
-            passwordModules: features.flatMap((feature) =>
-              feature?.kind === "password" ? [feature.moduleId] : [],
-            ),
-          }) as Effect.Effect<
+          const services = backend.passkeys(
+            {
+              storage,
+              namespace: auth.namespace,
+              dialect,
+              features: passkeys,
+              passwordModules: features.flatMap((feature) =>
+                feature?.kind === "password" ? [feature.moduleId] : [],
+              ),
+            },
+            database,
+          ) as Effect.Effect<
             Context.Context<never>,
             PersistenceConfigurationError,
-            | PasskeyRequirement<A>
-            | Crypto.Crypto
-            | LifecycleHooks
-            | SqlClient.SqlClient
-            | NativeDatabase
-            | CurrentProofSql
+            PasskeyRequirement<A> | Crypto.Crypto | LifecycleHooks | SqlClient.SqlClient
           >;
 
-          context = Context.merge(
-            context,
-            yield* services.pipe(
-              Effect.provideService(NativeDatabase, native),
-              Effect.provideService(CurrentProofSql, native),
-            ),
-          );
+          context = Context.merge(context, yield* services);
         }
 
         // The checked capability metadata above determines exactly these service keys.
@@ -778,31 +708,25 @@ export const createPersistence = <T extends object, R>(
           context = context.pipe(
             Context.add(PasskeyCredentials, {
               lookup: (input) => Effect.flatMap(credentials, (s) => s.lookup(input)),
+              listForSubject: (input) =>
+                Effect.flatMap(credentials, (s) => s.listForSubject(input)),
             }),
             Context.add(PasskeyPersistence, {
               issue: (input, prepare) =>
                 Effect.flatMap(persistence, (s) => s.issue(input, prepare)),
               context: (input) => Effect.flatMap(persistence, (s) => s.context(input)),
-              claim: (input, prepare) =>
-                Effect.flatMap(persistence, (s) => s.claim(input, prepare)),
-              settle: (input, prepare) =>
-                Effect.flatMap(persistence, (s) => s.settle(input, prepare)),
+              consume: (input, prepare) =>
+                Effect.flatMap(persistence, (s) => s.consume(input, prepare)),
               cleanup: (input, prepare) =>
                 Effect.flatMap(persistence, (s) => s.cleanup(input, prepare)),
             }),
           );
           if (passkeys.some((feature) => feature.management)) {
             const manager = service(PasskeyManagementPersistence, unavailable);
-            const enrollment = service(PasskeyEnrollmentContext, unavailable);
 
             context = context.pipe(
-              Context.add(PasskeyEnrollmentContext, {
-                capture: (input) => Effect.flatMap(enrollment, (s) => s.capture(input)),
-              }),
               Context.add(PasskeyManagementPersistence, {
                 list: (input) => Effect.flatMap(manager, (s) => s.list(input)),
-                issueEnrollment: (input, prepare) =>
-                  Effect.flatMap(manager, (s) => s.issueEnrollment(input, prepare)),
                 completeEnrollment: (input, prepare) =>
                   Effect.flatMap(manager, (s) => s.completeEnrollment(input, prepare)),
                 inspectRemove: (input) => Effect.flatMap(manager, (s) => s.inspectRemove(input)),

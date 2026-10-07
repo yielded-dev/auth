@@ -1,4 +1,3 @@
-import type { NativeDatabase } from "@yielded/auth-persistence/Adapter";
 import { EmailAddressPersistence, EmailSignInTargets, EmailUnavailable } from "@yielded/auth/Email";
 import {
   coordinateCommit,
@@ -20,9 +19,8 @@ import {
   makeSqlEmailAddressPersistence,
   makeSqlEmailSignInTargets,
   type EmailSqlConfiguration,
-  type EmailSqlDatabase,
-  type EmailSqlQuery,
 } from "./email-sql";
+import type { NativeDatabase, NativeSqlDatabase, NativeSqlQuery } from "./native-database";
 import type { ProofTargetConfiguration } from "./proof-target";
 import { sqlClientStandaloneGuard, type TransactionService } from "./standalone-guard";
 import { validateDrizzleStorage } from "./storage-validation";
@@ -30,9 +28,10 @@ import { validateDrizzleStorage } from "./storage-validation";
 export interface EmailTargetConfiguration {
   readonly mode: "interactive" | "synchronous";
   readonly locking: boolean;
+  readonly maxParameters?: number;
   readonly standaloneGuard: Effect.Effect<void, EmailUnavailable>;
   readonly coordinatorGuard?: Effect.Effect<void, EmailUnavailable>;
-  readonly generatedSubjectRows: (query: EmailSqlQuery) => EmailSqlQuery;
+  readonly generatedSubjectRows: (query: NativeSqlQuery) => NativeSqlQuery;
   readonly proof: ProofTargetConfiguration;
 }
 
@@ -56,6 +55,9 @@ export const sqlClientEmailStandaloneGuard = (
 const proofConfiguration = (configuration: EmailTargetConfiguration, coordinated = false) => ({
   mode: configuration.proof.mode,
   locking: configuration.proof.locking,
+  ...(configuration.proof.maxParameters === undefined
+    ? {}
+    : { maxParameters: configuration.proof.maxParameters }),
 
   standaloneGuard: Effect.void,
   coordinated,
@@ -161,21 +163,19 @@ export const coordinateTargetEmailAddress = <Transaction, A, E, R>(
       Effect.mapError(() => EmailUnavailable.make({})),
     );
 
-    const result = yield* coordinateCommit(
-      () =>
-        database.transaction((transaction) =>
-          Effect.gen(function* () {
-            return yield* owner(transaction, {
-              emailAddressPersistence: yield* makeSqlEmailAddressPersistence(
-                mapping,
-                addressOptions(configuration, proofMapping, true),
-              ).pipe(
-                Effect.provideService(CurrentEmailSql, transaction as unknown as EmailSqlDatabase),
-              ),
-            });
-          }),
-        ),
-      { mode: configuration.mode },
+    const result = yield* coordinateCommit(() =>
+      database.transaction((transaction) =>
+        Effect.gen(function* () {
+          return yield* owner(transaction, {
+            emailAddressPersistence: yield* makeSqlEmailAddressPersistence(
+              mapping,
+              addressOptions(configuration, proofMapping, true),
+            ).pipe(
+              Effect.provideService(CurrentEmailSql, transaction as unknown as NativeSqlDatabase),
+            ),
+          });
+        }),
+      ),
     ).pipe(Effect.provideService(LifecycleHooks, hooks));
 
     return result.value;
@@ -205,21 +205,19 @@ export const coordinateTargetEmailRegistration = <Registration, Transaction, A, 
       Effect.mapError(() => EmailUnavailable.make({})),
     );
 
-    const result = yield* coordinateCommit(
-      () =>
-        database.transaction((transaction) =>
-          Effect.gen(function* () {
-            return yield* owner(transaction, {
-              registrationAuthority: yield* makeSqlEmailRegistrationAuthority<Registration>(
-                mapping,
-                registrationOptions(configuration, proofMapping, true),
-              ).pipe(
-                Effect.provideService(CurrentEmailSql, transaction as unknown as EmailSqlDatabase),
-              ),
-            });
-          }),
-        ),
-      { mode: configuration.mode },
+    const result = yield* coordinateCommit(() =>
+      database.transaction((transaction) =>
+        Effect.gen(function* () {
+          return yield* owner(transaction, {
+            registrationAuthority: yield* makeSqlEmailRegistrationAuthority<Registration>(
+              mapping,
+              registrationOptions(configuration, proofMapping, true),
+            ).pipe(
+              Effect.provideService(CurrentEmailSql, transaction as unknown as NativeSqlDatabase),
+            ),
+          });
+        }),
+      ),
     ).pipe(Effect.provideService(LifecycleHooks, hooks));
 
     return result.value;

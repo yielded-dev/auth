@@ -1,4 +1,3 @@
-import { NativeDatabase } from "@yielded/auth-persistence/Adapter";
 import type { LifecycleHooks, HookConfigurationError } from "@yielded/auth/Hooks";
 import {
   AuthenticationAuthority,
@@ -16,7 +15,7 @@ import { Effect, Context } from "effect";
 import type { SqlError } from "effect/sql/SqlError";
 
 import { Database as DatabaseService } from "./mysql-database";
-import { nativeDatabase } from "./native-database";
+import { NativeDatabase, nativeDatabase } from "./native-database";
 import type {
   AuthenticationAuthorityMapping,
   PendingAuthenticationMapping,

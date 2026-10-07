@@ -205,8 +205,7 @@ supplies both strategies.
 Provide the registration strategy's `RegistrationAuthority` with
 `makeEmailRegistrationServices` from your Drizzle adapter, and provide
 `ProofPersistence` through `makeProofPersistenceServices` with the same proof mapping
-for issuance and completion. In atomic mode, completed
-mailbox proof can replace another subject's active, unverified email reservation
+for issuance and completion. Completed mailbox proof can replace another subject's active, unverified email reservation
 when the application's inspection and proof policies allow it. The new account
 receives the verified address. The earlier account keeps its data and credentials,
 and its security revision advances. Verified ownership is never replaced.
@@ -214,8 +213,8 @@ and its security revision advances. Verified ownership is never replaced.
 Registration does not issue a session. Start a fresh email sign-in afterward;
 an authenticated user can then call `addPassword` when password management is
 enabled. `AuthPersistence.layer` does not install guest email-registration services
-automatically. Pending-mode registration leaves provisioning and ownership changes
-to the application. See [email persistence](../reference/adapters#email) for mapping
+automatically. Provisioning completes synchronously and idempotently by request ID;
+applications whose accounts live elsewhere can own a queue before registration. See [email persistence](../reference/adapters#email) for mapping
 and session invalidation requirements.
 
 Use `Email.makeAddresses` for authenticated address management. Confirming an

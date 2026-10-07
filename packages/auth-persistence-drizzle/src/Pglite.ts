@@ -1,7 +1,11 @@
 export { OAuthProxyPersistence } from "./internal/drizzle-postgres-oauth-proxy";
 
 import type { AnyRelations } from "drizzle-orm";
-import { type EffectPgDatabase, makeWithDefaults } from "drizzle-orm/effect-pglite";
+import {
+  EffectPgTransaction as PasskeyTransaction,
+  type EffectPgDatabase,
+  makeWithDefaults,
+} from "drizzle-orm/effect-pglite";
 import type { AnyPgTable } from "drizzle-orm/pg-core";
 import { Effect, Layer } from "effect";
 
@@ -84,13 +88,6 @@ export {
   coordinatePgSessionStepUp as coordinateSessionStepUp,
 } from "./drizzle/pg-sessions";
 
-export {
-  makePgPasswordPreparedPersistenceServices as makePasswordPreparedPersistenceServices,
-  coordinatePgPasswordPreparedPersistence as coordinatePasswordPreparedPersistence,
-} from "./drizzle/pg-password-prepared";
-
-export { passwordPreparedPersistenceLayer } from "./drizzle/password-prepared-target";
-
 import { makeOAuthTarget } from "./drizzle/oauth-drivers";
 import { sqlClientOAuthStandaloneGuard } from "./drizzle/oauth-target";
 
@@ -103,6 +100,7 @@ const oauthTarget = makeOAuthTarget<
   dialect: "pg",
   locking: true,
   standaloneGuard: sqlClientOAuthStandaloneGuard,
+  transactionConstructor: PasskeyTransaction,
 });
 
 export const {
@@ -121,13 +119,14 @@ export const {
 } = oauthTarget;
 
 import { makePasskeyTarget } from "./drizzle/passkey-drivers";
-import { sqlClientPasskeyStandaloneGuard } from "./drizzle/passkey-target";
+import { sqlClientPasskeyStandaloneGuard } from "./drizzle/passkey/target";
 
 const passkeyTarget = makePasskeyTarget<
   Database,
   EffectPgDatabase<AnyRelations>,
   AnyPgTable<{ dialect: "pg" }>
 >(Database, {
+  transactionConstructor: PasskeyTransaction,
   mode: "interactive",
   dialect: "pg",
   locking: true,
@@ -137,7 +136,6 @@ const passkeyTarget = makePasskeyTarget<
 export const {
   makePasskeyCredentialServices,
   makePasskeyPersistenceServices,
-  makePasskeyEnrollmentContextServices,
   makePasskeyRegistrationCeremonyServices,
   coordinatePasskeyPersistence,
   coordinatePasskeyRegistrationCeremony,

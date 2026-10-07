@@ -62,10 +62,7 @@ export const RegisterInput = Schema.Struct({
   registration: Registration,
 });
 
-export const RegisterResult = Schema.Union([
-  Schema.TaggedStruct("RegistrationAccepted", {}),
-  Schema.TaggedStruct("ProvisioningPending", { reference: Schema.String }),
-]);
+export const RegisterResult = Schema.TaggedStruct("RegistrationAccepted", {});
 
 type Completion =
   | { readonly _tag: "Authenticated"; readonly session: { readonly subjectId: string } }

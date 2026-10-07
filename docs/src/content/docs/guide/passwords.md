@@ -49,6 +49,8 @@ const result = yield* auth.register({
 
 Generate `requestId` once per submission and retain it for an exact retry.
 `RegistrationAccepted` does not reveal whether the account already existed.
+Provisioning completes synchronously. If accounts live in another system, provision
+idempotently by `requestId` or run an application-owned queue before registration.
 
 Password registration does not prove ownership of the email address. Offer
 [mailbox registration](./codes#register-a-mailbox-owner) with `Email.makeRegistration`
@@ -83,8 +85,16 @@ const result = yield* auth.changePassword({ commandId, currentPassword, newPassw
 ```
 
 This call requires an authenticated `Auth.AuthRequest`. Applications requiring
-another factor also supply `actionProof`. The result reports the session
-invalidation behavior of your selected strategy.
+another factor supply `actionProof` or accept recent session step-up through
+`PasswordActionEvidence`. A passkey step-up can authorize the change without
+`currentPassword`; verify its authentication time and factor from `invocation.assurance`
+within the configured evidence age. Current authority is checked again at commit.
+The result reports the session invalidation behavior of your selected strategy.
+After passkey authentication, the application can call:
+
+```ts
+const result = yield* auth.changePassword({ commandId, newPassword });
+```
 
 ## Supply the services
 
@@ -130,9 +140,8 @@ alongside those shared services. Keep normalization stable for stored credential
 [`CryptoLive`](../reference/crypto#use-with-auth) is the shared application crypto
 Layer. Install `@yielded/crypto` alongside Auth when importing its backend. See
 [crypto backends](../reference/crypto#compose-a-backend) for native alternatives.
-Share one `PasswordKdfAdmission.layer()` instance across hashers in each runtime.
-`Layer.provideMerge(Admission)` exposes both the password admission service and
-its generic KDF service. The outer password operation and nested derivations use
+Share one `KdfAdmission.layer()` from `@yielded/crypto/KdfAdmission` across hashers
+and backends in each runtime. `Layer.provideMerge(Admission)` exposes that service. The outer password operation and nested derivations use
 that same instance; comparison and secret cleanup retain the permit. Nested work
 in the same fiber reuses it, while child fibers acquire independently.
 By default it runs one KDF callback and accepts up to 16 waiting calls, each with a
@@ -194,7 +203,8 @@ defaults to 10,000 ms (allowed range: 1–30,000); a timed-out check returns
 ## Recover a password
 
 Recovery uses `requestReset` → `verifyReset` → `completeReset` and requires an
-independently verified email address. The definition above selects reset links.
+independently verified email address. Users who have a passkey sign in with it,
+complete step-up if required, then change their password. The definition above selects reset links.
 Auth builds the link and renders the email; your `EmailDelivery` service only
 sends the finished message. See [email delivery](./email-delivery) for REST API
 and Alchemy examples.

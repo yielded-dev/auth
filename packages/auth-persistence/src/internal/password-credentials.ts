@@ -9,12 +9,12 @@ import {
 } from "@yielded/auth/Password";
 import { reportPersistenceFailure } from "@yielded/auth/Persistence";
 import { Effect, Option, Redacted, Schema } from "effect";
+import { SqlClient } from "effect/sql";
 
 import type { PersistenceMappingError } from "./mapping-error";
 import type { AnyPasswordPersistenceMapping } from "./models/password-model";
 import { sqlMapping, type SqlTable } from "./native-sql-table";
-import type { PasswordSqlConfiguration } from "./password-kernel";
-import { NativeDatabase } from "./transaction-kernel";
+import type { PasswordWorkflowOptions } from "./password-policy";
 
 type Row = Readonly<Record<string, unknown>>;
 const unavailable = () => PasswordUnavailable.make({});
@@ -55,13 +55,13 @@ export const samePasswordCredentialSnapshot = (
 export const makePasswordCredentials = Effect.fnUntraced(function* (
   table: (table: object) => SqlTable,
   mapping: AnyPasswordPersistenceMapping,
-  options: PasswordSqlConfiguration,
+  options: PasswordWorkflowOptions,
 ): Effect.fn.Return<
   Pick<PasswordPersistence["Service"], "findCredential" | "rehashIfCurrent">,
   PasswordUnavailable,
-  NativeDatabase
+  SqlClient.SqlClient
 > {
-  const sql = (yield* NativeDatabase).$client.withoutTransforms();
+  const sql = (yield* SqlClient.SqlClient).withoutTransforms();
   const parent = yield* Effect.serviceOption(CurrentCommitJournal);
 
   const [s, i, c] = yield* sqlMapping(

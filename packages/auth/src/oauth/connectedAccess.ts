@@ -22,6 +22,7 @@ import {
 } from "../operations/context";
 import { AuthenticationRequired } from "../operations/errors";
 import { SecurityRevision } from "../sessions/models";
+import { OAuthAccountRevision } from "./accountsModels";
 import * as M from "./connectedModels";
 import { retainGrantTokens, wipeConnectedMaterial } from "./grantTokens";
 import { OAuthConnectedPersistence } from "./OAuthConnectedPersistence";
@@ -303,8 +304,7 @@ export const makeOAuthConnectedAccess = <const Id extends string>(
       const { id, policy } = yield* validateConnectedPolicy(moduleId, captured);
       const { authorize } = yield* OAuthConnectedUseAuthority;
 
-      const { inspectAccess, claimRefresh, settleRefresh, admitUse } =
-        yield* OAuthConnectedPersistence;
+      const { read, claimRefresh, settleRefresh } = yield* OAuthConnectedPersistence;
 
       const { refreshGrant } = yield* OAuthConnectedProtocol;
       const { seal, open } = yield* OAuthConnectedTokenProtector;
@@ -331,7 +331,13 @@ export const makeOAuthConnectedAccess = <const Id extends string>(
             const receipt = yield* restore(
               claimRefresh(
                 {
-                  grant: snapshotOAuthSync(M.OAuthConnectedStoredGrant, grant),
+                  key: {
+                    moduleId: id,
+                    subjectId: grant.context.subjectId,
+                    grantId: grant.context.grantId,
+                  },
+                  grantVersion: grant.context.grantVersion,
+                  tokenVersion: grant.context.tokenVersion,
                   authorization,
                   claimId,
                   nextTokenVersion,
@@ -399,7 +405,6 @@ export const makeOAuthConnectedAccess = <const Id extends string>(
                   const context = snapshotOAuthSync(M.OAuthConnectedTokenContext, {
                     ...grant.context,
                     tokenVersion: nextTokenVersion,
-                    exchangeOrder: owned.order,
                     metadata: projected.metadata,
                   });
 
@@ -413,31 +418,9 @@ export const makeOAuthConnectedAccess = <const Id extends string>(
                     sealed,
                   });
 
-                  let cleanup: M.OAuthConnectedRevocationJob | undefined;
-
-                  if (context.configuration.profile.revocation === "cohort") {
-                    const cleanupContext = snapshotOAuthSync(M.OAuthConnectedRevocationContext, {
-                      namespace: "effect-auth/oauth-connected-revocation-context/v1",
-                      jobId: yield* random(),
-                      token: context,
-                    });
-
-                    cleanup = snapshotOAuthSync(M.OAuthConnectedRevocationJob, {
-                      context: cleanupContext,
-                      sealed: yield* seal({
-                        context: cleanupContext,
-                        material: snapshotOAuthSync(
-                          M.OAuthConnectedTokenMaterial,
-                          projected.material,
-                        ),
-                      }),
-                    });
-                  }
-
                   return snapshotOAuthSync(M.OAuthConnectedRefreshOutcome, {
                     _tag: "Refreshed",
                     grant: updated,
-                    ...(cleanup ? { cleanup } : {}),
                   });
                 }).pipe(
                   Effect.ensuring(Effect.sync(() => wipeConnectedMaterial(projected.material))),
@@ -459,25 +442,21 @@ export const makeOAuthConnectedAccess = <const Id extends string>(
               ? exchanged.value
               : { _tag: "ReauthorizationRequired" };
 
+            // Bound settlement even while preserving the refresh mask. Unknown
+            // completion never releases tokens or authorizes another refresh.
             const finished = yield* Effect.exit(
               connectedBounded(
-                settleRefresh(
-                  {
-                    claim: owned,
-                    authorization,
-                    outcome,
-                  },
-                  (value, journal) =>
-                    journal.prepare(snapshotOAuthSync(M.OAuthConnectedRefreshSettlement, value)),
-                ),
-                policy.settlementTimeoutMillis,
+                settleRefresh({ claim: owned, authorization, outcome }, (value, journal) =>
+                  journal.prepare(snapshotOAuthSync(M.OAuthConnectedRefreshSettlement, value)),
+                ).pipe(Effect.flatMap(connectedRead)),
+                5_000,
               ),
             );
 
             if (Exit.isFailure(exchanged) && Cause.hasInterrupts(exchanged.cause))
               return yield* Effect.interrupt;
             if (Exit.isFailure(finished)) return yield* OAuthUnavailable.make({});
-            const settled = yield* connectedRead(finished.value);
+            const settled = finished.value;
 
             if (settled._tag !== "Refreshed")
               return yield* M.OAuthConnectedReauthorizationRequired.make({});
@@ -513,15 +492,32 @@ export const makeOAuthConnectedAccess = <const Id extends string>(
           input.profileKey,
         );
 
-        const inspected = yield* inspectAccess({ authorization, ...input }).pipe(
-          Effect.flatMap((v) => snapshotOAuth(M.OAuthConnectedAccessInspection, v)),
-        );
+        const inspected = yield* read({
+          moduleId: id,
+          subjectId: caller.subjectId,
+          selector: { _tag: "Grant", grantId: input.grantId },
+        });
 
-        if (inspected._tag === "Busy") return yield* M.OAuthConnectedBusy.make({});
-        if (inspected._tag === "ReauthorizationRequired")
+        if (
+          inspected === undefined ||
+          inspected.grant === undefined ||
+          !connectedSame(OAuthAccountRevision, inspected.revision, authorization.revision)
+        )
+          return yield* OAuthRejected.make({});
+        const snapshot = yield* snapshotOAuth(M.OAuthConnectedGrantSnapshot, inspected.grant);
+
+        if (snapshot.state === "Refreshing") {
+          if (
+            (snapshot.refreshClaimExpiresAtMillis ?? 0) <=
+            DateTime.toEpochMillis(yield* DateTime.now)
+          )
+            return yield* M.OAuthConnectedReauthorizationRequired.make({});
+
+          return yield* M.OAuthConnectedBusy.make({});
+        }
+        if (snapshot.state === "ReauthorizationRequired")
           return yield* M.OAuthConnectedReauthorizationRequired.make({});
-        if (inspected._tag !== "Target") return yield* OAuthRejected.make({});
-        let grant = inspected.grant;
+        let grant = snapshotOAuthSync(M.OAuthConnectedStoredGrant, snapshot);
 
         if (
           grant.context.moduleId !== id ||
@@ -557,44 +553,13 @@ export const makeOAuthConnectedAccess = <const Id extends string>(
           );
           if (DateTime.toEpochMillis(yield* DateTime.now) >= grant.context.metadata.useUntilMillis)
             return yield* M.OAuthConnectedReauthorizationRequired.make({});
-          const admissionId = yield* random();
-
-          const receipt = yield* admitUse(
-            {
-              grant: snapshotOAuthSync(M.OAuthConnectedStoredGrant, grant),
-              authorization,
-              admissionId,
-              lifetimeMillis: policy.useAdmissionLifetimeMillis,
-            },
-            (value, journal) =>
-              journal.prepare(snapshotOAuthSync(M.OAuthConnectedUseAdmission, value)),
-          );
-
-          const admitted = yield* connectedRead(receipt);
-
-          if (admitted._tag === "Busy") return yield* M.OAuthConnectedBusy.make({});
-          if (admitted._tag === "ReauthorizationRequired")
-            return yield* M.OAuthConnectedReauthorizationRequired.make({});
-          if (admitted._tag !== "Admitted") return yield* OAuthRejected.make({});
-          if (
-            admitted.admissionId !== admissionId ||
-            admitted.grantId !== grant.context.grantId ||
-            admitted.tokenVersion !== grant.context.tokenVersion ||
-            admitted.expiresAtMillis <= admitted.admittedAtMillis ||
-            admitted.admittedAtMillis > DateTime.toEpochMillis(yield* DateTime.now) ||
-            admitted.expiresAtMillis >
-              Math.min(
-                admitted.admittedAtMillis + policy.useAdmissionLifetimeMillis,
-                grant.context.metadata.useUntilMillis,
-                authorization.expiresAtMillis,
-              ) ||
-            DateTime.toEpochMillis(yield* DateTime.now) >= admitted.expiresAtMillis
-          )
-            return yield* OAuthUnavailable.make({});
 
           return {
             token: Redacted.make(Redacted.value(material.accessToken)),
-            expiresAtMillis: admitted.expiresAtMillis,
+            expiresAtMillis: Math.min(
+              authorization.expiresAtMillis,
+              grant.context.metadata.useUntilMillis,
+            ),
           };
         }).pipe(Effect.ensuring(Effect.sync(() => wipeConnectedMaterial(material))));
       }, connectedSafe);

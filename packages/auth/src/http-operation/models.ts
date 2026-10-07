@@ -12,7 +12,6 @@ export const credentialSlots = [
   "request-binding",
   "session-step-up",
   "password-intent",
-  "connected-intent",
 ] as const;
 
 export type HttpCredentials = Readonly<Partial<Record<CredentialSlot, Redacted.Redacted<string>>>>;

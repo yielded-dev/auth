@@ -1,5 +1,4 @@
 import {
-  NativeDatabase,
   decodeStepUpIntent,
   encodeStepUpIntent,
   stepUpIntentLive,
@@ -64,7 +63,7 @@ import {
 } from "./d1-planning";
 import { D1BatchStatements } from "./D1BatchStatements";
 import { column, PersistenceMappingError, isMappedConstraintConflict, updateValues } from "./model";
-import { nativeDatabase } from "./native-database";
+import { NativeDatabase, nativeDatabase } from "./native-database";
 import type {
   D1AuthenticationAuthorityMapping,
   D1PendingAuthenticationMapping,
@@ -355,21 +354,19 @@ function runPlanned<A, E, GuardE extends D1PlanError = never>(
     if (batch._tag === "Some") {
       const owned = batch.value;
 
-      const result = yield* coordinateCommit(
-        () =>
-          Effect.gen(function* () {
-            yield* owned.owner.check;
-            const journal = yield* CurrentCommitJournal;
-            const value = yield* planned;
+      const result = yield* coordinateCommit(() =>
+        Effect.gen(function* () {
+          yield* owned.owner.check;
+          const journal = yield* CurrentCommitJournal;
+          const value = yield* planned;
 
-            yield* owned.owner.check;
-            const guarded = { ...value, journalGuard: journal.prepare(undefined) };
+          yield* owned.owner.check;
+          const guarded = { ...value, journalGuard: journal.prepare(undefined) };
 
-            yield* owned.append(guarded);
+          yield* owned.append(guarded);
 
-            return guarded.receipt;
-          }),
-        { mode: "batch" },
+          return guarded.receipt;
+        }),
       );
 
       return result.value;
@@ -377,22 +374,20 @@ function runPlanned<A, E, GuardE extends D1PlanError = never>(
 
     const database = yield* CurrentD1PlanningDatabase;
 
-    const result = yield* coordinateCommit(
-      () =>
-        Effect.gen(function* () {
-          const prepared = yield* planned;
+    const result = yield* coordinateCommit(() =>
+      Effect.gen(function* () {
+        const prepared = yield* planned;
 
-          yield* database.$client
-            .batch(prepared.statements)
-            .pipe(
-              Effect.catchCause((cause) =>
-                Effect.fail(new D1BatchFailure({ cause, mutation: prepared })),
-              ),
-            );
+        yield* database.$client
+          .batch(prepared.statements)
+          .pipe(
+            Effect.catchCause((cause) =>
+              Effect.fail(new D1BatchFailure({ cause, mutation: prepared })),
+            ),
+          );
 
-          return prepared.receipt;
-        }),
-      { mode: "batch" },
+        return prepared.receipt;
+      }),
     );
 
     return result.value;
@@ -1813,62 +1808,60 @@ export const coordinateD1SessionBatch = <Services, A, E, R>(
 
     yield* validateDrizzleStorage(mapping).pipe(Effect.mapError(unavailable));
 
-    const result = yield* coordinateCommit(
-      () =>
-        Effect.gen(function* () {
-          const statements: Statement<any>[] = [];
-          let mutation: Planned<any> | undefined;
+    const result = yield* coordinateCommit(() =>
+      Effect.gen(function* () {
+        const statements: Statement<any>[] = [];
+        let mutation: Planned<any> | undefined;
 
-          const nativeCollector = D1BatchStatements.of({
-            append: (statement) => Effect.sync(() => statements.push(statement)),
-          });
+        const nativeCollector = D1BatchStatements.of({
+          append: (statement) => Effect.sync(() => statements.push(statement)),
+        });
 
-          const d1Owner = yield* makeD1Owner(unavailable()).pipe(
-            Effect.provideService(D1BatchStatements, nativeCollector),
+        const d1Owner = yield* makeD1Owner(unavailable()).pipe(
+          Effect.provideService(D1BatchStatements, nativeCollector),
+        );
+
+        let batch!: D1SessionBatch;
+
+        const appendMutation = (input: Planned<any>) =>
+          d1Owner.run(
+            Effect.suspend(() => {
+              // Guard recovery is unambiguous only for one persistence transition.
+              // The owner may append any number of application statements around it.
+              if (mutation !== undefined) return Effect.fail(unavailable());
+              mutation = input;
+              statements.push(...input.statements);
+
+              return Effect.void;
+            }),
           );
 
-          let batch!: D1SessionBatch;
+        batch = { owner: d1Owner, append: appendMutation };
+        const services = yield* make(batch);
 
-          const appendMutation = (input: Planned<any>) =>
-            d1Owner.run(
-              Effect.suspend(() => {
-                // Guard recovery is unambiguous only for one persistence transition.
-                // The owner may append any number of application statements around it.
-                if (mutation !== undefined) return Effect.fail(unavailable());
-                mutation = input;
-                statements.push(...input.statements);
+        const value = yield* d1Owner.close(
+          Effect.provideService(owner(services, batch), D1BatchStatements, d1Owner.collector),
+        );
 
-                return Effect.void;
-              }),
-            );
+        if (mutation?.journalGuard !== undefined) {
+          const status = yield* Effect.result(mutation.journalGuard.read);
 
-          batch = { owner: d1Owner, append: appendMutation };
-          const services = yield* make(batch);
+          if (status._tag === "Success" || status.failure._tag !== "CommitPending")
+            return yield* unavailable();
+        }
 
-          const value = yield* d1Owner.close(
-            Effect.provideService(owner(services, batch), D1BatchStatements, d1Owner.collector),
-          );
-
-          if (mutation?.journalGuard !== undefined) {
-            const status = yield* Effect.result(mutation.journalGuard.read);
-
-            if (status._tag === "Success" || status.failure._tag !== "CommitPending")
-              return yield* unavailable();
-          }
-
-          yield* database.$client
-            .batch(statements)
-            .pipe(
-              Effect.catchCause((cause) =>
-                Effect.fail(
-                  new D1BatchFailure({ cause, ...(mutation === undefined ? {} : { mutation }) }),
-                ),
+        yield* database.$client
+          .batch(statements)
+          .pipe(
+            Effect.catchCause((cause) =>
+              Effect.fail(
+                new D1BatchFailure({ cause, ...(mutation === undefined ? {} : { mutation }) }),
               ),
-            );
+            ),
+          );
 
-          return value;
-        }),
-      { mode: "batch" },
+        return value;
+      }),
     ).pipe(
       Effect.catchCause(recoverCoordinatedD1BatchCause),
       Effect.provideService(CurrentD1PlanningDatabase, database),

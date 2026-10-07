@@ -132,8 +132,8 @@ Enabling these strategies adds their storage and a `PasskeyConfig` requirement; 
 application still supplies action authorization, claims, and the protocol verifier.
 Composed passkey tables use integer milliseconds. Custom passkey timestamps use
 the explicit adapters or core service ports.
-Persistence initialization also prepares module policy and admission records. Increment the strategy's
-`policy.generation` when changing a stored passkey policy; disabled modules stay disabled.
+Each challenge retains its selected relying-party profile until expiry, so rolling
+configuration changes do not invalidate ceremonies already in progress.
 Removal preserves a remaining password or user-verified passkey that independently
 meets current sign-in requirements. More involved factor combinations use an explicit
 `write.policy.remainingSignIn` predicate, returned in Effect from the captured subject row.
@@ -142,7 +142,7 @@ With password registration enabled, also supply `Persistence.Provisioning`:
 
 ```ts
 const ProvisioningLive = Layer.succeed(Persistence.Provisioning, {
-  password: createCustomer, // ({ registration, identifier }) => Effect<SubjectId, PasswordUnavailable>
+  password: createCustomer, // ({ requestId, registration, identifier }) => Effect<SubjectId, PasswordUnavailable>
 });
 const PersistenceLive = Persistence.layer.pipe(Layer.provide(ProvisioningLive));
 ```
@@ -150,7 +150,8 @@ const PersistenceLive = Persistence.layer.pipe(Layer.provide(ProvisioningLive));
 `createCustomer` inserts only the application subject, allocating its ID and initial
 security revision. It runs inside the library's SQL transaction: use the same Effect
 SQL client, including Drizzle over it. Identifier, password, and receipt writes commit
-with that insert. Do not send email or open a separate transaction in this callback.
+with that insert. The stable `requestId` also identifies the application operation.
+Do not send email or open a separate transaction in this callback.
 Replays suppress creation and never overwrite or recover another request's password.
 See the [managed example's wiring](https://github.com/yielded-dev/auth/blob/main/examples/persistence-drizzle-managed/src/live.ts).
 `subjects.actionRequirements` can supply a distinct recovery or credential-change
@@ -231,7 +232,9 @@ against the captured database's catalog during acquisition. Apply migrations bef
 building these Layers; a Drizzle declaration does not install a constraint. Permit
 catalog reads on PostgreSQL, MySQL, and SQLite, and reacquire services after schema
 changes. These checks cover usable, unconditional unique keys; application predicates
-and column codecs remain application contracts.
+and column codecs remain application contracts. Retain the acquired persistence Layer
+at the application composition root so requests reuse its schema validation and
+configuration. Operations still check current authority inside their transactions.
 
 ## Compose the application Layer
 
@@ -262,6 +265,11 @@ account and credential revisions and decides which factors are required.
 `SessionPersistenceLive` supplies the bound `AppAuth.sessions.StatefulSessionPersistence`
 and `AppAuth.sessions.SessionRepository`. Both Layers use your account model;
 neither has an automatic default.
+
+Stateful session verification reads the session and subject in one SQL snapshot
+when their mapped IDs have compatible SQL types and encodings. Application claims
+may require their own query; join the required account fields in that query.
+Explicit session reads always check current storage.
 
 Add the method's Layers, such as `PasswordLive` from the [password guide](../guide/passwords#supply-the-services):
 
@@ -402,7 +410,6 @@ Coordinated password mutations, including a reset's proof completion, are checke
 after your writes; changing their account, credential, or proof rows in the same commit
 rolls both back.
 Do not put standalone services inside an untracked raw Drizzle transaction.
-Attempt state and receipts remain durable in persistence, independently of limiter storage.
 
 ## Email
 
@@ -411,9 +418,9 @@ Attempt state and receipts remain durable in persistence, independently of limit
 
 For explicit composition over an existing storage layout, start from
 `yield* makeStorageMappings(storage)` and use its `.emails()` and `.proofs()` factories.
-Supply the raw registration mapping's provisioning, receipt table, and inspection policy.
+Supply the raw registration mapping's synchronous provisioning and inspection policy.
 
-Atomic email registration provisions a fresh subject after mailbox proof. Its
+Email registration provisions a fresh subject after mailbox proof. Its
 `inspect` policy and proof authority's `identifier.isCurrent` must admit absent or
 active-unverified targets to permit reclamation; D1's `d1CurrentCondition` must
 express the same rule at batch commit. Scope this permission to
@@ -426,10 +433,10 @@ Reclamation advances the previous subject's security revision without moving its
 credentials or application data. Identifier eligibility is separate from the prior
 subject's status: a disabled subject stays disabled. Sessions and pending authentication must consult
 that revision for immediate invalidation; purely stateless sessions retain their
-documented lifetime. Provisioning, reclamation, receipt, and proof consumption share
-one transaction or D1 batch. Verified addresses cannot be reclaimed. Pending-mode
-registration only records a provisioning intent; the application owns its eventual
-binding transition. Compose this guest workflow explicitly as shown in
+documented lifetime. Provisioning, reclamation and proof consumption share one
+transaction or D1 batch. Verified addresses cannot be reclaimed. Provisioning
+completes synchronously and idempotently by request ID; an application can own a
+queue when its account system requires asynchronous work. Compose this guest workflow explicitly as shown in
 [mailbox registration](../guide/codes#register-a-mailbox-owner).
 
 Address changes consume their proof and advance security revisions in the same transaction.
@@ -491,9 +498,8 @@ and reject ambient transactions. For atomic application work, use the matching
 `coordinateOAuth*({ mapping }, body)` function; registration additionally takes its
 `target` service. The body receives transaction-bound persistence, and queries
 through the same `SqlClient` participate in that transaction. Keep provider network
-exchanges outside it. Bound services cannot escape the coordinator. Coordinated registration also needs
-its synchronous `inspectSync` and `snapshotSync` callbacks; ID allocation precedes
-the transaction.
+exchanges outside it. Bound services cannot escape the coordinator. Registration compares its retained application binding before allocating IDs or
+provisioning. The registration Schema owns the canonical stored payload.
 
 ### Kysely-owned schemas
 
@@ -505,22 +511,44 @@ Effect SQL client. Otherwise supply a replacement persistence service that owns
 both operations under your application's transaction authority. No native Kysely
 integration is implied by table mapping.
 
-An external provider exchange cannot be rolled back with your database. Single-use
-claims and durable receipts preserve the original decision; uncertain exchange or
-refresh outcomes never authorize repeating provider work. Retain unresolved work
-and require a fresh flow where the protocol calls for one. Linking preserves tuple
+An external provider exchange cannot be rolled back with your database. A single conditional callback consume precedes provider exchange. Unknown exchange
+or commit outcomes require a fresh ceremony. Refresh alone retains a durable
+external-work claim and never permits expired takeover. Linking preserves tuple
 uniqueness; unlinking rechecks remaining login methods and retained-grant references
 before releasing ownership. Login-credential listing is an application query over
 its mapped tables; connected-grant listing belongs to `OAuthConnectedPersistence`.
 
 ## Passkeys
 
-`makePasskeyPersistenceServices` stores ceremonies; credential, enrollment,
-registration, and management services have separate factories. Completion rechecks
-the challenge, relying party, account revision, and credential revision before
-committing its result. Enrollment inserts the credential and shared factor atomically
-while preserving the subject security revision and existing sessions. Removal bumps
-the revision and applies the configured session invalidation in the same transaction.
+`makePasskeyPersistenceServices` inserts challenges, reads their context, consumes
+verified challenges, and deletes expired rows in bounded batches.
+`PasskeyCredentials` supplies credential lookup and `listForSubject`, which returns
+the subject's current factor revisions, same-RP exclusions, and an optional existing
+user handle. Each credential retains its own handle.
+
+After signature verification, one transaction conditionally deletes the unexpired
+challenge and updates the credential counter. A failed or uncertain consume never
+issues a session. Session issuance separately rechecks subject and credential
+authority; if it fails, begin a new ceremony.
+
+Enrollment stores the application's begin authorization with the challenge. Its
+completion locks the subject, re-assesses that authorization and the current
+credential cap, and atomically inserts the credential and shared factor. Enrollment
+preserves the subject security revision and existing sessions. Removal protects the
+last usable sign-in method, bumps the revision, and applies session invalidation
+under the same subject lock. Registration stores its original schema-encoded
+application payload on the challenge row and provisions synchronously on completion.
+
+Use `coordinatePasskeyManagement` or `coordinatePasskeyRegistration` when application
+writes share the transaction. Wrap any savepoint whose rollback you catch in its
+own `Hooks.coordinateCommit`; catching a bare `tx.transaction(...)` failure does
+not discard its staged receipts and events.
+
+Standalone reads open no transaction. Credential lookup uses one SELECT when mapped
+references share compatible SQL types and ID encodings; custom codecs that transform
+IDs outside SQL require additional mapped reads. Passkey budgets use Effect's
+`RateLimiter`, with a bounded process-local default. Supply a shared `RateLimiter` or
+`RateLimiterStore` for limits coordinated across replicas.
 
 ## Phone
 
@@ -576,17 +604,19 @@ for the table definitions and mappings.
 
 `OAuthPersistence.makeOAuthConnectedServices` and
 `OAuthPersistence.makeOAuthConnectedRevocationServices` coordinate
-provider grants, refresh attempts, and revocation. When composing login unlinking,
-include `oauthConnectedOwnershipReferences(mapping, dialect)` in the accounts mapping
-so retained and unresolved provider work keeps ownership protected. Keep the durable grant identity
-and refresh claim so another worker cannot repeat an uncertain refresh.
+provider grants, refresh attempts, and optional revocation. Map `otherReferences`
+to an indexed SQL predicate for concrete login, grant, or job references sharing
+identity ownership. Unlink/disconnect release ownership only when those references
+are absent. Keep the durable grant identity and refresh version/claim predicates;
+no ordinary callback claim or token-use admission row is needed.
 
-For `OAuth.make({ access: profile })`, use those same connected services alongside
-`makeOAuthSignInServices`. Map `signIn.credential` and `signIn.flow` to the shared
-sign-in tables and provide `flow.encodeSignIn`; the connected flow’s subject column
-must allow NULL until identity resolution. The
+For `OAuth.make({ access: profile })`, use the same connected services alongside
+`makeOAuthSignInServices` and map `credential` to the shared login table. Live flow
+rows contain their Schema snapshot and exact callback predicates. The
 [OAuth storage example](https://github.com/yielded-dev/auth/blob/main/examples/shared/oauth/storage.ts)
-shows the application-owned schema and authority.
+shows the application-owned schema and authority. Cleanup accepts a shared
+`CleanupLimit` and returns `{ removed, hasMore }`; `hasMore` means the batch limit
+was reached, so another call can remove zero rows.
 
 <details>
 <summary>D1 and Durable Object transaction boundaries</summary>
@@ -603,6 +633,16 @@ Durable Object SQLite uses the captured Effect SQL client's asynchronous
 crypto Effects may suspend inside that owned transaction. An arbitrary raw Drizzle
 outer transaction, including its `transactionSync` callbacks, is unsupported.
 No synchronous crypto implementation or `Effect.runSync` bridge is required.
+
+Compatible scalar mappings, including application-owned tables and renamed columns,
+use grouped cleanup reads and writes, with atomic checks after application work and
+database triggers. Groups split at the driver's statement and bound-data limits.
+An arbitrary SQL-producing encoder or binary/array representation may require its
+original mapped statements because it cannot be encoded as a scalar rowset.
+Collation aliases and staged D1 writes can also require additional statements;
+a page size alone does not determine its cost.
+Budget every statement and transaction-control call as a database roundtrip.
+Direct Effect SQL uses SQLite limits that also fit Durable Objects.
 
 </details>
 

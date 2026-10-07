@@ -70,7 +70,7 @@ export const exampleAuthority = Effect.gen(function* () {
   const atomic = <A, E extends Sessions.SessionError>(
     body: (journal: Hooks.CommitJournal) => Effect.Effect<A, E>,
   ) =>
-    Hooks.coordinateCommit(body, { mode: "interactive" }).pipe(
+    Hooks.coordinateCommit(body).pipe(
       Effect.map((result) => result.value),
       Effect.mapError((error) =>
         error._tag === "HookConfigurationError" ? Sessions.SessionUnavailable.make({}) : error,
