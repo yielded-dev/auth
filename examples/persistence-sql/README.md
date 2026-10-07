@@ -151,8 +151,9 @@ with Yielded**, and return directly if an Auth session meets Agent's authenticat
 age limit. Agent requests `max_age=240`, leaving a minute within its five-minute
 evidence policy to complete sign-in. For a missing or older session, Auth starts
 GitHub sign-in automatically and returns after completion. GitHub controls
-its own login and approval prompts. Choose **Use another Yielded account** in Agent
-to select an account explicitly; **Use another account** at Auth opens GitHub’s
+its own login and approval prompts. In Agent, expand **Other sign-in options** and
+choose **Use another Yielded account** to select an account explicitly;
+**Use another account** at Auth opens GitHub’s
 account picker. Cancellation stays visible without automatically restarting. The account-settings page remains at
 `/oauth-settings`; `/sign-in` continues the pending shared sign-in request.
 
