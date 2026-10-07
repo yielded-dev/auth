@@ -1,5 +1,18 @@
 # @yielded/auth
 
+## 0.1.0-beta.29
+
+### Minor Changes
+
+- [#165](https://github.com/yielded-dev/auth/pull/165) [`167f725`](https://github.com/yielded-dev/auth/commit/167f7256fa634430f442eb6f1e0a04595c605370) Thanks [@danieljvdm](https://github.com/danieljvdm)! - Add `keyValueRateLimiterStore` to `@yielded/auth/Persistence`, which keeps auth rate limits in any Effect `KeyValueStore`, such as Workers KV. BEHAVIOR CHANGE: action, global message, and passkey module budgets now always stay per instance; a supplied store holds only identifier, subject, target, and network buckets.
+
+### Patch Changes
+
+- Updated dependencies [[`536a76b`](https://github.com/yielded-dev/auth/commit/536a76b6cd7d653b456adfcf0f81d275cda77660)]:
+  - @yielded/crypto@0.1.0-beta.29
+  - @yielded/jose@0.1.0-beta.29
+  - @yielded/oauth@0.1.0-beta.29
+
 ## 0.1.0-beta.28
 
 ### Patch Changes

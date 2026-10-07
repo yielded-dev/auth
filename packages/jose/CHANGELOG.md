@@ -1,5 +1,12 @@
 # @yielded/jose
 
+## 0.1.0-beta.29
+
+### Patch Changes
+
+- Updated dependencies [[`536a76b`](https://github.com/yielded-dev/auth/commit/536a76b6cd7d653b456adfcf0f81d275cda77660)]:
+  - @yielded/crypto@0.1.0-beta.29
+
 ## 0.1.0-beta.28
 
 ### Patch Changes
