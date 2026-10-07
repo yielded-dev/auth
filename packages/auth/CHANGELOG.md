@@ -1,5 +1,15 @@
 # @yielded/auth
 
+## 0.1.0-beta.28
+
+### Patch Changes
+
+- [#157](https://github.com/yielded-dev/auth/pull/157) [`7a5b241`](https://github.com/yielded-dev/auth/commit/7a5b241f18f976271142e39fc523ba266ec4bbb0) Thanks [@danieljvdm](https://github.com/danieljvdm)! - Avoid duplicate requests when a named query discovers the account, including session reads with or without an SSR seed. Preserve account cleanup and forward explicit refreshes of seeded sessions.
+- Updated dependencies []:
+  - @yielded/crypto@0.1.0-beta.28
+  - @yielded/jose@0.1.0-beta.28
+  - @yielded/oauth@0.1.0-beta.28
+
 ## 0.1.0-beta.27
 
 ### Patch Changes

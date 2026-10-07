@@ -1,5 +1,12 @@
 # @yielded/auth-electron
 
+## 0.1.0-beta.28
+
+### Patch Changes
+
+- Updated dependencies [[`7a5b241`](https://github.com/yielded-dev/auth/commit/7a5b241f18f976271142e39fc523ba266ec4bbb0)]:
+  - @yielded/auth@0.1.0-beta.28
+
 ## 0.1.0-beta.27
 
 ### Patch Changes
