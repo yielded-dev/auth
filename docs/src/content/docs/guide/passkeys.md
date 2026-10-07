@@ -230,8 +230,9 @@ provides ceremony and credential storage through [the passkey adapters](../refer
 The method supplies its default policy and empty hooks. Admission uses Effect
 `RateLimiter` token buckets for global, subject, and target budgets. The default
 store is process-local, resets with the runtime, and rejects new keys when its
-10,000 active buckets are full. Multi-replica applications must provide a shared
-`RateLimiter` or `RateLimiterStore` to coordinate these limits.
+10,000 active buckets are full. Multi-replica and per-request runtimes must
+[share rate limits](./passwords#share-rate-limits) for subject and target budgets;
+the global budget stays per instance.
 Begin and completion requests each consume a global token and any known subject
 or target token, including rejected requests. Discoverable sign-in charges its
 subject after credential lookup. A full ten-token subject bucket covers five

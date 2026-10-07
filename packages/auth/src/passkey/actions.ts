@@ -13,7 +13,7 @@ import {
 import { Base64Url } from "effect/encoding";
 import * as RateLimiter from "effect/persistence/RateLimiter";
 
-import { boundedMemoryRateLimiter } from "../auth/rateLimiter";
+import { boundedMemoryRateLimiter, localRateLimiter } from "../auth/rateLimiter";
 import { hasCommitScope, type PreparedCommit } from "../hooks/commit";
 import { LifecycleHooks } from "../hooks/LifecycleHooks";
 import { lifecycleSnapshot } from "../hooks/models";
@@ -64,7 +64,16 @@ import { PasskeyProtocol } from "./PasskeyProtocol";
 import { PasskeyMethodPolicy, validatePasskeyPolicy } from "./policy";
 import { freezePasskey, samePasskey, snapshotPasskey, snapshotPasskeySync } from "./snapshot";
 
-export const passkeyRateLimiterLayer = boundedMemoryRateLimiter("reject");
+/** Module-wide budgets stay per instance and are shared by every passkey facet. */
+class PasskeyModuleLimiter extends Context.Service<PasskeyModuleLimiter, RateLimiter.RateLimiter>()(
+  "effect-auth/PasskeyModuleLimiter",
+) {}
+
+// One memoized Layer per Auth graph, so all facets charge the same buckets.
+export const passkeyRateLimiterLayer = Layer.merge(
+  boundedMemoryRateLimiter("reject"),
+  Layer.effect(PasskeyModuleLimiter, localRateLimiter("reject")),
+);
 
 export const passkeyNoAmbient = Effect.fn("Passkey.noAmbient")(function* () {
   if (yield* hasCommitScope) return yield* PasskeyMethodUnsupported.make({});
@@ -159,10 +168,11 @@ export const makePasskeyCeremony = <const Id extends string, const Purpose exten
     const binder = yield* binding.RequestBinding;
     const crypto = yield* Crypto.Crypto;
     const hooks = yield* LifecycleHooks;
-    const limiter = yield* RateLimiter.RateLimiter;
+    const shared = yield* RateLimiter.RateLimiter;
+    const local = yield* PasskeyModuleLimiter;
 
     const admit = (scope: "global" | "subject" | "target", key: string) =>
-      limiter
+      (scope === "global" ? local : shared)
         .consume({
           key: `effect-auth:passkey:${JSON.stringify([moduleId, scope, key])}`,
           algorithm: "token-bucket",

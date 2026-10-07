@@ -2,7 +2,7 @@ import { Cause, Context, Duration, Effect, Layer, Schema } from "effect";
 import * as RateLimiter from "effect/persistence/RateLimiter";
 
 import { defaultLayer } from "../../auth/defaults";
-import { boundedMemoryRateLimiter } from "../../auth/rateLimiter";
+import { boundedMemoryRateLimiter, localRateLimiter } from "../../auth/rateLimiter";
 import { reportAuthFailure } from "../../internal/diagnostics";
 import { PasswordRejected, PasswordUnavailable } from "./errors";
 import { PasswordAttemptPolicy } from "./policy";
@@ -35,12 +35,14 @@ export class PasswordAttemptLimiter extends Context.Service<
    * without a check, including rejected checks; budget changes retain the longer
    * expiry. New-key pressure triggers cleanup. Active buckets are never evicted;
    * a full store fails with PasswordUnavailable. No cleanup fiber runs. Supply
-   * shared storage for limits coordinated across servers.
+   * shared storage for limits coordinated across servers; the action bucket is
+   * always process-local.
    */
   static readonly layer = Layer.effect(
     this,
     Effect.gen(function* () {
       const limiter = yield* RateLimiter.RateLimiter;
+      const local = yield* localRateLimiter("reject");
 
       return PasswordAttemptLimiter.of({
         check: Effect.fnUntraced(function* ({ moduleId, action, scope, key, budget }) {
@@ -48,7 +50,7 @@ export class PasswordAttemptLimiter extends Context.Service<
             budget,
           ).pipe(Effect.mapError(() => PasswordUnavailable.make({})));
 
-          yield* limiter
+          yield* (scope === "action" ? local : limiter)
             .consume({
               key: `effect-auth:password-attempt:${JSON.stringify([moduleId, action, scope, key])}`,
               algorithm: "token-bucket",

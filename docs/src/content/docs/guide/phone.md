@@ -85,9 +85,10 @@ replace a live code. SMS proves possession, without phishing resistance.
 Phone network-request, network-attempt, and message limits use `PhoneAdmission`.
 Its default token buckets allow 10 requests, 100 attempts, and 10 global message
 reservations per minute. Suppressed requests also spend these allowances. Configure
-`PhoneAdmission.layer(policy)` to change them; supply a shared Effect
-`RateLimiterStore` across replicas. The bounded process-local default retains
-active buckets and fails closed at capacity. Per-code failures and resend cooldown
+`PhoneAdmission.layer(policy)` to change them, and
+[share rate limits](./passwords#share-rate-limits) across replicas or per-request
+runtimes; the global message budget stays per instance. The bounded process-local
+default retains active buckets and fails closed at capacity. Per-code failures and resend cooldown
 remain in the proof row; see [proof limits](./codes#proof-expiry-and-rate-limits).
 
 ## Supply the services

@@ -417,9 +417,9 @@ also needs a proof mapping.
 
 Password verification consumes token-bucket budgets through `PasswordAttemptLimiter`
 before credential verification. Its default store is process-local, resets on
-restart, and has a fixed 10,000-key capacity. Multiple instances need a shared
-Effect `RateLimiterStore`; see [password limits](../guide/passwords#supply-the-services)
-for composition and capacity constraints. Consumed tokens are never refunded.
+restart, and has a fixed 10,000-key capacity. Multiple instances and per-request
+runtimes need a [shared store](../guide/passwords#share-rate-limits) for identifier
+and subject buckets; the action bucket stays per instance. Consumed tokens are never refunded.
 
 ```text
 password mutation transaction
@@ -586,8 +586,9 @@ fresh transaction.
 Standalone reads open no transaction. Credential lookup uses one SELECT when mapped
 references share compatible SQL types and ID encodings; custom codecs that transform
 IDs outside SQL require additional mapped reads. Passkey budgets use Effect's
-`RateLimiter`, with a bounded process-local default. Supply a shared `RateLimiter` or
-`RateLimiterStore` for limits coordinated across replicas.
+`RateLimiter`, with a bounded process-local default. Supply a
+[shared store](../guide/passwords#share-rate-limits) for subject and target limits
+across replicas; the global budget stays per instance.
 
 ## TOTP
 
