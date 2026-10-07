@@ -1,5 +1,14 @@
 # @yielded/auth-persistence-drizzle
 
+## 0.1.0-beta.27
+
+### Patch Changes
+
+- [#154](https://github.com/yielded-dev/auth/pull/154) [`a8f2460`](https://github.com/yielded-dev/auth/commit/a8f2460f92d652fd5ba97e61da939cf7c6790bc3) Thanks [@danieljvdm](https://github.com/danieljvdm)! - Allow PostgreSQL and SQLite Drizzle adapters to load without installing the optional MySQL driver.
+- Updated dependencies []:
+  - @yielded/auth@0.1.0-beta.27
+  - @yielded/auth-persistence@0.1.0-beta.27
+
 ## 0.1.0-beta.26
 
 ### Minor Changes

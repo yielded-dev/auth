@@ -1,5 +1,12 @@
 # @yielded/auth-electron
 
+## 0.1.0-beta.27
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @yielded/auth@0.1.0-beta.27
+
 ## 0.1.0-beta.26
 
 ### Patch Changes

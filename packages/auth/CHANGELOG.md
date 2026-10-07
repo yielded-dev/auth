@@ -1,5 +1,14 @@
 # @yielded/auth
 
+## 0.1.0-beta.27
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @yielded/crypto@0.1.0-beta.27
+  - @yielded/jose@0.1.0-beta.27
+  - @yielded/oauth@0.1.0-beta.27
+
 ## 0.1.0-beta.26
 
 ### Minor Changes
