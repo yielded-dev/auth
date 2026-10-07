@@ -7,17 +7,18 @@ import StorageLadder from "../../../components/StorageLadder.astro";
 import { TableMap } from "@yielded/starlight-theme/components";
 
 Your account model belongs to your application. A subject can be a row in your
-existing customer table or an identity managed by another service. Yielded Auth
-needs ways to look up that identity and durably store credentials, proofs, and
-sessions; core does not require an ORM or a particular database.
+existing customer table or an identity managed by another service. In production,
+Yielded Auth needs ways to look up that identity and durably store credentials,
+proofs, and sessions; core does not require an ORM or a particular database.
 
 Choose how to provide those services:
 
-| Start with                        | When it fits                                                 |
-| --------------------------------- | ------------------------------------------------------------ |
-| [Managed tables](#managed-tables) | You want auth storage supplied alongside your account table. |
-| [Your schema](#your-schema)       | You already own SQL tables and migrations.                   |
-| [Your services](#your-services)   | Your backend needs a custom store or transaction model.      |
+| Start with                          | When it fits                                                               |
+| ----------------------------------- | -------------------------------------------------------------------------- |
+| [Managed tables](#managed-tables)   | You want auth storage supplied alongside your account table.               |
+| [Your schema](#your-schema)         | You already own SQL tables and migrations.                                 |
+| [Your services](#your-services)     | Your backend needs a custom store or transaction model.                    |
+| [In-memory tests](#in-memory-tests) | You need seeded password sign-in and stateful sessions without a database. |
 
 Replacing storage Layers keeps your contract, `AppAuth`, and client unchanged. Moving existing data still
 requires an application-owned migration.
@@ -171,6 +172,50 @@ transaction boundaries, including D1 and Durable Objects.
 
 The file-store example supports one process on a local filesystem. It illustrates
 the service boundary; replication and production storage operations remain yours.
+
+## In-memory tests
+
+For an Auth definition with one sign-in-only `Password.make()` strategy and
+`Sessions.stateful()`, replace database persistence with `Testing.layer`.
+Each acquisition starts with your seed subjects and discards its state when
+the scope closes. This storage is only for tests.
+
+```sh
+bun add -d @yielded/auth-persistence@beta
+```
+
+```ts
+import * as Testing from "@yielded/auth-persistence/Testing";
+import { Layer, Redacted } from "effect";
+
+import { AppAuth, requirement } from "./auth";
+
+const TestPersistence = Testing.layer(AppAuth, {
+  subjects: [{
+    subjectId: "reader",
+    email: "reader@example.invalid",
+    password: Redacted.make("test passphrase"),
+  }],
+  requirement,
+});
+
+const TestAuth = AppAuth.layer.pipe(
+  Layer.provide(TestPersistence),
+  Layer.provide(Testing.services({ seed: "account-test" })),
+);
+```
+
+`Testing.services()` supplies portable crypto and real password hashing using
+your runtime's WebCrypto. Set `seed` for reproducible test credentials, or omit it
+for secure randomness. Supply your claims Layer to `TestAuth`; requests still
+need private credential delivery. The helper needs no database or native dependency
+and works with WebCrypto in Node, Bun, and Cloudflare Workers.
+
+Both Layers use the caller's clock. With `it.effect` from `@effect/vitest`, use
+`TestClock.adjust` to control expiry. The [consumer test](https://github.com/yielded-dev/auth/blob/main/examples/auth/test/in-memory.test.ts)
+shows the complete setup and private delivery.
+See the [testing reference](../reference/adapters#in-memory-testing) for seed
+options, session coverage, and scope behavior.
 
 ## Run each level
 

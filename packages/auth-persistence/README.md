@@ -37,3 +37,6 @@ Plain reads use no transaction. Protected mutations retain their named final che
 when an application joins additional work to the owner.
 See [persistence examples](../../docs/src/content/docs/reference/adapters.md#runnable-examples) for all
 four ownership models and their current limits.
+
+The opt-in [`Testing` module](../../docs/src/content/docs/guide/storage.mdx#in-memory-tests)
+provides non-durable password and session storage with portable crypto services for tests.

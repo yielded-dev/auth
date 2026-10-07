@@ -16,11 +16,52 @@ their driver.
 
 ## Runnable examples
 
-[Database and backend choices](../guide/storage) explains the three storage options. The [four account apps](../guide/examples#run-an-account-app)
+[Database and backend choices](../guide/storage) explains the storage options. The [four account apps](../guide/examples#run-an-account-app)
 show managed Drizzle tables, an application-owned Drizzle schema, direct Effect
 SQL, and custom services. Start there to compare ownership and composition, or
 [run an example](../guide/examples#run-an-account-app) for the complete setup.
 This reference covers the persistence APIs and their transaction requirements.
+
+## In-memory testing
+
+`Testing.layer(auth, options)` from `@yielded/auth-persistence/Testing` replaces
+password and session persistence in tests. Start with the
+[setup guide](../guide/storage#in-memory-tests) or [consumer test](https://github.com/yielded-dev/auth/blob/main/examples/auth/test/in-memory.test.ts).
+
+| Configuration     | Behavior                                                                                                                                                                          |
+| ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `auth`            | One sign-in-only `Password.make()` strategy and `Sessions.stateful()`. Other configurations fail acquisition with `PersistenceConfigurationError`.                                |
+| `subjects`        | Each seed has `subjectId`, `email`, a redacted `password`, and optional `active` (default `true`). Duplicate IDs or normalized emails fail acquisition. Emails remain unverified. |
+| `requirement`     | Required application `AuthenticationRequirement`; no test default.                                                                                                                |
+| `PasswordHashing` | Required Layer dependency. Hashes seed passwords without text normalization. `Testing.services()` supplies this and Effect `Crypto`; claims remain application-owned.             |
+| Clock             | Captured at acquisition. Effect's `TestClock` controls expiry directly.                                                                                                           |
+
+Supported session operations are issuance, verification, renewal, listing,
+revocation, and sign-out. Renewal invalidates the previous credential; retrying
+with it fails. Sign-in creates a new session on each successful call.
+Password management, pending authentication, handoff, signed-session approval,
+and ambient transaction composition are unsupported and fail explicitly.
+
+Separate acquisitions have independent state; reusing a Layer within one build
+shares it. State is process-local, non-durable, and discarded on scope close.
+In a Worker, acquire and use it within the request or test scope. Use the actual
+production adapter to verify database concurrency or recovery.
+
+### Test services
+
+`Testing.services(options?)` supplies Effect `Crypto` and `PasswordHashing` with
+portable Argon2id at the default password cost. Provide it to the composition of
+Auth and `Testing.layer` so both use the same services.
+
+| Option or requirement | Behavior                                                                                                                                                                                                                     |
+| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `seed`                | Optional string or number. Restarts a private random sequence per acquisition. Equal seeds and operation order reproduce credentials; use distinct seeds for independent simulated clients. Omit for secure host randomness. |
+| Runtime               | Requires global WebCrypto. Missing WebCrypto fails acquisition with `PersistenceConfigurationError`.                                                                                                                         |
+| Clock                 | Inherits the caller's clock. It does not install a test clock or replace Effect's `Random` service.                                                                                                                          |
+
+For custom crypto or hashing, supply your own Layers to `Testing.layer` and Auth
+instead. Promise-based test runners can use `ManagedRuntime.make(TestAuth)` and
+dispose the runtime after each test.
 
 ## Compose persistence once
 
