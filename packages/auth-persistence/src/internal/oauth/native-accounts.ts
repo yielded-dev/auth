@@ -429,26 +429,22 @@ export const makeNativeOAuthAccountsServices = Effect.fnUntraced(function* (
           if (!facts.some((fact) => fact.usablePrimary) || !satisfies(facts, requirement))
             return yield* prepareOAuthNative({ _tag: "LastSignInMethod" }, prepare);
 
-          const present = (entry: (typeof methods)[number]) =>
-            anySqlCondition(sql, entry.conditions);
+          const present = (entry: (typeof methods)[number]) => anySqlCondition(entry.conditions);
 
           // Preserve a usable remaining method through application work. These
           // predicates describe eligible credential identities, not observed rows.
           const remaining = sql.and([
-            anySqlCondition(sql, methods.filter((entry) => entry.fact.usablePrimary).map(present)),
+            anySqlCondition(methods.filter((entry) => entry.fact.usablePrimary).map(present)),
             anySqlCondition(
-              sql,
               requirement.alternatives.map((alternative) =>
                 sql.and([
                   ...alternative.factors.map((factor) =>
                     anySqlCondition(
-                      sql,
                       methods.filter((entry) => entry.fact.factors.includes(factor)).map(present),
                     ),
                   ),
                   sql`(${sql.join(" + ", false)(methods.map((entry) => sql`case when ${present(entry)} then 1 else 0 end`))}) >= ${alternative.minimumCredentials}`,
                   anySqlCondition(
-                    sql,
                     methods
                       .filter(
                         (entry) =>

@@ -1,7 +1,7 @@
 import { Effect, Schema } from "effect";
 import type { SqlClient } from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
-import type { Fragment } from "effect/sql/Statement";
+import { join, type Fragment } from "effect/sql/Statement";
 
 /** Native row counts are the authority for conditional writes. MySQL exposes
  * its result header; PostgreSQL and SQLite return one row for every match. */
@@ -19,8 +19,11 @@ export const executeSqlChange = (
   });
 
 /** Effect renders an empty OR as `1=1`; an empty set of alternatives matches nothing. */
-export const anySqlCondition = (sql: SqlClient, conditions: ReadonlyArray<Fragment>) =>
-  conditions.length === 0 ? sql`1 = 0` : sql.or(conditions);
+export const anySqlCondition: (conditions: ReadonlyArray<Fragment>) => Fragment = join(
+  " OR ",
+  true,
+  "1 = 0",
+);
 
 /** Keep the indexed predicate and reject collation aliases of security tokens. */
 export const exactSqlText = (sql: SqlClient, left: Fragment, right: Fragment) =>

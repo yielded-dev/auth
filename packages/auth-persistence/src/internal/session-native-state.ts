@@ -128,10 +128,7 @@ export const makeNativeSessionAuthorityState = Effect.fnUntraced(function* (
   };
 
   const requested = (table: SqlTable, ids: ReadonlyArray<string>) =>
-    anySqlCondition(
-      sql,
-      ids.map((value) => exact(table, c.credentialId, value)),
-    );
+    anySqlCondition(ids.map((value) => exact(table, c.credentialId, value)));
 
   const decode = Effect.fnUntraced(function* (
     subjectId: SubjectId,
