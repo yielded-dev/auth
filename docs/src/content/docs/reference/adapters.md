@@ -16,11 +16,36 @@ their driver.
 
 ## Runnable examples
 
-[Database and backend choices](../guide/storage) explains the three storage options. The [four account apps](../guide/examples#run-an-account-app)
+[Database and backend choices](../guide/storage) explains the storage options. The [four account apps](../guide/examples#run-an-account-app)
 show managed Drizzle tables, an application-owned Drizzle schema, direct Effect
 SQL, and custom services. Start there to compare ownership and composition, or
 [run an example](../guide/examples#run-an-account-app) for the complete setup.
 This reference covers the persistence APIs and their transaction requirements.
+
+## In-memory testing
+
+`Testing.layer(auth, options)` from `@yielded/auth-persistence/Testing` replaces
+password and session persistence in tests. Start with the
+[setup guide](../guide/storage#in-memory-tests) or [consumer test](https://github.com/yielded-dev/auth/blob/main/examples/auth/test/in-memory.test.ts).
+
+| Configuration     | Behavior                                                                                                                                                                          |
+| ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `auth`            | One sign-in-only `Password.make()` strategy and `Sessions.stateful()`. Other configurations fail acquisition with `PersistenceConfigurationError`.                                |
+| `subjects`        | Each seed has `subjectId`, `email`, a redacted `password`, and optional `active` (default `true`). Duplicate IDs or normalized emails fail acquisition. Emails remain unverified. |
+| `requirement`     | Required application `AuthenticationRequirement`; no test default.                                                                                                                |
+| `PasswordHashing` | Required Layer dependency. Hashes seed passwords without text normalization. Supply claims and Effect `Crypto` separately to Auth.                                                |
+| Clock             | Captured at acquisition. Effect's `TestClock` controls expiry directly.                                                                                                           |
+
+Supported session operations are issuance, verification, renewal, listing,
+revocation, and sign-out. Renewal invalidates the previous credential; retrying
+with it fails. Sign-in creates a new session on each successful call.
+Password management, pending authentication, handoff, signed-session approval,
+and ambient transaction composition are unsupported and fail explicitly.
+
+Separate acquisitions have independent state; reusing a Layer within one build
+shares it. State is process-local, non-durable, and discarded on scope close.
+In a Worker, acquire and use it within the request or test scope. Use the actual
+production adapter to verify database concurrency or recovery.
 
 ## Compose persistence once
 

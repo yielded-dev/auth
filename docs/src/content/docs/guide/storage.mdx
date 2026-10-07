@@ -7,9 +7,9 @@ import StorageLadder from "../../../components/StorageLadder.astro";
 import { TableMap } from "@yielded/starlight-theme/components";
 
 Your account model belongs to your application. A subject can be a row in your
-existing customer table or an identity managed by another service. Yielded Auth
-needs ways to look up that identity and durably store credentials, proofs, and
-sessions; core does not require an ORM or a particular database.
+existing customer table or an identity managed by another service. In production,
+Yielded Auth needs ways to look up that identity and durably store credentials,
+proofs, and sessions; core does not require an ORM or a particular database.
 
 Choose how to provide those services:
 
@@ -175,28 +175,20 @@ the service boundary; replication and production storage operations remain yours
 
 ## In-memory tests
 
-Import `@yielded/auth-persistence/Testing` explicitly for tests with one
-`Password.make()` sign-in strategy and `Sessions.stateful()`. It creates and seeds
-scoped memory with no database, native modules, or filesystem access.
-Each acquisition starts fresh; reusing a Layer within one build
-shares its state. Closing the scope discards everything. This is process-local,
-non-durable test storage, never a production default.
-
-Install the persistence package as a test dependency:
+For an Auth definition with one sign-in-only `Password.make()` strategy and
+`Sessions.stateful()`, replace database persistence with `Testing.layer`.
+Each acquisition starts with your seed subjects and discards its state when
+the scope closes. This storage is only for tests.
 
 ```sh
 bun add -d @yielded/auth-persistence@beta
 ```
 
-The helper is runtime-independent, including Bun and Cloudflare Workers test
-environments. Supply crypto and hashing Layers supported by your host; the
-consumer example uses WebCrypto and `@yielded/crypto/Portable`. In a Worker, acquire
-and use the Layer inside the request or test scope. It remains outside production
-import paths and does not emulate D1, Durable Objects, or a SQL adapter.
-
 ```ts
 import * as Testing from "@yielded/auth-persistence/Testing";
-import { Redacted } from "effect";
+import { Layer, Redacted } from "effect";
+
+import { AppAuth, requirement } from "./auth";
 
 const TestPersistence = Testing.layer(AppAuth, {
   subjects: [{
@@ -204,40 +196,22 @@ const TestPersistence = Testing.layer(AppAuth, {
     email: "reader@example.invalid",
     password: Redacted.make("test passphrase"),
   }],
-  requirement, // Your explicit AuthenticationRequirement
+  requirement,
 });
+
+const TestAuth = AppAuth.layer.pipe(Layer.provide(TestPersistence));
 ```
 
-Provide this Layer to `AppAuth.layer`, alongside your password strategy's
-`SessionClaims`, `PasswordHashing`, and Effect `Crypto` Layers. Seed passwords are
-byte-preserving and hashed with that same hasher. Email addresses are normalized;
-they remain unverified. `active: false` seeds a disabled subject. Invalid seeds or
-duplicate subject IDs/emails fail acquisition. Application claims, authentication
-requirements, session lifetime, and private credential delivery remain explicit.
+Supply your claims, password hashing, and Crypto Layers to
+`TestAuth`; requests still need private credential delivery. Choose crypto
+backends for your runtime, including Bun or Cloudflare Workers. The helper itself
+has no database or native dependency.
 
-The helper captures Effect's Clock when acquired. `TestClock.adjust` and `setTime`
-then control expiry directly, with no synchronization call. Provide your own
-`Crypto` Layer for deterministic entropy; the helper never replaces cryptography.
-The in-memory owner serializes changes and rechecks time before committing. This
-does not verify production database concurrency, durability, or crash recovery.
-
-Coverage is existing-account password sign-in and stateful session issuance,
-verification, renewal, listing, revocation, and sign-out. Renewal invalidates the
-previous credential, and retrying it fails. Sign-in remains non-idempotent.
-Other strategies, password management, and other session modes are rejected with
-`PersistenceConfigurationError` during acquisition. Direct unsupported password
-management port calls fail with `PasswordUnavailable`. Pending authentication,
-session handoff, signed-session approval, and ambient transaction composition are
-unsupported and fail explicitly. No registration, proof delivery, MFA,
-identity-mutation, or OAuth services are supplied.
-
-The [public-import consumer test](https://github.com/yielded-dev/auth/blob/main/examples/auth/test/in-memory.test.ts)
-shows the complete composition, private credential collector, deterministic
-entropy, expiry, renewal, sign-out, and isolation. Run it from a repository checkout:
-
-```sh
-vp -C examples/auth test test/in-memory.test.ts
-```
+Acquire the Layer under Effect's test clock to control expiry with
+`TestClock.adjust`. The [consumer test](https://github.com/yielded-dev/auth/blob/main/examples/auth/test/in-memory.test.ts)
+shows the complete setup, including deterministic entropy and private delivery.
+See the [testing reference](../reference/adapters#in-memory-testing) for seed
+options, session coverage, and scope behavior.
 
 ## Run each level
 

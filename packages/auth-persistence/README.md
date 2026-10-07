@@ -27,13 +27,6 @@ on SQLite/D1 or PostgreSQL. Its operations require standalone commits.
 Applications own subject provisioning, policy, claims, delivery, and their database
 connection and migration runner.
 
-The explicit `/Testing` subpath supplies isolated, non-durable memory for seeded
-password sign-in and stateful sessions. It uses Effect's Clock directly, requires
-no database or native dependency, and stays outside production import paths.
-Applications supply crypto and hashing Layers for their runtime.
-See [in-memory testing](../../docs/src/content/docs/guide/storage.mdx#in-memory-tests)
-for coverage, clock composition, and the runnable public-import consumer test.
-
 The composed Layer covers password sign-in and management, email address verification
 and changes, phone sign-in, and passkey sign-in and management with stateful sessions
 on PostgreSQL and SQLite. The `/Adapter` module has two integration levels:
@@ -44,3 +37,6 @@ Plain reads use no transaction. Protected mutations retain their named final che
 when an application joins additional work to the owner.
 See [persistence examples](../../docs/src/content/docs/reference/adapters.md#runnable-examples) for all
 four ownership models and their current limits.
+
+The opt-in [`Testing` Layer](../../docs/src/content/docs/guide/storage.mdx#in-memory-tests)
+provides non-durable password and session storage for tests.
