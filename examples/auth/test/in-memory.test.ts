@@ -1,16 +1,16 @@
-import { NodeCrypto } from "@effect/platform-node";
 import { it } from "@effect/vitest";
 import type { Operations } from "@yielded/auth";
 import { Auth, Password, Sessions } from "@yielded/auth";
 import * as Testing from "@yielded/auth-persistence/Testing";
 import * as KdfAdmission from "@yielded/crypto/KdfAdmission";
-import * as NodeKdf from "@yielded/crypto/platform-node";
+import * as Portable from "@yielded/crypto/Portable";
+import { layerCryptoWeb } from "@yielded/crypto/WebCrypto";
 import { Crypto, Effect, Layer, Random, Redacted, Schema } from "effect";
 import { TestClock } from "effect/testing";
 import { expect } from "vite-plus/test";
 
 // Requested public-import consumer test: exercise the helper through Auth, including
-// acquisition isolation and SQL expiry, which existing adapter tests cannot prove.
+// acquisition isolation and Effect clock expiry, which adapter tests cannot prove.
 const App = Auth.make("in-memory-example", {
   claims: Schema.Struct({ role: Schema.Literal("reader") }),
   sessions: Sessions.stateful({ idleTimeout: "10 minutes", maxAge: "1 hour" }),
@@ -37,7 +37,6 @@ const options = {
     ],
     maximumAgeMillis: 60_000,
   }),
-  clock: "test" as const,
 };
 
 // Deterministic entropy is supplied explicitly; digests and password hashing stay real.
@@ -53,10 +52,12 @@ const entropy = Layer.effect(
       digest: (algorithm, data) => native.digest(algorithm, data),
     });
   }),
-).pipe(Layer.provide(NodeCrypto.layer));
+).pipe(Layer.provide(layerCryptoWeb));
 
 const hashing = Password.PasswordHashing.layer().pipe(
-  Layer.provide(NodeKdf.layer().pipe(Layer.provideMerge(KdfAdmission.layer()))),
+  Layer.provide(
+    Portable.layer(globalThis.crypto.subtle).pipe(Layer.provideMerge(KdfAdmission.layer())),
+  ),
 );
 
 const memory = Testing.layer(App, options);
@@ -109,7 +110,6 @@ it.effect("signs in, rotates, revokes and expires sessions in isolated acquisiti
       expect((yield* auth.verifySession(original)).subjectId).toBe("reader");
 
       yield* TestClock.adjust("5 minutes");
-      yield* Testing.syncClock;
       yield* auth.renewSession().pipe(Effect.provideService(Auth.AuthRequest, call(original)));
       expect((yield* auth.verifySession(original).pipe(Effect.flip))._tag).toBe("SessionInvalid");
       expect(
@@ -139,7 +139,6 @@ it.effect("signs in, rotates, revokes and expires sessions in isolated acquisiti
       yield* auth.signIn(signIn);
       if (credential === undefined) return yield* Effect.die("Missing isolated credential");
       yield* TestClock.adjust("11 minutes");
-      yield* Testing.syncClock;
       expect((yield* auth.verifySession(credential).pipe(Effect.flip))._tag).toBe("SessionInvalid");
     }).pipe(Effect.provideService(Auth.AuthRequest, call()), Effect.provide(live));
   }).pipe(Random.withSeed("in-memory-example")),

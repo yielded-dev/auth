@@ -27,9 +27,10 @@ on SQLite/D1 or PostgreSQL. Its operations require standalone commits.
 Applications own subject provisioning, policy, claims, delivery, and their database
 connection and migration runner.
 
-The explicit `/Testing` subpath supplies isolated, non-durable SQLite storage for
-seeded password sign-in and stateful sessions in Node.js tests. It requires the
-optional `@effect/sql-sqlite-node` peer and stays outside production import paths.
+The explicit `/Testing` subpath supplies isolated, non-durable memory for seeded
+password sign-in and stateful sessions. It uses Effect's Clock directly, requires
+no database or native dependency, and stays outside production import paths.
+Applications supply crypto and hashing Layers for their runtime.
 See [in-memory testing](../../docs/src/content/docs/guide/storage.mdx#in-memory-tests)
 for coverage, clock composition, and the runnable public-import consumer test.
 

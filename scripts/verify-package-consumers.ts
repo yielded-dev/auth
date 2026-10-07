@@ -887,11 +887,9 @@ export const verifyPackageConsumers = Effect.fn("verifyPackageConsumers")(functi
         }
       }
 
-      const persistenceExports = Object.keys(persistenceManifest.exports ?? {})
-        .filter((key) => key !== "./Testing" && !key.startsWith("./Testing/"))
-        .map((key) =>
-          key === "." ? "@yielded/auth-persistence" : `@yielded/auth-persistence${key.slice(1)}`,
-        );
+      const persistenceExports = Object.keys(persistenceManifest.exports ?? {}).map((key) =>
+        key === "." ? "@yielded/auth-persistence" : `@yielded/auth-persistence${key.slice(1)}`,
+      );
 
       const persistenceDeclarations = path.join(stage, "fixtures/persistence-exports.ts");
 

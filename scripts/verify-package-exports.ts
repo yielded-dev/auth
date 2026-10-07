@@ -10,17 +10,11 @@ const authPackage = /^@yielded\/auth(?:$|[-/])/;
 const Dependencies = Schema.Record(Schema.String, Schema.String);
 const BundledDependencies = Schema.Union([Schema.Boolean, Schema.Array(Schema.String)]);
 
-const PeerDependenciesMeta = Schema.Record(
-  Schema.String,
-  Schema.Struct({ optional: Schema.optionalKey(Schema.Boolean) }),
-);
-
 export const ReusableManifest = Schema.Struct({
   name: Schema.String,
   dependencies: Schema.optionalKey(Dependencies),
   optionalDependencies: Schema.optionalKey(Dependencies),
   peerDependencies: Schema.optionalKey(Dependencies),
-  peerDependenciesMeta: Schema.optionalKey(PeerDependenciesMeta),
   bundledDependencies: Schema.optionalKey(BundledDependencies),
   bundleDependencies: Schema.optionalKey(BundledDependencies),
 });
@@ -63,15 +57,7 @@ export const reusableDependencyProblems = (
             ? name.startsWith("@yielded/") && allowed.has(name) && resolved === "workspace:*"
             : !resolved.includes(":") && !resolved.includes("/"));
 
-      // The Testing subpath owns this optional driver. Production imports still
-      // use reusableDependencies below, and the purity audit excludes Testing.
-      const testingPeer =
-        manifest.name === "@yielded/auth-persistence" &&
-        section === "peerDependencies" &&
-        name === "@effect/sql-sqlite-node" &&
-        manifest.peerDependenciesMeta?.[name]?.optional === true;
-
-      if ((!allowed.has(name) && !testingPeer) || !permittedRange)
+      if (!allowed.has(name) || !permittedRange)
         problems.push(
           `${manifest.name} ${section}.${name} (${range}${resolved !== range ? ` -> ${resolved ?? "missing catalog entry"}` : ""}) is outside its runtime dependency graph`,
         );
@@ -95,7 +81,6 @@ const Manifest = Schema.Struct({
   dependencies: Schema.optionalKey(Dependencies),
   optionalDependencies: Schema.optionalKey(Dependencies),
   peerDependencies: Schema.optionalKey(Dependencies),
-  peerDependenciesMeta: Schema.optionalKey(PeerDependenciesMeta),
   devDependencies: Schema.optionalKey(Dependencies),
   bundledDependencies: Schema.optionalKey(BundledDependencies),
   bundleDependencies: Schema.optionalKey(BundledDependencies),
