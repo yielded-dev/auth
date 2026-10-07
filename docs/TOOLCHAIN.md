@@ -209,7 +209,12 @@ This contributor guide stays at the top of `docs/` and is excluded from the publ
 `effect-auth-docs` Cloudflare Worker at stage `prod`. It uses the account-wide
 Cloudflare state store, matching Effect Agent. The Astro base and Worker asset
 base both use `/auth/`. The Worker route covers the `/auth` prefix;
-other paths on `yielded.dev` remain available for sibling projects. The stack
+other paths on `yielded.dev` remain available for sibling projects.
+Asset paths stay prefixed with `/auth`, so slash redirects from HTML handling
+stay on this site. `docs/worker.ts` permanently redirects `/auth`,
+`/auth/index`, and `/auth/index.html` to `/auth/`. Unknown paths under
+`/auth/` serve the generated `404.html` with status 404, and the same worker
+returns that document with status 404 for `/auth/404`. The stack
 owns the proxied apex DNS placeholder until a shared Yielded site provides an origin.
 The old `effect-auth.com` domain remains attached for TLS and permanently redirects
 paths and query strings to the new docs location.
