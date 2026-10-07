@@ -199,17 +199,21 @@ const TestPersistence = Testing.layer(AppAuth, {
   requirement,
 });
 
-const TestAuth = AppAuth.layer.pipe(Layer.provide(TestPersistence));
+const TestAuth = AppAuth.layer.pipe(
+  Layer.provide(TestPersistence),
+  Layer.provide(Testing.services({ seed: "account-test" })),
+);
 ```
 
-Supply your claims, password hashing, and Crypto Layers to
-`TestAuth`; requests still need private credential delivery. Choose crypto
-backends for your runtime, including Bun or Cloudflare Workers. The helper itself
-has no database or native dependency.
+`Testing.services()` supplies portable crypto and real password hashing using
+your runtime's WebCrypto. Set `seed` for reproducible test credentials, or omit it
+for secure randomness. Supply your claims Layer to `TestAuth`; requests still
+need private credential delivery. The helper needs no database or native dependency
+and works with WebCrypto in Node, Bun, and Cloudflare Workers.
 
-Acquire the Layer under Effect's test clock to control expiry with
-`TestClock.adjust`. The [consumer test](https://github.com/yielded-dev/auth/blob/main/examples/auth/test/in-memory.test.ts)
-shows the complete setup, including deterministic entropy and private delivery.
+Both Layers use the caller's clock. With `it.effect` from `@effect/vitest`, use
+`TestClock.adjust` to control expiry. The [consumer test](https://github.com/yielded-dev/auth/blob/main/examples/auth/test/in-memory.test.ts)
+shows the complete setup and private delivery.
 See the [testing reference](../reference/adapters#in-memory-testing) for seed
 options, session coverage, and scope behavior.
 

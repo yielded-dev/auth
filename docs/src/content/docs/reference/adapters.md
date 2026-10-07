@@ -33,7 +33,7 @@ password and session persistence in tests. Start with the
 | `auth`            | One sign-in-only `Password.make()` strategy and `Sessions.stateful()`. Other configurations fail acquisition with `PersistenceConfigurationError`.                                |
 | `subjects`        | Each seed has `subjectId`, `email`, a redacted `password`, and optional `active` (default `true`). Duplicate IDs or normalized emails fail acquisition. Emails remain unverified. |
 | `requirement`     | Required application `AuthenticationRequirement`; no test default.                                                                                                                |
-| `PasswordHashing` | Required Layer dependency. Hashes seed passwords without text normalization. Supply claims and Effect `Crypto` separately to Auth.                                                |
+| `PasswordHashing` | Required Layer dependency. Hashes seed passwords without text normalization. `Testing.services()` supplies this and Effect `Crypto`; claims remain application-owned.             |
 | Clock             | Captured at acquisition. Effect's `TestClock` controls expiry directly.                                                                                                           |
 
 Supported session operations are issuance, verification, renewal, listing,
@@ -46,6 +46,22 @@ Separate acquisitions have independent state; reusing a Layer within one build
 shares it. State is process-local, non-durable, and discarded on scope close.
 In a Worker, acquire and use it within the request or test scope. Use the actual
 production adapter to verify database concurrency or recovery.
+
+### Test services
+
+`Testing.services(options?)` supplies Effect `Crypto` and `PasswordHashing` with
+portable Argon2id at the default password cost. Provide it to the composition of
+Auth and `Testing.layer` so both use the same services.
+
+| Option or requirement | Behavior                                                                                                                                                                                                                     |
+| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `seed`                | Optional string or number. Restarts a private random sequence per acquisition. Equal seeds and operation order reproduce credentials; use distinct seeds for independent simulated clients. Omit for secure host randomness. |
+| Runtime               | Requires global WebCrypto. Missing WebCrypto fails acquisition with `PersistenceConfigurationError`.                                                                                                                         |
+| Clock                 | Inherits the caller's clock. It does not install a test clock or replace Effect's `Random` service.                                                                                                                          |
+
+For custom crypto or hashing, supply your own Layers to `Testing.layer` and Auth
+instead. Promise-based test runners can use `ManagedRuntime.make(TestAuth)` and
+dispose the runtime after each test.
 
 ## Compose persistence once
 

@@ -2,10 +2,7 @@ import { it } from "@effect/vitest";
 import type { Operations } from "@yielded/auth";
 import { Auth, Password, Sessions } from "@yielded/auth";
 import * as Testing from "@yielded/auth-persistence/Testing";
-import * as KdfAdmission from "@yielded/crypto/KdfAdmission";
-import * as Portable from "@yielded/crypto/Portable";
-import { layerCryptoWeb } from "@yielded/crypto/WebCrypto";
-import { Crypto, Effect, Layer, Random, Redacted, Schema } from "effect";
+import { Effect, Layer, Redacted, Schema } from "effect";
 import { TestClock } from "effect/testing";
 import { expect } from "vite-plus/test";
 
@@ -39,27 +36,7 @@ const options = {
   }),
 };
 
-// Deterministic entropy is supplied explicitly; digests and password hashing stay real.
-// This seeded randomness is only suitable for tests.
-const entropy = Layer.effect(
-  Crypto.Crypto,
-  Effect.gen(function* () {
-    const native = yield* Crypto.Crypto;
-    const random = yield* Random.Random;
-
-    return Crypto.make({
-      randomBytes: (size) => Uint8Array.from({ length: size }, () => random.nextIntUnsafe() & 255),
-      digest: (algorithm, data) => native.digest(algorithm, data),
-    });
-  }),
-).pipe(Layer.provide(layerCryptoWeb));
-
-const hashing = Password.PasswordHashing.layer().pipe(
-  Layer.provide(
-    Portable.layer(globalThis.crypto.subtle).pipe(Layer.provideMerge(KdfAdmission.layer())),
-  ),
-);
-
+const services = Testing.services({ seed: "in-memory-example" });
 const memory = Testing.layer(App, options);
 
 const live = App.layer.pipe(
@@ -69,8 +46,7 @@ const live = App.layer.pipe(
     }),
   ),
   Layer.provideMerge(memory),
-  Layer.provide(hashing),
-  Layer.provide(entropy),
+  Layer.provide(services),
 );
 
 it.effect(
@@ -145,7 +121,7 @@ it.effect(
           "SessionInvalid",
         );
       }).pipe(Effect.provideService(Auth.AuthRequest, call()), Effect.provide(live));
-    }).pipe(Random.withSeed("in-memory-example")),
+    }),
   // Seeding and sign-in use the default Argon2 cost on the portable backend.
   { timeout: 30000 },
 );
@@ -159,9 +135,7 @@ it.effect("rejects unsupported session modes at acquisition", () => {
 
   return Effect.gen(function* () {
     const error = yield* Effect.void.pipe(
-      Effect.provide(
-        Testing.layer(signed, options).pipe(Layer.provide(hashing), Layer.provide(entropy)),
-      ),
+      Effect.provide(Testing.layer(signed, options).pipe(Layer.provide(services))),
       Effect.flip,
     );
 

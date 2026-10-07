@@ -33,14 +33,14 @@
     "test": "vp test --passWithNoTests"
   },
   "dependencies": {
-    "@yielded/auth": "workspace:*"
+    "@yielded/auth": "workspace:*",
+    "@yielded/crypto": "workspace:*"
   },
   "devDependencies": {
     "@effect/platform-node": "catalog:",
     "@effect/sql-libsql": "catalog:",
     "@effect/sql-sqlite-node": "catalog:",
     "@effect/vitest": "catalog:",
-    "@yielded/crypto": "workspace:*",
     "@yielded/jose": "workspace:*",
     "effect": "catalog:",
     "typescript": "catalog:",

@@ -29,7 +29,7 @@ const reusableDependencies = (name: string): ReadonlySet<string> | undefined =>
         : name === "@yielded/auth"
           ? new Set(["effect", "@yielded/crypto", "@yielded/jose", "@yielded/oauth"])
           : name === "@yielded/auth-persistence"
-            ? new Set(["effect", "@yielded/auth"])
+            ? new Set(["effect", "@yielded/auth", "@yielded/crypto"])
             : undefined;
 
 /** Check source and publisher-resolved manifests, including aliases and optional peers. */

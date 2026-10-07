@@ -37,13 +37,18 @@ import {
   StaleAuthentication,
   type StatefulSessionPersistence,
 } from "@yielded/auth/Sessions";
+import * as KdfAdmission from "@yielded/crypto/KdfAdmission";
+import * as Portable from "@yielded/crypto/Portable";
+import { layerCryptoWeb } from "@yielded/crypto/WebCrypto";
 import {
   Clock,
   Context,
+  Crypto,
   DateTime,
   Effect,
   Layer,
   Option,
+  Random,
   Redacted,
   Schema,
   Semaphore,
@@ -73,6 +78,51 @@ export interface Options {
 
 const configurationError = (reason: string) => PersistenceConfigurationError.make({ reason });
 const unavailable = () => SessionUnavailable.make({});
+
+export interface ServicesOptions {
+  /** Reproducible test entropy. Omit to use the host's secure randomness. */
+  readonly seed?: string | number;
+}
+
+/** Portable password hashing and Effect Crypto for tests. Requires global WebCrypto
+ * at acquisition; uses the default password cost and one shared KDF admission owner.
+ * A seed restarts its private random sequence on each acquisition; it never changes
+ * the caller's Random or Clock services. Seeded credentials are only suitable for tests.
+ * Provide this after composing Auth with Testing.layer and application claims.
+ */
+export const services = (options: ServicesOptions = {}) => {
+  const { seed } = options;
+
+  return Layer.unwrap(
+    Effect.gen(function* () {
+      const subtle = globalThis.crypto?.subtle;
+
+      if (subtle === undefined)
+        return yield* configurationError("Testing.services requires global WebCrypto");
+
+      const entropy =
+        seed === undefined
+          ? layerCryptoWeb
+          : Layer.effect(
+              Crypto.Crypto,
+              Effect.gen(function* () {
+                const native = yield* Crypto.Crypto;
+                const random = yield* Random.Random.pipe(Random.withSeed(seed));
+
+                return Crypto.make({
+                  randomBytes: (size) =>
+                    Uint8Array.from({ length: size }, () => random.nextIntUnsafe() & 255),
+                  digest: (algorithm, data) => native.digest(algorithm, data),
+                });
+              }),
+            ).pipe(Layer.provide(layerCryptoWeb));
+
+      const backend = Portable.layer(subtle).pipe(Layer.provideMerge(KdfAdmission.layer()));
+
+      return PasswordHashing.layer().pipe(Layer.provide(backend), Layer.provideMerge(entropy));
+    }),
+  );
+};
 
 /** Fresh scoped memory for exactly one Password.make() sign-in strategy and
  * stateful sessions: issue, verify, renew, list, revoke and sign out. No SQL,
