@@ -230,8 +230,12 @@ export const makeNativeOAuthRegistrationIntentServices = Effect.fnUntraced(funct
 
           const statement = conditionalInsert(intent, values, eligible);
 
-          if (batch !== undefined) yield* state.change(statement);
-          else if ((yield* executeSqlChange(sql, statement)) !== 1) return yield* rejected();
+          if (batch !== undefined) {
+            // D1 classifies eligibility before staging, as the row count does for
+            // interactive owners; the batch still asserts the conditional insert.
+            if ((yield* sql`select 1 where ${eligible}`).length === 0) return yield* rejected();
+            yield* state.change(statement);
+          } else if ((yield* executeSqlChange(sql, statement)) !== 1) return yield* rejected();
           if (Option.isSome(external))
             yield* state.finish(
               "oauth-registration-intent-issued",

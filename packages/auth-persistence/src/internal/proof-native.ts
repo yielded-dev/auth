@@ -201,7 +201,6 @@ export const makeNativeProofStore = Effect.fnUntraced(function* (
       [p.issuedAt]: issuedAt,
       [p.expiresAt]: expiresAt,
       [p.failedAttempts]: 0,
-      [p.sendCount]: 1,
     };
 
     if (mysql) {
@@ -231,7 +230,6 @@ export const makeNativeProofStore = Effect.fnUntraced(function* (
       p.issuedAt,
       p.expiresAt,
       p.failedAttempts,
-      p.sendCount,
     ];
 
     const excluded = proof.as("excluded");

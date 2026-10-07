@@ -125,7 +125,6 @@ export const storageTables = {
       issuedAt: integer,
       expiresAt: integer,
       failedAttempts: integer,
-      sendCount: integer,
     },
     [
       ["moduleId", "purpose", "seriesKey"],

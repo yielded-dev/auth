@@ -1,6 +1,4 @@
 import {
-  type OAuthActionAuthorization,
-  type OAuthConnectedActionAuthorization,
   type OAuthAccountRevision,
   OAuthUnavailable,
   OAuthExternalIdentity,
@@ -10,7 +8,7 @@ import type { AuthenticationRequirement } from "@yielded/auth/Sessions";
 import { Crypto, Effect, Schema } from "effect";
 import { Base64Url } from "effect/encoding";
 
-import { digest, randomId } from "../crypto";
+import { randomId } from "../crypto";
 export { digest } from "../crypto";
 
 const encoder = new TextEncoder();
@@ -150,50 +148,3 @@ export const satisfies = (
       ),
   );
 };
-
-export const matchesAcceptedAction = Effect.fnUntraced(function* (
-  authorization: OAuthActionAuthorization | OAuthConnectedActionAuthorization,
-  expected: {
-    readonly moduleId: string;
-    readonly action:
-      | OAuthActionAuthorization["challenge"]["action"]
-      | OAuthConnectedActionAuthorization["challenge"]["action"];
-    readonly flowId: string;
-    readonly revision: OAuthAccountRevision;
-    readonly intent: string;
-  },
-  now: number,
-) {
-  const challenge = authorization.challenge;
-  const evidence = authorization.evidence;
-  const intentDigest = yield* digest(expected.intent);
-
-  const binding = yield* digest(
-    // oxlint-disable-next-line no-restricted-properties -- Fixed private action fingerprint format shared with the core verifier.
-    JSON.stringify([
-      expected.action.startsWith("connected-")
-        ? "effect-auth/oauth-connected-action/v1"
-        : "effect-auth/oauth-action/v1",
-      expected.moduleId,
-      expected.action,
-      expected.flowId,
-      intentDigest,
-    ]),
-  );
-
-  if (
-    now >= authorization.validUntilMillis ||
-    challenge.moduleId !== expected.moduleId ||
-    challenge.action !== expected.action ||
-    challenge.flowId !== expected.flowId ||
-    challenge.intentDigest !== intentDigest ||
-    challenge.bindingDigest !== binding ||
-    evidence.flowId !== expected.flowId ||
-    evidence.bindingDigest !== binding ||
-    !sameRevision(challenge.revision, expected.revision) ||
-    !sameRevision(evidence.revision, expected.revision)
-  )
-    return false;
-
-  return true;
-});

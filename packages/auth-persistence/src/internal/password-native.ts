@@ -94,15 +94,23 @@ export const makeNativePasswordServices = Effect.fnUntraced(function* (
   ) {
     const nativeId = yield* mapping.subjectId.toNative(subjectId);
 
+    // Without one wanted identifier, retired identifiers would multiply authority
+    // rows; read authority separately so the result grows linearly.
+    const joined = wanted !== undefined;
+
     const rows =
-      yield* sql`select ${subject.fields("password_subject_")}, ${identifier.fields("password_identifier_")}, ${credential.fields("password_credential_")}, ${authority.fields("password_authority_")}, ${now} as engine_now
+      yield* sql`select ${subject.fields("password_subject_")}, ${identifier.fields("password_identifier_")}, ${credential.fields("password_credential_")}${joined ? sql`, ${authority.fields("password_authority_")}` : sql``}, ${now} as engine_now
       from ${subject.name}
       left join ${identifier.name} on ${subjectKey(identifier, i.subjectId, nativeId)} ${wanted === undefined ? sql`` : sql`and ${exact(identifier, i.namespace, wanted.namespace)} and ${exact(identifier, i.value, wanted.value)}`}
       left join ${credential.name} on ${subjectKey(credential, c.subjectId, nativeId)} and ${exact(credential, c.moduleId, moduleId)}
-      left join ${authority.name} on ${subjectKey(authority, a.subjectId, nativeId)}
-      where ${subjectKey(subject, s.id, nativeId)} order by ${identifier.column(i.namespace)}, ${identifier.column(i.value)}, ${authority.column(a.credentialId)} limit 4097`;
+      ${joined ? sql`left join ${authority.name} on ${subjectKey(authority, a.subjectId, nativeId)}` : sql``}
+      where ${subjectKey(subject, s.id, nativeId)} order by ${identifier.column(i.namespace)}, ${identifier.column(i.value)}${joined ? sql`, ${authority.column(a.credentialId)}` : sql``} limit 4097`;
 
-    ensure(rows.length <= 4096);
+    const authorityRows = joined
+      ? rows
+      : yield* sql`select ${authority.fields("password_authority_")} from ${authority.name} where ${subjectKey(authority, a.subjectId, nativeId)} order by ${authority.column(a.credentialId)} limit 4097`;
+
+    ensure(rows.length <= 4096 && authorityRows.length <= 4096);
     if (rows[0] === undefined) return undefined;
     const subjectRow = subject.decode(rows[0], "password_subject_");
     const decodedId = yield* mapping.subjectId.toSubject(subjectRow[s.id]);
@@ -125,7 +133,7 @@ export const makeNativePasswordServices = Effect.fnUntraced(function* (
 
     let identifierRow: Record<string, unknown> | undefined;
 
-    for (const row of rows) {
+    for (const row of authorityRows) {
       const factor = authority.decode(row, "password_authority_");
 
       if (
@@ -140,6 +148,8 @@ export const makeNativePasswordServices = Effect.fnUntraced(function* (
         ensure(old === undefined || old.revision === revision);
         factors.set(id, { credentialId: id, revision, active: true });
       }
+    }
+    for (const row of rows) {
       const entry = identifier.decode(row, "password_identifier_");
 
       if (

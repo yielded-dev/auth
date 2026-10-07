@@ -6,7 +6,6 @@ import { Schema } from "effect";
 export interface ProofRow {
   readonly record: Proofs.ProofRecord;
   failedAttempts: number;
-  readonly sendCount: 1;
 }
 
 export type ProofRows = Map<string, ProofRow>;
@@ -62,7 +61,7 @@ export const issueProof = (
     expiresAtMillis: now + input.lifetimeMillis,
   };
 
-  rows.set(key, { record, failedAttempts: 0, sendCount: 1 });
+  rows.set(key, { record, failedAttempts: 0 });
 
   return { _tag: "Issued", record };
 };

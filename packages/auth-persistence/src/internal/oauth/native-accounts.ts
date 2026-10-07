@@ -15,14 +15,7 @@ import { makeOAuthNativeFlow } from "./native-flow";
 import { makeOAuthNativeMutation } from "./native-mutation";
 import { prepareOAuthNative } from "./native-sign-in";
 import { makeOAuthNativeState } from "./native-state";
-import {
-  invariant,
-  oauthIdentityKey,
-  sameRevision,
-  satisfies,
-  unavailable,
-  matchesAcceptedAction,
-} from "./state";
+import { invariant, oauthIdentityKey, sameRevision, satisfies, unavailable } from "./state";
 
 // Physical metadata is validated by the adapter; schema values remain typed.
 export type OAuthNativeAccountsMapping = OAuthAccountsMapping<
@@ -139,25 +132,6 @@ export const makeNativeOAuthAccountsServices = Effect.fnUntraced(function* (
             context.provider !== verified.identity.provider ||
             context.issuer !== verified.identity.issuer ||
             current.now >= context.expiresAtMillis
-          )
-            return yield* rejected();
-
-          const intent = yield* Schema.encodeEffect(
-            Schema.fromJsonString(M.OAuthLinkIntentContext),
-          )(context);
-
-          if (
-            !(yield* matchesAcceptedAction(
-              context.authorization,
-              {
-                moduleId: context.moduleId,
-                action: "link-begin",
-                flowId: context.flowId,
-                revision: context.revision,
-                intent,
-              },
-              current.now,
-            ))
           )
             return yield* rejected();
 
@@ -343,24 +317,6 @@ export const makeNativeOAuthAccountsServices = Effect.fnUntraced(function* (
           if (current === undefined || !sameRevision(current.revision, captured.revision))
             return yield* rejected();
 
-          const intent = yield* Schema.encodeEffect(
-            Schema.fromJsonString(M.OAuthCredentialSnapshot),
-          )(captured);
-
-          if (
-            !(yield* matchesAcceptedAction(
-              authorization,
-              {
-                moduleId: captured.moduleId,
-                action: "unlink",
-                flowId: authorization.challenge.flowId,
-                revision: captured.revision,
-                intent,
-              },
-              current.now,
-            ))
-          )
-            return yield* rejected();
           const key = yield* oauthIdentityKey(captured.identity);
 
           const target = credentialCondition(

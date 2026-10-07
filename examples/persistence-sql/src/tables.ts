@@ -68,7 +68,6 @@ export const proofs = AuthPersistence.table({
     issuedAt: { name: "c_issued_at", type: "integer" },
     expiresAt: { name: "c_expires_at", type: "integer" },
     failedAttempts: { name: "c_failed_attempts", type: "integer" },
-    sendCount: { name: "c_send_count", type: "integer" },
   },
   unique: [
     ["moduleId", "purpose", "seriesKey"],
