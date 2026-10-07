@@ -73,75 +73,81 @@ const live = App.layer.pipe(
   Layer.provide(entropy),
 );
 
-it.effect("signs in, rotates, revokes and expires sessions in isolated acquisitions", () =>
-  Effect.gen(function* () {
-    let credential: Redacted.Redacted<string> | undefined;
+it.effect(
+  "signs in, rotates, revokes and expires sessions in isolated acquisitions",
+  () =>
+    Effect.gen(function* () {
+      let credential: Redacted.Redacted<string> | undefined;
 
-    const call = (session?: Redacted.Redacted<string>) => ({
-      credentials: session === undefined ? {} : { session },
-      credentialCommandSink: (commands: readonly Operations.AuthCredentialCommand[]) =>
-        Effect.sync(() => {
-          for (const command of commands) {
-            if (command._tag === "Issue" && command.slot === "session")
-              credential = command.credential;
-          }
-        }),
-    });
-
-    const signIn = { email: "reader@example.invalid", password: "test passphrase" };
-
-    const first = yield* Effect.gen(function* () {
-      const auth = yield* App;
-
-      expect((yield* auth.signIn({ ...signIn, password: "wrong" }).pipe(Effect.flip))._tag).toBe(
-        "PasswordRejected",
-      );
-      expect(credential).toBeUndefined();
-      const result = yield* auth.signIn(signIn);
-
-      expect(result).toMatchObject({
-        _tag: "Authenticated",
-        session: { subjectId: "reader", claims: { role: "reader" } },
+      const call = (session?: Redacted.Redacted<string>) => ({
+        credentials: session === undefined ? {} : { session },
+        credentialCommandSink: (commands: readonly Operations.AuthCredentialCommand[]) =>
+          Effect.sync(() => {
+            for (const command of commands) {
+              if (command._tag === "Issue" && command.slot === "session")
+                credential = command.credential;
+            }
+          }),
       });
-      expect(result).not.toHaveProperty("credentialCommands");
-      const original = credential;
 
-      if (original === undefined) return yield* Effect.die("Missing private session credential");
-      expect((yield* auth.verifySession(original)).subjectId).toBe("reader");
+      const signIn = { email: "reader@example.invalid", password: "test passphrase" };
 
-      yield* TestClock.adjust("5 minutes");
-      yield* auth.renewSession().pipe(Effect.provideService(Auth.AuthRequest, call(original)));
-      expect((yield* auth.verifySession(original).pipe(Effect.flip))._tag).toBe("SessionInvalid");
-      expect(
-        (yield* auth
-          .renewSession()
-          .pipe(Effect.provideService(Auth.AuthRequest, call(original)), Effect.flip))._tag,
-      ).toBe("SessionInvalid");
-      const renewed = credential;
+      const first = yield* Effect.gen(function* () {
+        const auth = yield* App;
 
-      if (renewed === undefined) return yield* Effect.die("Missing renewed credential");
-      expect(
-        yield* auth.signOut().pipe(Effect.provideService(Auth.AuthRequest, call(renewed))),
-      ).toMatchObject({ invalidation: "revoked" });
-      expect((yield* auth.verifySession(renewed).pipe(Effect.flip))._tag).toBe("SessionInvalid");
+        expect((yield* auth.signIn({ ...signIn, password: "wrong" }).pipe(Effect.flip))._tag).toBe(
+          "PasswordRejected",
+        );
+        expect(credential).toBeUndefined();
+        const result = yield* auth.signIn(signIn);
 
-      yield* auth.signIn(signIn);
-      if (credential === undefined) return yield* Effect.die("Missing new credential");
+        expect(result).toMatchObject({
+          _tag: "Authenticated",
+          session: { subjectId: "reader", claims: { role: "reader" } },
+        });
+        expect(result).not.toHaveProperty("credentialCommands");
+        const original = credential;
 
-      return credential;
-    }).pipe(Effect.provideService(Auth.AuthRequest, call()), Effect.provide(live));
+        if (original === undefined) return yield* Effect.die("Missing private session credential");
+        expect((yield* auth.verifySession(original)).subjectId).toBe("reader");
 
-    // Reusing the same Layer value in a separate acquisition creates an empty session store.
-    yield* Effect.gen(function* () {
-      const auth = yield* App;
+        yield* TestClock.adjust("5 minutes");
+        yield* auth.renewSession().pipe(Effect.provideService(Auth.AuthRequest, call(original)));
+        expect((yield* auth.verifySession(original).pipe(Effect.flip))._tag).toBe("SessionInvalid");
+        expect(
+          (yield* auth
+            .renewSession()
+            .pipe(Effect.provideService(Auth.AuthRequest, call(original)), Effect.flip))._tag,
+        ).toBe("SessionInvalid");
+        const renewed = credential;
 
-      expect((yield* auth.verifySession(first).pipe(Effect.flip))._tag).toBe("SessionInvalid");
-      yield* auth.signIn(signIn);
-      if (credential === undefined) return yield* Effect.die("Missing isolated credential");
-      yield* TestClock.adjust("11 minutes");
-      expect((yield* auth.verifySession(credential).pipe(Effect.flip))._tag).toBe("SessionInvalid");
-    }).pipe(Effect.provideService(Auth.AuthRequest, call()), Effect.provide(live));
-  }).pipe(Random.withSeed("in-memory-example")),
+        if (renewed === undefined) return yield* Effect.die("Missing renewed credential");
+        expect(
+          yield* auth.signOut().pipe(Effect.provideService(Auth.AuthRequest, call(renewed))),
+        ).toMatchObject({ invalidation: "revoked" });
+        expect((yield* auth.verifySession(renewed).pipe(Effect.flip))._tag).toBe("SessionInvalid");
+
+        yield* auth.signIn(signIn);
+        if (credential === undefined) return yield* Effect.die("Missing new credential");
+
+        return credential;
+      }).pipe(Effect.provideService(Auth.AuthRequest, call()), Effect.provide(live));
+
+      // Reusing the same Layer value in a separate acquisition creates an empty session store.
+      yield* Effect.gen(function* () {
+        const auth = yield* App;
+
+        expect((yield* auth.verifySession(first).pipe(Effect.flip))._tag).toBe("SessionInvalid");
+        yield* auth.signIn(signIn);
+        if (credential === undefined) return yield* Effect.die("Missing isolated credential");
+        yield* TestClock.adjust("11 minutes");
+        expect((yield* auth.verifySession(credential).pipe(Effect.flip))._tag).toBe(
+          "SessionInvalid",
+        );
+      }).pipe(Effect.provideService(Auth.AuthRequest, call()), Effect.provide(live));
+    }).pipe(Random.withSeed("in-memory-example")),
+  // Seeding and sign-in use the default Argon2 cost on the portable backend.
+  { timeout: 30000 },
 );
 
 it.effect("rejects unsupported session modes at acquisition", () => {
