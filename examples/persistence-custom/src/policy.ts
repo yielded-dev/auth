@@ -79,9 +79,7 @@ const EmailActions = Layer.effect(
 const PasswordActions = Layer.effect(
   Password.PasswordActionEvidence,
   Effect.gen(function* () {
-    const passwords = yield* Password.PasswordPersistence;
     const sessions = yield* AppAuth.sessions.SessionStrategy;
-    const authority = yield* Sessions.AuthenticationAuthority;
     const store = yield* AccountStore;
 
     return Password.PasswordActionEvidence.of({
@@ -108,21 +106,20 @@ const PasswordActions = Layer.effect(
               .inspectInvocation(invocation, token)
               .pipe(Effect.provideService(AppAuth.sessions.SessionStrategy, sessions));
 
-            return yield* authorizePasswordSession(invocation, challenge, source).pipe(
-              Effect.provideService(Sessions.AuthenticationAuthority, authority),
-            );
+            return yield* authorizePasswordSession(invocation, challenge, source);
           }
           if (
             challenge.action !== "reset-password" ||
             recovery === undefined ||
             recovery.binding._tag !== "Subject" ||
             recovery.moduleId !== `${AppAuth.strategies.password.persistence.moduleId}/reset` ||
-            recovery.binding.revision.subjectId !== challenge.revision.subjectId ||
-            !(yield* passwords.checkReset(recovery))
+            recovery.binding.revision.subjectId !== challenge.revision.subjectId
           )
             return yield* Password.PasswordActionRequired.make({});
 
-          // This app's single-factor recovery policy requires its independently verified email credential.
+          const verifiedAt = yield* DateTime.now;
+
+          // The mutation owner redeems the candidate atomically; policy also requires a verified email credential.
           const email = yield* store.read((state) =>
             Effect.sync(
               () =>
@@ -138,19 +135,16 @@ const PasswordActions = Layer.effect(
 
           if (email === undefined) return yield* Password.PasswordActionRequired.make({});
 
-          const revision = yield* authority
-            .capture(challenge.revision.subjectId, [
-              ...challenge.revision.credentials.map((item) => item.credentialId),
-              email.id,
-            ])
-            .pipe(Effect.map((capture) => capture.revision));
-
-          if (revision.securityRevision !== challenge.revision.securityRevision)
+          if (
+            !challenge.revision.credentials.some(
+              (item) => item.credentialId === email.id && item.revision === email.revision,
+            )
+          )
             return yield* Password.PasswordActionRequired.make({});
 
           return {
             evidence: {
-              revision,
+              revision: challenge.revision,
               flowId: Sessions.AuthenticationFlowId.make(challenge.commandId),
               bindingDigest: challenge.bindingDigest,
               proofs: [
@@ -160,7 +154,7 @@ const PasswordActions = Layer.effect(
                   factors: ["possession" as const],
                   userVerified: false,
                   phishingResistant: false,
-                  verifiedAt: DateTime.makeUnsafe(recovery.nowMillis),
+                  verifiedAt,
                 },
               ] as const,
             },

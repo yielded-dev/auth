@@ -28,25 +28,31 @@ export {
   makeMysqlStatefulSessionServices as makeStatefulSessionServices,
 } from "./drizzle/mysql-sessions";
 
-export {
-  coordinateMysqlProofPersistence as coordinateProofPersistence,
-  makeMysqlProofPersistenceServices as makeProofPersistenceServices,
-} from "./drizzle/mysql-proofs";
+import { makeProofTarget } from "./drizzle/proof-drivers";
 
-export {
-  coordinateMysqlPasswordPersistence as coordinatePasswordPersistence,
-  coordinateMysqlPasswordRegistration as coordinatePasswordRegistration,
-  makeMysqlPasswordPersistenceServices as makePasswordPersistenceServices,
-  makeMysqlPasswordRegistrationServices as makePasswordRegistrationServices,
-} from "./drizzle/mysql-passwords";
+export const { coordinateProofPersistence, makeProofPersistenceServices } = makeProofTarget(
+  Database,
+  { mode: "native", dialect: "mysql" },
+);
 
-export {
-  coordinateMysqlEmailAddress as coordinateEmailAddress,
-  coordinateMysqlEmailRegistration as coordinateEmailRegistration,
-  makeMysqlEmailAddressServices as makeEmailAddressServices,
-  makeMysqlEmailRegistrationServices as makeEmailRegistrationServices,
-  makeMysqlEmailSignInServices as makeEmailSignInServices,
-} from "./drizzle/mysql-emails";
+import { makePasswordTarget } from "./drizzle/password-drivers";
+
+export const {
+  coordinatePasswordPersistence,
+  coordinatePasswordRegistration,
+  makePasswordPersistenceServices,
+  makePasswordRegistrationServices,
+} = makePasswordTarget(Database, { mode: "native", dialect: "mysql" });
+
+import { makeEmailTarget } from "./drizzle/email-drivers";
+
+export const {
+  makeEmailSignInServices,
+  makeEmailAddressServices,
+  makeEmailRegistrationServices,
+  coordinateEmailAddress,
+  coordinateEmailRegistration,
+} = makeEmailTarget(Database, { mode: "native", dialect: "mysql" });
 
 export const makeSubjectProvisioningServices = <
   Subject extends AnyMySqlTable,
@@ -155,22 +161,12 @@ const totpTarget = makeTotpTarget<
 
 export const { makeTotpPersistenceServices, coordinateTotpPersistence } = totpTarget;
 
-import { unavailable as phoneUnavailable } from "./drizzle/phone-state";
-import { makePhoneTarget, sqlClientPhoneStandaloneGuard } from "./drizzle/phone-target";
+import { makePhoneTarget } from "./drizzle/phone-drivers";
 
-const phoneTarget = makePhoneTarget<
+export const { makePhonePersistenceServices, coordinatePhonePersistence } = makePhoneTarget(
   Database,
-  EffectMysql2Database<AnyRelations>,
-  AnyMySqlTable<{ dialect: "mysql" }>
->(Database, {
-  mode: "interactive",
-  dialect: "mysql",
-  locking: true,
-  standaloneGuard: sqlClientPhoneStandaloneGuard,
-  transaction: (database, body) => mysqlTransaction(phoneUnavailable, database, body),
-});
-
-export const { makePhonePersistenceServices, coordinatePhonePersistence } = phoneTarget;
+  { mode: "native", dialect: "mysql" },
+);
 
 /** Construct Drizzle from the driver's SQL-client Layer. */
 export const databaseLayer = Layer.effect(Database, makeWithDefaults({}));

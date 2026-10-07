@@ -5,12 +5,7 @@ import { hasCommitScope, type PreparedCommit } from "../../hooks/commit";
 import { HookDenied } from "../../hooks/models";
 import { LoginIdentifier } from "../../identity/models";
 import { reportAuthFailure } from "../../internal/diagnostics";
-import {
-  ProofInvalid,
-  ProofRequestConflict,
-  ProofIngressDenied,
-  ProofCapabilityUnsupported,
-} from "../../proofs/errors";
+import { ProofInvalid, ProofIngressDenied, ProofCapabilityUnsupported } from "../../proofs/errors";
 import type { Email, SubjectId } from "../../Schema";
 import { TokenDigest } from "../../Schema";
 import { AuthenticationAuthority } from "../../sessions/AuthenticationAuthority";
@@ -54,7 +49,6 @@ export const passwordCompletionFailure = (
     Schema.is(
       Schema.Union([
         ProofInvalid,
-        ProofRequestConflict,
         ProofIngressDenied,
         SessionInvalid,
         SessionConflict,
@@ -124,6 +118,17 @@ export const makePasswordVerification = ({
     credential.moduleId === moduleId &&
     credential.revision.subjectId === revision.subjectId &&
     credential.revision.securityRevision === revision.securityRevision &&
+    new Set(credential.revision.credentials.map((item) => item.credentialId)).size ===
+      credential.revision.credentials.length &&
+    new Set(revision.credentials.map((item) => item.credentialId)).size ===
+      revision.credentials.length &&
+    credential.revision.credentials.length === revision.credentials.length &&
+    credential.revision.credentials.every((expected) =>
+      revision.credentials.some(
+        (current) =>
+          current.credentialId === expected.credentialId && current.revision === expected.revision,
+      ),
+    ) &&
     revision.credentials.some(
       (item) =>
         item.credentialId === credential.credentialId &&
@@ -213,15 +218,18 @@ export const makePasswordVerification = ({
         return yield* PasswordRejected.make({});
       }
 
-      const capture = yield* authority.capture(candidate.revision.subjectId, [
-        candidate.credentialId,
-      ]);
+      const capture = yield* authority.capture(
+        candidate.revision.subjectId,
+        candidate.revision.credentials.map((item) => item.credentialId),
+      );
 
-      const original = snapshotPasswordRevision(capture.revision);
+      // Preserve the lookup's full authority vector; policy capture must confirm
+      // it unchanged rather than replacing it with a selected or newer vector.
+      const original = snapshotPasswordRevision(candidate.revision);
       const requirement = yield* snapshotPasswordRequirement(capture.requirement);
 
       if (
-        !sameCredential(candidate, original) ||
+        !sameCredential(candidate, capture.revision) ||
         (subjectId !== undefined && candidate.revision.subjectId !== subjectId) ||
         candidate.identifier.value !== request.email
       ) {

@@ -15,7 +15,7 @@ import type {
   PasswordPersistence,
   PasswordUnavailable,
 } from "@yielded/auth/Password";
-import type { PhoneAdmission, PhoneSignInTargets } from "@yielded/auth/PhoneOtp";
+import type { PhoneSignInTargets } from "@yielded/auth/PhoneOtp";
 import type { ProofPersistence } from "@yielded/auth/Proofs";
 import type { SubjectId } from "@yielded/auth/Schema";
 import type {
@@ -115,15 +115,7 @@ export type ProvisioningRequirement<
   A extends { readonly namespace: string; readonly strategies: Readonly<Record<string, Strategy>> },
 > = ManagedPassword<A> extends never ? never : ProvisioningId<A["namespace"]>;
 
-type ProofRoles =
-  | "proofRequests"
-  | "proofSeries"
-  | "proofGenerations"
-  | "proofContinuations"
-  | "proofScopes"
-  | "proofAbuse"
-  | "proofFailures"
-  | "proofCommands";
+type ProofRoles = "proofs";
 
 type UsesProofs<A extends { readonly strategies: Readonly<Record<string, Strategy>> }> =
   | Enabled<A, "phone">
@@ -140,17 +132,15 @@ export type Ports<C extends ClaimsCodec, Id extends string, A extends Definition
   | (ManagedPasskey<A> extends never ? never : PasskeyManagementPersistence)
   | (Enabled<A, "email"> extends never ? never : EmailAddressPersistence)
   | (UsesProofs<A> extends never ? never : ProofPersistence)
-  | (Enabled<A, "phone"> extends never ? never : PhoneAdmission | PhoneSignInTargets);
+  | (Enabled<A, "phone"> extends never ? never : PhoneSignInTargets);
 
 export type Roles<C extends ClaimsCodec, Id extends string, A extends Definition<C, Id>> =
   | "identifiers"
   | "credentials"
   | "sessions"
   | "sessionFlows"
-  | (Enabled<A, "password"> extends never ? never : "passwords" | "passwordCommands")
-  | (ManagedPassword<A> extends never ? never : "passwordRegistrations")
-  | (Enabled<A, "phone"> extends never ? never : "phoneState")
-  | (Enabled<A, "email"> extends never ? never : "emailCredentials" | "emailCommands")
+  | (Enabled<A, "password"> extends never ? never : "passwords")
+  | (Enabled<A, "email"> extends never ? never : "emailCredentials")
   | (Enabled<A, "passkey"> extends never ? never : "passkeyCredentials" | "passkeyFlows")
   | (UsesProofs<A> extends never ? never : ProofRoles);
 

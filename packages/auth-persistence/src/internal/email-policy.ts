@@ -8,7 +8,6 @@ import {
 } from "@yielded/auth/Email";
 import type { LoginIdentifier } from "@yielded/auth/Identity";
 import {
-  assessAuthentication,
   snapshotAuthenticationEvidence,
   type AuthenticationRevision,
   type SecurityRevision,
@@ -18,7 +17,7 @@ import { Effect } from "effect";
 import type { EmailMutationRead } from "./email-store";
 import { PersistenceMappingError } from "./mapping-error";
 import type { AnyEmailAddressMapping } from "./models/email-model";
-import type { ProofWorkflowPolicy } from "./proof-policy";
+import { passwordEvidenceSatisfiedAt } from "./password-policy";
 
 const unavailable = () => EmailUnavailable.make({});
 
@@ -32,7 +31,6 @@ export type EmailWorkflowPolicy = Pick<
   | "allocateRevision"
   | "allocateRevisionSync"
   | "sessionInvalidation"
-  | "isCommandConflict"
   | "isIdentifierConflict"
   | "isCredentialConflict"
 > & {
@@ -41,14 +39,6 @@ export type EmailWorkflowPolicy = Pick<
     "nextSecurityRevision" | "nextSecurityRevisionSync"
   >;
 };
-
-export interface EmailWorkflowOptions {
-  readonly mode: "interactive" | "synchronous";
-  readonly locking: boolean;
-  readonly standaloneGuard: Effect.Effect<void, EmailUnavailable>;
-  readonly coordinated?: boolean;
-  readonly proof?: ProofWorkflowPolicy;
-}
 
 export const sameEmailRevision = (left: AuthenticationRevision, right: AuthenticationRevision) => {
   if (
@@ -79,8 +69,8 @@ export const emailActionModule = (moduleId: string, action: EmailAction) =>
 export const emailActionPurpose = (action: EmailAction) =>
   action === "verify-address" ? "email-address-verification" : "email-address-change";
 
-export const emailCompletionMatches = (input: EmailAddressMutation, action: EmailAction) => {
-  const completion = input.completion.input;
+export const emailRedemptionMatches = (input: EmailAddressMutation, action: EmailAction) => {
+  const completion = input.redemption.input;
   const binding = completion.binding;
 
   return (
@@ -138,13 +128,14 @@ export const validateEmailMutation = Effect.fn("EmailAddressPersistence.validate
     input: EmailAddressMutation,
     action: EmailAction,
     current: Pick<EmailMutationRead, "target" | "requirement"> | undefined,
+    now: number,
   ) {
     const confirmsExisting =
       action === "verify-address" && input.captured.targetIdentifierRevision !== undefined;
 
     if (
       !input.captured.eligible ||
-      !emailCompletionMatches(input, action) ||
+      !emailRedemptionMatches(input, action) ||
       input.authorization.challenge.moduleId !== input.moduleId ||
       input.authorization.challenge.action !== action ||
       input.authorization.challenge.commandId !== input.commandId ||
@@ -179,22 +170,18 @@ export const validateEmailMutation = Effect.fn("EmailAddressPersistence.validate
 
     const currentRequirement = yield* current.requirement;
 
-    const original = yield* assessAuthentication(
-      input.authorization.evidence,
-      input.authorization.requirement,
-    ).pipe(Effect.mapError(unavailable));
-
-    const configured = yield* assessAuthentication(
-      input.authorization.evidence,
-      currentRequirement,
-    ).pipe(Effect.mapError(unavailable));
-
-    return original.satisfied && configured.satisfied;
+    return (
+      passwordEvidenceSatisfiedAt(
+        input.authorization.evidence,
+        input.authorization.requirement,
+        now,
+      ) && passwordEvidenceSatisfiedAt(input.authorization.evidence, currentRequirement, now)
+    );
   },
 );
 
 export const allocateEmailValue = <A>(
-  mode: EmailWorkflowOptions["mode"],
+  mode: "interactive" | "synchronous",
   asynchronous: Effect.Effect<A, PersistenceMappingError> | undefined,
   synchronous: (() => A) | undefined,
 ) => {
@@ -217,7 +204,7 @@ export const allocateEmailValue = <A>(
 
 export const allocateEmailSecurityRevision = (
   mapping: EmailWorkflowPolicy,
-  mode: EmailWorkflowOptions["mode"],
+  mode: "interactive" | "synchronous",
   current: SecurityRevision,
 ) => {
   if (mode === "synchronous")

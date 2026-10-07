@@ -37,25 +37,31 @@ export {
   makeD1StatefulSessionServices as makeStatefulSessionServices,
 } from "./drizzle/d1-sessions";
 
-export {
-  coordinateD1ProofPersistence as coordinateProofPersistence,
-  makeD1ProofPersistenceServices as makeProofPersistenceServices,
-} from "./drizzle/d1-proofs";
+import { makeProofTarget } from "./drizzle/proof-drivers";
 
-export {
-  coordinateD1PasswordPersistence as coordinatePasswordPersistence,
-  coordinateD1PasswordRegistration as coordinatePasswordRegistration,
-  makeD1PasswordPersistenceServices as makePasswordPersistenceServices,
-  makeD1PasswordRegistrationServices as makePasswordRegistrationServices,
-} from "./drizzle/d1-passwords";
+export const { coordinateProofPersistence, makeProofPersistenceServices } = makeProofTarget(
+  Database,
+  { mode: "batch", dialect: "sqlite" },
+);
 
-export {
-  coordinateD1EmailAddress as coordinateEmailAddress,
-  coordinateD1EmailRegistration as coordinateEmailRegistration,
-  makeD1EmailAddressServices as makeEmailAddressServices,
-  makeD1EmailRegistrationServices as makeEmailRegistrationServices,
-  makeD1EmailSignInServices as makeEmailSignInServices,
-} from "./drizzle/d1-emails";
+import { makePasswordTarget } from "./drizzle/password-drivers";
+
+export const {
+  coordinatePasswordPersistence,
+  coordinatePasswordRegistration,
+  makePasswordPersistenceServices,
+  makePasswordRegistrationServices,
+} = makePasswordTarget(Database, { mode: "batch", dialect: "sqlite" });
+
+import { makeEmailTarget } from "./drizzle/email-drivers";
+
+export const {
+  makeEmailSignInServices,
+  makeEmailAddressServices,
+  makeEmailRegistrationServices,
+  coordinateEmailAddress,
+  coordinateEmailRegistration,
+} = makeEmailTarget(Database, { mode: "batch", dialect: "sqlite" });
 
 import type {
   D1GeneratedIdentityMapping,
@@ -135,7 +141,12 @@ export {
 
 export { D1BatchStatements } from "./drizzle/D1BatchStatements";
 
-export { makePhonePersistenceServices, coordinatePhonePersistence } from "./drizzle/d1-phone";
+import { makePhoneTarget } from "./drizzle/phone-drivers";
+
+export const { makePhonePersistenceServices, coordinatePhonePersistence } = makePhoneTarget(
+  Database,
+  { mode: "batch", dialect: "sqlite" },
+);
 
 /** Construct Drizzle from the driver's SQL-client Layer. */
 export const databaseLayer = Layer.effect(Database, makeWithDefaults({}));

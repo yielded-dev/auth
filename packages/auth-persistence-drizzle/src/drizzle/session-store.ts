@@ -12,7 +12,7 @@ import {
 } from "@yielded/auth-persistence/Adapter";
 import { TokenDigest } from "@yielded/auth/Schema";
 import { SecurityRevision, SessionId } from "@yielded/auth/Sessions";
-import { and, eq, gt, inArray } from "drizzle-orm";
+import { and, eq, gt } from "drizzle-orm";
 import { Effect, Option, Schema } from "effect";
 
 import { column, updateValues } from "./model";
@@ -90,7 +90,6 @@ export const sessionAuthorityReader = (
     Effect.gen(function* () {
       const nativeSubjectId = yield* mapping.subjectId.toNative(subjectId);
       const credentialId = column(mapping.credential.table, mapping.credential.credentialId);
-      const requested = [...new Set(credentialIds)].sort();
 
       const reads = [
         {
@@ -98,21 +97,15 @@ export const sessionAuthorityReader = (
           where: eq(column(mapping.subject.table, mapping.subject.id), nativeSubjectId),
           limit: 1,
         },
-        ...(requested.length === 0
-          ? []
-          : [
-              {
-                table: mapping.credential.table,
-                where: and(
-                  eq(
-                    column(mapping.credential.table, mapping.credential.subjectId),
-                    nativeSubjectId,
-                  ),
-                  inArray(credentialId, requested),
-                ),
-                orderBy: [credentialId],
-              },
-            ]),
+        {
+          table: mapping.credential.table,
+          where: eq(
+            column(mapping.credential.table, mapping.credential.subjectId),
+            nativeSubjectId,
+          ),
+          orderBy: [credentialId],
+          limit: 4097,
+        },
         ...(flowId === undefined || mapping.flow === undefined
           ? []
           : [
@@ -155,22 +148,20 @@ export const sessionAuthorityReader = (
         });
       }
 
-      const credentials = yield* Effect.forEach(
-        requested.length === 0 ? [] : (rows[1] ?? []),
-        (row) =>
-          Effect.gen(function* () {
-            return {
-              credentialId: yield* Schema.decodeUnknownEffect(Schema.String)(
-                row[mapping.credential.credentialId],
-              ),
-              revision: yield* Schema.decodeUnknownEffect(SecurityRevision)(
-                row[mapping.credential.revision],
-              ),
-              active:
-                mapping.credential.status === undefined ||
-                mapping.credential.isActiveStatus?.(row[mapping.credential.status]) === true,
-            };
-          }),
+      const credentials = yield* Effect.forEach(rows[1] ?? [], (row) =>
+        Effect.gen(function* () {
+          return {
+            credentialId: yield* Schema.decodeUnknownEffect(Schema.String)(
+              row[mapping.credential.credentialId],
+            ),
+            revision: yield* Schema.decodeUnknownEffect(SecurityRevision)(
+              row[mapping.credential.revision],
+            ),
+            active:
+              mapping.credential.status === undefined ||
+              mapping.credential.isActiveStatus?.(row[mapping.credential.status]) === true,
+          };
+        }),
       );
 
       return {
@@ -178,10 +169,7 @@ export const sessionAuthorityReader = (
         credentials: credentials.sort((left, right) =>
           left.credentialId.localeCompare(right.credentialId),
         ),
-        flow:
-          flowId === undefined
-            ? undefined
-            : yield* decodeFlow(mapping, rows[requested.length === 0 ? 1 : 2]?.[0]),
+        flow: flowId === undefined ? undefined : yield* decodeFlow(mapping, rows[2]?.[0]),
       };
     }),
 });

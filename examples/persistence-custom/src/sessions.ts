@@ -41,7 +41,7 @@ export const SessionsLive = Layer.effectContext(
               )
                 return yield* Sessions.StaleAuthentication.make({});
 
-              return { revision: revision(state, account, ids), requirement };
+              return { revision: revision(state, account), requirement };
             }),
           )
           .pipe(Effect.catchTag("StoreUnavailable", () => Sessions.SessionUnavailable.make({}))),

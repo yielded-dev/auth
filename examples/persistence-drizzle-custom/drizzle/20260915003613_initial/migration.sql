@@ -12,14 +12,6 @@ CREATE TABLE `customers` (
 	`display_name` text NOT NULL
 );
 --> statement-breakpoint
-CREATE TABLE `app_email_commands` (
-	`c_module_id` text NOT NULL,
-	`c_command_id` text NOT NULL,
-	`c_action` text NOT NULL,
-	`c_binding_digest` text NOT NULL,
-	`c_retention_until` integer NOT NULL
-);
---> statement-breakpoint
 CREATE TABLE `app_email_credentials` (
 	`c_module_id` text NOT NULL,
 	`c_subject_id` text NOT NULL,
@@ -31,26 +23,14 @@ CREATE TABLE `app_email_credentials` (
 );
 --> statement-breakpoint
 CREATE TABLE `app_identifiers` (
+	`c_module_id` text,
+	`c_credential_id` text,
 	`c_namespace` text NOT NULL,
 	`c_value` text NOT NULL,
 	`c_subject_id` text NOT NULL,
 	`c_revision` text NOT NULL,
 	`c_verified_at` integer,
 	`c_active` integer NOT NULL
-);
---> statement-breakpoint
-CREATE TABLE `app_password_commands` (
-	`c_module_id` text NOT NULL,
-	`c_command_id` text NOT NULL,
-	`c_action` text NOT NULL,
-	`c_binding_digest` text NOT NULL,
-	`c_decision` text NOT NULL,
-	`c_retention_until` integer NOT NULL
-);
---> statement-breakpoint
-CREATE TABLE `app_password_registrations` (
-	`c_module_id` text NOT NULL,
-	`c_request_id` text NOT NULL
 );
 --> statement-breakpoint
 CREATE TABLE `app_passwords` (
@@ -61,101 +41,6 @@ CREATE TABLE `app_passwords` (
 	`c_verifier_version` text NOT NULL,
 	`c_verifier` text NOT NULL,
 	`c_normalization` text NOT NULL
-);
---> statement-breakpoint
-CREATE TABLE `app_proof_abuse` (
-	`c_module_id` text NOT NULL,
-	`c_purpose` text NOT NULL,
-	`c_action` text NOT NULL,
-	`c_scope_kind` text NOT NULL,
-	`c_scope_key` text NOT NULL,
-	`c_command_id` text NOT NULL,
-	`c_occurred_at` integer NOT NULL,
-	`c_retention_until` integer NOT NULL
-);
---> statement-breakpoint
-CREATE TABLE `app_proof_commands` (
-	`c_module_id` text NOT NULL,
-	`c_command_id` text NOT NULL,
-	`c_kind` text NOT NULL,
-	`c_decision` text NOT NULL,
-	`c_retention_until` integer NOT NULL
-);
---> statement-breakpoint
-CREATE TABLE `app_proof_continuations` (
-	`c_module_id` text NOT NULL,
-	`c_purpose` text NOT NULL,
-	`c_continuation_id` text NOT NULL,
-	`c_digest` text NOT NULL,
-	`c_proof_id` text NOT NULL,
-	`c_series_key` text NOT NULL,
-	`c_binding` text NOT NULL,
-	`c_expires_at` integer NOT NULL,
-	`c_consumed` integer NOT NULL,
-	`c_version` text NOT NULL,
-	`c_retention_until` integer NOT NULL
-);
---> statement-breakpoint
-CREATE TABLE `app_proof_failures` (
-	`c_module_id` text NOT NULL,
-	`c_purpose` text NOT NULL,
-	`c_series_key` text NOT NULL,
-	`c_command_id` text NOT NULL,
-	`c_occurred_at` integer NOT NULL,
-	`c_retention_until` integer NOT NULL
-);
---> statement-breakpoint
-CREATE TABLE `app_proof_generations` (
-	`c_module_id` text NOT NULL,
-	`c_purpose` text NOT NULL,
-	`c_proof_id` text NOT NULL,
-	`c_request_id` text NOT NULL,
-	`c_series_key` text NOT NULL,
-	`c_delivery_id` text NOT NULL,
-	`c_binding` text NOT NULL,
-	`c_verifier_key_id` text NOT NULL,
-	`c_verifier_digest` text NOT NULL,
-	`c_issued_at` integer NOT NULL,
-	`c_expires_at` integer NOT NULL,
-	`c_version` text NOT NULL,
-	`c_state` text NOT NULL,
-	`c_send_count` integer NOT NULL,
-	`c_delivery_state` text NOT NULL,
-	`c_claim_version` text,
-	`c_claim_deadline` integer,
-	`c_retry_at` integer,
-	`c_delivery_retry_millis` integer NOT NULL,
-	`c_retention_until` integer NOT NULL,
-	`c_fingerprint` text NOT NULL
-);
---> statement-breakpoint
-CREATE TABLE `app_proof_requests` (
-	`c_module_id` text NOT NULL,
-	`c_request_id` text NOT NULL,
-	`c_fingerprint` text NOT NULL,
-	`c_proof_id` text NOT NULL,
-	`c_purpose` text NOT NULL,
-	`c_key_id` text NOT NULL,
-	`c_created_at` integer NOT NULL,
-	`c_retention_until` integer NOT NULL,
-	`c_receipt` text NOT NULL
-);
---> statement-breakpoint
-CREATE TABLE `app_proof_scopes` (
-	`c_module_id` text NOT NULL,
-	`c_purpose` text NOT NULL,
-	`c_action` text NOT NULL,
-	`c_scope_kind` text NOT NULL,
-	`c_scope_key` text NOT NULL
-);
---> statement-breakpoint
-CREATE TABLE `app_proof_series` (
-	`c_module_id` text NOT NULL,
-	`c_purpose` text NOT NULL,
-	`c_scope_key` text NOT NULL,
-	`c_active_proof_id` text,
-	`c_last_issue_at` integer,
-	`c_version` text NOT NULL
 );
 --> statement-breakpoint
 CREATE TABLE `app_session_flows` (
@@ -211,29 +96,46 @@ CREATE TABLE `app_passkey_flows` (
 	`c_expires_at` integer NOT NULL
 );
 --> statement-breakpoint
-CREATE UNIQUE INDEX `app_credentials_key_0` ON `app_credentials` (`c_credential_id`);--> statement-breakpoint
-CREATE UNIQUE INDEX `app_email_commands_key_0` ON `app_email_commands` (`c_module_id`,`c_command_id`);--> statement-breakpoint
-CREATE UNIQUE INDEX `app_email_credentials_key_0` ON `app_email_credentials` (`c_module_id`,`c_credential_id`);--> statement-breakpoint
-CREATE UNIQUE INDEX `app_email_credentials_key_1` ON `app_email_credentials` (`c_module_id`,`c_identifier_namespace`,`c_identifier_value`);--> statement-breakpoint
-CREATE UNIQUE INDEX `app_identifiers_key_0` ON `app_identifiers` (`c_namespace`,`c_value`);--> statement-breakpoint
-CREATE UNIQUE INDEX `app_password_commands_key_0` ON `app_password_commands` (`c_module_id`,`c_command_id`);--> statement-breakpoint
-CREATE UNIQUE INDEX `app_password_registrations_key_0` ON `app_password_registrations` (`c_module_id`,`c_request_id`);--> statement-breakpoint
-CREATE UNIQUE INDEX `app_passwords_key_0` ON `app_passwords` (`c_module_id`,`c_subject_id`);--> statement-breakpoint
-CREATE UNIQUE INDEX `app_passwords_key_1` ON `app_passwords` (`c_module_id`,`c_credential_id`);--> statement-breakpoint
-CREATE UNIQUE INDEX `app_proof_abuse_key_0` ON `app_proof_abuse` (`c_module_id`,`c_action`,`c_scope_kind`,`c_scope_key`,`c_command_id`);--> statement-breakpoint
-CREATE UNIQUE INDEX `app_proof_commands_key_0` ON `app_proof_commands` (`c_module_id`,`c_command_id`);--> statement-breakpoint
-CREATE UNIQUE INDEX `app_proof_continuations_key_0` ON `app_proof_continuations` (`c_module_id`,`c_continuation_id`);--> statement-breakpoint
-CREATE UNIQUE INDEX `app_proof_continuations_key_1` ON `app_proof_continuations` (`c_module_id`,`c_digest`);--> statement-breakpoint
-CREATE UNIQUE INDEX `app_proof_failures_key_0` ON `app_proof_failures` (`c_module_id`,`c_series_key`,`c_command_id`);--> statement-breakpoint
-CREATE UNIQUE INDEX `app_proof_generations_key_0` ON `app_proof_generations` (`c_module_id`,`c_proof_id`);--> statement-breakpoint
-CREATE UNIQUE INDEX `app_proof_generations_key_1` ON `app_proof_generations` (`c_module_id`,`c_delivery_id`);--> statement-breakpoint
-CREATE UNIQUE INDEX `app_proof_requests_key_0` ON `app_proof_requests` (`c_module_id`,`c_request_id`);--> statement-breakpoint
-CREATE UNIQUE INDEX `app_proof_scopes_key_0` ON `app_proof_scopes` (`c_module_id`,`c_purpose`,`c_action`,`c_scope_kind`,`c_scope_key`);--> statement-breakpoint
-CREATE UNIQUE INDEX `app_proof_series_key_0` ON `app_proof_series` (`c_module_id`,`c_purpose`,`c_scope_key`);--> statement-breakpoint
-CREATE UNIQUE INDEX `app_session_flows_key_0` ON `app_session_flows` (`c_flow_id`);--> statement-breakpoint
-CREATE UNIQUE INDEX `app_sessions_key_0` ON `app_sessions` (`c_session_id`);--> statement-breakpoint
-CREATE UNIQUE INDEX `app_sessions_key_1` ON `app_sessions` (`c_digest`);--> statement-breakpoint
-CREATE UNIQUE INDEX `app_passkey_credentials_key_0` ON `app_passkey_credentials` (`c_credential_id`);--> statement-breakpoint
-CREATE UNIQUE INDEX `app_passkey_credentials_key_1` ON `app_passkey_credentials` (`c_credential_key`);--> statement-breakpoint
-CREATE UNIQUE INDEX `app_passkey_flows_key_0` ON `app_passkey_flows` (`c_module_id`,`c_flow_id`);--> statement-breakpoint
+CREATE UNIQUE INDEX `app_credentials_key_0` ON `app_credentials` (`c_credential_id`);
+--> statement-breakpoint
+CREATE UNIQUE INDEX `app_email_credentials_key_0` ON `app_email_credentials` (`c_module_id`,`c_credential_id`);
+--> statement-breakpoint
+CREATE UNIQUE INDEX `app_email_credentials_key_1` ON `app_email_credentials` (`c_module_id`,`c_identifier_namespace`,`c_identifier_value`);
+--> statement-breakpoint
+CREATE UNIQUE INDEX `app_identifiers_key_0` ON `app_identifiers` (`c_namespace`,`c_value`);
+--> statement-breakpoint
+CREATE UNIQUE INDEX `app_passwords_key_0` ON `app_passwords` (`c_module_id`,`c_subject_id`);
+--> statement-breakpoint
+CREATE UNIQUE INDEX `app_passwords_key_1` ON `app_passwords` (`c_module_id`,`c_credential_id`);
+--> statement-breakpoint
+CREATE UNIQUE INDEX `app_session_flows_key_0` ON `app_session_flows` (`c_flow_id`);
+--> statement-breakpoint
+CREATE UNIQUE INDEX `app_sessions_key_0` ON `app_sessions` (`c_session_id`);
+--> statement-breakpoint
+CREATE UNIQUE INDEX `app_sessions_key_1` ON `app_sessions` (`c_digest`);
+--> statement-breakpoint
+CREATE UNIQUE INDEX `app_passkey_credentials_key_0` ON `app_passkey_credentials` (`c_credential_id`);
+--> statement-breakpoint
+CREATE UNIQUE INDEX `app_passkey_credentials_key_1` ON `app_passkey_credentials` (`c_credential_key`);
+--> statement-breakpoint
+CREATE UNIQUE INDEX `app_passkey_flows_key_0` ON `app_passkey_flows` (`c_module_id`,`c_flow_id`);
+--> statement-breakpoint
 CREATE UNIQUE INDEX `app_passkey_ownership_key_0` ON `app_passkey_ownership` (`c_credential_key`);
+--> statement-breakpoint
+CREATE TABLE `app_proofs` (
+	`c_module_id` text NOT NULL,
+	`c_purpose` text NOT NULL,
+	`c_series_key` text NOT NULL,
+	`c_proof_id` text NOT NULL,
+	`c_binding` text NOT NULL,
+	`c_verifier_key_id` text NOT NULL,
+	`c_verifier_digest` text NOT NULL,
+	`c_issued_at` integer NOT NULL,
+	`c_expires_at` integer NOT NULL,
+	`c_failed_attempts` integer NOT NULL,
+	`c_send_count` integer NOT NULL
+);
+--> statement-breakpoint
+CREATE UNIQUE INDEX `app_proofs_key_0` ON `app_proofs` (`c_module_id`,`c_purpose`,`c_series_key`);
+--> statement-breakpoint
+CREATE UNIQUE INDEX `app_proofs_key_1` ON `app_proofs` (`c_module_id`,`c_proof_id`);

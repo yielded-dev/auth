@@ -5,16 +5,6 @@ import {
   EncodedPasswordHash,
   type PasswordReplacement,
 } from "@yielded/auth/Password";
-import {
-  ProofBinding,
-  ProofContinuationId,
-  ProofDeliveryId,
-  ProofId,
-  ProofPurpose,
-  ProofRequestId,
-  ProofRequestReceipt,
-  ProofVersion,
-} from "@yielded/auth/Proofs";
 import { TokenDigest } from "@yielded/auth/Schema";
 import {
   SecurityRevision,
@@ -36,6 +26,7 @@ import {
 } from "./models/password-model";
 import { requiredProofConstraints, type AnyProofPersistenceMapping } from "./models/proof-model";
 import type { StatefulSessionMapping } from "./models/session-model";
+import { makeStorageClock } from "./storage-clock";
 import { storageTables, type StorageRole } from "./storage-tables";
 import type { TableModel, SqlExpression } from "./table-model";
 
@@ -45,35 +36,6 @@ const decode = <S extends Schema.Codec<unknown, unknown>>(schema: S, value: unkn
   Schema.decodeUnknownEffect(schema)(value).pipe(Effect.mapError(failure));
 
 const string = (value: unknown) => Schema.decodeUnknownSync(Schema.String)(value);
-const tuple = Schema.encodeSync(Schema.fromJsonString(Schema.Array(Schema.String)));
-const bindingJson = Schema.fromJsonString(ProofBinding);
-const receiptJson = Schema.fromJsonString(ProofRequestReceipt);
-
-const ProofRecord = Schema.Struct({
-  moduleId: Schema.String,
-  purpose: ProofPurpose,
-  proofId: ProofId,
-  requestId: ProofRequestId,
-  fingerprint: TokenDigest,
-  deliveryId: ProofDeliveryId,
-  binding: ProofBinding,
-  verifier: Schema.Struct({ keyId: Schema.String, digest: TokenDigest }),
-  issuedAtMillis: Schema.Int,
-  expiresAtMillis: Schema.Int,
-  version: ProofVersion,
-});
-
-const ProofContinuation = Schema.Struct({
-  moduleId: Schema.String,
-  purpose: ProofPurpose,
-  continuationId: ProofContinuationId,
-  digest: TokenDigest,
-  proofId: ProofId,
-  seriesKey: Schema.String,
-  binding: ProofBinding,
-  expiresAtMillis: Schema.Int,
-  version: ProofVersion,
-});
 
 /** Derive shared row mappings from a managed or custom storage layout.
  * Acquire Effect Crypto once; the returned allocators retain that implementation.
@@ -130,233 +92,27 @@ export const makeMappings = Effect.fnUntraced(function* (input: MappingInput) {
 
   const authority = () => ({ subjectId, subject, credential: authorityCredential() });
 
+  const clock = yield* makeStorageClock(input);
+
   const proofs = (): AnyProofPersistenceMapping<SqlExpression> => ({
     constraints: requiredProofConstraints,
-    encodeInstant: instant,
-    decodeInstant: readInstant,
-    allocateVersion: allocate.pipe(Effect.map(ProofVersion.make)),
-    isRequestConflict: () => false,
-    isSeriesConflict: () => false,
-    isCommandConflict: () => false,
-    scopeKeys: ({ binding }) => ({
-      series: tuple([
-        binding.identifier.namespace,
-        binding.identifier.value,
-        binding._tag === "Identifier" ? "anonymous" : binding.revision.subjectId,
-      ]),
-      identifier: tuple([binding.identifier.namespace, binding.identifier.value]),
-      subject: binding._tag === "Identifier" ? "anonymous" : binding.revision.subjectId,
-    }),
-    authority: {
-      ...authority(),
-      identifier: {
-        table: table("identifiers"),
-        namespace: "namespace",
-        value: "value",
-        isCurrent: (request, rows) =>
-          request.binding._tag === "Identifier"
-            ? rows.length === 0
-            : request.binding._tag === "IdentifierChange"
-              ? rows.length === 0 ||
-                (rows.length === 1 &&
-                  rows.every(
-                    (row) =>
-                      Object.is(row.subjectId, request.nativeSubjectId) &&
-                      row.active === true &&
-                      row.verifiedAt === null,
-                  ))
-              : rows.length === 1 &&
-                rows.every(
-                  (row) => Object.is(row.subjectId, request.nativeSubjectId) && row.active === true,
-                ),
-      },
-    },
-    request: {
-      ...mapped("proofRequests"),
-      moduleId: "moduleId",
-      requestId: "requestId",
-      fingerprint: "fingerprint",
-      proofId: "proofId",
-      purpose: "purpose",
-      keyId: "keyId",
-      createdAt: "createdAt",
-      retentionUntil: "retentionUntil",
-      encodeInsert: ({ record, retentionUntilMillis }) => ({
-        moduleId: record.moduleId,
-        requestId: record.requestId,
-        fingerprint: record.fingerprint,
-        proofId: record.proofId,
-        purpose: record.purpose,
-        keyId: record.verifier.keyId,
-        createdAt: instant(record.issuedAtMillis),
-        retentionUntil: instant(retentionUntilMillis),
-        receipt: Schema.encodeSync(receiptJson)({
-          requestId: record.requestId,
-          reference: {
-            proofId: record.proofId,
-            purpose: record.purpose,
-            keyId: record.verifier.keyId,
-          },
-        }),
-      }),
-      decodeReceipt: (row) => decode(receiptJson, row.receipt),
-    },
-    series: {
-      ...mapped("proofSeries"),
+    subjectId,
+    subject: { table: s.table, id: s.id },
+    clock,
+    proof: {
+      ...mapped("proofs"),
       moduleId: "moduleId",
       purpose: "purpose",
-      scopeKey: "scopeKey",
-      activeProofId: "activeProofId",
-      lastIssueAt: "lastIssueAt",
-      version: "version",
-      encodeInsert: (row) => ({ ...row, activeProofId: null, lastIssueAt: null }),
-    },
-    generation: {
-      ...mapped("proofGenerations"),
-      moduleId: "moduleId",
-      purpose: "purpose",
-      proofId: "proofId",
-      requestId: "requestId",
       seriesKey: "seriesKey",
-      deliveryId: "deliveryId",
+      proofId: "proofId",
       binding: "binding",
       verifierKeyId: "verifierKeyId",
       verifierDigest: "verifierDigest",
       issuedAt: "issuedAt",
       expiresAt: "expiresAt",
-      version: "version",
-      state: "state",
+      failedAttempts: "failedAttempts",
       sendCount: "sendCount",
-      deliveryState: "deliveryState",
-      claimVersion: "claimVersion",
-      claimDeadline: "claimDeadline",
-      retryAt: "retryAt",
-      deliveryRetryMillis: "deliveryRetryMillis",
-      retentionUntil: "retentionUntil",
-      encodeInsert: ({
-        record,
-        seriesKey,
-        retentionUntilMillis,
-        state,
-        deliveryState,
-        policy,
-      }) => ({
-        moduleId: record.moduleId,
-        purpose: record.purpose,
-        proofId: record.proofId,
-        requestId: record.requestId,
-        seriesKey,
-        deliveryId: record.deliveryId,
-        binding: Schema.encodeSync(bindingJson)(record.binding),
-        verifierKeyId: record.verifier.keyId,
-        verifierDigest: record.verifier.digest,
-        issuedAt: instant(record.issuedAtMillis),
-        expiresAt: instant(record.expiresAtMillis),
-        version: record.version,
-        state,
-        sendCount: 0,
-        deliveryState,
-        claimVersion: null,
-        claimDeadline: null,
-        retryAt: null,
-        deliveryRetryMillis: policy.deliveryRetryMillis,
-        retentionUntil: instant(retentionUntilMillis),
-        fingerprint: record.fingerprint,
-      }),
-      decodeBinding: (row) => decode(bindingJson, row.binding),
-      decodeRecord: (row) =>
-        Effect.gen(function* () {
-          return yield* decode(ProofRecord, {
-            moduleId: row.moduleId,
-            purpose: row.purpose,
-            proofId: row.proofId,
-            requestId: row.requestId,
-            fingerprint: row.fingerprint,
-            deliveryId: row.deliveryId,
-            binding: yield* decode(bindingJson, row.binding),
-            verifier: { keyId: row.verifierKeyId, digest: row.verifierDigest },
-            issuedAtMillis: yield* readInstant(row.issuedAt),
-            expiresAtMillis: yield* readInstant(row.expiresAt),
-            version: row.version,
-          });
-        }),
-    },
-    continuation: {
-      ...mapped("proofContinuations"),
-      moduleId: "moduleId",
-      purpose: "purpose",
-      continuationId: "continuationId",
-      digest: "digest",
-      proofId: "proofId",
-      seriesKey: "seriesKey",
-      binding: "binding",
-      expiresAt: "expiresAt",
-      consumed: "consumed",
-      version: "version",
-      retentionUntil: "retentionUntil",
-      encodeInsert: (record) => ({
-        ...record,
-        binding: Schema.encodeSync(bindingJson)(record.binding),
-        expiresAt: instant(record.expiresAtMillis),
-        consumed: false,
-        retentionUntil: instant(record.retentionUntilMillis),
-      }),
-      decode: (row) =>
-        Effect.gen(function* () {
-          return yield* decode(ProofContinuation, {
-            ...row,
-            binding: yield* decode(bindingJson, row.binding),
-            expiresAtMillis: yield* readInstant(row.expiresAt),
-          });
-        }),
-    },
-    rateScope: {
-      ...mapped("proofScopes"),
-      moduleId: "moduleId",
-      purpose: "purpose",
-      action: "action",
-      scopeKind: "scopeKind",
-      scopeKey: "scopeKey",
-      encodeInsert: (row) => ({ ...row }),
-    },
-    abuseEvent: {
-      ...mapped("proofAbuse"),
-      moduleId: "moduleId",
-      purpose: "purpose",
-      action: "action",
-      scopeKind: "scopeKind",
-      scopeKey: "scopeKey",
-      commandId: "commandId",
-      occurredAt: "occurredAt",
-      retentionUntil: "retentionUntil",
-      encodeInsert: (row) => ({
-        ...row,
-        occurredAt: instant(row.occurredAtMillis),
-        retentionUntil: instant(row.retentionUntilMillis),
-      }),
-    },
-    failureEvent: {
-      ...mapped("proofFailures"),
-      moduleId: "moduleId",
-      purpose: "purpose",
-      seriesKey: "seriesKey",
-      commandId: "commandId",
-      occurredAt: "occurredAt",
-      retentionUntil: "retentionUntil",
-      encodeInsert: (row) => ({
-        ...row,
-        occurredAt: instant(row.occurredAtMillis),
-        retentionUntil: instant(row.retentionUntilMillis),
-      }),
-    },
-    command: {
-      ...mapped("proofCommands"),
-      moduleId: "moduleId",
-      commandId: "commandId",
-      kind: "kind",
-      decision: "decision",
-      retentionUntil: "retentionUntil",
-      encodeInsert: (row) => ({ ...row, retentionUntil: instant(row.retentionUntilMillis) }),
+      encodeInsert: () => ({}),
     },
   });
 
@@ -371,12 +127,10 @@ export const makeMappings = Effect.fnUntraced(function* (input: MappingInput) {
       subject,
       authorityCredential: authorityCredential(),
       constraints: requiredPasswordConstraints,
-      isCommandConflict: () => false,
       encodeInstant: instant,
       decodeInstant: readInstant,
       allocateCredentialId: allocate,
       allocateRevision: allocate.pipe(Effect.map(SecurityRevision.make)),
-      commandRetentionMillis: 86_400_000,
       sessionInvalidation: "same-authority-immediate",
       identifier: {
         table: table("identifiers"),
@@ -442,35 +196,26 @@ export const makeMappings = Effect.fnUntraced(function* (input: MappingInput) {
             });
           }),
       },
-      command: {
-        ...mapped("passwordCommands"),
-        moduleId: "moduleId",
-        commandId: "commandId",
-        action: "action",
-        bindingDigest: "bindingDigest",
-        decision: "decision",
-        retentionUntil: "retentionUntil",
-        encodeInsert: (row) => ({ ...row, retentionUntil: instant(row.retentionUntilMillis) }),
-      },
+      clock,
     };
   };
 
   const emails = (): AnyEmailAddressMapping<SqlExpression> => ({
     subjectId,
-    subject,
+    subject: { ...subject, activeStatusValue: s.activeValue },
     constraints: requiredEmailAddressConstraints,
     addressCardinality: "single",
     changeDisposition: "retire-source",
+    clock,
     encodeInstant: instant,
     decodeInstant: readInstant,
     allocateCredentialId: allocate,
     allocateRevision: allocate.pipe(Effect.map(SecurityRevision.make)),
-    commandRetentionMillis: 86_400_000,
     sessionInvalidation: "same-authority-immediate",
-    isCommandConflict: () => false,
     isIdentifierConflict: () => false,
     isCredentialConflict: () => false,
     authorityCredential: {
+      activeStatusValue: true,
       ...authorityCredential(),
       encodeActivation: (revision) => ({ revision, active: true }),
       encodeRetirement: (revision) => ({ revision, active: false }),
@@ -499,6 +244,7 @@ export const makeMappings = Effect.fnUntraced(function* (input: MappingInput) {
       encodeRetirement: ({ bindingRevision }) => ({ revision: bindingRevision, active: false }),
     },
     credential: {
+      activeStatusValue: true,
       table: table("emailCredentials"),
       moduleId: "moduleId",
       subjectId: "subjectId",
@@ -539,18 +285,6 @@ export const makeMappings = Effect.fnUntraced(function* (input: MappingInput) {
             },
           });
         }),
-    },
-    command: {
-      table: table("emailCommands"),
-      moduleId: "moduleId",
-      commandId: "commandId",
-      action: "action",
-      bindingDigest: "bindingDigest",
-      retentionUntil: "retentionUntil",
-      encodeInsert: ({ retentionUntilMillis, ...row }) => ({
-        ...row,
-        retentionUntil: instant(retentionUntilMillis),
-      }),
     },
   });
 

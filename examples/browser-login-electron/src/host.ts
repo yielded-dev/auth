@@ -11,11 +11,9 @@ const headers = (prefix: string): Readonly<Record<Operations.CredentialSlot, str
   session: `${prefix}session`,
   "session-cache": `${prefix}session-cache`,
   "pending-proof": `${prefix}pending-proof`,
-  "proof-continuation": `${prefix}proof-continuation`,
   registration: `${prefix}registration`,
   "request-binding": `${prefix}request-binding`,
   "session-step-up": `${prefix}session-step-up`,
-  "password-intent": `${prefix}password-intent`,
 });
 
 export const makeHost = Effect.fnUntraced(function* (hostedUrl: string) {

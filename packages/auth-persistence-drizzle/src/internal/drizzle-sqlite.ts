@@ -15,7 +15,6 @@ import {
 import { Effect } from "effect";
 import type { SqlClient } from "effect/sql/SqlClient";
 
-import { makeBackendEmailOwner } from "../drizzle/email-store";
 import {
   NativeDatabase,
   nativeDatabase,
@@ -23,10 +22,6 @@ import {
 } from "../drizzle/native-database";
 import { makeDrizzleSqlTables } from "../drizzle/native-sql-table";
 import { makeComposedPasskeys } from "../drizzle/passkeys";
-import { makeBackendPasswordOwner } from "../drizzle/password-store";
-import { makePhoneOwner } from "../drizzle/phone-store";
-import { makeBackendProofOwner } from "../drizzle/proof-store";
-import { makeRegistrationOwner } from "../drizzle/registration-store";
 import { makeStatefulSessionOwner } from "../drizzle/session-store";
 
 const makeTable = (definition: StorageTable) =>
@@ -89,26 +84,6 @@ export const sqlitePersistence = <R>(acquire: Effect.Effect<object, never, R | S
     describe,
     sessionOwner: (mapping, database) =>
       makeStatefulSessionOwner(mapping, database).pipe(
-        Effect.provideService(NativeDatabase, database),
-      ),
-    proofOwner: (mapping, options, database) =>
-      makeBackendProofOwner(mapping, options, database).pipe(
-        Effect.provideService(NativeDatabase, database),
-      ),
-    passwordOwner: (mapping, options, database, proofMapping) =>
-      makeBackendPasswordOwner(mapping, options, database, proofMapping).pipe(
-        Effect.provideService(NativeDatabase, database),
-      ),
-    emailOwner: (mapping, options, database, proofMapping) =>
-      makeBackendEmailOwner(mapping, options, database, proofMapping).pipe(
-        Effect.provideService(NativeDatabase, database),
-      ),
-    registrationOwner: (mapping, receipts, database) =>
-      makeRegistrationOwner(mapping, receipts, database).pipe(
-        Effect.provideService(NativeDatabase, database),
-      ),
-    phoneOwner: (mapping, options, database) =>
-      makePhoneOwner(mapping, options, database).pipe(
         Effect.provideService(NativeDatabase, database),
       ),
     acquire: nativeDatabase(acquire),

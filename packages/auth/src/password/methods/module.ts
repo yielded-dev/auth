@@ -10,14 +10,11 @@ import { type AuthInvocation } from "../../operations/context";
 import type { AuthOperationResult } from "../../operations/credentials";
 import { makeOperation, operationGroup } from "../../operations/operation";
 import { proofRequestAdmission } from "../../proofs/admission";
-import type { ProofCompletionPlan } from "../../proofs/completion";
 import type { ProofSecretPolicy } from "../../proofs/crypto";
 import { readProofCommit } from "../../proofs/dispatch";
 import { defaultIngressLayer } from "../../proofs/HostIngressLimiter";
 import {
   ProofBinding,
-  ProofContinuation,
-  ProofContinuationId,
   ProofPurpose,
   ProofReference,
   ProofRequestId,
@@ -25,6 +22,7 @@ import {
 } from "../../proofs/models";
 import { makeProofModule } from "../../proofs/module";
 import type { ProofPolicy } from "../../proofs/policy";
+import type { ProofRedemptionPlan } from "../../proofs/redemption";
 import type { SubjectId } from "../../Schema";
 import { Email, Locale } from "../../Schema";
 import { assessAuthentication, snapshotAuthenticationEvidence } from "../../sessions/assurance";
@@ -209,17 +207,11 @@ const makePasswordWithManagement = <
     locale: Locale,
   });
 
-  const VerifyResetInput = Schema.Struct({
-    ...ResetBase,
-    reference: ProofReference,
-    secret: OpaqueProof,
-  });
-
   const CompleteResetInput = Schema.Struct({
     ...ResetBase,
     ...ActionInput,
-    continuationId: ProofContinuationId,
-    credential: OpaqueProof,
+    reference: ProofReference,
+    secret: OpaqueProof,
   });
 
   const Failure = Schema.Union([
@@ -270,12 +262,6 @@ const makePasswordWithManagement = <
       readonly requestReset: (
         input: typeof RequestResetInput.Type,
       ) => Effect.Effect<ProofRequestReceipt, Failure>;
-      readonly verifyReset: (
-        input: typeof VerifyResetInput.Type,
-      ) => Effect.Effect<
-        AuthOperationResult<{ readonly continuation: ProofContinuation }>,
-        Failure
-      >;
       readonly planReset: (
         invocation: AuthInvocation,
         input: typeof CompleteResetInput.Type,
@@ -392,7 +378,7 @@ const makePasswordWithManagement = <
         expectedRevision: AuthenticationEvidence["revision"],
         credential?: PasswordCredentialSnapshot,
         currentPasswordEvidence?: AuthenticationEvidence,
-        recovery?: ProofCompletionPlan,
+        recovery?: ProofRedemptionPlan,
       ): Effect.fn.Return<Mutation, Failure> {
         expectedRevision = snapshotPasswordRevision(expectedRevision);
 
@@ -515,9 +501,6 @@ const makePasswordWithManagement = <
                   ? [
                       { _tag: "Clear" as const, slot: "session" as const },
                       { _tag: "Clear" as const, slot: "pending-proof" as const },
-                      ...(action === "reset-password"
-                        ? [{ _tag: "Clear" as const, slot: "proof-continuation" as const }]
-                        : []),
                     ]
                   : [],
             });
@@ -638,12 +621,7 @@ const makePasswordWithManagement = <
           const credential =
             verified?.credential ?? (yield* snapshotPasswordCredential(existing.value));
 
-          const revision =
-            verified?.evidence.revision ??
-            (yield* authority.capture(caller.subjectId, [credential.credentialId]).pipe(
-              Effect.map((capture) => capture.revision),
-              Effect.mapError(passwordCompletionFailure),
-            ));
+          const revision = verified?.evidence.revision ?? credential.revision;
 
           const plan = yield* planMutation(
             "change-password",
@@ -682,40 +660,19 @@ const makePasswordWithManagement = <
 
           return dispatch.receipt;
         }),
-        verifyReset: Effect.fn("Passwords.verifyReset")(function* (request) {
-          yield* noAmbient();
-          const bound = yield* recoveryBinding(request);
-
-          const result = yield* proofs
-            .prepareAttempt({
-              reference: request.reference,
-              binding: bound.binding,
-              credential: request.secret,
-            })
-            .pipe(Effect.flatMap(readProofCommit), Effect.mapError(passwordCompletionFailure));
-
-          if (result.value._tag === "Rejected") return yield* PasswordRejected.make({});
-
-          return {
-            value: { continuation: result.value.continuation },
-            credentialCommands: result.credentialCommands,
-          };
-        }),
         planReset: Effect.fn("Passwords.planReset")(function* (invocation, request) {
           yield* noAmbient();
           const bound = yield* recoveryBinding(request);
 
-          if (Option.isNone(bound.target)) return yield* PasswordRejected.make({});
-
           const proof = yield* proofs
-            .planComplete({
-              continuationId: request.continuationId,
+            .planRedeem({
+              reference: request.reference,
               binding: bound.binding,
-              credential: request.credential,
+              credential: request.secret,
             })
             .pipe(Effect.mapError(passwordCompletionFailure));
 
-          if (!(yield* store.checkReset(proof.input))) return yield* PasswordRejected.make({});
+          if (Option.isNone(bound.target)) return yield* PasswordRejected.make({});
 
           const plan = yield* planMutation(
             "reset-password",
@@ -730,7 +687,7 @@ const makePasswordWithManagement = <
           const commit = Effect.gen(function* () {
             const owner = yield* PasswordPersistence;
 
-            return yield* owner.resetWithProof({ ...plan.input, completion: proof }, plan.prepare);
+            return yield* owner.resetWithProof({ ...plan.input, redemption: proof }, plan.prepare);
           });
 
           return { commit };
@@ -796,17 +753,7 @@ const makePasswordWithManagement = <
     error: Failure,
     access: "any",
     exposure: "public",
-    replay: "idempotent",
-  });
-
-  const VerifyReset = makeOperation(`${moduleId}/verify-reset`, {
-    payload: VerifyResetInput,
-    success: Schema.Struct({ continuation: ProofContinuation }),
-    error: Failure,
-    access: "any",
-    exposure: "public",
-    replay: "single-use",
-    credentials: true,
+    replay: "non-idempotent",
   });
 
   const CompleteReset = makeOperation(`${moduleId}/complete-reset`, {
@@ -865,11 +812,6 @@ const makePasswordWithManagement = <
         return yield* (yield* Passwords).requestReset(request);
       }),
     ),
-    VerifyReset.credentialHandlerLayer(
-      Effect.fn("PasswordOperation.verifyReset")(function* (request) {
-        return yield* (yield* Passwords).verifyReset(request);
-      }),
-    ),
     CompleteReset.credentialHandlerLayer(
       Effect.fn("PasswordOperation.reset")(function* (request, invocation) {
         return yield* read(
@@ -890,7 +832,6 @@ const makePasswordWithManagement = <
     AddPassword,
     ChangePassword,
     RequestReset,
-    VerifyReset,
     CompleteReset,
     PasswordStatus,
   };
@@ -915,7 +856,6 @@ const makePasswordWithManagement = <
         addPassword: AddPassword.invoke,
         changePassword: ChangePassword.invoke,
         requestReset: RequestReset.invoke,
-        verifyReset: VerifyReset.invoke,
         completeReset: CompleteReset.invoke,
         passwordStatus: PasswordStatus.invoke,
       },

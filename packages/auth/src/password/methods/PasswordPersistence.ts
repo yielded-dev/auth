@@ -2,8 +2,7 @@ import { Context, type Effect, type Option, type Redacted } from "effect";
 
 import type { CommitJournal, PreparedCommit } from "../../hooks/commit";
 import type { LoginIdentifier } from "../../identity/models";
-import type { ProofCompletionPlan } from "../../proofs/completion";
-import type { ProofCompletionInput } from "../../proofs/ProofPersistence";
+import type { ProofRedemptionPlan } from "../../proofs/redemption";
 import type { SubjectId } from "../../Schema";
 import type { SessionInvalidationWindow } from "../../sessions/invalidation";
 import type { AuthenticationRevision } from "../../sessions/models";
@@ -41,7 +40,8 @@ export interface PasswordMutationInput {
 export class PasswordPersistence extends Context.Service<
   PasswordPersistence,
   {
-    /** Read a coherent candidate without writing or holding a transaction open.
+    /** Read a coherent candidate and the complete active factor revision vector
+     * without writing or holding a transaction open.
      * Unknown, disabled, missing, or ineligible identifiers return None.
      * Session issuance and password mutation recheck the captured authority.
      * Identifier removal, rebinding, or eligibility changes MUST bump the subject
@@ -62,11 +62,16 @@ export class PasswordPersistence extends Context.Service<
       readonly credential: PasswordCredentialSnapshot;
       readonly nextVerifier: Redacted.Redacted<EncodedPasswordHash>;
     }) => Effect.Effect<void, PasswordUnavailable>;
+    /** The password snapshot includes the complete current active factor vector. */
     readonly readForSubject: (input: {
       readonly moduleId: string;
       readonly subjectId: SubjectId;
     }) => Effect.Effect<Option.Option<PasswordCredentialSnapshot>, PasswordUnavailable>;
-    /** Only eligible verified identifiers; return None for absent/inactive/ineligible. */
+    /** Only eligible verified identifiers; return None for absent/inactive/ineligible.
+     * Capture the complete active factor revision vector with the subject and password
+     * snapshot, including independent recovery credentials. Action policy may bind a
+     * separately selected recovery factor to this vector; the mutation owner still
+     * rechecks current authority before redeeming and changing the password. */
     readonly recoveryTarget: (input: {
       readonly moduleId: string;
       readonly identifier: LoginIdentifier;
@@ -83,19 +88,13 @@ export class PasswordPersistence extends Context.Service<
       input: PasswordMutationInput,
       prepare: PreparePasswordCommit<PasswordMutationDecision, A>,
     ) => Effect.Effect<PreparedCommit<A>, PasswordUnavailable>;
-    /** Authoritative nonconsuming preflight before exposing new-password policy
-     * results or doing KDF work. Final resetWithProof repeats every predicate/CAS.
-     */
-    readonly checkReset: (
-      input: ProofCompletionInput,
-    ) => Effect.Effect<boolean, PasswordUnavailable>;
     /** Compose proof predicates + replacement/invalidation atomically. Never call an
-     * independently committing ProofPersistence.complete. completed iff ALL apply.
+     * independently committing ProofPersistence.redeem. redeemed iff ALL apply.
      * D1 preplans before batch; exact lost guard discards success journal before a
      * separate zero-write rejected receipt. Unknown SQL failure remains unavailable.
      */
     readonly resetWithProof: <A>(
-      input: PasswordMutationInput & { readonly completion: ProofCompletionPlan },
+      input: PasswordMutationInput & { readonly redemption: ProofRedemptionPlan },
       prepare: PreparePasswordCommit<PasswordMutationDecision, A>,
     ) => Effect.Effect<PreparedCommit<A>, PasswordUnavailable>;
   }

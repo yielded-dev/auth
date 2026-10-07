@@ -19,9 +19,11 @@ import type {
 export class AuthenticationAuthority extends Context.Service<
   AuthenticationAuthority,
   {
-    /** Before verification, read active subject, factor policy and these independently
-     * resolved credential IDs together. The captured requirement is planning data;
-     * approve/establish must still check current policy under the committing authority. */
+    /** Read the active subject, current factor policy and complete active factor
+     * revision vector together. Every supplied credential ID is a required anchor,
+     * not a projection; an empty list still returns the full vector. This records
+     * authority, not proof of those factors. The requirement is planning data;
+     * approve/establish must recheck current policy under the committing authority. */
     readonly capture: (
       subjectId: SubjectId,
       credentialIds: ReadonlyArray<string>,

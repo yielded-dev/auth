@@ -70,6 +70,11 @@ const uniquePlans: Readonly<Record<string, readonly [string, ReadonlyArray<strin
   "unique(intent.moduleId,intent.intentId)": ["intent", ["moduleId", "intentId"]],
   "unique(intent.moduleId,intent.reference)": ["intent", ["moduleId", "reference"]],
   "unique(ownership.identityKey)": ["ownership", ["identityKey"]],
+  "unique(proof.moduleId,proof.purpose,proof.seriesKey)": [
+    "proof",
+    ["moduleId", "purpose", "seriesKey"],
+  ],
+  "unique(proof.moduleId,proof.proofId)": ["proof", ["moduleId", "proofId"]],
   "unique(pending.digest)": ["pending", ["digest"]],
   "unique(pending.flowId)": ["pending", ["flowId"]],
   "unique(rateScope.moduleId,rateScope.purpose,rateScope.action,rateScope.scopeKind,rateScope.scopeKey)":

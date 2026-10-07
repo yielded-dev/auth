@@ -8,7 +8,7 @@ import {
   type PasswordCredentialSnapshot,
   type PasswordMutationInput,
 } from "@yielded/auth/Password";
-import type { ProofCompletionPlan } from "@yielded/auth/Proofs";
+import type { ProofRedemptionPlan } from "@yielded/auth/Proofs";
 import {
   snapshotAuthenticationEvidence,
   type AuthenticationEvidence,
@@ -18,8 +18,8 @@ import {
 import { DateTime, Effect, Redacted } from "effect";
 
 import { PersistenceMappingError } from "./mapping-error";
+import type { AnyProofPersistenceMapping } from "./models/proof-model";
 import type { PasswordMutationRead } from "./password-store";
-import type { ProofWorkflowPolicy } from "./proof-policy";
 
 const unavailable = () => PasswordUnavailable.make({});
 
@@ -120,10 +120,10 @@ export const snapshotPasswordMutation = Effect.fn("PasswordPersistence.snapshotM
   },
 );
 
-export const passwordProofCompletionMatches = (
-  input: PasswordMutationInput & { readonly completion: ProofCompletionPlan },
+export const passwordProofRedemptionMatches = (
+  input: PasswordMutationInput & { readonly redemption: ProofRedemptionPlan },
 ) => {
-  const completion = input.completion.input;
+  const completion = input.redemption.input;
   const binding = completion.binding;
 
   if (
@@ -174,7 +174,7 @@ export interface PasswordWorkflowOptions {
   readonly locking: boolean;
   readonly coordinated?: boolean;
   readonly standaloneGuard: Effect.Effect<void, PasswordUnavailable>;
-  readonly proof?: ProofWorkflowPolicy;
+  readonly proof?: AnyProofPersistenceMapping;
 }
 
 export const allocatePasswordValue = <A>(
@@ -221,6 +221,7 @@ export const validatePasswordMutation = Effect.fnUntraced(function* (
     PasswordMutationRead,
     "subject" | "identifierCurrent" | "credentials" | "snapshot" | "requirement"
   >,
+  now: number,
 ) {
   if (
     current.subject === undefined ||
@@ -270,7 +271,6 @@ export const validatePasswordMutation = Effect.fnUntraced(function* (
       return undefined;
   }
   const requirement = yield* current.requirement;
-  const now = DateTime.toEpochMillis(yield* DateTime.now);
 
   if (
     !passwordEvidenceSatisfiedAt(evidence, input.authorization.requirement, now) ||

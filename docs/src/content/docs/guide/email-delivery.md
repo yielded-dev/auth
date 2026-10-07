@@ -149,7 +149,7 @@ delivery worker automatically; there is no scheduler to implement or wire up.
 It accepts up to 64 pending tasks, runs one at a time, and requests cancellation
 after ten seconds of execution. A full queue returns `ProofUnavailable` without waiting for the
 provider. Every committed receipt uses the same admission path, including suppression
-and replay.
+and repeated requests.
 
 The worker stops with the application scope; a scope that closes at the end of each
 request also cancels its delivery. Workers and other hosts that suspend after returning
@@ -167,13 +167,15 @@ For CLI or trusted workflows that must await delivery, explicitly provide
 not serve public requests that must conceal account eligibility.
 
 Keep bodies and capability URLs out of logs and telemetry. Disable transport/SDK
-retries and use `maximumDeliveryAttempts: 1`; the service promises no deduplication.
-Generic auth receipts do not confirm delivery. Scheduling is process-local, without
-a durable outbox; a crash or shutdown can discard accepted work. An exact retry
-recovers its receipt without authorizing another send.
+retries. Each committed issue permits one process-local scheduler submission and
+one transport invocation, including when its receipt is read repeatedly.
+Suppression submits a no-op through the same scheduler. There is no external
+exactly-once guarantee or delivery retry. Unknown commits schedule nothing; a crash,
+queue rejection, or shutdown can leave a proof unsent. Request again explicitly
+after cooldown with the original binding; request IDs do not recover earlier receipts.
 
-When replacing proof-level delivery, start new email flows with fresh request IDs
-and let old proofs expire. Account, password, and session data need no reset.
+When upgrading the proof storage format, clear the old proof graph and start fresh
+flows. Account, password, and session data need no reset for proof delivery alone.
 
 ## Customize wording
 

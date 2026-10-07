@@ -8,18 +8,13 @@ export {
   type EmailCredentialReadTable,
   type EmailCredentialTable,
   type EmailAuthorityCredentialTable,
-  type EmailCommandTable,
   type RequiredEmailSignInConstraints,
   requiredEmailSignInConstraints,
   type EmailSignInMapping,
   type RequiredEmailAddressConstraints,
   requiredEmailAddressConstraints,
-  type EmailD1Clock,
   type EmailAddressMapping,
-  type D1EmailAddressMapping,
-  type EmailRegistrationState,
   type EmailRegistrationIntent,
-  type EmailRegistrationTable,
   type EmailRegistrationProvisioning,
   type EmailRegistrationIdentifierTable,
   type EmailRegistrationCredentialTable,
@@ -30,7 +25,6 @@ export {
   type AnyEmailSignInMapping,
   type AnyEmailAddressMapping,
   type AnyEmailRegistrationMapping,
-  type D1EmailRegistrationMapping,
 } from "./internal/models/email-model";
 
 export {
@@ -79,16 +73,10 @@ export {
   type PasswordIdentifierTable,
   type PasswordAuthorityCredentialTable,
   type PasswordCredentialTable,
-  type PasswordCommandTable,
   type RequiredPasswordConstraints,
   requiredPasswordConstraints,
-  type PasswordConstraintClassifier,
-  type PasswordD1Clock,
   type PasswordPersistenceMapping,
-  type D1PasswordPersistenceMapping,
-  type PasswordRegistrationState,
   type PasswordRegistrationIntent,
-  type PasswordRegistrationTable,
   type PasswordRegistrationProvisioning,
   type RequiredPasswordRegistrationConstraints,
   requiredPasswordRegistrationConstraints,
@@ -99,30 +87,11 @@ export {
 } from "./internal/models/password-model";
 
 export {
-  type ProofAction,
-  type ProofScopeKind,
-  type ProofGenerationState,
-  type ProofDeliveryState,
-  type ProofCommandKind,
-  type ProofCommandDecision,
-  type ProofScopeKeys,
-  type ProofAuthorityInput,
-  type ProofAuthorityTables,
-  type ProofRequestTable,
-  type ProofSeriesTable,
-  type ProofGenerationTable,
-  type ProofContinuationRecord,
-  type ProofContinuationTable,
-  type ProofRateScopeTable,
-  type ProofAbuseEventTable,
-  type ProofFailureEventTable,
-  type ProofCommandTable,
+  type ProofTable,
+  type ProofClock,
   type RequiredProofConstraints,
   requiredProofConstraints,
-  type ProofConstraintClassifier,
-  type ProofD1Clock,
   type ProofPersistenceMapping,
-  type D1ProofPersistenceMapping,
   type AnyProofPersistenceMapping,
 } from "./internal/models/proof-model";
 
@@ -233,114 +202,7 @@ export {
 
 export { preservesRevision, allocateSessionValue } from "./internal/session-policy";
 
-export { CurrentProofStore } from "./internal/proof-store";
-
-export type {
-  ProofStoreError,
-  ProofAuthorityRead,
-  ProofAuthorityRequest,
-  ProofScopeEntry,
-  ProofScopeRequest,
-  ProofSeriesKey,
-  ProofSeriesRead,
-  ProofGenerationRead,
-  ProofRequestRead,
-  ProofCompletionRead,
-  ProofCompletionStore,
-  ProofCleanupRead,
-  ProofAttemptInput,
-  ProofDeliverySettlementInput,
-  ProofAttemptWrite,
-  ProofDeliveryWrite,
-  ProofStore,
-} from "./internal/proof-store";
-
-export {
-  allocateProofVersion,
-  sameProofBinding,
-  proofScopeEntries,
-  matchesProofAuthority,
-  type ProofWorkflowPolicy,
-  type ProofWorkflowOptions,
-} from "./internal/proof-policy";
-
-export {
-  makeProofWorkflow,
-  inspectProofCompletion,
-  checkProofCompletion,
-  completeProofIn,
-  completeProofPlan,
-  translateProofFailure,
-} from "./internal/proof-workflow";
-
 export type { PersistenceStoreError, PersistenceOwner } from "./internal/persistence-owner";
-
-export type {
-  PasswordStoreError,
-  PasswordCredentialLookup,
-  PasswordCredentialRead,
-  PasswordMutationRevisions,
-  PasswordMutationRead,
-  PasswordStore,
-} from "./internal/password-store";
-
-export {
-  samePasswordIdentifier,
-  samePasswordCredential,
-  passwordEvidenceSatisfiedAt,
-  snapshotPasswordMutation,
-  passwordProofCompletionMatches,
-  allocatePasswordValue,
-  allocatePasswordNextSecurityRevision,
-  validatePasswordMutation,
-  type PasswordWorkflowPolicy,
-  type PasswordWorkflowOptions,
-} from "./internal/password-policy";
-
-export { makePasswordWorkflow, translatePasswordFailure } from "./internal/password-workflow";
-
-export type {
-  EmailStoreError,
-  EmailAddressRequest,
-  EmailMutationRevisions,
-  EmailMutationRead,
-  EmailAddressStore,
-} from "./internal/email-store";
-
-export {
-  sameEmailRevision,
-  emailActionModule,
-  emailActionPurpose,
-  emailCompletionMatches,
-  snapshotEmailMutation,
-  validateEmailMutation,
-  type EmailWorkflowPolicy,
-  type EmailWorkflowOptions,
-} from "./internal/email-policy";
-
-export { allocateEmailValue, allocateEmailSecurityRevision } from "./internal/email-policy";
-export { makeEmailAddressWorkflow, translateEmailFailure } from "./internal/email-workflow";
-export type { PasswordRegistrationStore } from "./internal/registration-store";
-
-export {
-  PhoneAdmissionReceipt,
-  PhoneAdmissionCounter,
-  PhoneCommandRecord,
-  PhoneStoredState,
-  phoneStateScope,
-  validPhoneAdmissionInput,
-  phoneAdmissionReplay,
-  phoneAdmissionDecision,
-  phoneAdmissionExpiry,
-  phoneSignInSnapshot,
-  type PhoneAdmissionInput,
-} from "./internal/phone-policy";
-
-export {
-  composedPhoneAdmission,
-  type PhoneStore,
-  type PhoneStoreError,
-} from "./internal/phone-store";
 
 export type { MappingInput } from "./internal/configuration";
 
@@ -499,3 +361,27 @@ export {
 
 export { captureOAuthMapping } from "./internal/oauth/state";
 export * from "./internal/oauth/native-layers";
+
+export { makeNativeProofStore, makeNativeProofServices } from "./internal/proof-native";
+
+export { makeNativePasswordServices } from "./internal/password-native";
+
+export { makeNativePasswordRegistrationServices } from "./internal/password-registration-native";
+
+export {
+  type PhoneMapping,
+  type AnyPhoneMapping,
+  requiredPhoneConstraints,
+} from "./internal/models/phone-model";
+
+export { makeNativePhoneServices } from "./internal/phone-native";
+
+export {
+  makeNativeEmailSignInServices,
+  makeNativeEmailAddressServices,
+} from "./internal/email-native";
+
+export {
+  makeNativeEmailRegistrationServices,
+  type EmailRegistrationAuthority,
+} from "./internal/email-registration-native";

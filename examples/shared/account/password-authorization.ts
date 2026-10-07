@@ -1,5 +1,5 @@
 import { Operations, Password, Sessions } from "@yielded/auth";
-import { DateTime, Effect } from "effect";
+import { Array, DateTime, Effect } from "effect";
 
 import type { AppAuth } from "./auth";
 import { requirement } from "./auth";
@@ -34,30 +34,44 @@ export const authorizePasswordSession = Effect.fn("Customers.authorizePasswordSe
   )
     return yield* Password.PasswordActionRequired.make({});
 
-  const captured = [...challenge.revision.credentials, ...original.revision.credentials];
-
-  const capture = yield* (yield* Sessions.AuthenticationAuthority).capture(
-    challenge.revision.subjectId,
-    [...new Set(captured.map((item) => item.credentialId))],
-  );
-
-  const revision = capture.revision;
+  const revision = challenge.revision;
 
   if (
-    revision.securityRevision !== challenge.revision.securityRevision ||
-    captured.some(
-      (item) =>
+    original.proofs.some((proof) => {
+      const captured = original.revision.credentials.find(
+        (item) => item.credentialId === proof.credentialId,
+      );
+
+      return (
+        captured === undefined ||
         !revision.credentials.some(
           (current) =>
-            current.credentialId === item.credentialId && current.revision === item.revision,
-        ),
-    )
+            current.credentialId === captured.credentialId &&
+            current.revision === captured.revision,
+        )
+      );
+    })
   )
     return yield* Password.PasswordActionRequired.make({});
+
+  if (original.proofs.some((proof) => DateTime.toEpochMillis(proof.verifiedAt) > now))
+    return yield* Password.PasswordActionRequired.make({});
+
+  const proofs = original.proofs.filter(
+    (proof) =>
+      proof.method === "passkey" &&
+      proof.factors.includes("possession") &&
+      proof.userVerified &&
+      proof.phishingResistant &&
+      now - DateTime.toEpochMillis(proof.verifiedAt) < requirement.maximumAgeMillis,
+  );
+
+  if (!Array.isArrayNonEmpty(proofs)) return yield* Password.PasswordActionRequired.make({});
 
   return {
     evidence: {
       ...original,
+      proofs,
       revision,
       flowId: Sessions.AuthenticationFlowId.make(challenge.commandId),
       bindingDigest: challenge.bindingDigest,

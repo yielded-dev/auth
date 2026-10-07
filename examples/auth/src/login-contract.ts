@@ -49,8 +49,6 @@ const attempt = {
   secret: Schema.RedactedFromValue(Schema.String.check(Schema.isMaxLength(4096))),
 };
 
-const verified = Schema.Struct({ continuation: Proofs.ProofContinuation });
-
 export const LoginApi = AuthContract.make("example/social-auth", {
   claims: Schema.Struct({ displayName: Schema.String }),
   actions: (sessions) => ({
@@ -73,18 +71,8 @@ export const LoginApi = AuthContract.make("example/social-auth", {
       strategy: "email",
       requestFields: { requestBinding: "request-binding" },
     }),
-    verifyEmailCode: AuthContract.action({
-      payload: Schema.Struct({ ...emailSignIn, ...attempt }),
-      success: verified,
-      error: EmailFailure,
-      mode: "mutation",
-      credentials: true,
-      method: "verifySignIn",
-      strategy: "email",
-      requestFields: { requestBinding: "request-binding" },
-    }),
     completeEmailSignIn: AuthContract.action({
-      payload: Schema.Struct({ ...emailSignIn, continuationId: Proofs.ProofContinuationId }),
+      payload: Schema.Struct({ ...emailSignIn, ...attempt }),
       success: Schema.Struct({
         completion: sessions.CompletionResult,
         returnTarget: Email.SafeReturnTarget,
@@ -95,7 +83,7 @@ export const LoginApi = AuthContract.make("example/social-auth", {
       replay: "single-use",
       method: "completeSignIn",
       strategy: "email",
-      requestFields: { requestBinding: "request-binding", credential: "proof-continuation" },
+      requestFields: { requestBinding: "request-binding" },
       subject: {
         fromSuccess: (value) =>
           value.completion._tag === "Authenticated"
@@ -122,20 +110,10 @@ export const LoginApi = AuthContract.make("example/social-auth", {
       strategy: "emailRegistration",
       requestFields: { requestBinding: "request-binding" },
     }),
-    verifyEmailRegistration: AuthContract.action({
-      payload: Schema.Struct({ ...emailRegistration, ...attempt }),
-      success: verified,
-      error: EmailFailure,
-      mode: "mutation",
-      credentials: true,
-      method: "verifyRegistration",
-      strategy: "emailRegistration",
-      requestFields: { requestBinding: "request-binding" },
-    }),
     completeEmailRegistration: AuthContract.action({
       payload: Schema.Struct({
         ...emailRegistration,
-        continuationId: Proofs.ProofContinuationId,
+        ...attempt,
         commandId: Email.EmailCommandId,
       }),
       success: OAuth.OAuthRegistrationResult,
@@ -145,7 +123,7 @@ export const LoginApi = AuthContract.make("example/social-auth", {
       replay: "single-use",
       method: "completeRegistration",
       strategy: "emailRegistration",
-      requestFields: { requestBinding: "request-binding", credential: "proof-continuation" },
+      requestFields: { requestBinding: "request-binding" },
     }),
     signIn: AuthContract.oauthSignIn(),
     completeSignIn: AuthContract.oauthCompleteSignIn(sessions),

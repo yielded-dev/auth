@@ -210,8 +210,12 @@ parameters change; a lost comparison is a no-op. Rate limits belong to
 `PasswordAttemptLimiter`, so no password attempt table or cleanup operation is needed.
 
 `AuthenticationAuthority.capture` returns `{ revision, requirement }` from the same
-subject read. Password sign-in reuses that requirement to choose a session or a
-pending second factor. The committing session or password-mutation authority must
+subject read, including the full active factor vector. Requested credential IDs are
+required anchors; `capture(subjectId, [])` still returns all active factors.
+Password lookup returns that full vector too, and sign-in confirms it with the
+existing policy capture before verifying the password. Only actual verification
+produces a factor proof; unrelated factors never gain proof timestamps.
+Password sign-in reuses the requirement to choose a session or a pending second factor. The committing session or password-mutation authority must
 still check current status, policy, and the original revisions. Credential replacement
 updates both the password and authority credential revisions; identifier removal,
 rebinding, or eligibility changes must atomically bump the subject security revision.
@@ -406,10 +410,28 @@ password mutation transaction
 ```
 
 Use the adapter's coordinator when combining authentication with application writes.
-Coordinated password mutations, including a reset's proof completion, are checked again
+Coordinated password mutations, including a reset's proof redemption, are checked again
 after your writes; changing their account, credential, or proof rows in the same commit
 rolls both back.
 Do not put standalone services inside an untracked raw Drizzle transaction.
+
+## Proof storage
+
+Map one proof row keyed by module, purpose, and canonical identifier/subject series.
+Issue uses the database clock and preserves a live code unless the complete binding
+matches. Redemption conditionally deletes the exact unexpired code or increments
+that code's bounded failure count. No request receipt, continuation, delivery claim,
+or SQL rate-limit tables remain.
+
+Subject-bound standalone redemption takes one subject lock without rereading
+factor or identifier authority. Protected password, email, and phone mutations
+redeem inside their native owner after its existing subject lock;
+standalone sign-in consumes first and issues a session independently. Cleanup uses
+`CleanupLimit` and returns `{ removed, hasMore }`; `hasMore` means the limit was
+reached. Retired phone identifiers are permanent and never part of cleanup.
+
+Reset development proof tables, removed command/registration-receipt tables, and
+the replaced phone identifier layout when adopting these pre-production schemas.
 
 ## Email
 
@@ -420,14 +442,11 @@ For explicit composition over an existing storage layout, start from
 `yield* makeStorageMappings(storage)` and use its `.emails()` and `.proofs()` factories.
 Supply the raw registration mapping's synchronous provisioning and inspection policy.
 
-Email registration provisions a fresh subject after mailbox proof. Its
-`inspect` policy and proof authority's `identifier.isCurrent` must admit absent or
-active-unverified targets to permit reclamation; D1's `d1CurrentCondition` must
-express the same rule at batch commit. Scope this permission to
-`email-code-registration`. The adapter rechecks the old owner, binding revision,
-unverified timestamp, and subject security revision, then updates the identifier's
-mapped `subjectId`, `verifiedAt`, and `bindingRevision` in place. Other identifier
-columns stay unchanged and the resulting row must satisfy `isCurrent`.
+Email registration provisions a fresh subject after mailbox proof. Its application
+inspection and committing identifier policy may admit absent or active-unverified
+targets for reclamation. Scope that permission to email registration. The owner
+rechecks the old account, binding revision and unverified state before updating
+ownership atomically with proof redemption; D1 compiles the same commit guards.
 
 Reclamation advances the previous subject's security revision without moving its
 credentials or application data. Identifier eligibility is separate from the prior
@@ -435,7 +454,8 @@ subject's status: a disabled subject stays disabled. Sessions and pending authen
 that revision for immediate invalidation; purely stateless sessions retain their
 documented lifetime. Provisioning, reclamation and proof consumption share one
 transaction or D1 batch. Verified addresses cannot be reclaimed. Provisioning
-completes synchronously and idempotently by request ID; an application can own a
+completes synchronously; the authority supplies a stable `requestId` for application
+idempotence. An application can own a
 queue when its account system requires asynchronous work. Compose this guest workflow explicitly as shown in
 [mailbox registration](../guide/codes#register-a-mailbox-owner).
 
@@ -590,10 +610,11 @@ export const ProofPersistenceLive = Layer.effect(
 ```
 
 The database connection above uses SQLite on Bun. The phone Layer supplies
-`PhonePersistence`, `PhoneAdmission`, and `PhoneSignInTargets`, with empty hook
+`PhonePersistence` and `PhoneSignInTargets`, with empty hook
 defaults. Both persistence Layers use the application's explicit `CryptoLive`.
-The proof Layer stores challenges, consumption, and rate limits. Sign-in uses
-lookup and admission; number-management operations
+The proof Layer stores one current code per series, its failed-attempt count, and
+cooldown. Core `ProofLimiter` and `PhoneAdmission` own token-bucket limits; configure
+their Layers separately from table mappings. Sign-in uses lookup and admission; number-management operations
 also use `PhonePersistence`. You provide table mappings and
 migrations. See the [SQLite example](https://github.com/yielded-dev/auth/blob/main/examples/auth/src/phone-sqlite-bun.ts)
 for the table definitions and mappings.

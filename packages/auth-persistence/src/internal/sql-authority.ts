@@ -59,28 +59,15 @@ export const makeAuthenticationAuthorityServices = Effect.fnUntraced(function* <
   const lock = (locking: boolean) => (locking && dialect === "pg" ? sql`for update` : sql``);
 
   const store: SessionAuthorityStore<Claims> = {
-    readAuthority: (id, requested, locking) =>
+    readAuthority: (id, _requested, locking) =>
       Effect.gen(function* () {
         const native = yield* mapping.subjectId.toNative(id);
         const subjectPredicate = sql`${subject.column(s.id)} = ${subject.value(s.id, native)}`;
 
-        const credentials = sql.and([
-          sql`${credential.column(c.subjectId)} = ${credential.value(c.subjectId, native)}`,
-          requested.length === 0
-            ? sql`false`
-            : sql.or(
-                requested.map((id) =>
-                  exactSqlText(
-                    sql,
-                    credential.column(c.credentialId),
-                    credential.value(c.credentialId, id),
-                  ),
-                ),
-              ),
-        ]);
+        const credentials = sql`${credential.column(c.subjectId)} = ${credential.value(c.subjectId, native)}`;
 
         const rows =
-          yield* sql`with authority_subject as ${locking && dialect === "pg" ? sql`materialized` : sql``} (select * from ${subject.name} where ${subjectPredicate} ${lock(locking)}), authority_credentials as ${locking && dialect === "pg" ? sql`materialized` : sql``} (select * from ${credential.name} where ${credentials} and exists(select 1 from authority_subject) order by ${credential.column(c.credentialId)} ${lock(locking)}) select ${subject.as("a").fields("subject_")}, ${credential.as("c").fields("credential_")} from authority_subject as a left join authority_credentials as c on true`;
+          yield* sql`with authority_subject as ${locking && dialect === "pg" ? sql`materialized` : sql``} (select * from ${subject.name} where ${subjectPredicate} ${lock(locking)}), authority_credentials as ${locking && dialect === "pg" ? sql`materialized` : sql``} (select * from ${credential.name} where ${credentials} and exists(select 1 from authority_subject) order by ${credential.column(c.credentialId)} limit 4097 ${lock(locking)}) select ${subject.as("a").fields("subject_")}, ${credential.as("c").fields("credential_")} from authority_subject as a left join authority_credentials as c on true`;
 
         if (rows.length === 0) return { subject: undefined, credentials: [], flow: undefined };
         const owner = subject.decode(rows[0]!, "subject_");

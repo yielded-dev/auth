@@ -34,25 +34,39 @@ export {
   makePgStatefulSessionServices as makeStatefulSessionServices,
 } from "./drizzle/pg-sessions";
 
-export {
-  coordinatePgProofPersistence as coordinateProofPersistence,
-  makePgProofPersistenceServices as makeProofPersistenceServices,
-} from "./drizzle/pg-proofs";
+import { makeProofTarget } from "./drizzle/proof-drivers";
 
-export {
-  coordinatePgPasswordPersistence as coordinatePasswordPersistence,
-  coordinatePgPasswordRegistration as coordinatePasswordRegistration,
-  makePgPasswordPersistenceServices as makePasswordPersistenceServices,
-  makePgPasswordRegistrationServices as makePasswordRegistrationServices,
-} from "./drizzle/pg-passwords";
+export const { coordinateProofPersistence, makeProofPersistenceServices } = makeProofTarget(
+  Database,
+  { mode: "native", dialect: "pg", transactionConstructor: PasskeyTransaction },
+);
 
-export {
-  coordinatePgEmailAddress as coordinateEmailAddress,
-  coordinatePgEmailRegistration as coordinateEmailRegistration,
-  makePgEmailAddressServices as makeEmailAddressServices,
-  makePgEmailRegistrationServices as makeEmailRegistrationServices,
-  makePgEmailSignInServices as makeEmailSignInServices,
-} from "./drizzle/pg-emails";
+import { makePasswordTarget } from "./drizzle/password-drivers";
+
+export const {
+  coordinatePasswordPersistence,
+  coordinatePasswordRegistration,
+  makePasswordPersistenceServices,
+  makePasswordRegistrationServices,
+} = makePasswordTarget(Database, {
+  mode: "native",
+  dialect: "pg",
+  transactionConstructor: PasskeyTransaction,
+});
+
+import { makeEmailTarget } from "./drizzle/email-drivers";
+
+export const {
+  makeEmailSignInServices,
+  makeEmailAddressServices,
+  makeEmailRegistrationServices,
+  coordinateEmailAddress,
+  coordinateEmailRegistration,
+} = makeEmailTarget(Database, {
+  mode: "native",
+  dialect: "pg",
+  transactionConstructor: PasskeyTransaction,
+});
 
 export const makeSubjectProvisioningServices = <
   Subject extends AnyPgTable,
@@ -160,20 +174,12 @@ const totpTarget = makeTotpTarget<
 
 export const { makeTotpPersistenceServices, coordinateTotpPersistence } = totpTarget;
 
-import { makePhoneTarget, sqlClientPhoneStandaloneGuard } from "./drizzle/phone-target";
+import { makePhoneTarget } from "./drizzle/phone-drivers";
 
-const phoneTarget = makePhoneTarget<
+export const { makePhonePersistenceServices, coordinatePhonePersistence } = makePhoneTarget(
   Database,
-  EffectPgDatabase<AnyRelations>,
-  AnyPgTable<{ dialect: "pg" }>
->(Database, {
-  mode: "interactive",
-  dialect: "pg",
-  locking: true,
-  standaloneGuard: sqlClientPhoneStandaloneGuard,
-});
-
-export const { makePhonePersistenceServices, coordinatePhonePersistence } = phoneTarget;
+  { mode: "native", dialect: "pg", transactionConstructor: PasskeyTransaction },
+);
 
 import { drizzleMigrationsLayer } from "./internal/drizzle-migrations";
 import { postgresPersistence } from "./internal/drizzle-postgres";

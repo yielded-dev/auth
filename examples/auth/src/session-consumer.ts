@@ -86,7 +86,7 @@ export const exampleAuthority = Effect.gen(function* () {
             revision: {
               subjectId,
               securityRevision: revision,
-              credentials: credentialIds.map((credentialId) => ({ credentialId, revision })),
+              credentials: [{ credentialId: "device-1", revision }],
             },
             requirement,
           }),

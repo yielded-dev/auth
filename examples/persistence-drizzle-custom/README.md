@@ -42,6 +42,10 @@ enrollment preserve the existing session. Enrollment requires authentication fro
 the last five minutes; sign in again when prompted. Use `localhost:4182` consistently
 for passkeys.
 
+The current schema replaces the old proof tables with one current-code table.
+Reset this example's development database before running it against older data;
+this also resets its accounts, sessions, and credentials.
+
 `AUTH_DATA_DIR` selects another data directory. Removing this example's `.data`
 resets only its accounts, sessions, credentials, and keys.
 

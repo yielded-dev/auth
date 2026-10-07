@@ -34,6 +34,8 @@ export const storageTables = {
     {
       namespace: text,
       value: text,
+      moduleId: optionalText,
+      credentialId: optionalText,
       subjectId: text,
       revision: text,
       verifiedAt: optionalInteger,
@@ -59,18 +61,6 @@ export const storageTables = {
       ["moduleId", "credentialId"],
     ],
   ),
-  passwordCommands: spec(
-    {
-      moduleId: text,
-      commandId: text,
-      action: text,
-      bindingDigest: text,
-      decision: text,
-      retentionUntil: integer,
-    },
-    [["moduleId", "commandId"]],
-  ),
-  passwordRegistrations: spec({ moduleId: text, requestId: text }, [["moduleId", "requestId"]]),
   emailCredentials: spec(
     {
       moduleId: text,
@@ -86,11 +76,6 @@ export const storageTables = {
       ["moduleId", "identifierNamespace", "identifierValue"],
     ],
   ),
-  emailCommands: spec(
-    { moduleId: text, commandId: text, action: text, bindingDigest: text, retentionUntil: integer },
-    [["moduleId", "commandId"]],
-  ),
-  phoneState: spec({ scope: text, state: text, version: text }, [["scope"]]),
   passkeyCredentials: spec(
     {
       credentialId: text,
@@ -128,110 +113,24 @@ export const storageTables = {
     },
     [["moduleId", "flowId"]],
   ),
-  proofRequests: spec(
-    {
-      moduleId: text,
-      requestId: text,
-      fingerprint: text,
-      proofId: text,
-      purpose: text,
-      keyId: text,
-      createdAt: integer,
-      retentionUntil: integer,
-      receipt: text,
-    },
-    [["moduleId", "requestId"]],
-  ),
-  proofSeries: spec(
+  proofs: spec(
     {
       moduleId: text,
       purpose: text,
-      scopeKey: text,
-      activeProofId: optionalText,
-      lastIssueAt: optionalInteger,
-      version: text,
-    },
-    [["moduleId", "purpose", "scopeKey"]],
-  ),
-  proofGenerations: spec(
-    {
-      moduleId: text,
-      purpose: text,
-      proofId: text,
-      requestId: text,
       seriesKey: text,
-      deliveryId: text,
+      proofId: text,
       binding: text,
       verifierKeyId: text,
       verifierDigest: text,
       issuedAt: integer,
       expiresAt: integer,
-      version: text,
-      state: text,
+      failedAttempts: integer,
       sendCount: integer,
-      deliveryState: text,
-      claimVersion: optionalText,
-      claimDeadline: optionalInteger,
-      retryAt: optionalInteger,
-      deliveryRetryMillis: integer,
-      retentionUntil: integer,
-      fingerprint: text,
     },
     [
+      ["moduleId", "purpose", "seriesKey"],
       ["moduleId", "proofId"],
-      ["moduleId", "deliveryId"],
     ],
-  ),
-  proofContinuations: spec(
-    {
-      moduleId: text,
-      purpose: text,
-      continuationId: text,
-      digest: text,
-      proofId: text,
-      seriesKey: text,
-      binding: text,
-      expiresAt: integer,
-      consumed: boolean,
-      version: text,
-      retentionUntil: integer,
-    },
-    [
-      ["moduleId", "continuationId"],
-      ["moduleId", "digest"],
-    ],
-  ),
-  proofScopes: spec(
-    { moduleId: text, purpose: text, action: text, scopeKind: text, scopeKey: text },
-    [["moduleId", "purpose", "action", "scopeKind", "scopeKey"]],
-  ),
-  proofAbuse: spec(
-    {
-      moduleId: text,
-      purpose: text,
-      action: text,
-      scopeKind: text,
-      scopeKey: text,
-      commandId: text,
-      occurredAt: integer,
-      retentionUntil: integer,
-    },
-    [["moduleId", "action", "scopeKind", "scopeKey", "commandId"]],
-  ),
-  proofFailures: spec(
-    {
-      moduleId: text,
-      purpose: text,
-      seriesKey: text,
-      commandId: text,
-      occurredAt: integer,
-      retentionUntil: integer,
-    },
-    [["moduleId", "seriesKey", "commandId"]],
-  ),
-  proofCommands: spec(
-    { moduleId: text, commandId: text, kind: text, decision: text, retentionUntil: integer },
-    [["moduleId", "commandId"]],
   ),
   sessions: spec(
     {

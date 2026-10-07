@@ -8,22 +8,20 @@ import { HookDenied } from "../hooks/models";
 import { LoginIdentifier } from "../identity/models";
 import type { AuthInvocation } from "../operations/context";
 import { makeOperation, operationGroup } from "../operations/operation";
-import type { RequestBindingCredential } from "../operations/requestBinding";
-import { makeRequestBinding, RequestBindingFlowId } from "../operations/requestBinding";
+import {
+  RequestBindingCredential,
+  makeRequestBinding,
+  RequestBindingFlowId,
+} from "../operations/requestBinding";
 import { readProofCommit } from "../proofs/dispatch";
 import { ProofBinding, ProofPurpose, ProofRequestId, ProofRequestReceipt } from "../proofs/models";
 import { makeProofModule } from "../proofs/module";
 import type { ProofPolicy } from "../proofs/policy";
 import { defaultProofPolicy } from "../proofs/policy";
 import { Locale, TokenDigest } from "../Schema";
-import { AuthenticationAuthority } from "../sessions/AuthenticationAuthority";
-import {
-  AuthenticationFlowId,
-  AuthenticationRevision,
-  type AuthenticationEvidence,
-} from "../sessions/models";
+import { AuthenticationFlowId, type AuthenticationEvidence } from "../sessions/models";
 import type { makeSessionModule } from "../sessions/module";
-import { phoneAdmission, phoneDigest, phoneAttemptAdmission } from "./admission";
+import { phoneAdmission, phoneAttemptAdmission } from "./admission";
 import { makePhoneClaims } from "./claims";
 import { deliveryLayer } from "./delivery";
 import { phoneFailure } from "./failure";
@@ -34,7 +32,7 @@ import {
   PhoneOtpRejected,
   PhoneOtpUnavailable,
 } from "./models";
-import { PhoneAdmission } from "./PhoneAdmission";
+import { defaultPhoneAdmissionLayer } from "./PhoneAdmission";
 import { PhoneDeliveryEligibility } from "./PhoneDeliveryEligibility";
 import { PhoneSignInTargets } from "./PhoneSignInTargets";
 
@@ -43,6 +41,7 @@ const Start = Schema.Struct({
   requestId: ProofRequestId,
   phoneNumber: PhoneNumber,
   locale: Locale,
+  requestBinding: Schema.optionalKey(RequestBindingCredential),
 });
 
 const Challenge = Schema.Struct({ ...ProofRequestReceipt.fields, flowId: RequestBindingFlowId });
@@ -107,36 +106,17 @@ export const makePhoneOtp = <
         Effect.mapError(phoneFailure),
       );
 
-      const current = yield* (yield* AuthenticationAuthority)
-        .capture(snapshot.revision.subjectId, [snapshot.credentialId])
-        .pipe(
-          Effect.map((capture) => capture.revision),
-          Effect.map(Option.some),
-          Effect.catchTag("StaleAuthentication", () => Effect.succeed(Option.none())),
-          Effect.mapError(phoneFailure),
-        );
-
-      if (Option.isSome(current)) {
-        const revision = yield* Schema.encodeEffect(Schema.toCodecJson(AuthenticationRevision))(
-          current.value,
+      if (
+        snapshot.moduleId === moduleId &&
+        snapshot.phoneNumber === request.phoneNumber &&
+        snapshot.verifiedAtMillis <= DateTime.toEpochMillis(yield* DateTime.now) &&
+        snapshot.revision.credentials.some(
+          (value) =>
+            value.credentialId === snapshot.credentialId &&
+            value.revision === snapshot.credentialRevision,
         )
-          .pipe(Effect.flatMap(Schema.decodeEffect(Schema.toCodecJson(AuthenticationRevision))))
-          .pipe(Effect.mapError(phoneFailure));
-
-        if (
-          snapshot.moduleId === moduleId &&
-          snapshot.phoneNumber === request.phoneNumber &&
-          snapshot.verifiedAtMillis <= DateTime.toEpochMillis(yield* DateTime.now) &&
-          revision.subjectId === snapshot.revision.subjectId &&
-          revision.securityRevision === snapshot.revision.securityRevision &&
-          revision.credentials.some(
-            (value) =>
-              value.credentialId === snapshot.credentialId &&
-              value.revision === snapshot.credentialRevision,
-          )
-        )
-          target = Option.some({ ...snapshot, revision });
-      }
+      )
+        target = Option.some(snapshot);
     }
 
     const encoded = yield* Schema.encodeEffect(tuple)([
@@ -165,17 +145,8 @@ export const makePhoneOtp = <
     return { target, binding: proofBinding };
   });
 
-  const admitSignIn = Effect.fn("PhoneOtp.admitRequest")(function* (input: typeof Start.Type) {
-    if (
-      !(yield* phoneAdmission(
-        moduleId,
-        "request",
-        input.requestId,
-        yield* phoneDigest(["sign-in", input.flowId, input.phoneNumber, input.locale]),
-        options.policy?.requestRetentionMillis ?? defaultProofPolicy.requestRetentionMillis,
-      ))
-    )
-      return yield* PhoneOtpRejected.make({});
+  const admitSignIn = Effect.fn("PhoneOtp.admitRequest")(function* () {
+    if (!(yield* phoneAdmission(moduleId, "request"))) return yield* PhoneOtpRejected.make({});
   });
 
   const SignIn = makeOperation(`${moduleId}/sign-in`, {
@@ -191,7 +162,7 @@ export const makePhoneOtp = <
 
   const Complete = makeOperation(`${moduleId}/complete`, {
     payload: PhoneOtpComplete,
-    authorize: (input) => phoneAttemptAdmission(moduleId, input.flowId, input.reference.proofId),
+    authorize: () => phoneAttemptAdmission(moduleId),
     success: sessions.CompletionResult,
     error: Failure,
     access: "any",
@@ -206,16 +177,22 @@ export const makePhoneOtp = <
         yield* noAmbient();
         if (invocation._tag !== "Guest") return yield* PhoneOtpRejected.make({});
 
-        const issued = yield* (yield* binding.RequestBinding)
-          .issue(input.flowId)
-          .pipe(Effect.mapError(phoneFailure));
+        const issued =
+          input.requestBinding === undefined
+            ? yield* (yield* binding.RequestBinding)
+                .issue(input.flowId)
+                .pipe(Effect.mapError(phoneFailure))
+            : undefined;
 
-        const credential = issued.credentialCommands.find(
-          (command) => command._tag === "Issue" && command.slot === "request-binding",
+        const command = issued?.credentialCommands.find(
+          (value) => value._tag === "Issue" && value.slot === "request-binding",
         );
 
-        if (credential?._tag !== "Issue") return yield* PhoneOtpUnavailable.make({});
-        const current = yield* capture({ ...input, requestBinding: credential.credential });
+        const requestBinding =
+          input.requestBinding ?? (command?._tag === "Issue" ? command.credential : undefined);
+
+        if (requestBinding === undefined) return yield* PhoneOtpUnavailable.make({});
+        const current = yield* capture({ ...input, requestBinding });
         const eligible = yield* (yield* PhoneDeliveryEligibility).allowed(input.phoneNumber);
 
         const dispatch = yield* (yield* proof.Proofs)
@@ -231,7 +208,7 @@ export const makePhoneOtp = <
 
         return {
           value: { ...dispatch.receipt, flowId: input.flowId },
-          credentialCommands: issued.credentialCommands,
+          credentialCommands: issued?.credentialCommands ?? [],
         };
       }),
     ),
@@ -243,32 +220,16 @@ export const makePhoneOtp = <
         const verifiedAt = yield* DateTime.now;
         const proofs = yield* proof.Proofs;
 
-        const attempted = yield* proofs
-          .prepareAttempt({
+        const consumed = yield* proofs
+          .prepareRedeem({
             binding: current.binding,
             reference: input.reference,
             credential: input.code,
           })
           .pipe(Effect.flatMap(readProofCommit), Effect.mapError(phoneFailure));
 
-        if (attempted.value._tag !== "Accepted" || Option.isNone(current.target))
+        if (consumed !== "redeemed" || Option.isNone(current.target))
           return yield* PhoneOtpRejected.make({});
-
-        const continuation = attempted.credentialCommands.find(
-          (command) => command._tag === "Issue" && command.slot === "proof-continuation",
-        );
-
-        if (continuation?._tag !== "Issue") return yield* PhoneOtpUnavailable.make({});
-
-        const consumed = yield* proofs
-          .prepareComplete({
-            binding: current.binding,
-            continuationId: attempted.value.continuation.continuationId,
-            credential: continuation.credential,
-          })
-          .pipe(Effect.flatMap(readProofCommit), Effect.mapError(phoneFailure));
-
-        if (consumed !== "completed") return yield* PhoneOtpRejected.make({});
 
         const evidence: AuthenticationEvidence = {
           flowId: AuthenticationFlowId.make(input.flowId),
@@ -352,7 +313,7 @@ export const makePhoneOtp = <
       },
       layer.pipe(
         Layer.merge(Layer.effect(Crypto.Crypto, Crypto.Crypto)),
-        Layer.merge(Layer.effect(PhoneAdmission, PhoneAdmission)),
+        Layer.provideMerge(defaultPhoneAdmissionLayer),
       ),
       { completion: true },
     ),

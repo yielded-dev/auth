@@ -33,15 +33,16 @@ export class SqlCommitOwnerError extends Schema.TaggedError<SqlCommitOwnerError>
   },
 ) {}
 
-/** Supplied by the D1 driver; its fixed statements commit as one atomic batch. */
+/** Composition selects a D1 batch owner or explicitly supplies no batch owner. */
 export class SqlBatchCommit extends Context.Service<
   SqlBatchCommit,
-  {
-    readonly client: SqlClient.SqlClient;
-    readonly execute: (
-      statements: ReadonlyArray<Statement<unknown>>,
-    ) => Effect.Effect<void, SqlError>;
-  }
+  | undefined
+  | {
+      readonly client: SqlClient.SqlClient;
+      readonly execute: (
+        statements: ReadonlyArray<Statement<unknown>>,
+      ) => Effect.Effect<void, SqlError>;
+    }
 >()("@yielded/auth-persistence/SqlBatchCommit") {}
 
 /** Platform ownership for databases requiring a transaction isolation policy. */

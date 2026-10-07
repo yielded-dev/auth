@@ -126,7 +126,7 @@ export const makePasskeyMapped = Effect.fnUntraced(function* <M, R>(
 
   const batch = {
     client: database.$client,
-    execute: (statements: Parameters<SqlBatchCommit["Service"]["execute"]>[0]) =>
+    execute: (statements: Parameters<NonNullable<SqlBatchCommit["Service"]>["execute"]>[0]) =>
       database.$client.batch(statements).pipe(Effect.asVoid),
   };
 
