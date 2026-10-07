@@ -1,7 +1,4 @@
-import type {
-  NativeDatabase,
-  PasswordRegistrationAuthority,
-} from "@yielded/auth-persistence/Adapter";
+import type { PasswordRegistrationAuthority } from "@yielded/auth-persistence/Adapter";
 import {
   coordinateCommit,
   CurrentCommitJournal,
@@ -23,12 +20,13 @@ import { and, eq } from "drizzle-orm";
 import { Cause, Effect, Schema } from "effect";
 
 import { column, isMappedConstraintConflict, PersistenceMappingError } from "./model";
+import type { NativeDatabase, NativeSqlQuery } from "./native-database";
 import {
   type AnyPasswordRegistrationMapping,
   requiredPasswordRegistrationConstraints,
 } from "./password-model";
-import { CurrentPasswordSql, type PasswordSqlQuery } from "./password-sql";
-import { CurrentProofSql, type ProofSqlDatabase } from "./proof-sql";
+import { CurrentPasswordSql } from "./password-sql";
+import { CurrentProofSql } from "./proof-sql";
 import { validateDrizzleStorage } from "./storage-validation";
 
 type Mapping<Registration> = AnyPasswordRegistrationMapping<Registration>;
@@ -52,7 +50,7 @@ export interface PasswordRegistrationConfiguration {
   readonly locking: boolean;
   readonly standaloneGuard: Effect.Effect<void, PasswordUnavailable>;
   readonly coordinated?: boolean;
-  readonly generatedSubjectRows: (query: PasswordSqlQuery) => PasswordSqlQuery;
+  readonly generatedSubjectRows: (query: NativeSqlQuery) => NativeSqlQuery;
 }
 
 const validConstraints = <Registration>(mapping: Mapping<Registration>) =>
@@ -61,7 +59,7 @@ const validConstraints = <Registration>(mapping: Mapping<Registration>) =>
       mapping.constraints[key as keyof typeof requiredPasswordRegistrationConstraints] === value,
   );
 
-const selectRows = (query: PasswordSqlQuery, locking: boolean) =>
+const selectRows = (query: NativeSqlQuery, locking: boolean) =>
   locking && typeof query.for === "function" ? query.for("update") : query;
 
 const allocate = <A>(
@@ -123,7 +121,6 @@ const registerIn = Effect.fn("DrizzlePasswordRegistration.registerIn")(function*
     readonly credentialRevision: any;
     readonly verifierVersion: any;
     readonly nativeSubjectId?: unknown;
-    readonly recoveryReference?: any;
   },
   prepare: PreparePasswordCommit<PasswordRegistrationDecision, A>,
 ) {
@@ -148,19 +145,6 @@ const registerIn = Effect.fn("DrizzlePasswordRegistration.registerIn")(function*
     replacement: input.replacement,
   };
 
-  if (mapping.mode === "pending") {
-    if (allocated.recoveryReference === undefined) return yield* unavailable();
-    const receipt = prepare({ _tag: "Pending", reference: allocated.recoveryReference }, journal);
-
-    yield* database.insert(mapping.registration.table).values(
-      mapping.registration.encodeInsert(intent, {
-        state: "pending",
-        recoveryReference: allocated.recoveryReference,
-      }),
-    );
-
-    return receipt;
-  }
   let nativeSubjectId = allocated.nativeSubjectId;
 
   const subjectInsert = database.insert(mapping.subject.table).values(
@@ -267,7 +251,7 @@ export const makeSqlPasswordRegistrationAuthority = Effect.fn(
         );
 
         const nativeSubjectId =
-          mapping.mode !== "atomic" || mapping.provisioning.idMode === "generated"
+          mapping.provisioning.idMode === "generated"
             ? undefined
             : yield* allocate(
                 configuration.mode,
@@ -275,38 +259,26 @@ export const makeSqlPasswordRegistrationAuthority = Effect.fn(
                 mapping.provisioning.allocateSubjectIdSync,
               );
 
-        const recoveryReference =
-          mapping.mode === "pending"
-            ? yield* allocate(
-                configuration.mode,
-                mapping.allocateRecoveryReference,
-                mapping.allocateRecoveryReferenceSync,
-              )
-            : undefined;
-
-        const run = coordinateCommit(
-          () =>
-            database.transaction((transaction) =>
-              registerIn(
-                mapping,
-                configuration,
-                input,
-                {
-                  credentialId,
-                  securityRevision,
-                  identifierRevision,
-                  credentialRevision,
-                  verifierVersion,
-                  ...(nativeSubjectId === undefined ? {} : { nativeSubjectId }),
-                  ...(recoveryReference === undefined ? {} : { recoveryReference }),
-                },
-                prepare,
-              ).pipe(
-                Effect.provideService(CurrentPasswordSql, transaction),
-                Effect.provideService(CurrentProofSql, transaction as unknown as ProofSqlDatabase),
-              ),
+        const run = coordinateCommit(() =>
+          database.transaction((transaction) =>
+            registerIn(
+              mapping,
+              configuration,
+              input,
+              {
+                credentialId,
+                securityRevision,
+                identifierRevision,
+                credentialRevision,
+                verifierVersion,
+                ...(nativeSubjectId === undefined ? {} : { nativeSubjectId }),
+              },
+              prepare,
+            ).pipe(
+              Effect.provideService(CurrentPasswordSql, transaction),
+              Effect.provideService(CurrentProofSql, transaction),
             ),
-          { mode: configuration.mode },
+          ),
         ).pipe(Effect.map((result) => result.value));
 
         const guarded =
@@ -329,32 +301,27 @@ export const makeSqlPasswordRegistrationAuthority = Effect.fn(
               (cause.reasons.every(Cause.isFailReason) &&
                 isMappedConstraintConflict(mapping.isCredentialConflict, cause))
             )
-              return coordinateCommit(
-                (journal) =>
-                  database.transaction((transaction) =>
-                    Effect.gen(function* () {
-                      const row = (yield* registrationRows(
-                        mapping,
-                        input.moduleId,
-                        input.requestId,
-                        configuration.locking,
-                      ))[0];
+              return coordinateCommit((journal) =>
+                database.transaction((transaction) =>
+                  Effect.gen(function* () {
+                    const row = (yield* registrationRows(
+                      mapping,
+                      input.moduleId,
+                      input.requestId,
+                      configuration.locking,
+                    ))[0];
 
-                      const decision =
-                        row === undefined
-                          ? ({ _tag: "Suppressed" } as const)
-                          : yield* mapping.registration.decodeReplay(row);
+                    const decision =
+                      row === undefined
+                        ? ({ _tag: "Suppressed" } as const)
+                        : yield* mapping.registration.decodeReplay(row);
 
-                      return prepare(decision, journal);
-                    }).pipe(
-                      Effect.provideService(CurrentPasswordSql, transaction),
-                      Effect.provideService(
-                        CurrentProofSql,
-                        transaction as unknown as ProofSqlDatabase,
-                      ),
-                    ),
+                    return prepare(decision, journal);
+                  }).pipe(
+                    Effect.provideService(CurrentPasswordSql, transaction),
+                    Effect.provideService(CurrentProofSql, transaction),
                   ),
-                { mode: configuration.mode },
+                ),
               ).pipe(Effect.map((result) => result.value));
 
             return Effect.failCause(cause);

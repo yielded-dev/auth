@@ -1,5 +1,5 @@
-import { NativeDatabase } from "@yielded/auth-persistence/Adapter";
-import { LifecycleHooks } from "@yielded/auth/Hooks";
+import { randomId } from "@yielded/auth-persistence/Adapter";
+import { CurrentCommitJournal, LifecycleHooks } from "@yielded/auth/Hooks";
 import {
   PhoneConfigurationError,
   PhoneLifecyclePolicy,
@@ -18,11 +18,10 @@ import { sql, type Table } from "drizzle-orm";
 import { type Crypto, Context, Effect, Schema } from "effect";
 import type { Statement } from "effect/sql/Statement";
 
-import { randomId } from "./crypto";
 import { CurrentD1PlanningDatabase } from "./d1-planning";
 import { compileD1ProofCompletionPlan } from "./d1-proofs";
 import type { PersistenceMappingError } from "./model";
-import { nativeDatabase } from "./native-database";
+import { NativeDatabase, nativeDatabase } from "./native-database";
 import {
   phoneProofs,
   type PhoneMapping,
@@ -166,7 +165,7 @@ const services = Effect.fnUntraced(function* (
                 candidate = yield* preparePhoneMutation(mapping, input);
 
               if (candidate.mutate === undefined) {
-                const receipt = prepare(candidate.decision, owner.journal);
+                const receipt = prepare(candidate.decision, yield* CurrentCommitJournal);
 
                 owner.guards.push(receipt as any);
 
@@ -215,7 +214,7 @@ const services = Effect.fnUntraced(function* (
                   (x) => x,
                 ).pipe(Effect.provideService(CurrentD1PlanningDatabase, owner.database));
 
-                // Mutation observations describe an accepted plan. A stale proof aborts this owner.
+                // Mutation snapshots describe an accepted plan. A stale proof aborts this owner.
                 invariant(compiled.statements.length !== 0);
                 owner.statements.push(...compiled.statements, ...(compiled.postconditions ?? []));
                 receipt = compiled.receipt;
@@ -241,7 +240,13 @@ const services = Effect.fnUntraced(function* (
                 invariant(observed.rows.length === 1);
                 const record = yield* cn.decode(observed.rows[0]!);
 
-                observed.rows = observed.rows.map((row) => ({ ...row, [cn.consumed]: true }));
+                owner.postconditions.push(
+                  ...owner.matchRows(
+                    cn.table,
+                    observed.where,
+                    observed.rows.map((row) => ({ ...row, [cn.consumed]: true })),
+                  ),
+                );
                 const command = phoneProofs(mapping.proofs).command;
 
                 owner.postconditions.push(
@@ -249,6 +254,10 @@ const services = Effect.fnUntraced(function* (
                   sql`exists(select 1 from ${command.table} where ${equal(command.table, { [command.moduleId]: input.completion.input.moduleId, [command.commandId]: input.completion.input.continuationDigest, [command.kind]: "complete", [command.decision]: "completed", [command.retentionUntil]: phoneProofs(mapping.proofs).encodeInstant(record.expiresAtMillis) })})`,
                 );
               }
+              if (!completed)
+                owner.postconditions.push(
+                  ...owner.matchRows(cn.table, observed.where, observed.rows),
+                );
               invariant(receipt?._tag === "PreparedCommit");
               owner.guards.push(receipt as any);
 

@@ -1,10 +1,4 @@
 import {
-  CurrentPasswordPreparedTransaction,
-  type NativeDatabase,
-  type PasswordPreparedPostcondition,
-  PasswordPreparedPostconditions,
-} from "@yielded/auth-persistence/Adapter";
-import {
   coordinateCommit,
   hasCommitScope,
   LifecycleHooks,
@@ -16,6 +10,12 @@ import { Cause, type Context, Effect, Layer } from "effect";
 import type * as SqlError from "effect/sql/SqlError";
 
 import {
+  CurrentMutationTransaction,
+  MutationPostconditions,
+  type MutationPostcondition,
+} from "./mutation-postconditions";
+import type { NativeDatabase, NativeSqlDatabase, NativeSqlQuery } from "./native-database";
+import {
   makeSqlPasswordRegistrationAuthority,
   type PasswordRegistrationAuthority,
   type PasswordRegistrationConfiguration,
@@ -24,8 +24,6 @@ import {
   CurrentPasswordSql,
   makeSqlPasswordPersistence,
   type PasswordSqlConfiguration,
-  type PasswordSqlDatabase,
-  type PasswordSqlQuery,
 } from "./password-sql";
 import type { ProofTargetConfiguration } from "./proof-target";
 import { sqlClientStandaloneGuard, type TransactionService } from "./standalone-guard";
@@ -34,14 +32,15 @@ import { validateDrizzleStorage } from "./storage-validation";
 export interface PasswordTargetConfiguration {
   readonly mode: "interactive" | "synchronous";
   readonly locking: boolean;
+  readonly maxParameters?: number;
   readonly standaloneGuard: Effect.Effect<void, PasswordUnavailable>;
   readonly coordinatorGuard?: Effect.Effect<void, PasswordUnavailable>;
   readonly insertIfAbsent: (
-    query: PasswordSqlQuery,
+    query: NativeSqlQuery,
     selfKey: string,
     selfValue: unknown,
-  ) => PasswordSqlQuery;
-  readonly generatedSubjectRows: (query: PasswordSqlQuery) => PasswordSqlQuery;
+  ) => NativeSqlQuery;
+  readonly generatedSubjectRows: (query: NativeSqlQuery) => NativeSqlQuery;
   readonly proof: ProofTargetConfiguration;
 }
 
@@ -69,6 +68,9 @@ export const passwordOptions = (
 ): PasswordSqlConfiguration => ({
   mode: configuration.mode,
   locking: configuration.locking,
+  ...(configuration.maxParameters === undefined
+    ? {}
+    : { maxParameters: configuration.maxParameters }),
 
   standaloneGuard: !coordinated ? configuration.standaloneGuard : Effect.void,
   insertIfAbsent: configuration.insertIfAbsent,
@@ -81,6 +83,9 @@ export const passwordOptions = (
           configuration: {
             mode: configuration.proof.mode,
             locking: configuration.proof.locking,
+            ...(configuration.proof.maxParameters === undefined
+              ? {}
+              : { maxParameters: configuration.proof.maxParameters }),
 
             standaloneGuard: Effect.void,
 
@@ -155,56 +160,54 @@ export const coordinateTargetPasswordPersistence = <Transaction, A, E, R>(
       Effect.mapError(() => PasswordUnavailable.make({})),
     );
 
-    const result = yield* coordinateCommit(
-      () =>
-        database.transaction((transaction) =>
-          Effect.gen(function* () {
-            const postconditions: Array<PasswordPreparedPostcondition> = [];
-            let acceptingPostconditions = true;
+    const result = yield* coordinateCommit(() =>
+      database.transaction((transaction) =>
+        Effect.gen(function* () {
+          const postconditions: Array<MutationPostcondition> = [];
+          let acceptingPostconditions = true;
 
-            const value = yield* owner(transaction, {
-              passwordPersistence: yield* makeSqlPasswordPersistence(
-                mapping,
-                passwordOptions(configuration, proofMapping, true),
-              ).pipe(
-                Effect.provideService(
-                  CurrentPasswordSql,
-                  transaction as unknown as PasswordSqlDatabase,
-                ),
+          const value = yield* owner(transaction, {
+            passwordPersistence: yield* makeSqlPasswordPersistence(
+              mapping,
+              passwordOptions(configuration, proofMapping, true),
+            ).pipe(
+              Effect.provideService(
+                CurrentPasswordSql,
+                transaction as unknown as NativeSqlDatabase,
               ),
-            }).pipe(
-              Effect.provideService(PasswordPreparedPostconditions, {
-                register: (check) => {
-                  if (!acceptingPostconditions) return false;
-                  postconditions.push(check);
+            ),
+          }).pipe(
+            Effect.provideService(MutationPostconditions, {
+              register: (check) => {
+                if (!acceptingPostconditions) return false;
+                postconditions.push(check);
 
-                  return true;
-                },
+                return true;
+              },
+            }),
+            Effect.ensuring(
+              Effect.sync(() => {
+                acceptingPostconditions = false;
               }),
-              Effect.ensuring(
-                Effect.sync(() => {
-                  acceptingPostconditions = false;
-                }),
+            ),
+          );
+
+          // Application work in this transaction must not change what the
+          // password mutations committed to; a failure here rolls back both.
+          for (const check of postconditions)
+            yield* check.pipe(
+              Effect.provideService(
+                CurrentMutationTransaction,
+                transaction as unknown as NativeSqlDatabase,
+              ),
+              Effect.catchCause((cause) =>
+                Effect.failCause(Cause.map(cause, () => PasswordUnavailable.make({}))),
               ),
             );
 
-            // Application work in this transaction must not change what the
-            // password mutations committed to; a failure here rolls back both.
-            for (const check of postconditions)
-              yield* check.pipe(
-                Effect.provideService(
-                  CurrentPasswordPreparedTransaction,
-                  transaction as unknown as PasswordSqlDatabase,
-                ),
-                Effect.catchCause((cause) =>
-                  Effect.failCause(Cause.map(cause, () => PasswordUnavailable.make({}))),
-                ),
-              );
-
-            return value;
-          }),
-        ),
-      { mode: configuration.mode },
+          return value;
+        }),
+      ),
     ).pipe(Effect.provideService(LifecycleHooks, hooks));
 
     return result.value;
@@ -235,24 +238,22 @@ export const coordinateTargetPasswordRegistration = <Registration, Transaction, 
       Effect.mapError(() => PasswordUnavailable.make({})),
     );
 
-    const result = yield* coordinateCommit(
-      () =>
-        database.transaction((transaction) =>
-          Effect.gen(function* () {
-            return yield* owner(transaction, {
-              registrationAuthority: yield* makeSqlPasswordRegistrationAuthority<Registration>(
-                mapping,
-                registrationOptions(configuration, true),
-              ).pipe(
-                Effect.provideService(
-                  CurrentPasswordSql,
-                  transaction as unknown as PasswordSqlDatabase,
-                ),
+    const result = yield* coordinateCommit(() =>
+      database.transaction((transaction) =>
+        Effect.gen(function* () {
+          return yield* owner(transaction, {
+            registrationAuthority: yield* makeSqlPasswordRegistrationAuthority<Registration>(
+              mapping,
+              registrationOptions(configuration, true),
+            ).pipe(
+              Effect.provideService(
+                CurrentPasswordSql,
+                transaction as unknown as NativeSqlDatabase,
               ),
-            });
-          }),
-        ),
-      { mode: configuration.mode },
+            ),
+          });
+        }),
+      ),
     ).pipe(Effect.provideService(LifecycleHooks, hooks));
 
     return result.value;

@@ -1,4 +1,3 @@
-import type { NativeDatabase } from "@yielded/auth-persistence/Adapter";
 import {
   type PrepareEmailCommit,
   type EmailCommandId,
@@ -26,14 +25,10 @@ import {
   type AnyEmailRegistrationMapping,
   requiredEmailRegistrationConstraints,
 } from "./email-model";
-import { CurrentEmailSql, type EmailSqlDatabase, type EmailSqlQuery } from "./email-sql";
+import { CurrentEmailSql } from "./email-sql";
 import { column, isMappedConstraintConflict, PersistenceMappingError, updateValues } from "./model";
-import {
-  CurrentProofSql,
-  completeProofPlanIn,
-  type ProofSqlConfiguration,
-  type ProofSqlDatabase,
-} from "./proof-sql";
+import type { NativeDatabase, NativeSqlDatabase, NativeSqlQuery } from "./native-database";
+import { CurrentProofSql, completeProofPlanIn, type ProofSqlConfiguration } from "./proof-sql";
 import { validateDrizzleStorage } from "./storage-validation";
 
 type Mapping<Registration> = AnyEmailRegistrationMapping<Registration>;
@@ -78,26 +73,21 @@ export interface EmailRegistrationConfiguration {
   readonly locking: boolean;
   readonly standaloneGuard: Effect.Effect<void, EmailUnavailable>;
   readonly coordinated?: boolean;
-  readonly generatedSubjectRows: (query: EmailSqlQuery) => EmailSqlQuery;
+  readonly generatedSubjectRows: (query: NativeSqlQuery) => NativeSqlQuery;
   readonly proof: {
     readonly mapping: any;
     readonly configuration: ProofSqlConfiguration;
   };
 }
 
-const selectRows = (query: EmailSqlQuery, locking: boolean) =>
+const selectRows = (query: NativeSqlQuery, locking: boolean) =>
   locking && typeof query.for === "function" ? query.for("update") : query;
 
 const sameIdentifier = (left: LoginIdentifier, right: LoginIdentifier) =>
   left.namespace === right.namespace && left.value === right.value;
 
 const validConstraints = <Registration>(mapping: Mapping<Registration>) => {
-  if (
-    mapping.constraints.request !== requiredEmailRegistrationConstraints.request ||
-    mapping.constraints.pendingReference !== requiredEmailRegistrationConstraints.pendingReference
-  )
-    return false;
-  if (mapping.mode === "pending") return true;
+  if (mapping.constraints.request !== requiredEmailRegistrationConstraints.request) return false;
 
   return Object.entries(requiredEmailRegistrationConstraints).every(
     ([key, value]) =>
@@ -212,19 +202,17 @@ export const readEmailRegistrationTarget = Effect.fnUntraced(function* <Registra
 });
 
 const owned = <A, E, R>(
-  database: EmailSqlDatabase,
+  database: NativeSqlDatabase,
   configuration: EmailRegistrationConfiguration,
   body: Effect.Effect<A, E, R>,
 ) => {
-  const run = coordinateCommit(
-    () =>
-      database.transaction((transaction) =>
-        body.pipe(
-          Effect.provideService(CurrentEmailSql, transaction),
-          Effect.provideService(CurrentProofSql, transaction as unknown as ProofSqlDatabase),
-        ),
+  const run = coordinateCommit(() =>
+    database.transaction((transaction) =>
+      body.pipe(
+        Effect.provideService(CurrentEmailSql, transaction),
+        Effect.provideService(CurrentProofSql, transaction),
       ),
-    { mode: configuration.mode },
+    ),
   ).pipe(Effect.map((result) => result.value));
 
   return configuration.coordinated !== true
@@ -292,7 +280,6 @@ const registerIn = Effect.fn("DrizzleEmailRegistration.registerIn")(function* <R
     readonly identifierRevision?: SecurityRevision;
     readonly credentialRevision?: SecurityRevision;
     readonly nativeSubjectId?: unknown;
-    readonly pendingReference?: string;
   },
   prepare: PrepareEmailCommit<EmailRegistrationDecision, A>,
 ) {
@@ -311,10 +298,11 @@ const registerIn = Effect.fn("DrizzleEmailRegistration.registerIn")(function* <R
   if (!inspected.eligible || inspected.fingerprint !== input.fingerprint)
     return prepare({ _tag: "Rejected" }, journal);
 
-  const target =
-    mapping.mode === "atomic"
-      ? yield* readEmailRegistrationTarget(mapping, input.identifier, configuration.locking)
-      : undefined;
+  const target = yield* readEmailRegistrationTarget(
+    mapping,
+    input.identifier,
+    configuration.locking,
+  );
 
   if (target?._tag === "Rejected") return prepare({ _tag: "Rejected" }, journal);
   if (
@@ -346,17 +334,7 @@ const registerIn = Effect.fn("DrizzleEmailRegistration.registerIn")(function* <R
   const protectedMutation = Effect.gen(function* () {
     const transaction = yield* CurrentEmailSql;
 
-    if (mapping.mode === "pending") {
-      if (allocated.pendingReference === undefined) return false;
-      decision = { _tag: "ProvisioningPending", reference: allocated.pendingReference };
-      yield* transaction.insert(mapping.registration.table).values(
-        mapping.registration.encodeInsert(intent, {
-          state: "pending",
-          pendingReference: allocated.pendingReference,
-          retentionUntilMillis: now + mapping.retentionMillis,
-        }),
-      );
-    } else {
+    {
       if (
         allocated.credentialId === undefined ||
         allocated.securityRevision === undefined ||
@@ -458,11 +436,6 @@ const registerIn = Effect.fn("DrizzleEmailRegistration.registerIn")(function* <R
     const registrationState = column(mapping.registration.table, mapping.registration.state);
     const registrationSubject = column(mapping.registration.table, mapping.registration.subjectId);
 
-    const registrationReference = column(
-      mapping.registration.table,
-      mapping.registration.pendingReference,
-    );
-
     const registrationRetention = column(
       mapping.registration.table,
       mapping.registration.retentionUntil,
@@ -477,21 +450,16 @@ const registerIn = Effect.fn("DrizzleEmailRegistration.registerIn")(function* <R
             eq(registrationModule, input.moduleId),
             eq(registrationCommand, input.commandId),
             eq(registrationFingerprint, input.fingerprint),
-            eq(registrationState, mapping.mode === "pending" ? "pending" : "registered"),
+            eq(registrationState, "registered"),
             eq(registrationRetention, mapping.encodeInstant(now + mapping.retentionMillis)),
-            mapping.mode === "pending"
-              ? and(
-                  eq(registrationReference, allocated.pendingReference!),
-                  isNull(registrationSubject),
-                )
-              : and(eq(registrationSubject, nativeSubjectId), isNull(registrationReference)),
+            eq(registrationSubject, nativeSubjectId),
           ),
         )
         .limit(1),
       false,
     );
 
-    if (mapping.mode === "atomic" && nativeSubjectId !== undefined) {
+    if (nativeSubjectId !== undefined) {
       const subjectId = column(mapping.subject.table, mapping.subject.id);
       const identifierNamespace = column(mapping.identifier.table, mapping.identifier.namespace);
       const identifierValue = column(mapping.identifier.table, mapping.identifier.value);
@@ -610,10 +578,9 @@ const registerIn = Effect.fn("DrizzleEmailRegistration.registerIn")(function* <R
       stored !== undefined &&
       exactRegistration.length === 1 &&
       stored[mapping.registration.fingerprint] === input.fingerprint &&
-      (mapping.mode === "pending" ||
-        (nativeSubjectId !== undefined &&
-          stored[mapping.registration.subjectId] !== null &&
-          mapping.subjectId.equals(stored[mapping.registration.subjectId], nativeSubjectId)))
+      nativeSubjectId !== undefined &&
+      stored[mapping.registration.subjectId] !== null &&
+      mapping.subjectId.equals(stored[mapping.registration.subjectId], nativeSubjectId)
     );
   });
 
@@ -739,7 +706,7 @@ export const makeSqlEmailRegistrationAuthority = Effect.fn("makeSqlEmailRegistra
                   })
               : yield* mapping.inspect(inspectInput);
 
-          const atomic = mapping.mode === "atomic";
+          const atomic = true;
 
           const credentialId = atomic
             ? yield* allocate(
@@ -790,15 +757,6 @@ export const makeSqlEmailRegistrationAuthority = Effect.fn("makeSqlEmailRegistra
                 )
               : undefined;
 
-          const pendingReference =
-            mapping.mode === "pending"
-              ? yield* allocate(
-                  configuration.mode,
-                  mapping.allocatePendingReference,
-                  mapping.allocatePendingReferenceSync,
-                )
-              : undefined;
-
           const run = owned(
             database,
             configuration,
@@ -815,7 +773,6 @@ export const makeSqlEmailRegistrationAuthority = Effect.fn("makeSqlEmailRegistra
                   ...(identifierRevision === undefined ? {} : { identifierRevision }),
                   ...(credentialRevision === undefined ? {} : { credentialRevision }),
                   ...(nativeSubjectId === undefined ? {} : { nativeSubjectId }),
-                  ...(pendingReference === undefined ? {} : { pendingReference }),
                 },
                 prepare,
               );
@@ -829,11 +786,10 @@ export const makeSqlEmailRegistrationAuthority = Effect.fn("makeSqlEmailRegistra
                 isMappedConstraintConflict(mapping.isRequestConflict, cause);
 
               const conflict =
-                mapping.mode === "atomic" &&
-                ((cause.reasons.every(Cause.isFailReason) &&
+                (cause.reasons.every(Cause.isFailReason) &&
                   isMappedConstraintConflict(mapping.isIdentifierConflict, cause)) ||
-                  (cause.reasons.every(Cause.isFailReason) &&
-                    isMappedConstraintConflict(mapping.isCredentialConflict, cause)));
+                (cause.reasons.every(Cause.isFailReason) &&
+                  isMappedConstraintConflict(mapping.isCredentialConflict, cause));
 
               return request || conflict
                 ? prepareConflict(mapping, configuration, capturedInput, prepare)

@@ -36,12 +36,7 @@ const Failure = Schema.Union([EmailRejected, EmailUnavailable, EmailMethodUnsupp
 
 type Failure = typeof Failure.Type;
 
-const Success = Schema.Union([
-  Schema.TaggedStruct("RegistrationAccepted", {}),
-  Schema.TaggedStruct("ProvisioningPending", {
-    reference: Schema.NonEmptyString.check(Schema.isMaxLength(256)),
-  }),
-]);
+const Success = Schema.TaggedStruct("RegistrationAccepted", {});
 
 const AttemptSuccess = Schema.Struct({ continuation: ProofContinuation });
 
@@ -118,10 +113,9 @@ export const makeEmailRegistration = <
         { readonly fingerprint: TokenDigest; readonly eligible: boolean },
         EmailUnavailable
       >;
-      /** One physical owner consumes completion and creates subject + verified identifier
-       * + active email credential, or a protected pending reconciliation intent. No orphan
-       * subject/upsert/session issuance. Exact command/intent uniqueness prevents adopting
-       * a prior subject or replacing pending intent; pending reference is nonauthorizing.
+      /** One physical owner consumes completion and synchronously creates the subject,
+       * verified identifier and active email credential. Provision idempotently by
+       * requestId; never adopt a prior subject or issue a session in this transaction.
        */
       readonly registerWithProof: <A>(
         input: {

@@ -201,21 +201,21 @@ Without `access`, verified sign-in discards all provider tokens. The profile sel
 provider/client registration, scopes/resources, token retention, refresh limits,
 and revocation support. It does not provision accounts or select a session mode.
 
-| Service/configuration                                        | Purpose                                                              |
-| ------------------------------------------------------------ | -------------------------------------------------------------------- |
-| `OAuthSignInPersistence`                                     | Existing account links and single-use sign-in flows                  |
-| `OAuthConnectedPersistence`                                  | Grant retention, refresh, disconnect, and durable operation ordering |
-| `OAuthConnectedProtocol`                                     | The single code exchange plus refresh and revocation                 |
-| `OAuthTransactionProtector`                                  | Encrypted sign-in transaction secrets                                |
-| `OAuthConnectedTransactionProtector`                         | Connected-operation transaction secrets                              |
-| `OAuthConnectedTokenProtector`                               | Encrypted provider tokens and cleanup jobs                           |
-| `OAuthConnectedUseAuthority`, `OAuthConnectedActionEvidence` | Current permission for token use and disconnect                      |
-| `SessionClaims`, shared session services                     | Application claims and authentication completion                     |
+| Service/configuration                                        | Purpose                                              |
+| ------------------------------------------------------------ | ---------------------------------------------------- |
+| `OAuthSignInPersistence`                                     | Existing account links and single-use sign-in flows  |
+| `OAuthConnectedPersistence`                                  | Grant retention, refresh, disconnect, and cleanup    |
+| `OAuthConnectedProtocol`                                     | The single code exchange plus refresh and revocation |
+| `OAuthTransactionProtector`                                  | Encrypted sign-in transaction secrets                |
+| `OAuthConnectedTransactionProtector`                         | Connected-operation transaction secrets              |
+| `OAuthConnectedTokenProtector`                               | Encrypted provider tokens                            |
+| `OAuthConnectedUseAuthority`, `OAuthConnectedActionEvidence` | Current permission for token use and disconnect      |
+| `SessionClaims`, shared session services                     | Application claims and authentication completion     |
 
-The Drizzle connected mapping must include `signIn: { credential, flow }` pointing
-to the same tables as sign-in persistence, plus `flow.encodeSignIn`. Connected-flow
-`subjectId` must allow NULL while identity is unknown. Keep every required unique
-constraint and use the database engine's wall clock. See the
+The connected mapping's `credential` points to the same login table as sign-in
+persistence. Both workflows share actual identity ownership and subject authority.
+An unknown identity creates no reservation row. Keep the required unique keys and
+use the database engine's wall clock. See the
 [example storage](https://github.com/yielded-dev/auth/blob/main/examples/shared/oauth/storage.ts).
 
 The bound strategy exposes `access.ConnectedAccess`, `access.accessLayer`, and
@@ -224,59 +224,73 @@ passes through an application-owned scheduler when profiles support remote
 revocation. `Auth` exposes `listAccountConnections` and `disconnectAccount`; public
 completion results may include `{ connection: { grantId, profileKey } }`.
 
-Confirmed retention precedes session delivery. A lost commit response releases no
-session and never permits repeating the code. Refresh claims are single-use even
-after their deadline; unknown external outcomes remain unresolved. Retain the
-associated identities and receipts. Known losing exchanges use cohort cleanup jobs
-when supported, or discard their tokens locally when revocation is unsupported.
-Unresolved exchanges with unknown identity can block cohort cleanup for that client
-registration and require application-owned reconciliation; expiry alone is not proof
-that the provider operation did not happen.
+Confirmed retention precedes session delivery. Callback completion consumes its
+bound flow before exchanging the code. A failed or uncertain exchange, grant commit,
+or session issuance requires a new ceremony; none permits repeating that code.
+`exchangeTimeoutMillis` bounds provider work independently of persisted state.
+
+Refresh keeps one durable claim against the exact grant and token versions.
+Concurrent callers cannot take it over, even after its deadline. An unknown refresh
+outcome requires fresh authorization. A new retained sign-in or Reconnect exchanges
+a new authorization code and replaces the unresolved grant while preserving its
+connection ID. Its new version prevents a late old refresh from overwriting it.
+Provider-side token-family behavior can still affect the new authorization.
+Disconnect removes the grant independently of
+token rotation; a late refresh cannot recreate it. A token already released to a
+callback or sent to the provider remains in flight.
+
+Remote revocation is optional explicit maintenance. A profile with
+`revocation: "provider"` retains the removed grant's encrypted tokens for a bounded
+worker. Provider-wide revocation may also invalidate a later authorization; there
+is no cross-exchange ordering guarantee. Unknown revocation outcomes are not
+retried automatically.
+
+### Register and link accounts
+
+Registration retains the verified identity in a restricted intent. Your
+`RegistrationAuthority` binds the original Schema-encoded application payload,
+command, fingerprint, and stable `requestId` before synchronous provisioning.
+Exact replay returns the retained outcome without provisioning, lifecycle events,
+credential delivery, or a session. After `RegistrationAccepted`, start a fresh
+OAuth sign-in. Changing any bound application input conflicts.
+
+The SQL adapter commits application provisioning and identity ownership together.
+An external account system must resolve the same `requestId` and payload to the
+same subject. An unknown external outcome returns unavailable; reconciliation is
+application policy. A SQL rollback cannot undo an external account creation.
+
+Account linking accepts `actionProof` only at begin. `OAuthActionEvidence.verify`
+receives the exact challenge and returns accepted private evidence, a requirement,
+and its source: `{ _tag: "Proof" }` or
+`{ _tag: "Session", sessionId, authenticatedAt }`. A recent passkey step-up can
+satisfy application policy when its actual private session provenance matches the
+current subject and credential revisions. Read that provenance through the session
+module's `inspectInvocation`; public assurance ordinals are not credential IDs.
+The core checks factor age and session authentication age, rejects future times,
+and fixes the authorization deadline at begin. Completion rechecks that retained
+authorization under the committing authority without consuming another factor.
+
+Linking preserves the security revision and existing sessions. Unlinking retains
+last-login-method checks, revision changes, and session invalidation. The
+`requireImmediateInvalidation` policy applies only to unlink and requires a zero
+positive-cache window. A second unlink of an absent credential is rejected;
+absence does not prove an earlier authorized removal.
 
 ### Connect an authenticated account
 
-`OAuth.makeConnectedModule` manages provider access independently of sign-in.
-Call `Connected.prepareBegin` first: it retains the generated grant identity,
-PKCE/state, callback, profile, revisions, and expiry in native flow custody.
-Preparation returns only a public flow ID and expiry, plus a private
-`connected-intent` credential command. It cannot exchange a code or activate a grant.
+Call `Connected.begin` directly with a flow ID, callback, Connect or Reconnect
+intent, return target, and optional private action proof. The application verifier
+receives the generated exact challenge inside the operation. A confirmed begin
+returns the authorization URL and privately issues the request-binding credential.
+There is no separate prepared-intent credential or context lookup.
 
-A trusted server factor adapter calls `Connected.beginContext` with that private
-credential and the original input, verifies independent evidence for the returned
-challenge, and then calls `Connected.begin` with the same input and proof. Keep the
-challenge's flow ID, binding digest, and full revision unchanged. Re-reading a target
-must never rebind an already verified proof. `completeContext` resolves the original
-callback target; `disconnectContext` resolves the native grant and command target.
-These context methods are server-only services, not public HTTP operations. Factor
-selection, proof custody and one-time consumption remain application-owned through
-`OAuthConnectedActionEvidence`; ordinary session history is not an exact-action proof.
-
-Use the existing Operation HTTP credential mapping to keep credentials out of JSON:
-
-```ts
-const beginRoute = OperationHttpContract.route(connected.operations.Begin, {
-  path: "/auth/provider/begin",
-  credentials: {
-    preparationCredential: "connected-intent",
-    actionProof: "pending-proof",
-  },
-});
-```
-
-`Complete` maps `requestBinding` to `request-binding`; map `actionProof` to your
-private proof slot for complete and disconnect as well. Execute begin only after
-proof authorization to receive the retained authorization URL and move the original
-binder into `request-binding`. Keep flow and command IDs across retries. Duplicate
-preparations and uncertain commits never authorize issuing a replacement credential.
-Disconnect preserves its existing durable command replay and revocation receipts.
-
-Custom persistence adapters must implement `prepare` and `inspectPrepared`, and
-change `issue` to atomically promote the exact retained preparation to `Pending`.
-Use `OAuthConnectedSealedTransaction` for connected flow storage and transaction
-protectors; its bounded envelope includes the retained authorization URL.
-Unclaimed connected-management flows from before this cutover must be restarted;
-retain grants, exchange receipts and unresolved revocation work. Ordinary sign-in
-flow envelopes are unchanged.
+`Connected.complete` consumes the callback flow, then verifies its completion
+`actionProof` before the provider exchange. Connect/Reconnect keep this second
+confirmation. Map `requestBinding` to `request-binding` and any action proof to
+your private proof slot through the Operation HTTP credential mapping.
+`Connected.disconnect` binds its proof to the exact subject, grant, and grant
+version; concurrent token rotation cannot defeat removal. These operations do not
+issue a login session or upgrade assurance.
 
 ### Runnable examples
 
@@ -301,12 +315,13 @@ other identities cannot sign in. The example denies connected management actions
 until an application supplies independent exact-action evidence; ordinary session
 metadata is not treated as a fresh proof.
 
-The former OAuthApp cookie, flow, and grant format is removed. For development,
-clear its cookies and reset its flow/grant table before using shared Auth storage.
-Existing connected token envelopes also need resetting because they now bind the
-exchange order. Preserve account subject IDs, identity tuples, and any receipts or
-revocation work needed to reconcile real external credentials; the library performs
-no automatic deletion or migration.
+This pre-production change resets OAuth callback flows, registration intents,
+connected grants, and revocation jobs because their encoded contexts changed.
+Recreate their mapped tables and restart ceremonies. Preserve application subjects
+and concrete identity/login ownership; remove obsolete reservation, command,
+client, cohort, and admission tables. Reconcile any real outstanding provider work
+before resetting its local encrypted records. Proxy and OAuthServer storage are
+unchanged.
 
 ## Shared auth setup
 
@@ -499,7 +514,7 @@ ingress rate limits.
 | OIDC                    | [`OpenIdConnect.provider`](../guide/google) with issuer and credentials                                           |
 | Plain OAuth             | `OpenIdConnect.provider` with endpoints and an identity decoder                                                   |
 
-`GitHub.accessProfile` defaults to `read:user`, rotating refresh tokens, cohort
+`GitHub.accessProfile` defaults to `read:user`, rotating refresh tokens, provider
 revocation, and thirty days of local refresh retention. `Strava.accessProfile`
 requires scopes and declares unsupported remote revocation. Its adapter rechecks
 athlete identity on refresh and limits response bodies to 1 MiB. Custom Effect HTTP clients must reject redirects and
@@ -540,8 +555,7 @@ For shared auth, use `provider({ registrations: [...] })` to retain older entrie
 with `issuance: "retired"` while flows or connected grants reference them. Assign
 a new `configurationGeneration` when settings change and keep one active generation.
 Retain old callback paths until their flows expire. When moving a retained permission
-profile to another client registration, increase its profile `generation` too; client
-exchange counters are independent, and an older profile cannot replace a newer grant.
+profile to another client registration, increase its profile `generation` too; an older profile cannot replace a newer grant.
 
 Earlier GitHub adapters used the issuer `https://github.com`; the current identity
 uses `https://github.com/login/oauth`. Old bindings are not reused automatically.

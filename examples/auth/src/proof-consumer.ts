@@ -118,27 +118,25 @@ export const makeExampleProofAuthority = Effect.gen(function* () {
     Effect.gen(function* () {
       if (yield* Hooks.hasCommitScope) return yield* Proofs.ProofUnavailable.make({});
 
-      return yield* Hooks.coordinateCommit(
-        (journal) =>
-          Effect.gen(function* () {
-            const now = DateTime.toEpochMillis(yield* DateTime.now);
+      return yield* Hooks.coordinateCommit((journal) =>
+        Effect.gen(function* () {
+          const now = DateTime.toEpochMillis(yield* DateTime.now);
 
-            return yield* Effect.try({
-              try: () => {
-                const state = copy(committed);
-                const value = body(state, journal, now);
+          return yield* Effect.try({
+            try: () => {
+              const state = copy(committed);
+              const value = body(state, journal, now);
 
-                committed = state;
+              committed = state;
 
-                return value;
-              },
-              catch: (error) =>
-                Schema.is(Proofs.ProofRequestConflict)(error)
-                  ? error
-                  : Proofs.ProofUnavailable.make({}),
-            });
-          }),
-        { mode: "synchronous" },
+              return value;
+            },
+            catch: (error) =>
+              Schema.is(Proofs.ProofRequestConflict)(error)
+                ? error
+                : Proofs.ProofUnavailable.make({}),
+          });
+        }),
       ).pipe(
         Effect.map((result) => result.value),
         Effect.mapError((error) =>

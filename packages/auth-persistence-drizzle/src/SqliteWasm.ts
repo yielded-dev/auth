@@ -1,12 +1,13 @@
-import { NativeDatabase } from "@yielded/auth-persistence/Adapter";
-export { OAuthProxyPersistence } from "./internal/drizzle-sqlite-oauth-proxy";
-
 import type { AnyRelations } from "drizzle-orm";
-import { type EffectSQLiteWasmDatabase, makeWithDefaults } from "drizzle-orm/effect-sqlite-wasm";
+import {
+  EffectSQLiteWasmTransaction as PasskeyTransaction,
+  type EffectSQLiteWasmDatabase,
+  makeWithDefaults,
+} from "drizzle-orm/effect-sqlite-wasm";
 import type { AnySQLiteTable } from "drizzle-orm/sqlite-core";
 import { Context, Effect, Layer } from "effect";
 
-import { nativeDatabase } from "./drizzle/native-database";
+import { NativeDatabase, nativeDatabase } from "./drizzle/native-database";
 
 /** The application-owned Drizzle database used to construct persistence services. */
 export class Database extends Context.Service<Database, EffectSQLiteWasmDatabase<AnyRelations>>()(
@@ -133,24 +134,6 @@ export const makeExternalIdentityServices = <
     Effect.provideServiceEffect(NativeDatabase, nativeDatabase(Database)),
   );
 
-import { makeSqlitePasswordPreparedTarget } from "./drizzle/sqlite-password-prepared";
-
-const passwordPreparedTarget = makeSqlitePasswordPreparedTarget<
-  Database,
-  EffectSQLiteWasmDatabase<AnyRelations>
->(Database, (service) =>
-  sqlitePasswordConfiguration(
-    "interactive",
-    sqlClientPasswordStandaloneGuard(service),
-    sqlClientProofStandaloneGuard(service),
-  ),
-);
-
-export const { makePasswordPreparedPersistenceServices, coordinatePasswordPreparedPersistence } =
-  passwordPreparedTarget;
-
-export { passwordPreparedPersistenceLayer } from "./drizzle/password-prepared-target";
-
 import { makeOAuthTarget } from "./drizzle/oauth-drivers";
 import { sqlClientOAuthStandaloneGuard } from "./drizzle/oauth-target";
 
@@ -163,6 +146,7 @@ const oauthTarget = makeOAuthTarget<
   dialect: "sqlite",
   locking: false,
   standaloneGuard: sqlClientOAuthStandaloneGuard,
+  transactionConstructor: PasskeyTransaction,
 });
 
 export const {
@@ -181,13 +165,14 @@ export const {
 } = oauthTarget;
 
 import { makePasskeyTarget } from "./drizzle/passkey-drivers";
-import { sqlClientPasskeyStandaloneGuard } from "./drizzle/passkey-target";
+import { sqlClientPasskeyStandaloneGuard } from "./drizzle/passkey/target";
 
 const passkeyTarget = makePasskeyTarget<
   Database,
   EffectSQLiteWasmDatabase<AnyRelations>,
   AnySQLiteTable<{ dialect: "sqlite" }>
 >(Database, {
+  transactionConstructor: PasskeyTransaction,
   mode: "interactive",
   dialect: "sqlite",
   locking: false,
@@ -197,7 +182,6 @@ const passkeyTarget = makePasskeyTarget<
 export const {
   makePasskeyCredentialServices,
   makePasskeyPersistenceServices,
-  makePasskeyEnrollmentContextServices,
   makePasskeyRegistrationCeremonyServices,
   coordinatePasskeyPersistence,
   coordinatePasskeyRegistrationCeremony,
@@ -253,3 +237,5 @@ export const AuthPersistence = {
       ),
     )(options),
 };
+
+export { OAuthProxyPersistence } from "./internal/drizzle-sqlite-oauth-proxy";

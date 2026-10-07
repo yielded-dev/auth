@@ -8,14 +8,14 @@ import { type Context, Crypto, Effect, Schema } from "effect";
 
 import { PersistenceConfigurationError } from "./configuration";
 import { randomId } from "./crypto";
-import { CurrentPasswordSql } from "./password-kernel";
-import type { QueryOperations } from "./query-operations";
+import type { PersistenceOwner } from "./persistence-owner";
 import type { PasswordRegistrationAuthority } from "./registration-contract";
-import type { makeMappings } from "./storage-mapping";
+import type { PasswordRegistrationStore } from "./registration-store";
 
 class IdentifierTaken extends Schema.TaggedError<IdentifierTaken>()("IdentifierTaken", {}) {}
 
 type CreateSubject = (input: {
+  readonly requestId: string;
   readonly identifier: LoginIdentifier;
   readonly registration: unknown;
 }) => Effect.Effect<SubjectId, PasswordUnavailable>;
@@ -25,17 +25,15 @@ type CreateSubject = (input: {
  * always suppress; a public request ID never recovers a private password intent.
  */
 export const makeRegistrationAuthority = Effect.fn("makeRegistrationAuthority")(function* <R>(
-  mappings: Effect.Success<ReturnType<typeof makeMappings>>,
-  operations: QueryOperations,
+  owner: PersistenceOwner<PasswordRegistrationStore>,
   standalone: Effect.Effect<void, PasswordUnavailable>,
   provisioning: Context.Key<R, object>,
   strategy: string,
 ): Effect.fn.Return<
   PasswordRegistrationAuthority<unknown>,
   PersistenceConfigurationError,
-  LifecycleHooks | CurrentPasswordSql | Crypto.Crypto | R
+  LifecycleHooks | Crypto.Crypto | R
 > {
-  const database = yield* CurrentPasswordSql;
   const hooks = yield* LifecycleHooks;
   const crypto = yield* Crypto.Crypto;
   // Core has already decoded registration with the selected strategy's Schema;
@@ -47,9 +45,6 @@ export const makeRegistrationAuthority = Effect.fn("makeRegistrationAuthority")(
     return yield* PersistenceConfigurationError.make({
       reason: `Missing subject provisioning for ${strategy}`,
     });
-  const { and, eq, column } = operations;
-  const mapping = mappings.passwords();
-  const receipts = mappings.table("passwordRegistrations");
 
   return {
     register: (input, prepare) =>
@@ -59,112 +54,51 @@ export const makeRegistrationAuthority = Effect.fn("makeRegistrationAuthority")(
 
         const receipt = { moduleId: input.moduleId, requestId: input.requestId };
 
-        const suppress = coordinateCommit(
-          (journal) =>
-            database.transaction((tx) =>
-              Effect.gen(function* () {
-                yield* tx.insert(receipts).values(receipt).onConflictDoNothing();
+        const suppress = coordinateCommit((journal) =>
+          owner.transaction((store) =>
+            Effect.gen(function* () {
+              yield* store.reserve(receipt);
 
-                return prepare({ _tag: "Suppressed" }, journal);
-              }),
-            ),
-          { mode: "interactive" },
+              return prepare({ _tag: "Suppressed" }, journal);
+            }),
+          ),
         );
 
-        const committed = yield* coordinateCommit(
-          (journal) =>
-            database.transaction((tx) =>
-              Effect.gen(function* () {
-                const reserved = yield* tx
-                  .insert(receipts)
-                  .values(receipt)
-                  .onConflictDoNothing()
-                  .returning();
+        const committed = yield* coordinateCommit((journal) =>
+          owner.transaction((store) =>
+            Effect.gen(function* () {
+              if (!(yield* store.reserve(receipt))) return prepare({ _tag: "Suppressed" }, journal);
+              if (!(yield* store.identifierAvailable(input.identifier)))
+                return prepare({ _tag: "Suppressed" }, journal);
 
-                if (reserved.length === 0) return prepare({ _tag: "Suppressed" }, journal);
+              const subjectId = yield* createSubject({
+                requestId: input.requestId,
+                identifier: input.identifier,
+                registration: input.registration,
+              });
 
-                const identifiers = yield* tx
-                  .select()
-                  .from(mapping.identifier.table)
-                  .where(
-                    and(
-                      eq(
-                        column(mapping.identifier.table, mapping.identifier.namespace),
-                        input.identifier.namespace,
-                      ),
-                      eq(
-                        column(mapping.identifier.table, mapping.identifier.value),
-                        input.identifier.value,
-                      ),
-                    ),
-                  )
-                  .limit(1);
+              const identifierRevision = SecurityRevision.make(yield* randomId);
+              const credentialId = yield* randomId;
+              const credentialRevision = SecurityRevision.make(yield* randomId);
+              const verifierVersion = SecurityRevision.make(yield* randomId);
 
-                if (identifiers.length !== 0) return prepare({ _tag: "Suppressed" }, journal);
-
-                const subjectId = yield* createSubject({
+              if (
+                !(yield* store.bindSubject({
+                  moduleId: input.moduleId,
                   identifier: input.identifier,
-                  registration: input.registration,
-                });
+                  subjectId,
+                  replacement: input.replacement,
+                  identifierRevision,
+                  credentialId,
+                  credentialRevision,
+                  verifierVersion,
+                }))
+              )
+                return yield* IdentifierTaken.make({});
 
-                const nativeId = yield* mapping.subjectId.toNative(subjectId);
-
-                const subjects = yield* tx
-                  .select()
-                  .from(mapping.subject.table)
-                  .where(eq(column(mapping.subject.table, mapping.subject.id), nativeId))
-                  .limit(1);
-
-                if (
-                  subjects.length !== 1 ||
-                  !mapping.subject.isActiveStatus(subjects[0][mapping.subject.status])
-                )
-                  return yield* PasswordUnavailable.make({});
-                yield* Schema.decodeUnknownEffect(SecurityRevision)(
-                  subjects[0][mapping.subject.securityRevision],
-                );
-
-                const bound = yield* tx
-                  .insert(mapping.identifier.table)
-                  .values(
-                    mapping.identifier.encodeInitialInsert(
-                      input.identifier,
-                      nativeId,
-                      SecurityRevision.make(yield* randomId),
-                    ),
-                  )
-                  .onConflictDoNothing()
-                  .returning();
-
-                // A concurrent registration won the identifier. Roll back the application
-                // subject too, then persist a non-authorizing receipt in a new transaction.
-                if (bound.length !== 1) return yield* new IdentifierTaken({});
-
-                const credentialId = yield* randomId;
-                const credentialRevision = SecurityRevision.make(yield* randomId);
-
-                yield* tx.insert(mapping.credential.table).values(
-                  mapping.credential.encodeInsert({
-                    moduleId: input.moduleId,
-                    subjectId: nativeId,
-                    credentialId,
-                    credentialRevision,
-                    verifierVersion: SecurityRevision.make(yield* randomId),
-                    replacement: input.replacement,
-                  }),
-                );
-                yield* tx.insert(mapping.authorityCredential.table).values(
-                  mapping.authorityCredential.encodeInsert({
-                    subjectId: nativeId,
-                    credentialId,
-                    revision: credentialRevision,
-                  }),
-                );
-
-                return prepare({ _tag: "Created", subjectId }, journal);
-              }),
-            ),
-          { mode: "interactive" },
+              return prepare({ _tag: "Created", subjectId }, journal);
+            }),
+          ),
         ).pipe(Effect.catchTag("IdentifierTaken", () => suppress));
 
         return committed.value;

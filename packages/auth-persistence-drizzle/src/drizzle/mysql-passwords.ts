@@ -1,4 +1,3 @@
-import { NativeDatabase } from "@yielded/auth-persistence/Adapter";
 import type { LifecycleHooks, HookConfigurationError } from "@yielded/auth/Hooks";
 import { type PasswordUnavailable, PasswordPersistence } from "@yielded/auth/Password";
 /* oxlint-disable no-explicit-any -- proof mapping tables are independently typed by the proof owner; this driver forwards them unchanged to the shared target. */
@@ -9,11 +8,11 @@ import { Effect, Context } from "effect";
 import type { SqlError } from "effect/sql/SqlError";
 
 import { Database as DatabaseService } from "./mysql-database";
-import { nativeDatabase } from "./native-database";
+import { NativeDatabase, nativeDatabase } from "./native-database";
+import type { NativeSqlQuery } from "./native-database";
 import type { PasswordPersistenceMapping, PasswordRegistrationMapping } from "./password-model";
 import type { PasswordRegistrationAuthority } from "./password-registration";
 import { CurrentPasswordSql } from "./password-sql";
-import type { PasswordSqlQuery } from "./password-sql";
 import {
   coordinateTargetPasswordPersistence,
   coordinateTargetPasswordRegistration,
@@ -22,7 +21,6 @@ import {
   sqlClientPasswordStandaloneGuard,
 } from "./password-target";
 import type { ProofPersistenceMapping } from "./proof-model";
-import type { ProofSqlQuery } from "./proof-sql";
 import { sqlClientProofStandaloneGuard } from "./proof-target";
 import {
   type TransactionService,
@@ -38,14 +36,14 @@ const configuration = (service: TransactionService | undefined) => ({
   mode: "interactive" as const,
   locking: true,
   standaloneGuard: sqlClientPasswordStandaloneGuard(service),
-  insertIfAbsent: (query: PasswordSqlQuery, selfKey: string, selfValue: unknown) =>
+  insertIfAbsent: (query: NativeSqlQuery, selfKey: string, selfValue: unknown) =>
     query.onDuplicateKeyUpdate({ set: { [selfKey]: selfValue } }),
-  generatedSubjectRows: (query: PasswordSqlQuery) => query.$returningId(),
+  generatedSubjectRows: (query: NativeSqlQuery) => query.$returningId(),
   proof: {
     mode: "interactive" as const,
     locking: true,
     standaloneGuard: sqlClientProofStandaloneGuard(service),
-    insertIfAbsent: (query: ProofSqlQuery, selfKey: string, selfValue: unknown) =>
+    insertIfAbsent: (query: NativeSqlQuery, selfKey: string, selfValue: unknown) =>
       query.onDuplicateKeyUpdate({ set: { [selfKey]: selfValue } }),
   },
 });

@@ -4,7 +4,6 @@ import type {
   PasskeyActionChallenge,
   PasskeyConfig,
   PasskeyCredentials,
-  PasskeyEnrollmentContext,
   PasskeyManagementPersistence,
   PasskeyManagementPolicy,
   PasskeyMethodPolicy,
@@ -106,6 +105,7 @@ export type Provisioning<A extends { readonly strategies: Readonly<Record<string
       ? K
       : never
   ]: (input: {
+    readonly requestId: string;
     readonly identifier: LoginIdentifier;
     readonly registration: Registration<A["strategies"][K]>;
   }) => Effect.Effect<SubjectId, PasswordUnavailable>;
@@ -137,9 +137,7 @@ export type Ports<C extends ClaimsCodec, Id extends string, A extends Definition
   | (Enabled<A, "password"> extends never ? never : PasswordPersistence)
   | KeyId<RegistrationKey<ManagedPassword<A>>>
   | (Enabled<A, "passkey"> extends never ? never : PasskeyPersistence | PasskeyCredentials)
-  | (ManagedPasskey<A> extends never
-      ? never
-      : PasskeyManagementPersistence | PasskeyEnrollmentContext)
+  | (ManagedPasskey<A> extends never ? never : PasskeyManagementPersistence)
   | (Enabled<A, "email"> extends never ? never : EmailAddressPersistence)
   | (UsesProofs<A> extends never ? never : ProofPersistence)
   | (Enabled<A, "phone"> extends never ? never : PhoneAdmission | PhoneSignInTargets);
@@ -153,17 +151,7 @@ export type Roles<C extends ClaimsCodec, Id extends string, A extends Definition
   | (ManagedPassword<A> extends never ? never : "passwordRegistrations")
   | (Enabled<A, "phone"> extends never ? never : "phoneState")
   | (Enabled<A, "email"> extends never ? never : "emailCredentials" | "emailCommands")
-  | (Enabled<A, "passkey"> extends never
-      ? never
-      :
-          | "passkeyCredentials"
-          | "passkeyOwnership"
-          | "passkeyHandles"
-          | "passkeyModules"
-          | "passkeyFlows"
-          | "passkeyAdmissions"
-          | "passkeyCharges")
-  | (ManagedPasskey<A> extends never ? never : "passkeyCommands")
+  | (Enabled<A, "passkey"> extends never ? never : "passkeyCredentials" | "passkeyFlows")
   | (UsesProofs<A> extends never ? never : ProofRoles);
 
 export interface SubjectOptions<T extends object, NativeId> {

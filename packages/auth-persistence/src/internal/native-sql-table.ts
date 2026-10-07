@@ -3,8 +3,13 @@ import type { SqlClient } from "effect/sql/SqlClient";
 import * as Statement from "effect/sql/Statement";
 
 import { PersistenceMappingError } from "./mapping-error";
+import { compileSqlExpression } from "./sql-expression";
 import { Table, identifier } from "./sql-table";
-import type { PhysicalTextColumn } from "./storage-validation";
+
+export interface PhysicalTextColumn {
+  readonly table: { readonly name: string; readonly schema?: string };
+  readonly name: string;
+}
 
 /** Capture synchronous mapping callbacks without changing SQL execution errors. */
 export const sqlMapping = <A>(thunk: () => A): Effect.Effect<A, PersistenceMappingError> =>
@@ -16,10 +21,15 @@ export const sqlMapping = <A>(thunk: () => A): Effect.Effect<A, PersistenceMappi
 /** Physical SQL representation only. Semantic row codecs and policy remain in
  * the owning mapping. Execute assembled statements without name/result transforms. */
 export interface SqlTable {
+  readonly keys: ReadonlyArray<string>;
   readonly name: Statement.Fragment;
   /** Alias reads only; writes continue to target the original physical table. */
   readonly as: (alias: string) => SqlTable;
   readonly column: (key: string) => Statement.Fragment;
+  /** Unqualified physical name for conflict targets and assignment lists. */
+  readonly columnName: (key: string) => Statement.Fragment;
+  /** Result projection, including the physical driver's result codec cast. */
+  readonly selectedColumn: (key: string) => Statement.Fragment;
   /** Optional codec-free text candidate. Physical type/collation compatibility
    * must still be checked against the database before comparing columns. */
   readonly unencodedTextColumn?: (key: string) => PhysicalTextColumn | undefined;
@@ -36,7 +46,11 @@ export interface SqlTable {
   readonly update: (values: Readonly<Record<string, unknown>>) => Statement.Fragment;
 }
 
-export type NativeSqlTables = (table: object) => SqlTable;
+export interface NativeSqlTables {
+  (table: object): SqlTable;
+  /** Compile a mapped predicate without executing it or acquiring resources. */
+  readonly expression: (value: unknown) => Statement.Fragment;
+}
 
 /** Prefixes are short ASCII identifiers so ordinal aliases cannot be truncated
  * by PostgreSQL. Callers distinguish tables by prefix, never by physical names. */
@@ -75,10 +89,10 @@ const directTable = (client: SqlClient, physical: object): SqlTable => {
   };
 
   const value = (key: string, input: unknown): Statement.Fragment => {
-    const mapped = getColumn(key);
+    getColumn(key);
 
     if (Statement.isFragment(input)) return input;
-    const encoded = input === null ? null : mapped.mapToDriverValue(input);
+    const encoded = input;
 
     return Statement.fragment([
       Statement.parameter(
@@ -99,9 +113,12 @@ const directTable = (client: SqlClient, physical: object): SqlTable => {
     const column = (key: string) => client`${reference}.${quote(getColumn(key).options.name)}`;
 
     return {
+      keys: columns.map(([key]) => key),
       name: alias === undefined ? name : client`${name} AS ${reference}`,
       as: bind,
       column,
+      columnName: (key) => quote(getColumn(key).options.name),
+      selectedColumn: column,
       unencodedTextColumn: (key) =>
         getColumn(key).options.type === "text"
           ? {
@@ -162,17 +179,21 @@ const directTable = (client: SqlClient, physical: object): SqlTable => {
 export const makeNativeSqlTables = (
   client: SqlClient,
   convert: (client: SqlClient, table: object) => SqlTable = directTable,
+  expression: NativeSqlTables["expression"] = (value) => compileSqlExpression(client, value),
 ): NativeSqlTables => {
   const tables = new WeakMap<object, SqlTable>();
 
-  return (table) => {
-    const existing = tables.get(table);
+  return Object.assign(
+    (table: object) => {
+      const existing = tables.get(table);
 
-    if (existing !== undefined) return existing;
-    const mapped = convert(client, table);
+      if (existing !== undefined) return existing;
+      const mapped = convert(client, table);
 
-    tables.set(table, mapped);
+      tables.set(table, mapped);
 
-    return mapped;
-  };
+      return mapped;
+    },
+    { expression },
+  );
 };

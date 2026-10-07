@@ -8,19 +8,19 @@ import {
   AuthenticationRequirement,
   AuthenticationProof,
   AssuranceAlternative,
+  SessionId,
 } from "../sessions/models";
 import {
-  OAuthClaimId,
   OAuthCredentialSnapshot,
   OAuthInstant,
   OAuthModuleId,
   OAuthSealedTransaction,
+  OAuthSignInAccess,
   OAuthSignInBegin,
   OAuthSignInComplete,
   OAuthSignInPolicy,
   OAuthSignInTransactionContext,
   OAuthCommandId,
-  OAuthVerifiedExternalIdentity,
 } from "./signInModels";
 
 export class OAuthActionRequired extends Schema.TaggedError<OAuthActionRequired>()(
@@ -31,6 +31,7 @@ export class OAuthActionRequired extends Schema.TaggedError<OAuthActionRequired>
 export const OAuthAccountsPolicy = Schema.Struct({
   ...OAuthSignInPolicy.fields,
   maximumEvidenceAgeMillis: Schema.Int.check(Schema.isBetween({ minimum: 1000, maximum: 300000 })),
+  /** Applies only to unlink, including any positive session-cache window. */
   requireImmediateInvalidation: Schema.Boolean,
 });
 
@@ -43,42 +44,12 @@ export const OAuthActionDigest = TokenDigest.check(
 export const OAuthAccountRevision = OAuthCredentialSnapshot.fields.revision;
 export type OAuthAccountRevision = typeof OAuthAccountRevision.Type;
 
-export const OAuthLinkTransactionContext = Schema.Struct({
-  ...OAuthSignInTransactionContext.fields,
-  namespace: Schema.Literal("effect-auth/oauth-link-context/v1"),
-  revision: OAuthAccountRevision,
-  maximumEvidenceAgeMillis: OAuthAccountsPolicy.fields.maximumEvidenceAgeMillis,
-});
-
-export type OAuthLinkTransactionContext = typeof OAuthLinkTransactionContext.Type;
-
-export const OAuthLinkPendingFlow = Schema.Struct({
-  context: OAuthLinkTransactionContext,
-  sealed: OAuthSealedTransaction,
-  retentionUntilMillis: OAuthInstant,
-});
-
-export type OAuthLinkPendingFlow = typeof OAuthLinkPendingFlow.Type;
-
-export const OAuthLinkClaim = Schema.Struct({
-  flow: OAuthLinkPendingFlow,
-  claimId: OAuthClaimId,
-  claimedAtMillis: OAuthInstant,
-  claimExpiresAtMillis: OAuthInstant,
-});
-
-export type OAuthLinkClaim = typeof OAuthLinkClaim.Type;
-
 const proof = Schema.optionalKey(
   Schema.RedactedFromValue(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(16384))),
 );
 
 export const OAuthLinkBegin = Schema.Struct({ ...OAuthSignInBegin.fields, actionProof: proof });
-
-export const OAuthLinkComplete = Schema.Struct({
-  ...OAuthSignInComplete.fields,
-  actionProof: proof,
-});
+export const OAuthLinkComplete = Schema.Struct({ ...OAuthSignInComplete.fields });
 
 export const OAuthUnlink = Schema.Struct({
   commandId: OAuthCommandId,
@@ -88,19 +59,33 @@ export const OAuthUnlink = Schema.Struct({
 
 export const OAuthActionChallenge = Schema.Struct({
   moduleId: OAuthModuleId,
-  action: Schema.Literals(["link-begin", "link-complete", "unlink"]),
+  action: Schema.Literals(["link-begin", "unlink"]),
   flowId: RequestBindingFlowId,
-  commandId: OAuthCommandId,
   revision: OAuthAccountRevision,
-  /** Hash of the exact link context or unlink credential; no client authority. */
+  /** Hash of the exact pre-authorization link intent or unlink credential. */
   intentDigest: OAuthActionDigest,
   bindingDigest: OAuthActionDigest,
 });
 
 export type OAuthActionChallenge = typeof OAuthActionChallenge.Type;
 
+/** Session is accepted only with its exact private provenance, validated by the
+ * application authority. Public assurance ordinals never identify credentials. */
+export const OAuthActionSource = Schema.Union([
+  Schema.TaggedStruct("Proof", {}),
+  Schema.TaggedStruct("Session", {
+    sessionId: SessionId.check(Schema.isMaxLength(256)),
+    authenticatedAt: Schema.DateTimeUtcFromMillis,
+  }),
+]);
+
+export type OAuthActionSource = typeof OAuthActionSource.Type;
+
 export const OAuthActionAuthorization = Schema.Struct({
   challenge: OAuthActionChallenge,
+  source: OAuthActionSource,
+  /** Fixed at the accepted action; completion never refreshes its lifetime. */
+  validUntilMillis: OAuthInstant,
   evidence: Schema.Struct({
     ...AuthenticationEvidence.fields,
     revision: OAuthAccountRevision,
@@ -129,20 +114,36 @@ export const OAuthActionAuthorization = Schema.Struct({
 
 export type OAuthActionAuthorization = typeof OAuthActionAuthorization.Type;
 
-export const OAuthLinked = Schema.Union([
-  Schema.TaggedStruct("Linked", {
-    credentialId: OAuthCredentialSnapshot.fields.credentialId,
-    changed: Schema.Literal(true),
-    returnTarget: OAuthLinkTransactionContext.fields.returnTarget,
-    invalidation: SessionInvalidationWindow,
-  }),
-  Schema.TaggedStruct("Linked", {
-    credentialId: OAuthCredentialSnapshot.fields.credentialId,
-    changed: Schema.Literal(false),
-    returnTarget: OAuthLinkTransactionContext.fields.returnTarget,
-    invalidation: Schema.optionalKey(Schema.Never),
-  }),
-]);
+/** Hash this intent before authorizing it; the final encrypted context then
+ * includes the accepted authorization without a self-referential digest. */
+export const OAuthLinkIntentContext = Schema.Struct({
+  ...OAuthSignInTransactionContext.fields,
+  namespace: Schema.Literal("effect-auth/oauth-link-context/v1"),
+  revision: OAuthAccountRevision,
+  maximumEvidenceAgeMillis: OAuthAccountsPolicy.fields.maximumEvidenceAgeMillis,
+});
+
+export type OAuthLinkIntentContext = typeof OAuthLinkIntentContext.Type;
+
+export const OAuthLinkTransactionContext = Schema.Struct({
+  ...OAuthLinkIntentContext.fields,
+  authorization: OAuthActionAuthorization,
+});
+
+export type OAuthLinkTransactionContext = typeof OAuthLinkTransactionContext.Type;
+
+export const OAuthLinkFlow = Schema.Struct({
+  context: OAuthLinkTransactionContext,
+  sealed: OAuthSealedTransaction,
+});
+
+export type OAuthLinkFlow = typeof OAuthLinkFlow.Type;
+
+export const OAuthLinked = Schema.TaggedStruct("Linked", {
+  credentialId: OAuthCredentialSnapshot.fields.credentialId,
+  changed: Schema.Boolean,
+  returnTarget: OAuthLinkTransactionContext.fields.returnTarget,
+});
 
 export const OAuthUnlinked = Schema.TaggedStruct("Unlinked", {
   credentialId: OAuthCredentialSnapshot.fields.credentialId,
@@ -157,58 +158,38 @@ export const OAuthLinkResult = Schema.Union([
 ]);
 
 export const OAuthLinkAccess = Schema.Struct({
-  moduleId: OAuthModuleId,
-  generation: OAuthAccountsPolicy.fields.generation,
+  ...OAuthSignInAccess.fields,
   subjectId: OAuthAccountRevision.fields.subjectId,
-  flowId: RequestBindingFlowId,
-  provider: OAuthSignInComplete.fields.provider,
-  callbackId: OAuthSignInComplete.fields.callbackId,
-  stateDigest: OAuthLinkTransactionContext.fields.stateDigest,
-  requestBindingVerifier: OAuthLinkTransactionContext.fields.requestBindingVerifier,
-  requestBindingExpiresAtMillis: OAuthInstant,
-  responseIssuer: Schema.optionalKey(OAuthLinkTransactionContext.fields.issuer),
-  nowMillis: OAuthInstant,
 });
 
 export type OAuthLinkAccess = typeof OAuthLinkAccess.Type;
 
 export const OAuthLinkIssueDecision = Schema.Union([
-  Schema.TaggedStruct("Issued", { flow: OAuthLinkPendingFlow }),
+  Schema.TaggedStruct("Issued", { flow: OAuthLinkFlow }),
   Schema.TaggedStruct("Rejected", {}),
 ]);
 
-export const OAuthLinkClaimDecision = Schema.Union([
-  Schema.TaggedStruct("Claimed", { claim: OAuthLinkClaim }),
+export const OAuthLinkConsumeDecision = Schema.Union([
+  Schema.TaggedStruct("Consumed", { flow: OAuthLinkFlow }),
   Schema.TaggedStruct("Rejected", {}),
 ]);
-
-export const OAuthLinkOutcome = Schema.Union([
-  Schema.TaggedStruct("Verified", { identity: OAuthVerifiedExternalIdentity }),
-  Schema.TaggedStruct("Cancelled", {}),
-  Schema.TaggedStruct("Rejected", {}),
-  Schema.TaggedStruct("Ambiguous", {}),
-]);
-
-export type OAuthLinkOutcome = typeof OAuthLinkOutcome.Type;
 
 export const OAuthLinkDecision = Schema.Union([
   Schema.TaggedStruct("Linked", { credential: OAuthCredentialSnapshot, changed: Schema.Boolean }),
-  Schema.TaggedStruct("Cancelled", {}),
   Schema.TaggedStruct("Rejected", {}),
   Schema.TaggedStruct("Conflict", {}),
-  Schema.TaggedStruct("Ambiguous", {}),
 ]);
 
-export const OAuthUnlinkInspection = Schema.Union([
-  Schema.TaggedStruct("Target", { credential: OAuthCredentialSnapshot }),
-  Schema.TaggedStruct("Replay", { result: OAuthUnlinked }),
-  Schema.TaggedStruct("Rejected", {}),
-  Schema.TaggedStruct("Conflict", {}),
-]);
+export const OAuthCredentialKey = Schema.Struct({
+  moduleId: OAuthModuleId,
+  subjectId: OAuthAccountRevision.fields.subjectId,
+  credentialId: OAuthCredentialSnapshot.fields.credentialId,
+});
+
+export type OAuthCredentialKey = typeof OAuthCredentialKey.Type;
 
 export const OAuthUnlinkDecision = Schema.Union([
-  Schema.TaggedStruct("Unlinked", { result: OAuthUnlinked, replayed: Schema.Boolean }),
+  Schema.TaggedStruct("Unlinked", { result: OAuthUnlinked }),
   Schema.TaggedStruct("Rejected", {}),
-  Schema.TaggedStruct("Conflict", {}),
   Schema.TaggedStruct("LastSignInMethod", {}),
 ]);

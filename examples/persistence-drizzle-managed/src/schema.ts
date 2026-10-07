@@ -64,11 +64,5 @@ export const {
   emailCredentials,
   emailCommands,
   passkeyCredentials,
-  passkeyOwnership,
-  passkeyHandles,
-  passkeyModules,
   passkeyFlows,
-  passkeyAdmissions,
-  passkeyCharges,
-  passkeyCommands,
 } = authSchema;

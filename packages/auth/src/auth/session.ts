@@ -18,6 +18,7 @@ import {
   type SessionError,
   type SessionSignOutUnavailable,
 } from "../sessions/errors";
+import { CurrentSessionInvocation, SessionVerificationCapture } from "../sessions/invocation";
 import type { SessionReadOptions, SessionSignOut } from "../sessions/models";
 import type { makeSessionModule } from "../sessions/module";
 import { AuthRequest } from "./AuthRequest";
@@ -77,6 +78,8 @@ export const makeSessionApi = <
       Context.merge(handlers),
       Context.omit(
         AuthRequest,
+        CurrentSessionInvocation,
+        SessionVerificationCapture,
         Scope.Scope,
         AuthCredentialCommandCollector,
         AuthRevealCommandCollectorService,

@@ -10,6 +10,7 @@ import { type AuthInvocation } from "../../operations/context";
 import type { AuthOperationResult } from "../../operations/credentials";
 import { makeOperation, operationGroup } from "../../operations/operation";
 import { proofRequestAdmission } from "../../proofs/admission";
+import type { ProofCompletionPlan } from "../../proofs/completion";
 import type { ProofSecretPolicy } from "../../proofs/crypto";
 import { readProofCommit } from "../../proofs/dispatch";
 import { defaultIngressLayer } from "../../proofs/HostIngressLimiter";
@@ -68,8 +69,6 @@ import {
   validatePasswordMethodPolicy,
 } from "./policy";
 import { makePasswordPreparation } from "./preparation";
-import { makePasswordPrepared } from "./prepared";
-import type { PasswordPreparedConfiguration } from "./preparedModels";
 import { makePasswordSignIn, type PasswordSignInOptions } from "./signIn";
 import {
   snapshotPasswordCredential,
@@ -88,17 +87,11 @@ const Password = Schema.RedactedFromValue(Schema.String.check(Schema.isMaxLength
 const OpaqueProof = Schema.RedactedFromValue(Schema.String.check(Schema.isMaxLength(4096)));
 const FlowId = AuthenticationFlowId.check(Schema.isMaxLength(256));
 
-const RegisterResult = Schema.Union([
-  Schema.TaggedStruct("RegistrationAccepted", {}),
-  Schema.TaggedStruct("ProvisioningPending", {
-    reference: Schema.NonEmptyString.check(Schema.isMaxLength(256)),
-  }),
-]);
+const RegisterResult = Schema.TaggedStruct("RegistrationAccepted", {});
 
 export type PasswordRegistrationDecision =
   | { readonly _tag: "Created"; readonly subjectId: SubjectId }
-  | { readonly _tag: "Suppressed" }
-  | { readonly _tag: "Pending"; readonly reference: string };
+  | { readonly _tag: "Suppressed" };
 
 const MutationResult = Schema.Struct({ invalidation: SessionInvalidationWindow });
 const Status = Schema.Struct({ hasPassword: Schema.Boolean });
@@ -157,14 +150,10 @@ const makePasswordWithManagement = <
       readonly registration: Types.Invariant<Registration["Type"]>;
     },
     {
-      /** Join application provisioning + unverified identifier + create-if-absent
-       * password under one owner, or persist a protected recovery intent and Pending.
-       * Request binding includes exact private credential intent; public requestId
-       * alone cannot adopt another request's subject. Never upsert an existing login.
-       * Every retry has a fresh salt: verifier equality cannot prove password equality.
-       * Retain the original protected intent; replays never replace it or expose its
-       * subject. Return uniform Accepted/Pending metadata or suppress the replay.
-       * A pending reference is non-authorizing and cannot resume/adopt that intent.
+      /** Join synchronous application provisioning, the unverified identifier and
+       * create-if-absent password under one owner. Provision idempotently by requestId.
+       * Never adopt or replace an existing login; suppress retries uniformly without
+       * exposing the subject or comparing salted verifiers for password equality.
        */
       readonly register: <A>(
         input: {
@@ -206,7 +195,12 @@ const makePasswordWithManagement = <
   };
 
   const AddInput = Schema.Struct(ActionInput);
-  const ChangeInput = Schema.Struct({ ...ActionInput, currentPassword: Password });
+
+  const ChangeInput = Schema.Struct({
+    ...ActionInput,
+    currentPassword: Schema.optionalKey(Password),
+  });
+
   const ResetBase = { flowId: FlowId, email: BoundedEmail };
 
   const RequestResetInput = Schema.Struct({
@@ -398,7 +392,7 @@ const makePasswordWithManagement = <
         expectedRevision: AuthenticationEvidence["revision"],
         credential?: PasswordCredentialSnapshot,
         currentPasswordEvidence?: AuthenticationEvidence,
-        recovery?: import("../../proofs/completion").ProofCompletionPlan,
+        recovery?: ProofCompletionPlan,
       ): Effect.fn.Return<Mutation, Failure> {
         expectedRevision = snapshotPasswordRevision(expectedRevision);
 
@@ -568,11 +562,7 @@ const makePasswordWithManagement = <
                     }),
                   );
 
-                return journal.prepare(
-                  decision._tag === "Pending"
-                    ? { _tag: "ProvisioningPending" as const, reference: decision.reference }
-                    : { _tag: "RegistrationAccepted" as const },
-                );
+                return journal.prepare({ _tag: "RegistrationAccepted" as const });
               },
             );
           });
@@ -589,6 +579,7 @@ const makePasswordWithManagement = <
             credential,
           });
 
+          // Session issuance rechecks the authority captured before verification.
           return yield* completion
             .prepare({
               evidence: verified.evidence,
@@ -631,23 +622,36 @@ const makePasswordWithManagement = <
 
           if (Option.isNone(existing)) return yield* PasswordRejected.make({});
 
-          const verified = yield* verifyPassword(
-            {
-              flowId: AuthenticationFlowId.make(request.commandId),
-              email: existing.value.identifier.value as Email,
-              password: request.currentPassword,
-            },
-            "change",
-            caller.subjectId,
-          );
+          const verified =
+            request.currentPassword === undefined
+              ? undefined
+              : yield* verifyPassword(
+                  {
+                    flowId: AuthenticationFlowId.make(request.commandId),
+                    email: existing.value.identifier.value as Email,
+                    password: request.currentPassword,
+                  },
+                  "change",
+                  caller.subjectId,
+                );
+
+          const credential =
+            verified?.credential ?? (yield* snapshotPasswordCredential(existing.value));
+
+          const revision =
+            verified?.evidence.revision ??
+            (yield* authority.capture(caller.subjectId, [credential.credentialId]).pipe(
+              Effect.map((capture) => capture.revision),
+              Effect.mapError(passwordCompletionFailure),
+            ));
 
           const plan = yield* planMutation(
             "change-password",
             invocation,
             request,
-            verified.evidence.revision,
-            verified.credential,
-            verified.evidence,
+            revision,
+            credential,
+            verified?.evidence,
           );
 
           const commit = Effect.gen(function* () {
@@ -924,12 +928,6 @@ const makePasswordWithManagement = <
       ),
       { completion: true },
     ),
-    prepared: (configuration: PasswordPreparedConfiguration) =>
-      makePasswordPrepared(
-        moduleId,
-        { policy: policyInput, strategy: sessions.SessionStrategy, reset: reset.Proofs },
-        configuration,
-      ),
     Passwords,
     RegistrationAuthority,
     SessionClaims,

@@ -364,7 +364,7 @@ export const prepareConnectedConfigurations = Effect.fn(
           (profile.refresh === "unsupported" ||
             profile.maximumRefreshLifetimeMillis === undefined ||
             (provider.authentication.method === "none" && profile.refresh !== "rotating"))) ||
-        (profile.revocation === "cohort" &&
+        (profile.revocation === "provider" &&
           (provider.revocation.mode === "unsupported" ||
             (provider.revocation.mode === "rfc7009" &&
               profile.retention === "access-and-refresh" &&

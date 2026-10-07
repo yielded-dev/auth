@@ -1,20 +1,77 @@
 /* oxlint-disable no-explicit-any -- this private acquisition preserves the installed native transaction; public wrappers retain its exact type. */
+import type { SqlNativeCommit } from "@yielded/auth-persistence/Adapter";
+import { PersistenceMappingError } from "@yielded/auth-persistence/Adapter";
 import { EffectMysql2Transaction } from "drizzle-orm/effect-mysql2";
-import { Effect } from "effect";
+import { Context, Effect, Option } from "effect";
 import { makeWithTransaction, type SqlClient } from "effect/sql/SqlClient";
+import type { SqlError } from "effect/sql/SqlError";
+
+interface MysqlTransactionScope {
+  readonly client: SqlClient;
+  readonly transaction: SqlClient["withTransaction"];
+  active: boolean;
+}
+
+class CurrentMysqlTransaction extends Context.Service<
+  CurrentMysqlTransaction,
+  MysqlTransactionScope
+>()("@yielded/auth-persistence-drizzle/CurrentMysqlTransaction") {}
+
+/** The native handle reuses the physical owner's exact savepoint closure. */
+export const makeMysqlTransactionHandle = (
+  database: any,
+): Effect.Effect<EffectMysql2Transaction<any, any>> =>
+  Effect.map(Effect.serviceOption(CurrentMysqlTransaction), (current) => {
+    if (Option.isNone(current))
+      throw PersistenceMappingError.make({
+        operation: "transaction",
+        cause: "MySQL transaction owner is required",
+      });
+    const scope = current.value;
+
+    class NativeTransaction extends EffectMysql2Transaction<any, any> {
+      override transaction<A, E, R>(body: (transaction: any) => Effect.Effect<A, E, R>) {
+        return Effect.gen(function* () {
+          const current = yield* Effect.serviceOption(CurrentMysqlTransaction);
+
+          if (
+            !scope.active ||
+            Option.isNone(current) ||
+            current.value !== scope ||
+            scope.client.transactionService !== database.$client.transactionService
+          )
+            return yield* Effect.die(
+              PersistenceMappingError.make({
+                operation: "transaction",
+                cause: "MySQL transaction handle escaped its owner",
+              }),
+            );
+
+          return yield* scope.transaction(
+            Effect.suspend(() =>
+              body(
+                new NativeTransaction(database.dialect, database._.session, database._.relations),
+              ),
+            ),
+          );
+        });
+      }
+    }
+
+    return new NativeTransaction(database.dialect, database._.session, database._.relations);
+  });
 
 /** Locking discovery and later SQL policy predicates must see the same current
  * authority. MySQL's default repeatable-read snapshot is unsuitable after a
  * contended authority lock. Own one connection and one-shot transaction mode;
  * the pooled connection's session default is never changed. */
-export const mysqlTransaction = <A, E, R, Failure>(
+const withMysqlTransaction = <A, E, R, Failure>(
   unavailable: () => Failure,
-  database: any,
-  body: (transaction: any) => Effect.Effect<A, E, R>,
-) =>
+  client: SqlClient,
+  body: (transaction: SqlClient["withTransaction"]) => Effect.Effect<A, E, R>,
+): Effect.Effect<A, E | Failure | SqlError, R> =>
   Effect.scoped(
     Effect.gen(function* () {
-      const client: SqlClient = database.$client;
       const connection = yield* client.reserve;
 
       // Installed @effect/sql-mysql2 ConnectionImpl exposes its reserved native
@@ -71,31 +128,24 @@ export const mysqlTransaction = <A, E, R, Failure>(
           statement(`ROLLBACK TO SAVEPOINT effect_auth_oauth_${id}`),
       });
 
-      class NativeTransaction extends EffectMysql2Transaction<any, any> {
-        override transaction<A2, E2, R2>(nested: (tx: any) => Effect.Effect<A2, E2, R2>) {
-          return transaction(
-            Effect.suspend(() =>
-              nested(
-                new NativeTransaction(database.dialect, database._.session, database._.relations),
-              ),
-            ),
-          );
-        }
-      }
-
-      const native = new NativeTransaction(
-        database.dialect,
-        database._.session,
-        database._.relations,
-      );
-
       const cleanup = statement("ROLLBACK").pipe(
         Effect.andThen(statement(`SET TRANSACTION ISOLATION LEVEL ${isolation}`)),
         Effect.onExit((exit) => (exit._tag === "Failure" ? Effect.sync(destroy) : Effect.void)),
         Effect.orDie,
       );
 
-      return yield* transaction(Effect.suspend(() => body(native))).pipe(
+      const scope: MysqlTransactionScope = { client, transaction, active: true };
+
+      return yield* transaction(
+        Effect.suspend(() => body(transaction)).pipe(
+          Effect.provideService(CurrentMysqlTransaction, scope),
+        ),
+      ).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            scope.active = false;
+          }),
+        ),
         // BEGIN/COMMIT acknowledgments can be lost after the server acted.
         // Roll back any surviving transaction before resetting one-shot mode.
         // Failed cleanup destroys the connection before its reserve is released;
@@ -103,4 +153,28 @@ export const mysqlTransaction = <A, E, R, Failure>(
         Effect.ensuring(cleanup),
       );
     }),
+  );
+
+/** Shared owner capability: one reserved connection, one-shot READ COMMITTED. */
+export const mysqlNativeCommit = (client: SqlClient): SqlNativeCommit["Service"] => ({
+  client,
+  withTransaction: (effect) =>
+    withMysqlTransaction(
+      () =>
+        PersistenceMappingError.make({
+          operation: "transaction",
+          cause: "Unable to acquire MySQL transaction ownership",
+        }),
+      client,
+      () => effect,
+    ),
+});
+
+export const mysqlTransaction = <A, E, R, Failure>(
+  unavailable: () => Failure,
+  database: any,
+  body: (transaction: any) => Effect.Effect<A, E, R>,
+): Effect.Effect<A, E | Failure | SqlError, R> =>
+  withMysqlTransaction(unavailable, database.$client, () =>
+    Effect.flatMap(makeMysqlTransactionHandle(database), body),
   );

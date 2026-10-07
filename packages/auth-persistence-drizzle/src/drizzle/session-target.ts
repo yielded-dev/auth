@@ -1,4 +1,3 @@
-import type { NativeDatabase } from "@yielded/auth-persistence/Adapter";
 import {
   coordinateCommit,
   hasCommitScope,
@@ -15,9 +14,10 @@ import {
   type SessionStepUpPersistence,
 } from "@yielded/auth/Sessions";
 /* oxlint-disable no-explicit-any -- target entrypoints restore each concrete Drizzle database/table type. */
-import { type Context, Effect, Layer } from "effect";
+import { Context, Effect, Layer } from "effect";
 import type * as SqlError from "effect/sql/SqlError";
 
+import type { NativeDatabase, NativeSqlDatabase } from "./native-database";
 import {
   makeSqlAuthenticationAuthority,
   makeSqlPendingAuthentication,
@@ -25,7 +25,6 @@ import {
   makeSqlStatefulSessions,
   makeSqlSessionStepUp,
   CurrentSessionSql,
-  type SessionSqlDatabase,
   type SessionSqlOptions,
 } from "./session-sql";
 import { sqlClientStandaloneGuard, type TransactionService } from "./standalone-guard";
@@ -120,18 +119,16 @@ const coordinate = <Transaction, Services, A, E, R>(
 
     yield* validateDrizzleStorage(mapping).pipe(Effect.mapError(() => SessionUnavailable.make({})));
 
-    const result = yield* coordinateCommit(
-      () =>
-        database.transaction((transaction) =>
-          Effect.gen(function* () {
-            const services = yield* make(transaction);
+    const result = yield* coordinateCommit(() =>
+      database.transaction((transaction) =>
+        Effect.gen(function* () {
+          const services = yield* make(transaction);
 
-            return yield* owner(transaction, services);
-          }).pipe(
-            Effect.provideService(CurrentSessionSql, transaction as unknown as SessionSqlDatabase),
-          ),
+          return yield* owner(transaction, services);
+        }).pipe(
+          Effect.provideService(CurrentSessionSql, transaction as unknown as NativeSqlDatabase),
         ),
-      { mode: configuration.mode },
+      ),
     );
 
     return result.value;
@@ -153,7 +150,7 @@ export const coordinateTargetAuthenticationAuthority = <Claims, Transaction, A, 
     (transaction) =>
       Effect.map(
         makeSqlAuthenticationAuthority<Claims>(mapping, options(configuration, true)).pipe(
-          Effect.provideService(CurrentSessionSql, transaction as unknown as SessionSqlDatabase),
+          Effect.provideService(CurrentSessionSql, transaction as unknown as NativeSqlDatabase),
         ),
         (authenticationAuthority) => ({ authenticationAuthority }),
       ),
@@ -176,7 +173,7 @@ export const coordinateTargetPendingAuthentication = <Claims, Transaction, A, E,
     (transaction) =>
       Effect.map(
         makeSqlPendingAuthentication<Claims>(mapping, options(configuration, true)).pipe(
-          Effect.provideService(CurrentSessionSql, transaction as unknown as SessionSqlDatabase),
+          Effect.provideService(CurrentSessionSql, transaction as unknown as NativeSqlDatabase),
         ),
         (pendingAuthentication) => ({ pendingAuthentication }),
       ),
@@ -201,7 +198,7 @@ export const coordinateTargetStatefulSessions = <Claims, Transaction, A, E, R>(
     mapping,
     (transaction) =>
       makeSqlStatefulSessions<Claims>(mapping, options(configuration, true)).pipe(
-        Effect.provideService(CurrentSessionSql, transaction as unknown as SessionSqlDatabase),
+        Effect.provideService(CurrentSessionSql, transaction as unknown as NativeSqlDatabase),
       ),
     owner,
   );
@@ -222,7 +219,7 @@ export const coordinateTargetSignedSessionValidity = <Transaction, A, E, R>(
     (transaction) =>
       Effect.map(
         makeSqlSignedValidity(mapping, options(configuration, true)).pipe(
-          Effect.provideService(CurrentSessionSql, transaction as unknown as SessionSqlDatabase),
+          Effect.provideService(CurrentSessionSql, transaction as unknown as NativeSqlDatabase),
         ),
         (signedSessionValidity) => ({ signedSessionValidity }),
       ),
@@ -257,14 +254,11 @@ export const statefulSessionLayers = <Claims, E, R>(
     R
   >,
 ) =>
-  Layer.merge(
-    Layer.effect(
-      module.StatefulSessionPersistence,
-      Effect.map(services, (value) => value.statefulSessionPersistence),
-    ),
-    Layer.effect(
-      module.SessionRepository,
-      Effect.map(services, (value) => value.sessionRepository),
+  Layer.effectContext(
+    Effect.map(services, (value) =>
+      Context.make(module.StatefulSessionPersistence, value.statefulSessionPersistence).pipe(
+        Context.add(module.SessionRepository, value.sessionRepository),
+      ),
     ),
   );
 
@@ -327,7 +321,7 @@ export const coordinateTargetSessionStepUp = <Claims, Id, Transaction, A, E, R>(
     (transaction) =>
       Effect.map(
         makeSqlSessionStepUp<Claims>(mapping, options(configuration, true)).pipe(
-          Effect.provideService(CurrentSessionSql, transaction as unknown as SessionSqlDatabase),
+          Effect.provideService(CurrentSessionSql, transaction as unknown as NativeSqlDatabase),
         ),
         (sessionStepUpPersistence) => ({
           sessionStepUpPersistence: target.of(sessionStepUpPersistence),

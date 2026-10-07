@@ -3,10 +3,10 @@ import { Context, Effect, Layer, Schema, type Types } from "effect";
 import type { AuthInvocation } from "../operations/context";
 import type { AuthOperationResult } from "../operations/credentials";
 import { makeOperation, operationGroup } from "../operations/operation";
-import type { AuthenticationAuthority } from "../sessions/AuthenticationAuthority";
 import type { makeSessionModule } from "../sessions/module";
 import {
   passkeyUnexpected,
+  passkeyRateLimiterLayer,
   makePasskeyCeremony,
   passkeyNoAmbient,
   readPasskeyCommit,
@@ -26,7 +26,6 @@ import {
 } from "./models";
 import type { PasskeyConfig } from "./PasskeyConfig";
 import type { PasskeyCredentials } from "./PasskeyCredentials";
-import type { PasskeyEnrollmentContext } from "./PasskeyEnrollmentContext";
 import type { PasskeyMethodPolicy } from "./policy";
 import { snapshotPasskey } from "./snapshot";
 const credential = Schema.RedactedFromValue(Schema.NonEmptyString.check(Schema.isMaxLength(16384)));
@@ -73,9 +72,7 @@ export const makePasskeyStepUp = <
       const runtime = yield* ceremony.make,
         stepUp = yield* sessions.SessionStepUp;
 
-      const services = yield* Effect.context<
-        PasskeyCredentials | PasskeyEnrollmentContext | AuthenticationAuthority
-      >();
+      const services = yield* Effect.context<PasskeyCredentials>();
 
       const target = Effect.fn("PasskeyStepUp.target")(function* (
         invocation: AuthInvocation,
@@ -173,7 +170,7 @@ export const makePasskeyStepUp = <
         }, passkeyUnexpected),
       });
     }),
-  );
+  ).pipe(Layer.provide(passkeyRateLimiterLayer));
 
   const Begin = makeOperation(`${moduleId}/passkey/step-up/begin`, {
     payload: BeginInput,

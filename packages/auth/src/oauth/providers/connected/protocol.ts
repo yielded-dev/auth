@@ -616,7 +616,7 @@ export const makeConnectedProtocolWithCompatibility = Effect.fn(
       revocation = entry.provider.revocation;
 
     if (
-      saved.profile.revocation !== "cohort" ||
+      saved.profile.revocation !== "provider" ||
       revocation.mode === "unsupported" ||
       (revocation.mode === "provider-cohort" && compatibility === undefined) ||
       (revocation.mode === "rfc7009" &&

@@ -36,8 +36,8 @@ import {
 } from "./models/password-model";
 import { requiredProofConstraints, type AnyProofPersistenceMapping } from "./models/proof-model";
 import type { StatefulSessionMapping } from "./models/session-model";
-import type { TableModel, SqlFragment } from "./query-operations";
 import { storageTables, type StorageRole } from "./storage-tables";
+import type { TableModel, SqlExpression } from "./table-model";
 
 const failure = (cause: unknown) => PersistenceMappingError.make({ operation: "decode", cause });
 
@@ -130,7 +130,7 @@ export const makeMappings = Effect.fnUntraced(function* (input: MappingInput) {
 
   const authority = () => ({ subjectId, subject, credential: authorityCredential() });
 
-  const proofs = (): AnyProofPersistenceMapping<SqlFragment> => ({
+  const proofs = (): AnyProofPersistenceMapping<SqlExpression> => ({
     constraints: requiredProofConstraints,
     encodeInstant: instant,
     decodeInstant: readInstant,
@@ -360,7 +360,7 @@ export const makeMappings = Effect.fnUntraced(function* (input: MappingInput) {
     },
   });
 
-  const passwords = (): AnyPasswordPersistenceMapping<SqlFragment> => {
+  const passwords = (): AnyPasswordPersistenceMapping<SqlExpression> => {
     const verifier = (replacement: PasswordReplacement) => ({
       verifier: Redacted.value(replacement.verifier),
       normalization: replacement.normalization,
@@ -455,7 +455,7 @@ export const makeMappings = Effect.fnUntraced(function* (input: MappingInput) {
     };
   };
 
-  const emails = (): AnyEmailAddressMapping<SqlFragment> => ({
+  const emails = (): AnyEmailAddressMapping<SqlExpression> => ({
     subjectId,
     subject,
     constraints: requiredEmailAddressConstraints,

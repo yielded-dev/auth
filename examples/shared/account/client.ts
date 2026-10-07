@@ -187,13 +187,7 @@ export const makeAccountClient = <Auth extends AccountAuth>(
       get.set(verification, null);
       get.set(recovery, null);
 
-      const result = yield* register({ ...input, requestId: yield* id }, get);
-
-      if (result._tag === "ProvisioningPending") {
-        get.set(notice, "Your registration is being processed. Please try signing in shortly.");
-
-        return;
-      }
+      yield* register({ ...input, requestId: yield* id }, get);
 
       // Registration alone grants no session; verify the supplied password normally.
       const signedIn = yield* passwordSignIn({ login: input.email, password: input.password }, get);

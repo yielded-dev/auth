@@ -9,7 +9,10 @@ import type { PasswordActionChallenge } from "./models";
 /** Independently verify action-specific evidence against this exact challenge.
  * proof means fresh independently verifiable input for THIS call. Hashing uses
  * a new salt each retry: a grant bound to an earlier challenge cannot be resumed
- * here. Such a workflow requires a separately persisted replacement intent.
+ * here. The application may instead accept recent passkey step-up assurance from
+ * invocation.assurance, using authenticatedAt and the factor actually verified
+ * within the action's maximum evidence age. Bind that evidence to this challenge;
+ * the password owner rechecks its current revisions and freshness at commit.
  * Consume replay-sensitive factor input in its OWN authority before returning.
  * A later rejected password mutation does not refund that factor; retries need
  * fresh evidence. Mere replay-counter/code consumption preserves semantic factor

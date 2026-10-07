@@ -24,9 +24,7 @@ export const makeAppAuth = (email: Email.EmailCodeOptions) =>
         policy: {
           generation: 1,
           lifetimeMillis: 300_000,
-          claimLifetimeMillis: 30_000,
-          settlementTimeoutMillis: 5_000,
-          retentionMillis: 600_000,
+          exchangeTimeoutMillis: 30_000,
         },
         registrationPolicy: {
           lifetimeMillis: 300_000,

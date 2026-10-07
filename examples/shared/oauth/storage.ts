@@ -47,10 +47,7 @@ export const identities = Mapping.table({
     provider: { name: "provider", type: "text" },
     issuer: { name: "issuer", type: "text" },
     externalSubject: { name: "externalSubject", type: "text" },
-    state: { name: "state", type: "text" },
-    version: { name: "version", type: "text" },
-    subjectId: { name: "subjectId", type: "text", nullable: true },
-    reservation: { name: "reservation", type: "text", nullable: true },
+    subjectId: { name: "subjectId", type: "text" },
   },
   unique: [["identityKey"]],
 });
@@ -73,23 +70,21 @@ export const signInFlows = Mapping.table({
   columns: {
     moduleId: { name: "moduleId", type: "text" },
     flowId: { name: "flowId", type: "text" },
-    commandId: { name: "commandId", type: "text", nullable: true },
     purpose: { name: "purpose", type: "text" },
     generation: { name: "generation", type: "integer", nullable: true },
-    state: { name: "state", type: "text", nullable: true },
-    version: { name: "version", type: "text", nullable: true },
+    provider: { name: "provider", type: "text", nullable: true },
+    callbackId: { name: "callbackId", type: "text", nullable: true },
+    issuer: { name: "issuer", type: "text", nullable: true },
+    responseIssuerMode: { name: "responseIssuerMode", type: "text", nullable: true },
+    subjectId: { name: "subjectId", type: "text", nullable: true },
     stateDigest: { name: "stateDigest", type: "text", nullable: true },
     binderVerifier: { name: "binderVerifier", type: "text", nullable: true },
     binderExpiresAt: { name: "binderExpiresAt", type: "integer", nullable: true },
     snapshot: { name: "snapshot", type: "text", nullable: true },
     issuedAt: { name: "issuedAt", type: "integer", nullable: true },
     expiresAt: { name: "expiresAt", type: "integer", nullable: true },
-    claimId: { name: "claimId", type: "text", nullable: true },
-    claimedAt: { name: "claimedAt", type: "integer", nullable: true },
-    claimExpiresAt: { name: "claimExpiresAt", type: "integer", nullable: true },
-    retentionUntil: { name: "retentionUntil", type: "integer", nullable: true },
   },
-  unique: [["moduleId", "flowId"], ["moduleId", "commandId"], ["stateDigest"]],
+  unique: [["moduleId", "flowId"], ["stateDigest"]],
 });
 
 export const connectedFlows = Mapping.table({
@@ -97,25 +92,21 @@ export const connectedFlows = Mapping.table({
   columns: {
     moduleId: { name: "moduleId", type: "text" },
     flowId: { name: "flowId", type: "text" },
-    commandId: { name: "commandId", type: "text", nullable: true },
+    purpose: { name: "purpose", type: "text" },
+    generation: { name: "generation", type: "integer", nullable: true },
+    provider: { name: "provider", type: "text", nullable: true },
+    callbackId: { name: "callbackId", type: "text", nullable: true },
+    issuer: { name: "issuer", type: "text", nullable: true },
+    responseIssuerMode: { name: "responseIssuerMode", type: "text", nullable: true },
     subjectId: { name: "subjectId", type: "text", nullable: true },
-    clientKey: { name: "clientKey", type: "text", nullable: true },
-    cohortKey: { name: "cohortKey", type: "text", nullable: true },
-    state: { name: "state", type: "text", nullable: true },
-    version: { name: "version", type: "text", nullable: true },
     stateDigest: { name: "stateDigest", type: "text", nullable: true },
+    binderVerifier: { name: "binderVerifier", type: "text", nullable: true },
+    binderExpiresAt: { name: "binderExpiresAt", type: "integer", nullable: true },
     snapshot: { name: "snapshot", type: "text", nullable: true },
-    claimId: { name: "claimId", type: "text", nullable: true },
-    claimDigest: { name: "claimDigest", type: "text", nullable: true },
-    claimOrder: { name: "claimOrder", type: "integer", nullable: true },
-    claimedAt: { name: "claimedAt", type: "integer", nullable: true },
-    claimExpiresAt: { name: "claimExpiresAt", type: "integer", nullable: true },
+    issuedAt: { name: "issuedAt", type: "integer", nullable: true },
     expiresAt: { name: "expiresAt", type: "integer", nullable: true },
-    retentionUntil: { name: "retentionUntil", type: "integer", nullable: true },
-    work: { name: "work", type: "text", nullable: true },
-    custody: { name: "custody", type: "text", nullable: true },
   },
-  unique: [["moduleId", "flowId"], ["moduleId", "commandId"], ["stateDigest"]],
+  unique: [["moduleId", "flowId"], ["stateDigest"]],
 });
 
 export const grants = Mapping.table({
@@ -125,88 +116,22 @@ export const grants = Mapping.table({
     grantId: { name: "grantId", type: "text" },
     subjectId: { name: "subjectId", type: "text" },
     identityKey: { name: "identityKey", type: "text", nullable: true },
-    activeIdentityKey: { name: "activeIdentityKey", type: "text", nullable: true },
-    clientKey: { name: "clientKey", type: "text", nullable: true },
-    cohortKey: { name: "cohortKey", type: "text", nullable: true },
     profileKey: { name: "profileKey", type: "text", nullable: true },
     grantVersion: { name: "grantVersion", type: "text", nullable: true },
     tokenVersion: { name: "tokenVersion", type: "text", nullable: true },
-    cohortGeneration: { name: "cohortGeneration", type: "text", nullable: true },
     state: { name: "state", type: "text", nullable: true },
-    version: { name: "version", type: "text", nullable: true },
-    context: { name: "context", type: "text", nullable: true },
-    sealed: { name: "sealed", type: "text", nullable: true },
+    snapshot: { name: "snapshot", type: "text", nullable: true },
     summary: { name: "summary", type: "text", nullable: true },
-    revocationJobId: { name: "revocationJobId", type: "text", nullable: true },
-    refreshWork: { name: "refreshWork", type: "text", nullable: true },
-    refreshClaim: { name: "refreshClaim", type: "text", nullable: true },
+    refreshClaimId: { name: "refreshClaimId", type: "text", nullable: true },
+    refreshNextTokenVersion: { name: "refreshNextTokenVersion", type: "text", nullable: true },
+    refreshClaimedAt: { name: "refreshClaimedAt", type: "integer", nullable: true },
     refreshClaimExpiresAt: { name: "refreshClaimExpiresAt", type: "integer", nullable: true },
-    retentionUntil: { name: "retentionUntil", type: "integer", nullable: true },
+    expiresAt: { name: "expiresAt", type: "integer", nullable: true },
   },
   unique: [
     ["moduleId", "grantId"],
-    ["moduleId", "subjectId", "profileKey", "activeIdentityKey"],
+    ["moduleId", "subjectId", "profileKey", "identityKey"],
   ],
-});
-
-export const clients = Mapping.table({
-  name: "oauth_connected_client",
-  columns: {
-    clientKey: { name: "clientKey", type: "text", nullable: true },
-    provider: { name: "provider", type: "text" },
-    issuer: { name: "issuer", type: "text" },
-    clientRegistrationId: { name: "clientRegistrationId", type: "text" },
-    counter: { name: "counter", type: "integer", nullable: true },
-    version: { name: "version", type: "text", nullable: true },
-  },
-  unique: [["clientKey"]],
-});
-
-export const cohorts = Mapping.table({
-  name: "oauth_connected_cohort",
-  columns: {
-    cohortKey: { name: "cohortKey", type: "text", nullable: true },
-    clientKey: { name: "clientKey", type: "text" },
-    identityKey: { name: "identityKey", type: "text" },
-    generation: { name: "generation", type: "text", nullable: true },
-    cutoff: { name: "cutoff", type: "integer", nullable: true },
-    state: { name: "state", type: "text", nullable: true },
-    version: { name: "version", type: "text", nullable: true },
-  },
-  unique: [["cohortKey"]],
-});
-
-export const admissions = Mapping.table({
-  name: "oauth_connected_admission",
-  columns: {
-    admissionId: { name: "admissionId", type: "text" },
-    moduleId: { name: "moduleId", type: "text" },
-    grantId: { name: "grantId", type: "text" },
-    subjectId: { name: "subjectId", type: "text" },
-    identityKey: { name: "identityKey", type: "text", nullable: true },
-    clientKey: { name: "clientKey", type: "text", nullable: true },
-    cohortKey: { name: "cohortKey", type: "text", nullable: true },
-    snapshot: { name: "snapshot", type: "text", nullable: true },
-    admittedAt: { name: "admittedAt", type: "integer", nullable: true },
-    expiresAt: { name: "expiresAt", type: "integer", nullable: true },
-    version: { name: "version", type: "text", nullable: true },
-  },
-  unique: [["admissionId"]],
-});
-
-export const commands = Mapping.table({
-  name: "oauth_connected_command",
-  columns: {
-    moduleId: { name: "moduleId", type: "text" },
-    commandId: { name: "commandId", type: "text" },
-    subjectId: { name: "subjectId", type: "text" },
-    grantId: { name: "grantId", type: "text" },
-    intent: { name: "intent", type: "text", nullable: true },
-    decision: { name: "decision", type: "text", nullable: true },
-    retentionUntil: { name: "retentionUntil", type: "integer", nullable: true },
-    version: { name: "version", type: "text", nullable: true },
-  },
-  unique: [["moduleId", "commandId"]],
 });
 
 export const revocations = Mapping.table({
@@ -216,16 +141,12 @@ export const revocations = Mapping.table({
     moduleId: { name: "moduleId", type: "text" },
     subjectId: { name: "subjectId", type: "text" },
     identityKey: { name: "identityKey", type: "text", nullable: true },
-    clientKey: { name: "clientKey", type: "text", nullable: true },
-    cohortKey: { name: "cohortKey", type: "text", nullable: true },
-    grantId: { name: "grantId", type: "text" },
     snapshot: { name: "snapshot", type: "text", nullable: true },
     state: { name: "state", type: "text", nullable: true },
     claimId: { name: "claimId", type: "text", nullable: true },
     claimedAt: { name: "claimedAt", type: "integer", nullable: true },
     claimExpiresAt: { name: "claimExpiresAt", type: "integer", nullable: true },
     retentionUntil: { name: "retentionUntil", type: "integer", nullable: true },
-    version: { name: "version", type: "text", nullable: true },
   },
   unique: [["jobId"]],
 });
@@ -243,11 +164,6 @@ export const requirement = Sessions.AuthenticationRequirement.make({
 });
 
 const policyRevision = Sessions.SecurityRevision.make("owner-v1");
-
-const order: Mapping.OAuthConnectedOrderCodec = {
-  encode: (value) => value,
-  decode: Schema.decodeUnknownSync(OAuth.OAuthInstant),
-};
 
 export const subjectId: SubjectIdCodec<string> = {
   toNative: (id) => Effect.succeed(id),
@@ -299,79 +215,58 @@ export const signInFlow = {
   table: signInFlows,
   moduleId: "moduleId",
   flowId: "flowId",
-  commandId: "commandId",
   purpose: "purpose",
   generation: "generation",
-  state: "state",
-  version: "version",
+  provider: "provider",
+  callbackId: "callbackId",
+  issuer: "issuer",
+  responseIssuerMode: "responseIssuerMode",
+  subjectId: "subjectId",
   stateDigest: "stateDigest",
   binderVerifier: "binderVerifier",
   binderExpiresAt: "binderExpiresAt",
   snapshot: "snapshot",
   issuedAt: "issuedAt",
   expiresAt: "expiresAt",
-  claimId: "claimId",
-  claimedAt: "claimedAt",
-  claimExpiresAt: "claimExpiresAt",
-  retentionUntil: "retentionUntil",
   encodeInsert: (input) => input,
 } satisfies Mapping.OAuthFlowTable<typeof signInFlows>;
 
 export const ownership = {
-  mode: "integrated",
-  tuple: {
-    table: identities,
-    identityKey: "identityKey",
-    provider: "provider",
-    issuer: "issuer",
-    externalSubject: "externalSubject",
-    state: "state",
-    version: "version",
-    subjectId: "subjectId",
-    reservation: "reservation",
-    // Only startup provisioning may introduce an identity. A verified provider
-    // response cannot expand the application's allowlist through connect.
-    encodeInsert: () => {
-      throw PersistenceMappingError.make({
-        operation: "oauth-storage.unprovisioned-identity",
-        cause: undefined,
-      });
-    },
+  table: identities,
+  identityKey: "identityKey",
+  provider: "provider",
+  issuer: "issuer",
+  externalSubject: "externalSubject",
+  subjectId: "subjectId",
+  decodeSubjectId: (row) => Schema.decodeUnknownSync(Schema.String)(row.subjectId),
+  // This example grants access only to identities provisioned at startup.
+  encodeInsert: () => {
+    throw PersistenceMappingError.make({
+      operation: "oauth-storage.unprovisioned-identity",
+      cause: undefined,
+    });
   },
-} satisfies Mapping.OAuthOwnershipMutation<typeof identities, typeof identities, string>;
+} satisfies Mapping.OAuthOwnershipTable<typeof identities, string>;
 
 const connectedFlow = {
   table: connectedFlows,
   moduleId: "moduleId",
   flowId: "flowId",
-  commandId: "commandId",
+  purpose: "purpose",
+  generation: "generation",
+  provider: "provider",
+  callbackId: "callbackId",
+  issuer: "issuer",
+  responseIssuerMode: "responseIssuerMode",
   subjectId: "subjectId",
-  clientKey: "clientKey",
-  cohortKey: "cohortKey",
-  state: "state",
-  version: "version",
   stateDigest: "stateDigest",
+  binderVerifier: "binderVerifier",
+  binderExpiresAt: "binderExpiresAt",
   snapshot: "snapshot",
-  claimId: "claimId",
-  claimDigest: "claimDigest",
-  claimOrder: "claimOrder",
-  claimedAt: "claimedAt",
-  claimExpiresAt: "claimExpiresAt",
+  issuedAt: "issuedAt",
   expiresAt: "expiresAt",
-  retentionUntil: "retentionUntil",
-  work: "work",
-  custody: "custody",
-  encodeInsert: ({ flow, subjectId }) => ({
-    moduleId: flow.context.moduleId,
-    flowId: flow.context.flowId,
-    subjectId,
-  }),
-  encodeSignIn: ({ claim }) => ({
-    moduleId: claim.flow.context.moduleId,
-    flowId: claim.flow.context.flowId,
-    subjectId: null,
-  }),
-} satisfies Mapping.OAuthConnectedFlowTable<typeof connectedFlows, string>;
+  encodeInsert: (input) => input,
+} satisfies Mapping.OAuthFlowTable<typeof connectedFlows>;
 
 const grant = {
   table: grants,
@@ -379,23 +274,17 @@ const grant = {
   grantId: "grantId",
   subjectId: "subjectId",
   identityKey: "identityKey",
-  activeIdentityKey: "activeIdentityKey",
-  clientKey: "clientKey",
-  cohortKey: "cohortKey",
   profileKey: "profileKey",
   grantVersion: "grantVersion",
   tokenVersion: "tokenVersion",
-  cohortGeneration: "cohortGeneration",
   state: "state",
-  version: "version",
-  context: "context",
-  sealed: "sealed",
+  snapshot: "snapshot",
   summary: "summary",
-  revocationJobId: "revocationJobId",
-  refreshWork: "refreshWork",
-  refreshClaim: "refreshClaim",
+  refreshClaimId: "refreshClaimId",
+  refreshNextTokenVersion: "refreshNextTokenVersion",
+  refreshClaimedAt: "refreshClaimedAt",
   refreshClaimExpiresAt: "refreshClaimExpiresAt",
-  retentionUntil: "retentionUntil",
+  expiresAt: "expiresAt",
   encodeInsert: ({ grant, subjectId }) => ({
     moduleId: grant.context.moduleId,
     grantId: grant.context.grantId,
@@ -403,92 +292,21 @@ const grant = {
   }),
 } satisfies Mapping.OAuthConnectedGrantTable<typeof grants, string>;
 
-const client = {
-  table: clients,
-  clientKey: "clientKey",
-  provider: "provider",
-  issuer: "issuer",
-  clientRegistrationId: "clientRegistrationId",
-  counter: "counter",
-  version: "version",
-  encodeInsert: (configuration) => ({
-    provider: configuration.provider,
-    issuer: configuration.issuer,
-    clientRegistrationId: configuration.profile.clientRegistrationId,
-  }),
-} satisfies Mapping.OAuthConnectedClientRegistrationTable<typeof clients>;
-
-const cohort = {
-  table: cohorts,
-  cohortKey: "cohortKey",
-  clientKey: "clientKey",
-  identityKey: "identityKey",
-  generation: "generation",
-  cutoff: "cutoff",
-  state: "state",
-  version: "version",
-  encodeInsert: (input) => input,
-} satisfies Mapping.OAuthConnectedCohortTable<typeof cohorts>;
-
-const admission = {
-  table: admissions,
-  admissionId: "admissionId",
-  moduleId: "moduleId",
-  grantId: "grantId",
-  subjectId: "subjectId",
-  identityKey: "identityKey",
-  clientKey: "clientKey",
-  cohortKey: "cohortKey",
-  snapshot: "snapshot",
-  admittedAt: "admittedAt",
-  expiresAt: "expiresAt",
-  version: "version",
-  encodeInsert: ({ admissionId, grant, subjectId }) => ({
-    admissionId,
-    moduleId: grant.context.moduleId,
-    grantId: grant.context.grantId,
-    subjectId,
-  }),
-} satisfies Mapping.OAuthConnectedAdmissionTable<typeof admissions, string>;
-
-const command = {
-  table: commands,
-  moduleId: "moduleId",
-  commandId: "commandId",
-  subjectId: "subjectId",
-  grantId: "grantId",
-  intent: "intent",
-  decision: "decision",
-  retentionUntil: "retentionUntil",
-  version: "version",
-  encodeInsert: ({ commandId, grant, subjectId }) => ({
-    commandId,
-    moduleId: grant.context.moduleId,
-    grantId: grant.context.grantId,
-    subjectId,
-  }),
-} satisfies Mapping.OAuthConnectedCommandTable<typeof commands, string>;
-
 const job = {
   table: revocations,
   jobId: "jobId",
   moduleId: "moduleId",
   subjectId: "subjectId",
   identityKey: "identityKey",
-  clientKey: "clientKey",
-  cohortKey: "cohortKey",
-  grantId: "grantId",
   snapshot: "snapshot",
   state: "state",
   claimId: "claimId",
   claimedAt: "claimedAt",
   claimExpiresAt: "claimExpiresAt",
   retentionUntil: "retentionUntil",
-  version: "version",
   encodeInsert: ({ job, subjectId }) => ({
-    jobId: job.context.jobId,
-    moduleId: job.context.token.moduleId,
-    grantId: job.context.token.grantId,
+    jobId: job.jobId,
+    moduleId: job.grant.context.moduleId,
     subjectId,
   }),
 } satisfies Mapping.OAuthConnectedRevocationJobTable<typeof revocations, string>;
@@ -502,59 +320,80 @@ const migrations = [
     "subjectId" TEXT NOT NULL, "credentialId" TEXT NOT NULL, "revision" TEXT NOT NULL, "status" TEXT NOT NULL,
     UNIQUE("subjectId", "credentialId"))`,
   `CREATE TABLE IF NOT EXISTS oauth_identity (
-    "identityKey" TEXT PRIMARY KEY NOT NULL, "provider" TEXT NOT NULL, "issuer" TEXT NOT NULL,
-    "externalSubject" TEXT NOT NULL, "state" TEXT NOT NULL, "version" TEXT NOT NULL, "subjectId" TEXT, "reservation" TEXT)`,
+    "identityKey" TEXT PRIMARY KEY NOT NULL, provider TEXT NOT NULL, issuer TEXT NOT NULL,
+    "externalSubject" TEXT NOT NULL, "subjectId" TEXT NOT NULL)`,
   `CREATE TABLE IF NOT EXISTS oauth_login (
     "moduleId" TEXT NOT NULL, "credentialId" TEXT PRIMARY KEY NOT NULL, "subjectId" TEXT NOT NULL,
-    "identityKey" TEXT NOT NULL UNIQUE, "credentialRevision" TEXT NOT NULL, "status" TEXT NOT NULL)`,
+    "identityKey" TEXT NOT NULL UNIQUE, "credentialRevision" TEXT NOT NULL, status TEXT NOT NULL)`,
   `CREATE INDEX IF NOT EXISTS oauth_login_owner ON oauth_login("identityKey", "subjectId")`,
   `CREATE TABLE IF NOT EXISTS oauth_sign_in_flow (
-    "moduleId" TEXT NOT NULL, "flowId" TEXT NOT NULL, "commandId" TEXT, "purpose" TEXT NOT NULL,
-    "generation" INTEGER, "state" TEXT, "version" TEXT, "stateDigest" TEXT, "binderVerifier" TEXT,
-    "binderExpiresAt" INTEGER, "snapshot" TEXT, "issuedAt" INTEGER, "expiresAt" INTEGER,
-    "claimId" TEXT, "claimedAt" INTEGER, "claimExpiresAt" INTEGER, "retentionUntil" INTEGER,
-    UNIQUE("moduleId", "flowId"), UNIQUE("moduleId", "commandId"), UNIQUE("stateDigest"))`,
+    "moduleId" TEXT NOT NULL,
+    "flowId" TEXT NOT NULL,
+    "purpose" TEXT NOT NULL,
+    "generation" INTEGER,
+    "provider" TEXT,
+    "callbackId" TEXT,
+    "issuer" TEXT,
+    "responseIssuerMode" TEXT,
+    "subjectId" TEXT,
+    "stateDigest" TEXT,
+    "binderVerifier" TEXT,
+    "binderExpiresAt" INTEGER,
+    "snapshot" TEXT,
+    "issuedAt" INTEGER,
+    "expiresAt" INTEGER,
+    UNIQUE("moduleId", "flowId"),
+    UNIQUE("stateDigest"))`,
   `CREATE TABLE IF NOT EXISTS oauth_connected_flow (
-    "moduleId" TEXT NOT NULL, "flowId" TEXT NOT NULL, "commandId" TEXT, "subjectId" TEXT, "clientKey" TEXT,
-    "cohortKey" TEXT, "state" TEXT, "version" TEXT, "stateDigest" TEXT, "snapshot" TEXT, "claimId" TEXT,
-    "claimDigest" TEXT, "claimOrder" INTEGER, "claimedAt" INTEGER, "claimExpiresAt" INTEGER,
-    "expiresAt" INTEGER, "retentionUntil" INTEGER, "work" TEXT, "custody" TEXT,
-    UNIQUE("moduleId", "flowId"), UNIQUE("moduleId", "commandId"), UNIQUE("stateDigest"))`,
-  `CREATE INDEX IF NOT EXISTS oauth_connected_flow_client ON oauth_connected_flow("clientKey")`,
-  `CREATE INDEX IF NOT EXISTS oauth_connected_flow_cohort ON oauth_connected_flow("cohortKey")`,
+    "moduleId" TEXT NOT NULL,
+    "flowId" TEXT NOT NULL,
+    "purpose" TEXT NOT NULL,
+    "generation" INTEGER,
+    "provider" TEXT,
+    "callbackId" TEXT,
+    "issuer" TEXT,
+    "responseIssuerMode" TEXT,
+    "subjectId" TEXT,
+    "stateDigest" TEXT,
+    "binderVerifier" TEXT,
+    "binderExpiresAt" INTEGER,
+    "snapshot" TEXT,
+    "issuedAt" INTEGER,
+    "expiresAt" INTEGER,
+    UNIQUE("moduleId", "flowId"),
+    UNIQUE("stateDigest"))`,
   `CREATE TABLE IF NOT EXISTS oauth_connected_grant (
-    "moduleId" TEXT NOT NULL, "grantId" TEXT NOT NULL, "subjectId" TEXT NOT NULL, "identityKey" TEXT,
-    "activeIdentityKey" TEXT, "clientKey" TEXT, "cohortKey" TEXT, "profileKey" TEXT, "grantVersion" TEXT,
-    "tokenVersion" TEXT, "cohortGeneration" TEXT, "state" TEXT, "version" TEXT, "context" TEXT, "sealed" TEXT,
-    "summary" TEXT, "revocationJobId" TEXT, "refreshWork" TEXT, "refreshClaim" TEXT,
-    "refreshClaimExpiresAt" INTEGER, "retentionUntil" INTEGER, UNIQUE("moduleId", "grantId"),
-    UNIQUE("moduleId", "subjectId", "profileKey", "activeIdentityKey"))`,
-  `CREATE INDEX IF NOT EXISTS oauth_connected_grant_identity ON oauth_connected_grant("identityKey")`,
-  `CREATE INDEX IF NOT EXISTS oauth_connected_grant_client ON oauth_connected_grant("clientKey")`,
-  `CREATE INDEX IF NOT EXISTS oauth_connected_grant_cohort ON oauth_connected_grant("cohortKey")`,
-  `CREATE TABLE IF NOT EXISTS oauth_connected_client (
-    "clientKey" TEXT UNIQUE, "provider" TEXT NOT NULL, "issuer" TEXT NOT NULL,
-    "clientRegistrationId" TEXT NOT NULL, "counter" INTEGER, "version" TEXT)`,
-  `CREATE TABLE IF NOT EXISTS oauth_connected_cohort (
-    "cohortKey" TEXT UNIQUE, "clientKey" TEXT NOT NULL, "identityKey" TEXT NOT NULL,
-    "generation" TEXT, "cutoff" INTEGER, "state" TEXT, "version" TEXT)`,
-  `CREATE INDEX IF NOT EXISTS oauth_connected_cohort_identity ON oauth_connected_cohort("identityKey")`,
-  `CREATE INDEX IF NOT EXISTS oauth_connected_cohort_client ON oauth_connected_cohort("clientKey")`,
-  `CREATE TABLE IF NOT EXISTS oauth_connected_admission (
-    "admissionId" TEXT PRIMARY KEY NOT NULL, "moduleId" TEXT NOT NULL, "grantId" TEXT NOT NULL,
-    "subjectId" TEXT NOT NULL, "identityKey" TEXT, "clientKey" TEXT, "cohortKey" TEXT, "snapshot" TEXT,
-    "admittedAt" INTEGER, "expiresAt" INTEGER, "version" TEXT)`,
-  `CREATE INDEX IF NOT EXISTS oauth_connected_admission_identity ON oauth_connected_admission("identityKey")`,
-  `CREATE TABLE IF NOT EXISTS oauth_connected_command (
-    "moduleId" TEXT NOT NULL, "commandId" TEXT NOT NULL, "subjectId" TEXT NOT NULL, "grantId" TEXT NOT NULL,
-    "intent" TEXT, "decision" TEXT, "retentionUntil" INTEGER, "version" TEXT, UNIQUE("moduleId", "commandId"))`,
+    "moduleId" TEXT NOT NULL,
+    "grantId" TEXT NOT NULL,
+    "subjectId" TEXT NOT NULL,
+    "identityKey" TEXT,
+    "profileKey" TEXT,
+    "grantVersion" TEXT,
+    "tokenVersion" TEXT,
+    "state" TEXT,
+    "snapshot" TEXT,
+    "summary" TEXT,
+    "refreshClaimId" TEXT,
+    "refreshNextTokenVersion" TEXT,
+    "refreshClaimedAt" INTEGER,
+    "refreshClaimExpiresAt" INTEGER,
+    "expiresAt" INTEGER,
+    UNIQUE("moduleId", "grantId"),
+    UNIQUE("moduleId", "subjectId", "profileKey", "identityKey"))`,
   `CREATE TABLE IF NOT EXISTS oauth_connected_revocation (
-    "jobId" TEXT PRIMARY KEY NOT NULL, "moduleId" TEXT NOT NULL, "subjectId" TEXT NOT NULL,
-    "identityKey" TEXT, "clientKey" TEXT, "cohortKey" TEXT, "grantId" TEXT NOT NULL, "snapshot" TEXT,
-    "state" TEXT, "claimId" TEXT, "claimedAt" INTEGER, "claimExpiresAt" INTEGER, "retentionUntil" INTEGER, "version" TEXT)`,
-  `CREATE INDEX IF NOT EXISTS oauth_connected_revocation_identity ON oauth_connected_revocation("identityKey")`,
-  `CREATE INDEX IF NOT EXISTS oauth_connected_revocation_client ON oauth_connected_revocation("clientKey")`,
-  `CREATE INDEX IF NOT EXISTS oauth_connected_revocation_cohort ON oauth_connected_revocation("cohortKey")`,
+    "jobId" TEXT NOT NULL,
+    "moduleId" TEXT NOT NULL,
+    "subjectId" TEXT NOT NULL,
+    "identityKey" TEXT,
+    "snapshot" TEXT,
+    "state" TEXT,
+    "claimId" TEXT,
+    "claimedAt" INTEGER,
+    "claimExpiresAt" INTEGER,
+    "retentionUntil" INTEGER,
+    UNIQUE("jobId"))`,
+  `CREATE INDEX IF NOT EXISTS oauth_connected_grant_identity ON oauth_connected_grant("identityKey", "subjectId")`,
+  `CREATE INDEX IF NOT EXISTS oauth_connected_revocation_identity ON oauth_connected_revocation("identityKey", "subjectId")`,
 ];
 
 // Canonical adapter identity key: SHA-256 of versioned, length-prefixed UTF-8
@@ -630,9 +469,9 @@ export const makeMappings = (options: StorageOptions) =>
         yield* sqlClient`INSERT INTO oauth_subject (id, status, "securityRevision")
             VALUES (${localSubject}, 'active', 'initial') ON CONFLICT DO NOTHING`;
         yield* sqlClient`INSERT INTO oauth_identity
-            ("identityKey", provider, issuer, "externalSubject", "subjectId", state, version, reservation)
+            ("identityKey", provider, issuer, "externalSubject", "subjectId")
             VALUES (${key}, ${identity.provider}, ${identity.issuer}, ${identity.subject},
-              ${localSubject}, 'Owned', 'initial', NULL) ON CONFLICT DO NOTHING`;
+              ${localSubject}) ON CONFLICT DO NOTHING`;
         yield* sqlClient`INSERT INTO oauth_login
             ("moduleId", "credentialId", "subjectId", "identityKey", "credentialRevision", status)
             VALUES (${moduleId}, ${credentialId}, ${localSubject}, ${key}, 'initial', 'active')
@@ -649,7 +488,6 @@ export const makeMappings = (options: StorageOptions) =>
 
         if (
           owner === undefined ||
-          owner.state !== "Owned" ||
           owner.subjectId !== localSubject ||
           owner.provider !== identity.provider ||
           owner.issuer !== identity.issuer ||
@@ -673,18 +511,7 @@ export const makeMappings = (options: StorageOptions) =>
 
     const signIn = {
       ...common,
-      ownership: {
-        table: identities,
-        identityKey: "identityKey",
-        provider: "provider",
-        issuer: "issuer",
-        externalSubject: "externalSubject",
-        subjectId: "subjectId",
-        ownedCondition: sql`${eq(identities.columns.state, "Owned")}
-          AND ${eq(identities.columns.identityKey, key)}
-          AND ${eq(identities.columns.subjectId, localSubject)}`,
-        decodeSubjectId: (row) => Schema.decodeUnknownSync(Schema.String)(row.subjectId),
-      },
+      ownership,
       credential,
       flow: signInFlow,
       constraints: Mapping.requiredOAuthSignInConstraints,
@@ -702,26 +529,17 @@ export const makeMappings = (options: StorageOptions) =>
       ownership,
       flow: connectedFlow,
       grant,
-      client,
-      cohort,
-      admission,
-      command,
-      signIn: { credential, flow: signInFlow },
-      order,
-      retentionMillis: 86_400_000,
-      tupleConstraints: Mapping.requiredOAuthTupleConstraints,
+      credential,
       constraints: Mapping.requiredOAuthConnectedConstraints,
       revocation: {
-        mode: "cohort",
+        mode: "provider",
         job,
+        retentionMillis: 86_400_000,
         constraints: Mapping.requiredOAuthConnectedRevocationConstraints,
       },
       policy: {
         condition: (input) => {
-          const configuration =
-            input.kind === "action" || input.kind === "sign-in"
-              ? input.configuration
-              : input.grant?.configuration;
+          const configuration = input.grant?.configuration;
 
           const requestedModule =
             input.kind === "sign-in"
@@ -745,22 +563,17 @@ export const makeMappings = (options: StorageOptions) =>
           )
             return sql`false`;
 
-          return sql`exists(select 1 from ${identities} where ${identities.columns.identityKey} = ${key} and ${identities.columns.subjectId} = ${localSubject} and ${identities.columns.state} = 'Owned')`;
+          return sql`exists(select 1 from ${identities} where ${identities.columns.identityKey} = ${key} and ${identities.columns.subjectId} = ${localSubject})`;
         },
       },
-      externalReference: ({ identityKey, subjectId }) =>
+      otherReferences: ({ identityKey, subjectId }) =>
         sql`exists(select 1 from ${logins} where ${eq(logins.columns.identityKey, identityKey)} and ${eq(logins.columns.subjectId, subjectId)})`,
     } satisfies Mapping.OAuthConnectedMapping<
       typeof subjects,
       typeof credentials,
       typeof identities,
-      typeof identities,
       typeof connectedFlows,
       typeof grants,
-      typeof clients,
-      typeof cohorts,
-      typeof admissions,
-      typeof commands,
       string,
       typeof revocations
     >;
@@ -796,7 +609,7 @@ export const makeServices = (mappings: Effect.Success<ReturnType<typeof makeMapp
         )
           return yield* OAuth.OAuthRejected.make({});
 
-        const current = yield* connectedServices.oauthConnectedPersistence.capture({
+        const current = yield* connectedServices.oauthConnectedPersistence.read({
           moduleId,
           subjectId: localSubject,
         });

@@ -16,8 +16,8 @@ and telemetry. Runtime dependencies are Effect and the first-party
 Supply `Password.PasswordHashing.layer()`, `Totp.TotpCryptography.layer`, and the
 OAuth protector services’ `.layer(keyring)` defaults with owned crypto services
 and Effect `Crypto`. Keys remain application-owned. Password hashing requires
-`Kdf` and `PasswordKdfAdmission`; build one `PasswordKdfAdmission.layer()` instance
-and share its two service tags with the crypto backend and all hashers. Its permit
+`Kdf` and `KdfAdmission` from `@yielded/crypto`; share one `KdfAdmission.layer()`
+instance between the crypto backend and all hashers. Its permit
 covers parsing, derivation, comparison, and cleanup. If increasing password work
 limits, configure the supplied KDF backend to permit those same limits.
 

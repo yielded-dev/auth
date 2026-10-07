@@ -1,6 +1,5 @@
 import {
   PersistenceConfigurationError,
-  makeComposedPasskeys,
   createPersistence,
 } from "@yielded/auth-persistence/Adapter";
 import type { StorageTable } from "@yielded/auth-persistence/Adapter";
@@ -14,11 +13,22 @@ import {
   uniqueIndex,
   type PgTable,
 } from "drizzle-orm/pg-core";
-import type { Effect } from "effect";
+import { Effect } from "effect";
 import type { SqlClient } from "effect/sql/SqlClient";
 
+import { makeBackendEmailOwner } from "../drizzle/email-store";
+import {
+  NativeDatabase,
+  nativeDatabase,
+  type NativeDatabaseHandle,
+} from "../drizzle/native-database";
 import { makeDrizzleSqlTables } from "../drizzle/native-sql-table";
-import { drizzleQueryOperations } from "../drizzle/query-operations";
+import { makeComposedPasskeys } from "../drizzle/passkeys";
+import { makeBackendPasswordOwner } from "../drizzle/password-store";
+import { makePhoneOwner } from "../drizzle/phone-store";
+import { makeBackendProofOwner } from "../drizzle/proof-store";
+import { makeRegistrationOwner } from "../drizzle/registration-store";
+import { makeStatefulSessionOwner } from "../drizzle/session-store";
 
 const makeTable = (definition: StorageTable) =>
   pgTable(
@@ -75,11 +85,35 @@ const describe = (table: PgTable): StorageTable => {
 };
 
 export const postgresPersistence = <R>(acquire: Effect.Effect<object, never, R | SqlClient>) =>
-  createPersistence<PgTable, R>({
+  createPersistence<PgTable, R, NativeDatabaseHandle>({
+    nativeTables: (database) => makeDrizzleSqlTables(database.$client, database),
     makeTable,
     describe,
-    operations: drizzleQueryOperations,
-    nativeTables: makeDrizzleSqlTables,
-    acquire,
-    passkeys: makeComposedPasskeys(drizzleQueryOperations),
+    sessionOwner: (mapping, database) =>
+      makeStatefulSessionOwner(mapping, database).pipe(
+        Effect.provideService(NativeDatabase, database),
+      ),
+    proofOwner: (mapping, options, database) =>
+      makeBackendProofOwner(mapping, options, database).pipe(
+        Effect.provideService(NativeDatabase, database),
+      ),
+    passwordOwner: (mapping, options, database, proofMapping) =>
+      makeBackendPasswordOwner(mapping, options, database, proofMapping).pipe(
+        Effect.provideService(NativeDatabase, database),
+      ),
+    emailOwner: (mapping, options, database, proofMapping) =>
+      makeBackendEmailOwner(mapping, options, database, proofMapping).pipe(
+        Effect.provideService(NativeDatabase, database),
+      ),
+    registrationOwner: (mapping, receipts, database) =>
+      makeRegistrationOwner(mapping, receipts, database).pipe(
+        Effect.provideService(NativeDatabase, database),
+      ),
+    phoneOwner: (mapping, options, database) =>
+      makePhoneOwner(mapping, options, database).pipe(
+        Effect.provideService(NativeDatabase, database),
+      ),
+    acquire: nativeDatabase(acquire),
+    maxParameters: (database) => database.maxParameters,
+    passkeys: makeComposedPasskeys,
   });

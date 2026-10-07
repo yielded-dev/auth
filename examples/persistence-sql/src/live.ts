@@ -103,8 +103,8 @@ const SessionClaimsLive = Layer.effect(
   AppAuth.sessions.StatefulSessionPersistence,
   Effect.gen(function* () {
     const sessions = yield* AppAuth.sessions.StatefulSessionPersistence;
-    const passwords = yield* Password.PasswordPersistence;
-    const claims = yield* AppAuth.strategies.password.SessionClaims;
+    const sql = yield* SqlClient.SqlClient;
+    const active = sql.onDialectOrElse({ pg: () => true, orElse: () => 1 });
 
     return {
       ...sessions,
@@ -112,23 +112,25 @@ const SessionClaimsLive = Layer.effect(
         function* (input) {
           const session = yield* sessions.verify(input);
 
-          const current = yield* passwords.readForSubject({
-            moduleId: AppAuth.strategies.password.persistence.moduleId,
-            subjectId: session.subjectId,
-          });
+          // Claims need the current account and identifier in one snapshot.
+          const rows = yield* sql`select c.display_name as "displayName", i.c_value as email,
+              i.c_verified_at as "verifiedAt"
+            from customers c
+            join app_identifiers i on i.c_subject_id = c.customer_key and i.c_active = ${active}
+            join app_passwords p on p.c_subject_id = c.customer_key
+              and p.c_module_id = ${AppAuth.strategies.password.persistence.moduleId}
+            where c.customer_key = ${session.subjectId} and c.enabled = ${active}
+              and c.auth_revision = ${session.securityRevision}
+            limit 1`;
 
-          if (
-            Option.isNone(current) ||
-            current.value.revision.subjectId !== session.subjectId ||
-            current.value.revision.securityRevision !== session.securityRevision
-          )
-            return yield* Sessions.SessionInvalid.make({});
+          if (rows.length !== 1) return yield* Sessions.SessionInvalid.make({});
 
           return {
             ...session,
-            claims: yield* claims.resolve({
-              subjectId: current.value.revision.subjectId,
-              credential: current.value,
+            claims: yield* Schema.decodeUnknownEffect(Claims)({
+              displayName: rows[0].displayName,
+              email: rows[0].email,
+              emailVerified: rows[0].verifiedAt !== null,
             }),
           };
         },
@@ -138,10 +140,7 @@ const SessionClaimsLive = Layer.effect(
       ),
     };
   }),
-).pipe(
-  Layer.provide(ClaimsLive),
-  Layer.provideMerge(Persistence.layer.pipe(Layer.provide(ProvisioningLive))),
-);
+).pipe(Layer.provideMerge(Persistence.layer.pipe(Layer.provide(ProvisioningLive))));
 
 const ServicesLive = Layer.mergeAll(ClaimsLive, PasskeyClaimsLive, ActionPoliciesLive).pipe(
   Layer.provideMerge(SessionClaimsLive),

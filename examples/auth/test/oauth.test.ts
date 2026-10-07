@@ -12,7 +12,6 @@ import {
   OAuthConnectedPersistence,
   OAuthConnectedProtocol,
   OAuthModuleId,
-  OAuthCommandId,
   OAuthProtocol,
   OAuthRedirectUri,
   OAuthReturnTargets,
@@ -91,6 +90,8 @@ const durable = Layer.effectDiscard(
       clock: {
         engineNowMillis: storageSql`(SELECT millis FROM oauth_test_clock)`,
         encodeInstant: (millis) => millis,
+        toMillis: (expression) => expression,
+        fromMillis: (expression) => expression,
         decodeInstant: Schema.decodeUnknownSync(Schema.Int),
       },
     }).pipe(Layer.provideMerge(LibsqlClient.layer({ url: "file::memory:", intMode: "number" }))),
@@ -117,6 +118,7 @@ const actionEvidence = Layer.succeed(OAuthConnectedActionEvidence, {
     if (credential === undefined) return yield* OAuthConnectedActionRequired.make({});
 
     return {
+      source: { _tag: "Proof" as const },
       requirement: AuthenticationRequirement.make({
         maximumAgeMillis: 300_000,
         alternatives: [
@@ -207,12 +209,12 @@ const harness = (
 
           return OAuthConnectedPersistence.of({
             ...persistence,
-            settleSignIn: (input, prepare) =>
+            settle: (input, prepare) =>
               persistence
-                .settleSignIn(input, prepare)
+                .settle(input, prepare)
                 .pipe(
                   Effect.flatMap((receipt) =>
-                    input.outcome._tag === "Verified"
+                    input._tag === "SignIn"
                       ? Effect.fail(OAuthUnavailable.make({}))
                       : Effect.succeed(receipt),
                   ),
@@ -408,50 +410,43 @@ it.effect("libSQL persistence rejects ambient transactions", () =>
 
     // Never expose a successful storage result before an outer owner's commit.
     const error = yield* sql
-      .withTransaction(persistence.capture({ moduleId, subjectId }))
+      .withTransaction(persistence.read({ moduleId, subjectId }))
       .pipe(Effect.flip);
 
     expect(error._tag).toBe("OAuthUnavailable");
   }).pipe(Effect.provide(durable.pipe(Layer.provide(CryptoLive)))),
 );
 
-// Requested regression seam: resolve an internally generated connected target
-// before verifying independent evidence, then execute that exact retained target.
-it.effect("connected preparation retains its exact target until authorized execution", () => {
-  // 29aef9a retained the URL inside a smaller transaction envelope. Exercise the
-  // protocol's admitted string bound, including worst-case JSON escaping.
+// The application verifier receives the generated target inside each operation.
+it.effect("normal reconnect binds action evidence and replaces the selected grant", () => {
+  const challenges: Array<
+    Parameters<OAuthConnectedActionEvidence["Service"]["verify"]>[0]["challenge"]
+  > = [];
+
   let authorizationUrl = Redacted.make("");
-
-  let target:
-    | Parameters<OAuthConnectedActionEvidence["Service"]["verify"]>[0]["challenge"]
-    | undefined;
-
-  let verifications = 0;
 
   const h = harness({
     authorizationUrl: (value) => {
-      authorizationUrl = Redacted.make(
-        `${Redacted.value(value)}&padding=`.padEnd(16_384, "\u0000"),
-      );
+      authorizationUrl = Redacted.make(`${Redacted.value(value)}&padding=`.padEnd(16_384, "x"));
 
       return authorizationUrl;
     },
     actionEvidence: {
       verify: Effect.fnUntraced(function* ({ invocation, challenge, proof }) {
-        verifications++;
         if (
           invocation._tag !== "Authenticated" ||
+          invocation.subjectId !== subjectId ||
           proof === undefined ||
-          Redacted.value(proof) !== "begin-proof" ||
-          target === undefined ||
-          JSON.stringify(challenge) !== JSON.stringify(target)
+          Redacted.value(proof) !== challenge.action
         )
           return yield* OAuthConnectedActionRequired.make({});
         const credential = challenge.revision.credentials[0];
 
         if (credential === undefined) return yield* OAuthConnectedActionRequired.make({});
+        challenges.push(challenge);
 
         return {
+          source: { _tag: "Proof" as const },
           requirement: AuthenticationRequirement.make({
             maximumAgeMillis: 300_000,
             alternatives: [
@@ -464,9 +459,9 @@ it.effect("connected preparation retains its exact target until authorized execu
             ],
           }),
           evidence: Sessions.AuthenticationEvidence.make({
+            revision: challenge.revision,
             flowId: AuthenticationFlowId.make(challenge.flowId),
             bindingDigest: challenge.bindingDigest,
-            revision: challenge.revision,
             proofs: [
               {
                 method: "independent-test-factor",
@@ -486,76 +481,67 @@ it.effect("connected preparation retains its exact target until authorized execu
   return Effect.gen(function* () {
     const signedIn = yield* signIn;
     const connected = yield* oauth.access.Connected;
-
-    const input = {
-      flowId: RequestBindingFlowId.make("prepared-flow"),
-      commandId: OAuthCommandId.make("prepared-command"),
-      callbackId,
-      intent: {
-        _tag: "Reconnect" as const,
-        grantId: signedIn.connection.grantId,
-        profileKey: profile.key,
-      },
-      returnTarget: "/sync",
-    };
-
-    const prepared = yield* connected.prepareBegin(signedIn.caller, input);
-
-    const issued = prepared.credentialCommands.find(
-      (command) => command._tag === "Issue" && command.slot === "connected-intent",
-    );
-
-    if (issued?._tag !== "Issue")
-      return yield* Effect.die("Missing private preparation credential");
-    expect(Object.keys(prepared.value)).toEqual(["flowId", "expiresAtMillis"]);
-
-    const command = {
-      ...input,
-      preparationCredential: issued.credential,
-      actionProof: Redacted.make("begin-proof"),
-    };
-
-    target = yield* connected.beginContext(signedIn.caller, command);
-    expect(verifications).toBe(0);
-    yield* advance("1 second");
-    const repeated = yield* connected.beginContext(signedIn.caller, command);
-
-    expect(repeated).toEqual(target);
-    expect(
-      (yield* connected
-        .beginContext(signedIn.caller, {
-          ...command,
-          commandId: OAuthCommandId.make("other-command"),
-        })
-        .pipe(Effect.flip))._tag,
-    ).toBe("OAuthRejected");
-    const result = yield* connected.begin(signedIn.caller, command);
-
-    expect(Redacted.value(result.value.authorizationUrl)).toBe(Redacted.value(authorizationUrl));
-    expect(verifications).toBe(1);
-    expect(result.value.expiresAtMillis).toBe(prepared.value.expiresAtMillis);
-    expect(
-      result.credentialCommands.some(
-        (value) =>
-          value._tag === "Issue" &&
-          value.slot === "request-binding" &&
-          Redacted.value(value.credential) === Redacted.value(issued.credential),
-      ),
-    ).toBe(true);
-    expect((yield* connected.begin(signedIn.caller, command).pipe(Effect.flip))._tag).toBe(
-      "OAuthRejected",
-    );
-    expect(verifications).toBe(1);
     const sql = yield* SqlClient.SqlClient;
 
-    const rows =
-      yield* sql`SELECT snapshot, state FROM oauth_connected_flow WHERE flowId = ${input.flowId}`;
+    const [before] =
+      yield* sql`SELECT "grantVersion" FROM oauth_connected_grant WHERE "grantId" = ${signedIn.connection.grantId}`;
 
-    expect(rows[0]?.state).toBe("Pending");
-    expect(JSON.stringify(rows)).not.toContain(Redacted.value(issued.credential));
-    expect(rows[0]?.snapshot).not.toContain(
-      JSON.stringify(Redacted.value(result.value.authorizationUrl)),
+    const result = yield* connected.begin(signedIn.caller, {
+      flowId: RequestBindingFlowId.make("reconnect-flow"),
+      callbackId,
+      intent: { _tag: "Reconnect", grantId: signedIn.connection.grantId, profileKey: profile.key },
+      returnTarget: "/sync",
+      actionProof: Redacted.make("connected-begin"),
+    });
+
+    expect(Redacted.value(result.value.authorizationUrl)).toBe(Redacted.value(authorizationUrl));
+
+    const binder = result.credentialCommands.find(
+      (command) => command._tag === "Issue" && command.slot === "request-binding",
     );
+
+    if (binder?._tag !== "Issue") return yield* Effect.die("Missing callback binder");
+
+    const complete = connected.complete(signedIn.caller, {
+      flowId: result.value.flowId,
+      provider: profile.provider,
+      callbackId,
+      requestBinding: binder.credential,
+      response: {
+        _tag: "Code",
+        code: Redacted.make("authorization-code"),
+        state: Redacted.make(
+          new URL(Redacted.value(result.value.authorizationUrl)).searchParams.get("state")!,
+        ),
+        scope: "activity:read_all",
+      },
+      actionProof: Redacted.make("connected-complete"),
+    });
+
+    const completed = yield* complete;
+
+    expect(completed.value).toMatchObject({
+      _tag: "Connected",
+      grantId: signedIn.connection.grantId,
+    });
+    expect(challenges.map((challenge) => challenge.action)).toEqual([
+      "connected-begin",
+      "connected-complete",
+    ]);
+    expect(challenges[0]?.flowId).toBe(result.value.flowId);
+    expect(challenges[1]?.flowId).toBe(result.value.flowId);
+
+    const [after] =
+      yield* sql`SELECT "grantVersion" FROM oauth_connected_grant WHERE "grantId" = ${signedIn.connection.grantId}`;
+
+    expect(after?.grantVersion).not.toBe(before?.grantVersion);
+    expect((yield* complete.pipe(Effect.flip))._tag).toBe("OAuthRejected");
+    expect(challenges).toHaveLength(2);
+
+    const rows =
+      yield* sql`SELECT snapshot FROM oauth_connected_flow WHERE "flowId" = ${result.value.flowId}`;
+
+    expect(rows).toHaveLength(0);
   }).pipe(Effect.provide(h.live));
 });
 

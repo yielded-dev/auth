@@ -1,15 +1,16 @@
 import { Schema } from "effect";
 
-export const StorageColumn = Schema.Struct({
-  name: Schema.NonEmptyString,
-  type: Schema.Literals(["text", "integer", "boolean"]),
-  nullable: Schema.optionalKey(Schema.Boolean),
-});
-
 export const StorageTable = Schema.Struct({
   name: Schema.NonEmptyString,
   schema: Schema.optionalKey(Schema.NonEmptyString),
-  columns: Schema.Record(Schema.String, StorageColumn),
+  columns: Schema.Record(
+    Schema.String,
+    Schema.Struct({
+      name: Schema.NonEmptyString,
+      type: Schema.Literals(["text", "integer", "boolean"]),
+      nullable: Schema.optionalKey(Schema.Boolean),
+    }),
+  ),
   unique: Schema.Array(Schema.Array(Schema.String)),
 });
 
@@ -21,7 +22,7 @@ const boolean = { type: "boolean" as const };
 const optionalText = { ...text, nullable: true };
 const optionalInteger = { ...integer, nullable: true };
 
-const spec = <C extends Readonly<Record<string, Omit<typeof StorageColumn.Type, "name">>>>(
+const spec = <C extends Readonly<Record<string, Omit<StorageTable["columns"][string], "name">>>>(
   columns: C,
   unique: ReadonlyArray<ReadonlyArray<Extract<keyof C, string>>>,
 ) => ({ columns, unique });
@@ -97,7 +98,6 @@ export const storageTables = {
       rpId: text,
       protocolCredentialId: text,
       credentialKey: text,
-      handleKey: text,
       userHandle: text,
       publicKey: text,
       algorithm: integer,
@@ -109,112 +109,24 @@ export const storageTables = {
       backupEligible: boolean,
       backupState: boolean,
       counter: integer,
-      maximumCounter: integer,
       name: text,
       createdAt: integer,
       lastUsedAt: optionalInteger,
     },
     [["credentialId"], ["credentialKey"]],
   ),
-  passkeyOwnership: spec(
-    {
-      credentialKey: text,
-      rpId: text,
-      protocolCredentialId: text,
-      subjectId: optionalText,
-      credentialId: optionalText,
-      state: text,
-      version: text,
-      reservationId: optionalText,
-    },
-    [["credentialKey"]],
-  ),
-  passkeyHandles: spec(
-    {
-      handleKey: text,
-      rpId: text,
-      userHandle: text,
-      subjectId: optionalText,
-      state: text,
-      version: text,
-      reservationId: optionalText,
-    },
-    [["handleKey"], ["rpId", "subjectId"]],
-  ),
-  passkeyModules: spec(
-    {
-      moduleId: text,
-      active: boolean,
-      policyRevision: text,
-      policy: text,
-    },
-    [["moduleId"]],
-  ),
   passkeyFlows: spec(
     {
       moduleId: text,
       flowId: text,
-      commandId: text,
       purpose: text,
-      state: text,
-      version: text,
-      generation: integer,
       snapshot: text,
-      policySnapshot: text,
       requestBindingVerifier: text,
       requestBindingExpiresAt: integer,
       issuedAt: integer,
       expiresAt: integer,
-      retentionUntil: integer,
-      claimId: optionalText,
-      claimedAt: optionalInteger,
-      claimExpiresAt: optionalInteger,
-      credentialSnapshot: optionalText,
-      subjectScope: optionalText,
-      targetScope: optionalText,
     },
-    [
-      ["moduleId", "flowId"],
-      ["moduleId", "commandId"],
-    ],
-  ),
-  passkeyAdmissions: spec(
-    {
-      authorityScope: text,
-      moduleId: text,
-      version: text,
-      ownerMarker: text,
-      admittedAt: optionalInteger,
-    },
-    [["authorityScope", "moduleId"]],
-  ),
-  passkeyCharges: spec(
-    {
-      moduleId: text,
-      flowId: text,
-      purpose: text,
-      kind: text,
-      scope: text,
-      originalWindowMillis: integer,
-      admittedAt: optionalInteger,
-      retainUntil: optionalInteger,
-      version: text,
-      ownerMarker: text,
-    },
-    [["moduleId", "flowId", "kind"]],
-  ),
-  passkeyCommands: spec(
-    {
-      moduleId: text,
-      commandId: text,
-      subjectId: text,
-      credentialId: text,
-      intent: text,
-      decision: text,
-      retentionUntil: integer,
-      version: text,
-    },
-    [["moduleId", "commandId"]],
+    [["moduleId", "flowId"]],
   ),
   proofRequests: spec(
     {

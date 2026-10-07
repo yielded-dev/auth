@@ -159,9 +159,9 @@ public prerelease is installed as `@yielded/auth@beta`.
 
 ## CI and review
 
-Opening, reopening, updating, marking ready, or retargeting a PR runs CI. Title and
-description edits create only a skipped run; they do not cancel active CI or replace
-its required `ready` result.
+Opening, reopening, updating, marking ready, or editing a PR runs CI, including
+title, description, and base changes. Every run reports the stable required `ready`
+check after its selected gates pass. A newer run supersedes older work on the same PR.
 
 Every pull request reports the required `ready` check. Contributor docs, changesets,
 and auxiliary workflows need formatting and workflow validation; published docs

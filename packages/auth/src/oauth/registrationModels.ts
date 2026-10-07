@@ -3,7 +3,6 @@ import { Schema } from "effect";
 import { RequestBindingCredential, RequestBindingFlowId } from "../operations/requestBinding";
 import { TokenDigest } from "../Schema";
 import {
-  OAuthClaimId,
   OAuthCommandId,
   OAuthDisplayProfile,
   OAuthExternalIdentity,
@@ -44,8 +43,6 @@ export const OAuthRegistrationIntent = Schema.Struct({
   namespace: Schema.Literal("effect-auth/oauth-registration-intent/v1"),
   reference: OAuthRegistrationReference,
   context: OAuthSignInTransactionContext,
-  claimId: OAuthClaimId,
-  claimedAtMillis: OAuthInstant,
   identity: OAuthExternalIdentity,
   /** Original authenticated provider snapshot, available only to server-side
    * provisioning authority. It is not caller-supplied registration data. */
@@ -72,7 +69,6 @@ export const OAuthRegistrationAccess = Schema.Struct({
   requestBindingVerifier: OAuthSignInTransactionContext.fields.requestBindingVerifier,
   requestBindingExpiresAtMillis: OAuthInstant,
   credentialDigest: OAuthRegistrationBearerDigest,
-  nowMillis: OAuthInstant,
 });
 
 export type OAuthRegistrationAccess = typeof OAuthRegistrationAccess.Type;
@@ -85,15 +81,23 @@ export const OAuthRegistrationPrivateInput = Schema.Struct({
   commandId: OAuthCommandId,
 });
 
-const applicationBinding = { commandId: OAuthCommandId, fingerprint: OAuthRegistrationFingerprint };
-const recovery = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(256));
+export const OAuthRegistrationRequestId = Schema.NonEmptyString.check(Schema.isMaxLength(256));
+
+const applicationBinding = {
+  commandId: OAuthCommandId,
+  fingerprint: OAuthRegistrationFingerprint,
+  /** Original registration codec output; compare exact bytes on every replay. */
+  payload: Schema.String,
+  requestId: OAuthRegistrationRequestId,
+};
 
 /** A first accepted command atomically reaches one bound outcome. There is no
- * resettable intermediate state that permits a second provisioning attempt. */
+ * resettable intermediate state that permits a second provisioning attempt.
+ * Bound outcomes retain the original payload and stable provisioning request ID.
+ * Replay returns outcome metadata only, with no provisioning, event or new credential. */
 export const OAuthRegistrationApplication = Schema.Union([
   Schema.TaggedStruct("Unbound", {}),
   Schema.TaggedStruct("Registered", applicationBinding),
-  Schema.TaggedStruct("ProvisioningPending", { ...applicationBinding, reference: recovery }),
   Schema.TaggedStruct("Rejected", applicationBinding),
 ]);
 
@@ -106,14 +110,13 @@ export type OAuthRegistrationInspection = typeof OAuthRegistrationInspection.Typ
 
 export const OAuthRegistrationDecision = Schema.Union([
   Schema.TaggedStruct("Registered", { replayed: Schema.Boolean }),
-  Schema.TaggedStruct("ProvisioningPending", { reference: recovery, replayed: Schema.Boolean }),
   Schema.TaggedStruct("Rejected", {}),
   Schema.TaggedStruct("Conflict", {}),
 ]);
 
 export type OAuthRegistrationDecision = typeof OAuthRegistrationDecision.Type;
 
-export const OAuthRegistrationResult = Schema.Union([
-  Schema.TaggedStruct("RegistrationAccepted", {}),
-  Schema.TaggedStruct("ProvisioningPending", { reference: recovery }),
-]);
+/** Registration never establishes a session, including replay after an unknown
+ * outcome. Begin a fresh OAuth sign-in after acceptance; failed session issuance
+ * requires another new ceremony, without a replacement session receipt. */
+export const OAuthRegistrationResult = Schema.TaggedStruct("RegistrationAccepted", {});

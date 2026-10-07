@@ -1,5 +1,6 @@
 import {
   type OAuthActionAuthorization,
+  type OAuthConnectedActionAuthorization,
   type OAuthAccountRevision,
   OAuthUnavailable,
   OAuthExternalIdentity,
@@ -151,12 +152,13 @@ export const satisfies = (
 };
 
 export const validAction = Effect.fnUntraced(function* (
-  authorization: OAuthActionAuthorization,
+  authorization: OAuthActionAuthorization | OAuthConnectedActionAuthorization,
   expected: {
     readonly moduleId: string;
-    readonly action: OAuthActionAuthorization["challenge"]["action"];
+    readonly action:
+      | OAuthActionAuthorization["challenge"]["action"]
+      | OAuthConnectedActionAuthorization["challenge"]["action"];
     readonly flowId: string;
-    readonly commandId: string;
     readonly revision: OAuthAccountRevision;
     readonly intent: string;
   },
@@ -171,20 +173,21 @@ export const validAction = Effect.fnUntraced(function* (
   const binding = yield* digest(
     // oxlint-disable-next-line no-restricted-properties -- Fixed private action fingerprint format shared with the core verifier.
     JSON.stringify([
-      "effect-auth/oauth-action/v1",
+      expected.action.startsWith("connected-")
+        ? "effect-auth/oauth-connected-action/v1"
+        : "effect-auth/oauth-action/v1",
       expected.moduleId,
       expected.action,
       expected.flowId,
-      expected.commandId,
       intentDigest,
     ]),
   );
 
   if (
+    now >= authorization.validUntilMillis ||
     challenge.moduleId !== expected.moduleId ||
     challenge.action !== expected.action ||
     challenge.flowId !== expected.flowId ||
-    challenge.commandId !== expected.commandId ||
     challenge.intentDigest !== intentDigest ||
     challenge.bindingDigest !== binding ||
     evidence.flowId !== expected.flowId ||
@@ -205,6 +208,17 @@ export const validAction = Effect.fnUntraced(function* (
     )
   )
     return false;
+
+  if (authorization.source._tag === "Session") {
+    const authenticatedAt = DateTime.toEpochMillis(authorization.source.authenticatedAt);
+
+    if (
+      authenticatedAt > now ||
+      now - authenticatedAt >=
+        Math.min(maximumAgeMillis, authorization.requirement.maximumAgeMillis)
+    )
+      return false;
+  }
 
   return [authorization.requirement, currentRequirement].every((requirement) => {
     const fresh = evidence.proofs.filter((proof) => {

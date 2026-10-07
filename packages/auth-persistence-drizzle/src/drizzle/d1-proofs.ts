@@ -1,6 +1,5 @@
 /* oxlint-disable no-explicit-any -- D1 planning bridges consumer Drizzle tables to Effect SQL statements. */
 import type { D1Client } from "@effect/sql-d1/D1Client";
-import { NativeDatabase } from "@yielded/auth-persistence/Adapter";
 import {
   coordinateCommit,
   CurrentCommitJournal,
@@ -53,7 +52,7 @@ import { balancedD1And } from "./d1-generated-statement";
 import { CurrentD1PlanningDatabase, makeD1Owner } from "./d1-planning";
 import { D1BatchStatements } from "./D1BatchStatements";
 import { column, PersistenceMappingError, isMappedConstraintConflict, updateValues } from "./model";
-import { nativeDatabase } from "./native-database";
+import { NativeDatabase, nativeDatabase } from "./native-database";
 import {
   type D1ProofPersistenceMapping,
   requiredProofConstraints,
@@ -2124,88 +2123,84 @@ export function coordinateD1ProofPersistence<
 
       if (yield* hasCommitScope) return yield* unavailable();
 
-      const result = yield* coordinateCommit(
-        () =>
-          Effect.gen(function* () {
-            const statements: Statement<any>[] = [];
-            let mutation: Planned<any> | undefined;
+      const result = yield* coordinateCommit(() =>
+        Effect.gen(function* () {
+          const statements: Statement<any>[] = [];
+          let mutation: Planned<any> | undefined;
 
-            const nativeCollector = D1BatchStatements.of({
-              append: (statement) => Effect.sync(() => statements.push(statement)),
-            });
+          const nativeCollector = D1BatchStatements.of({
+            append: (statement) => Effect.sync(() => statements.push(statement)),
+          });
 
-            const owner = yield* makeD1Owner(unavailable()).pipe(
-              Effect.provideService(D1BatchStatements, nativeCollector),
+          const owner = yield* makeD1Owner(unavailable()).pipe(
+            Effect.provideService(D1BatchStatements, nativeCollector),
+          );
+
+          const plans = makeProofPlans(options.mapping as unknown as Mapping);
+
+          const run = <Out, Err, Env>(plan: Effect.Effect<Planned<Out>, Err, Env>) =>
+            coordinateCommit(() =>
+              Effect.gen(function* () {
+                const journal = yield* CurrentCommitJournal;
+                const planned = yield* plan;
+
+                yield* owner.check;
+                if (mutation !== undefined) return yield* unavailable();
+                const guarded = { ...planned, journalGuard: journal.prepare(undefined) };
+
+                mutation = guarded;
+                statements.push(...guarded.statements);
+
+                return guarded.receipt;
+              }),
+            ).pipe(
+              Effect.map((result) => result.value),
+              Effect.provideService(CurrentD1PlanningDatabase, database),
+              Effect.provideService(LifecycleHooks, hooks),
             );
 
-            const plans = makeProofPlans(options.mapping as unknown as Mapping);
+          const service: ProofPersistence["Service"] = {
+            issue: (input, prepare) =>
+              owner.run(run(plans.issue(input, prepare)).pipe(translateIssueFailure)),
+            attempt: (input, prepare) =>
+              owner.run(run(plans.attempt(input, prepare)).pipe(translateFailure)),
+            complete: (input, prepare) =>
+              owner.run(run(plans.complete(input, prepare)).pipe(translateFailure)),
+            claimDelivery: (input, prepare) =>
+              owner.run(run(plans.claimDelivery(input, prepare)).pipe(translateFailure)),
+            settleDelivery: (input, prepare) =>
+              owner.run(run(plans.settleDelivery(input, prepare)).pipe(translateFailure)),
+            cancel: (input, prepare) =>
+              owner.run(run(plans.cancel(input, prepare)).pipe(translateFailure)),
+            cleanup: (input, prepare) =>
+              owner.run(run(plans.cleanup(input, prepare)).pipe(translateFailure)),
+          };
 
-            const run = <Out, Err, Env>(plan: Effect.Effect<Planned<Out>, Err, Env>) =>
-              coordinateCommit(
-                () =>
-                  Effect.gen(function* () {
-                    const journal = yield* CurrentCommitJournal;
-                    const planned = yield* plan;
+          const provided = Context.make(ProofPersistence, service).pipe(
+            Context.add(D1BatchStatements, owner.collector),
+          );
 
-                    yield* owner.check;
-                    if (mutation !== undefined) return yield* unavailable();
-                    const guarded = { ...planned, journalGuard: journal.prepare(undefined) };
+          const value = yield* owner.close(Effect.provideContext(body, provided));
 
-                    mutation = guarded;
-                    statements.push(...guarded.statements);
+          if (mutation?.journalGuard !== undefined) {
+            const status = yield* Effect.result(mutation.journalGuard.read);
 
-                    return guarded.receipt;
-                  }),
-                { mode: "batch" },
-              ).pipe(
-                Effect.map((result) => result.value),
-                Effect.provideService(CurrentD1PlanningDatabase, database),
-                Effect.provideService(LifecycleHooks, hooks),
-              );
-
-            const service: ProofPersistence["Service"] = {
-              issue: (input, prepare) =>
-                owner.run(run(plans.issue(input, prepare)).pipe(translateIssueFailure)),
-              attempt: (input, prepare) =>
-                owner.run(run(plans.attempt(input, prepare)).pipe(translateFailure)),
-              complete: (input, prepare) =>
-                owner.run(run(plans.complete(input, prepare)).pipe(translateFailure)),
-              claimDelivery: (input, prepare) =>
-                owner.run(run(plans.claimDelivery(input, prepare)).pipe(translateFailure)),
-              settleDelivery: (input, prepare) =>
-                owner.run(run(plans.settleDelivery(input, prepare)).pipe(translateFailure)),
-              cancel: (input, prepare) =>
-                owner.run(run(plans.cancel(input, prepare)).pipe(translateFailure)),
-              cleanup: (input, prepare) =>
-                owner.run(run(plans.cleanup(input, prepare)).pipe(translateFailure)),
-            };
-
-            const provided = Context.make(ProofPersistence, service).pipe(
-              Context.add(D1BatchStatements, owner.collector),
-            );
-
-            const value = yield* owner.close(Effect.provideContext(body, provided));
-
-            if (mutation?.journalGuard !== undefined) {
-              const status = yield* Effect.result(mutation.journalGuard.read);
-
-              if (status._tag === "Success" || status.failure._tag !== "CommitPending")
-                return yield* unavailable();
-            }
-            yield* database.$client.batch(statements).pipe(
-              Effect.catchCause((cause) =>
-                Effect.failCause(
-                  Cause.map(cause, (error) =>
-                    everyFailureMatches(cause, mutation?.retryable) ? unavailable() : error,
-                  ),
+            if (status._tag === "Success" || status.failure._tag !== "CommitPending")
+              return yield* unavailable();
+          }
+          yield* database.$client.batch(statements).pipe(
+            Effect.catchCause((cause) =>
+              Effect.failCause(
+                Cause.map(cause, (error) =>
+                  everyFailureMatches(cause, mutation?.retryable) ? unavailable() : error,
                 ),
               ),
-              translateFailure,
-            );
+            ),
+            translateFailure,
+          );
 
-            return value;
-          }),
-        { mode: "batch" },
+          return value;
+        }),
       ).pipe(Effect.provideService(LifecycleHooks, hooks));
 
       return result.value;
@@ -2330,18 +2325,16 @@ const executeStandalone = <A, E, R>(
   Effect.suspend(() => {
     let retryable: ((cause: unknown) => boolean) | undefined;
 
-    const once = coordinateCommit(
-      () =>
-        Effect.gen(function* () {
-          const database = yield* CurrentD1PlanningDatabase;
-          const planned = yield* plan;
+    const once = coordinateCommit(() =>
+      Effect.gen(function* () {
+        const database = yield* CurrentD1PlanningDatabase;
+        const planned = yield* plan;
 
-          retryable = planned.retryable;
-          yield* database.$client.batch(planned.statements);
+        retryable = planned.retryable;
+        yield* database.$client.batch(planned.statements);
 
-          return planned.receipt;
-        }),
-      { mode: "batch" },
+        return planned.receipt;
+      }),
     ).pipe(Effect.map((result) => result.value));
 
     return once.pipe(

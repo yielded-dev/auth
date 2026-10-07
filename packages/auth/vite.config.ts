@@ -37,7 +37,6 @@ export default defineConfig({
       "src/Email.ts",
       "src/EmailDelivery.ts",
       "src/Passkey.ts",
-      "src/PasskeyPassword.ts",
       "src/PhoneOtp.ts",
       "src/SmsDelivery.ts",
       "src/Twilio.ts",

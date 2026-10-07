@@ -1,4 +1,4 @@
-import { withStorageValidation, NativeDatabase } from "@yielded/auth-persistence/Adapter";
+import { withStorageValidation } from "@yielded/auth-persistence/Adapter";
 import {
   ExternalIdentityMutation,
   IdentityConflict,
@@ -25,7 +25,7 @@ import {
   type IdentityTables,
   type SubjectProvisioningTables,
 } from "./model";
-import { nativeDatabase } from "./native-database";
+import { NativeDatabase, nativeDatabase } from "./native-database";
 import { Database as DatabaseService } from "./pg-database";
 import { validateDrizzleStorage } from "./storage-validation";
 
@@ -62,8 +62,6 @@ export const makePgSubjectProvisioningServices = Effect.fnUntraced(function* <
   const requestFingerprintColumn = column(requestTable, mapping.provisioningRequest.fingerprint);
   const requestSubjectColumn = column(requestTable, mapping.provisioningRequest.subjectId);
   const identifierTable = mapping.identifier.table;
-  const identifierNamespaceColumn = column(identifierTable, mapping.identifier.namespace);
-  const identifierValueColumn = column(identifierTable, mapping.identifier.value);
 
   const findReceipt = Effect.fn("DrizzlePgIdentity.findReceipt")(function* (requestId: string) {
     const rows = yield* db
@@ -151,21 +149,8 @@ export const makePgSubjectProvisioningServices = Effect.fnUntraced(function* <
               if (receipt !== undefined && receipt.fingerprint === fingerprint) {
                 return Effect.succeed(receipt.subjectId as NativeId);
               }
-              if (input.identifier === undefined) return IdentityConflict.make();
 
-              return db
-                .select({
-                  subjectId: column(identifierTable, mapping.identifier.subjectId) as PgColumn,
-                })
-                .from(identifierTable as any)
-                .where(
-                  and(
-                    eq(identifierNamespaceColumn, input.identifier.namespace),
-                    eq(identifierValueColumn, input.identifier.value),
-                  ),
-                )
-                .limit(1)
-                .pipe(Effect.flatMap(() => IdentityConflict.make()));
+              return IdentityConflict.make();
             }),
           );
         },

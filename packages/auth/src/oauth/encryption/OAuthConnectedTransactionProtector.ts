@@ -1,11 +1,8 @@
 import { Effect, Schema } from "effect";
 
-import {
-  OAuthConnectedTransactionContext,
-  OAuthConnectedTransactionSecrets,
-  OAuthConnectedSealedTransaction,
-} from "../connectedModels";
+import { OAuthConnectedTransactionContext } from "../connectedModels";
 import { OAuthUnavailable } from "../signInErrors";
+import { OAuthTransactionSecrets, OAuthSealedTransaction } from "../signInModels";
 import { type OAuthTransactionKeyring } from "../transactionKeyring";
 import { encodeUtf8 } from "./payload";
 import { transactionEncryption } from "./transaction-encryption";
@@ -13,8 +10,8 @@ import { transactionEncryption } from "./transaction-encryption";
 const codec = Schema.fromJsonString(
   Schema.Tuple([
     Schema.Literal("effect-auth/oauth-connected-aead/v1"),
-    OAuthConnectedSealedTransaction.fields.format,
-    OAuthConnectedSealedTransaction.fields.keyId,
+    OAuthSealedTransaction.fields.format,
+    OAuthSealedTransaction.fields.keyId,
     OAuthConnectedTransactionContext,
   ]),
 );
@@ -31,10 +28,7 @@ const aad = Effect.fnUntraced(function* (context: OAuthConnectedTransactionConte
 });
 
 export const make = (keyring: OAuthTransactionKeyring) =>
-  transactionEncryption(
-    OAuthConnectedTransactionContext,
-    aad,
-    keyring,
-    OAuthConnectedTransactionSecrets,
-    { schema: OAuthConnectedSealedTransaction, maximumPlaintextBytes: 100 * 1024 },
-  );
+  transactionEncryption(OAuthConnectedTransactionContext, aad, keyring, OAuthTransactionSecrets, {
+    schema: OAuthSealedTransaction,
+    maximumPlaintextBytes: 16384,
+  });

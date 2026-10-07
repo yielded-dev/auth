@@ -5,7 +5,7 @@ import type { TokenDigest } from "@yielded/auth/Schema";
 import type { AuthenticationRequirement, SecurityRevision } from "@yielded/auth/Sessions";
 import type { Effect } from "effect";
 
-import type { AnyTableModel, TableModel as Table, SqlExpression } from "../query-operations";
+import type { AnyTableModel, TableModel as Table, SqlExpression } from "../table-model";
 import type { PersistenceMappingError, SubjectIdCodec } from "./common";
 
 type ColumnKey<T extends Table> = T["column"];
@@ -271,7 +271,7 @@ export type D1EmailAddressMapping<
   };
 };
 
-export type EmailRegistrationState = "pending" | "registered";
+export type EmailRegistrationState = "registered";
 
 export interface EmailRegistrationIntent<Registration> {
   readonly moduleId: string;
@@ -294,14 +294,12 @@ export interface EmailRegistrationTable<Registration, Request extends Table, Nat
   readonly fingerprint: ColumnKey<Request>;
   readonly state: ColumnKey<Request>;
   readonly subjectId: ColumnKey<Request>;
-  readonly pendingReference: ColumnKey<Request>;
   readonly retentionUntil: ColumnKey<Request>;
   readonly encodeInsert: (
     input: EmailRegistrationIntent<Registration>,
     state: {
       readonly state: EmailRegistrationState;
       readonly nativeSubjectId?: NativeSubjectId;
-      readonly pendingReference?: string;
       readonly retentionUntilMillis: number;
     },
   ) => Request["insert"];
@@ -405,19 +403,17 @@ export interface EmailRegistrationAuthorityCredentialTable<
 export interface RequiredEmailRegistrationConstraints extends RequiredEmailSignInConstraints {
   readonly authorityCredential: "unique(authorityCredential.subjectId,authorityCredential.credentialId)";
   readonly request: "unique(emailRegistration.moduleId,emailRegistration.commandId)";
-  readonly pendingReference: "unique(emailRegistration.pendingReference)";
 }
 
 export const requiredEmailRegistrationConstraints: RequiredEmailRegistrationConstraints = {
   ...requiredEmailSignInConstraints,
   authorityCredential: "unique(authorityCredential.subjectId,authorityCredential.credentialId)",
   request: "unique(emailRegistration.moduleId,emailRegistration.commandId)",
-  pendingReference: "unique(emailRegistration.pendingReference)",
 };
 
 type EmailRegistrationBase<Registration, Request extends Table, NativeSubjectId> = {
   readonly registration: EmailRegistrationTable<Registration, Request, NativeSubjectId>;
-  readonly constraints: Pick<RequiredEmailRegistrationConstraints, "request" | "pendingReference">;
+  readonly constraints: Pick<RequiredEmailRegistrationConstraints, "request">;
   readonly inspect: (input: {
     readonly identifier: LoginIdentifier;
     readonly registration: Registration;
@@ -442,8 +438,6 @@ type EmailRegistrationBase<Registration, Request extends Table, NativeSubjectId>
     readonly fingerprint: TokenDigest;
     readonly eligible: boolean;
   };
-  readonly allocatePendingReference?: Effect.Effect<string, PersistenceMappingError>;
-  readonly allocatePendingReferenceSync?: () => string;
   readonly encodeInstant: (epochMillis: number) => unknown;
   readonly retentionMillis: number;
   readonly isRequestConflict: (cause: unknown) => boolean;
@@ -458,55 +452,41 @@ export type EmailRegistrationMapping<
   Request extends Table,
   NativeSubjectId,
   Expression extends SqlExpression = SqlExpression,
-> = EmailRegistrationBase<Registration, Request, NativeSubjectId> &
-  (
-    | {
-        readonly mode: "atomic";
-        readonly subject: EmailSubjectReadTable<Subject>;
-        readonly identifier: EmailRegistrationIdentifierTable<
-          Identifier,
-          NativeSubjectId,
-          Expression
-        >;
-        readonly credential: EmailRegistrationCredentialTable<Credential, NativeSubjectId>;
-        readonly authorityCredential: EmailRegistrationAuthorityCredentialTable<
-          AuthorityCredential,
-          NativeSubjectId
-        >;
-        readonly subjectId: SubjectIdCodec<NativeSubjectId>;
-        readonly constraints: RequiredEmailRegistrationConstraints;
-        readonly allocateCredentialId?: Effect.Effect<string, PersistenceMappingError>;
-        readonly allocateCredentialIdSync?: () => string;
-        readonly allocateRevision?: Effect.Effect<SecurityRevision, PersistenceMappingError>;
-        readonly allocateRevisionSync?: () => SecurityRevision;
-        readonly isIdentifierConflict: (cause: unknown) => boolean;
-        readonly isCredentialConflict: (cause: unknown) => boolean;
-        readonly provisioning: EmailRegistrationProvisioning<
-          Registration,
-          Subject,
-          NativeSubjectId
-        > &
-          (
-            | {
-                readonly idMode: "allocated";
-                readonly allocateSubjectId: Effect.Effect<NativeSubjectId, PersistenceMappingError>;
-              }
-            | {
-                readonly idMode: "synchronous";
-                readonly allocateSubjectIdSync: () => NativeSubjectId;
-              }
-            | {
-                readonly idMode: "generated";
-                readonly decodeGeneratedId: (
-                  rows: ReadonlyArray<unknown>,
-                ) => Effect.Effect<NativeSubjectId, PersistenceMappingError>;
-              }
-          );
-      }
-    | {
-        readonly mode: "pending";
-      }
-  );
+> = EmailRegistrationBase<Registration, Request, NativeSubjectId> & {
+  readonly mode: "atomic";
+  readonly subject: EmailSubjectReadTable<Subject>;
+  readonly identifier: EmailRegistrationIdentifierTable<Identifier, NativeSubjectId, Expression>;
+  readonly credential: EmailRegistrationCredentialTable<Credential, NativeSubjectId>;
+  readonly authorityCredential: EmailRegistrationAuthorityCredentialTable<
+    AuthorityCredential,
+    NativeSubjectId
+  >;
+  readonly subjectId: SubjectIdCodec<NativeSubjectId>;
+  readonly constraints: RequiredEmailRegistrationConstraints;
+  readonly allocateCredentialId?: Effect.Effect<string, PersistenceMappingError>;
+  readonly allocateCredentialIdSync?: () => string;
+  readonly allocateRevision?: Effect.Effect<SecurityRevision, PersistenceMappingError>;
+  readonly allocateRevisionSync?: () => SecurityRevision;
+  readonly isIdentifierConflict: (cause: unknown) => boolean;
+  readonly isCredentialConflict: (cause: unknown) => boolean;
+  readonly provisioning: EmailRegistrationProvisioning<Registration, Subject, NativeSubjectId> &
+    (
+      | {
+          readonly idMode: "allocated";
+          readonly allocateSubjectId: Effect.Effect<NativeSubjectId, PersistenceMappingError>;
+        }
+      | {
+          readonly idMode: "synchronous";
+          readonly allocateSubjectIdSync: () => NativeSubjectId;
+        }
+      | {
+          readonly idMode: "generated";
+          readonly decodeGeneratedId: (
+            rows: ReadonlyArray<unknown>,
+          ) => Effect.Effect<NativeSubjectId, PersistenceMappingError>;
+        }
+    );
+};
 
 export type AnyEmailSignInMapping = EmailSignInMapping<
   AnyTableModel,

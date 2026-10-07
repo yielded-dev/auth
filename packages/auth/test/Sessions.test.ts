@@ -45,9 +45,7 @@ const authority = Layer.succeed(Sessions.AuthenticationAuthority, {
       }),
     ),
   approve: (_input, prepare) =>
-    coordinateCommit((journal) => Effect.sync(() => prepare(undefined, journal)), {
-      mode: "interactive",
-    }).pipe(
+    coordinateCommit((journal) => Effect.sync(() => prepare(undefined, journal))).pipe(
       Effect.map((result) => result.value),
       Effect.orDie,
       Effect.provide(LifecycleHooks.empty),

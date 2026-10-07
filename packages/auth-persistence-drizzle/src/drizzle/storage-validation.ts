@@ -1,5 +1,4 @@
 import {
-  NativeDatabase,
   PersistenceMappingError,
   validateStorageBatch,
   type StorageValidation,
@@ -10,6 +9,8 @@ import { getTableConfig as getMysqlTableConfig, MySqlTable } from "drizzle-orm/m
 import { getTableConfig as getPgTableConfig, PgTable } from "drizzle-orm/pg-core";
 import { Effect } from "effect";
 import { SqlClient } from "effect/sql/SqlClient";
+
+import { NativeDatabase } from "./native-database";
 
 /** Validate at acquisition using the root database supplied by the adapter. */
 export const validateDrizzleStorage = Effect.fnUntraced(

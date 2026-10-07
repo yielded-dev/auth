@@ -249,8 +249,9 @@ import { Effect, Layer, Redacted, Schema } from "effect";
 import { Password, Totp, OAuth } from "@yielded/auth";
 import { layerCryptoWeb } from "@yielded/auth/WebCrypto";
 import * as Portable from "@yielded/crypto/Portable";
+import * as KdfAdmission from "@yielded/crypto/KdfAdmission";
 const fixtures = ${JSON.stringify(authCryptoFixtures)};
-const admission = Password.PasswordKdfAdmission.layer({ maxQueued: 0 });
+const admission = KdfAdmission.layer({ maxQueued: 0 });
 const runtime = Layer.merge(layerCryptoWeb, Portable.layer(globalThis.crypto.subtle).pipe(Layer.provideMerge(admission)));
 const key = Redacted.make(Schema.decodeUnknownSync(Schema.Uint8ArrayFromBase64Url)(fixtures.totp.key));
 const keys = Layer.succeed(Totp.TotpSecretKeys, { current: Effect.succeed({ keyId: "key1", key }), get: () => Effect.succeed(key) });
@@ -277,8 +278,8 @@ await Effect.runPromise(Effect.gen(function* () {
   for (const [service, contextSchema, sealedSchema, plainSchema, fixture] of [
     [OAuth.OAuthTransactionProtector, OAuth.OAuthSignInTransactionContext, OAuth.OAuthSealedTransaction, OAuth.OAuthTransactionSecrets, fixtures.oauth.signIn],
     [OAuth.OAuthLinkTransactionProtector, OAuth.OAuthLinkTransactionContext, OAuth.OAuthSealedTransaction, OAuth.OAuthTransactionSecrets, fixtures.oauth.link],
-    [OAuth.OAuthConnectedTransactionProtector, OAuth.OAuthConnectedTransactionContext, OAuth.OAuthConnectedSealedTransaction, OAuth.OAuthConnectedTransactionSecrets, fixtures.oauth.connected],
-    [OAuth.OAuthConnectedTokenProtector, OAuth.OAuthConnectedProtectionContext, OAuth.OAuthConnectedSealedTokens, OAuth.OAuthConnectedTokenMaterial, fixtures.oauth.token],
+    [OAuth.OAuthConnectedTransactionProtector, OAuth.OAuthConnectedTransactionContext, OAuth.OAuthSealedTransaction, OAuth.OAuthTransactionSecrets, fixtures.oauth.connected],
+    [OAuth.OAuthConnectedTokenProtector, OAuth.OAuthConnectedTokenContext, OAuth.OAuthConnectedSealedTokens, OAuth.OAuthConnectedTokenMaterial, fixtures.oauth.token],
   ]) {
     const protector = yield* service;
     const plain = yield* protector.open({context: Schema.decodeUnknownSync(contextSchema)(fixture.context), sealed: Schema.decodeUnknownSync(sealedSchema)(fixture.sealed)});

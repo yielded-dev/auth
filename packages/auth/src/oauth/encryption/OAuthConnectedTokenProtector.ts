@@ -1,7 +1,7 @@
 import { Effect, Schema } from "effect";
 
 import {
-  OAuthConnectedProtectionContext,
+  OAuthConnectedTokenContext,
   OAuthConnectedSealedTokens,
   OAuthConnectedTokenMaterial,
 } from "../connectedModels";
@@ -15,16 +15,15 @@ const contextCodec = Schema.fromJsonString(
     Schema.Literal("effect-auth/oauth-connected-token-aead/v1"),
     OAuthConnectedSealedTokens.fields.format,
     OAuthEncryptionKeyId,
-    OAuthConnectedProtectionContext,
+    OAuthConnectedTokenContext,
   ]),
 );
 
 const validate = Effect.fnUntraced(function* (
-  context: OAuthConnectedProtectionContext,
+  context: OAuthConnectedTokenContext,
   material: OAuthConnectedTokenMaterial,
 ) {
-  const token =
-    context.namespace === "effect-auth/oauth-connected-token-context/v1" ? context : context.token;
+  const token = context;
 
   if (
     (token.configuration.protocol === "oidc") !== (material.continuation._tag === "Oidc") ||
@@ -35,7 +34,7 @@ const validate = Effect.fnUntraced(function* (
   return material;
 });
 
-const aad = Effect.fnUntraced(function* (context: OAuthConnectedProtectionContext, keyId: string) {
+const aad = Effect.fnUntraced(function* (context: OAuthConnectedTokenContext, keyId: string) {
   const json = yield* Schema.encodeEffect(contextCodec)([
     "effect-auth/oauth-connected-token-aead/v1",
     "oauth-connected-xchacha20poly1305-v1",
@@ -49,7 +48,7 @@ const aad = Effect.fnUntraced(function* (context: OAuthConnectedProtectionContex
 export const make = (keyring: OAuthConnectedTokenKeyring) =>
   payloadEncryption(
     {
-      context: OAuthConnectedProtectionContext,
+      context: OAuthConnectedTokenContext,
       plaintext: OAuthConnectedTokenMaterial,
       envelope: OAuthConnectedSealedTokens,
       format: "oauth-connected-xchacha20poly1305-v1",
@@ -61,11 +60,11 @@ export const make = (keyring: OAuthConnectedTokenKeyring) =>
   ).pipe(
     Effect.map((encryption) => ({
       seal: (input: {
-        readonly context: OAuthConnectedProtectionContext;
+        readonly context: OAuthConnectedTokenContext;
         readonly material: OAuthConnectedTokenMaterial;
       }) => encryption.seal(input.context, input.material),
       open: (input: {
-        readonly context: OAuthConnectedProtectionContext;
+        readonly context: OAuthConnectedTokenContext;
         readonly sealed: OAuthConnectedSealedTokens;
       }) => encryption.open(input.context, input.sealed),
     })),

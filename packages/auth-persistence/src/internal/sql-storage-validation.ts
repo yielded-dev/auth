@@ -5,7 +5,6 @@ import { PersistenceMappingError } from "./mapping-error";
 import { Table } from "./sql-table";
 import { storageKeyPlans } from "./storage-plans";
 import { validateStorageBatch, type StorageValidation } from "./storage-validation";
-import { NativeDatabase } from "./transaction-kernel";
 
 /** Check declared mappings against physical keys before acquiring OAuth services. */
 export const validateSqlStorage = Effect.fnUntraced(function* (mapping: unknown) {
@@ -20,7 +19,7 @@ export const validateSqlStorage = Effect.fnUntraced(function* (mapping: unknown)
       PersistenceMappingError.make({ operation: "mapping", cause: "Invalid storage key mapping" }),
   });
 
-  const { $client: client } = yield* NativeDatabase;
+  const client = yield* SqlClient.SqlClient;
 
   const dialect = client.onDialectOrElse({
     pg: () => "pg" as const,

@@ -4,7 +4,6 @@ import {
   Crypto,
   DateTime,
   Effect,
-  Exit,
   Fiber,
   Layer,
   Redacted,
@@ -28,10 +27,9 @@ import type { AuthOperationResult, AuthCredentialCommand } from "../operations/c
 import { AuthenticationRequired } from "../operations/errors";
 import { makeOperation, operationGroup } from "../operations/operation";
 import { makeRequestBinding } from "../operations/requestBinding";
+import { CleanupResult } from "../persistence/cleanup";
 import { TokenDigest } from "../Schema";
-import { assessAuthentication } from "../sessions/assurance";
 import { SessionInvalidationWindow, sessionInvalidationWindow } from "../sessions/invalidation";
-import { AuthenticationFlowId } from "../sessions/models";
 import type { makeSessionModule } from "../sessions/module";
 import {
   OAuthAccountRevision,
@@ -41,20 +39,19 @@ import {
   OAuthActionRequired,
   OAuthLinkAccess,
   OAuthLinkBegin,
-  OAuthLinkClaim,
-  OAuthLinkClaimDecision,
+  OAuthLinkConsumeDecision,
+  OAuthLinkIntentContext,
   OAuthLinkComplete,
   OAuthLinkDecision,
   OAuthLinkIssueDecision,
-  OAuthLinkOutcome,
-  OAuthLinkPendingFlow,
+  OAuthLinkFlow,
   OAuthLinkResult,
   OAuthLinkTransactionContext,
   OAuthUnlink,
   OAuthUnlinkDecision,
   OAuthUnlinked,
-  OAuthUnlinkInspection,
 } from "./accountsModels";
+import { authorizeOAuthEvidence } from "./actionAuthorization";
 import { OAuthAccountsPersistence } from "./OAuthAccountsPersistence";
 import { OAuthActionEvidence } from "./OAuthActionEvidence";
 import { OAuthLinkTransactionProtector } from "./OAuthLinkTransactionProtector";
@@ -63,13 +60,11 @@ import { OAuthReturnTargets } from "./OAuthReturnTargets";
 import {
   OAuthConfigurationError,
   OAuthMethodUnsupported,
-  OAuthProtocolRejected,
   OAuthRejected,
   OAuthUnavailable,
 } from "./signInErrors";
 import {
   OAuthCallbackResponse,
-  OAuthClaimId,
   OAuthCleanupInput,
   OAuthCredentialSnapshot,
   OAuthModuleId,
@@ -115,12 +110,6 @@ const invocationSchema = Schema.TaggedStruct("Authenticated", {
   }),
 });
 
-const cleanupResult = Schema.Struct({
-  terminalized: Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 1000 })),
-  removed: Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 1000 })),
-  hasMore: Schema.Boolean,
-});
-
 const read = <A>(receipt: PreparedCommit<A>) =>
   receipt.read.pipe(Effect.mapError(() => OAuthUnavailable.make({})));
 
@@ -142,8 +131,8 @@ const bounded = <A, E, R>(effect: Effect.Effect<A, E, R>, millis: number) =>
 
 const encoder = new TextEncoder();
 const strings = Schema.fromJsonString(Schema.Array(Schema.String));
-const contextJson = Schema.fromJsonString(OAuthLinkTransactionContext);
-const flowJson = Schema.fromJsonString(OAuthLinkPendingFlow);
+const intentJson = Schema.fromJsonString(OAuthLinkIntentContext);
+const flowJson = Schema.fromJsonString(OAuthLinkFlow);
 const credentialJson = Schema.fromJsonString(OAuthCredentialSnapshot);
 const responseJson = Schema.fromJsonString(OAuthCallbackResponse);
 const invalidationJson = Schema.fromJsonString(SessionInvalidationWindow);
@@ -193,12 +182,7 @@ export const makeOAuthAccounts = <
         invocation: AuthInvocation,
         input: typeof OAuthUnlink.Type,
       ) => Effect.Effect<AuthOperationResult<typeof OAuthUnlinked.Type>, Failure>;
-      readonly cleanup: (
-        limit: number,
-      ) => Effect.Effect<
-        { readonly terminalized: number; readonly removed: number; readonly hasMore: boolean },
-        Failure
-      >;
+      readonly cleanup: (limit: number) => Effect.Effect<CleanupResult, Failure>;
     }
   >(`effect-auth/oauth/${moduleId.length}:${moduleId}/Accounts`);
 
@@ -221,7 +205,7 @@ export const makeOAuthAccounts = <
       const policy = captured;
       const { issue: issueBinding, verify: verifyBinding } = yield* binding.RequestBinding;
 
-      const { capture, issue, preflight, claim, settle, inspectUnlink, unlink, cleanup } =
+      const { capture, issue, consume, link, readCredential, unlink, cleanup } =
         yield* OAuthAccountsPersistence;
 
       const { verify: verifyAction } = yield* OAuthActionEvidence;
@@ -236,9 +220,6 @@ export const makeOAuthAccounts = <
         SessionInvalidationWindow,
         sessionInvalidationWindow("credential-change", strategy.capabilities, strategy.policy),
       );
-
-      if (policy.requireImmediateInvalidation && invalidation.existingSessions !== "immediate")
-        return yield* OAuthConfigurationError.make({ reason: "policy" });
 
       const expectedInvalidation = Schema.encodeSync(invalidationJson)(invalidation);
 
@@ -291,7 +272,6 @@ export const makeOAuthAccounts = <
       const challenge = Effect.fn("OAuthAccounts.challenge")(function* (
         action: typeof OAuthActionChallenge.Type.action,
         flowId: typeof OAuthActionChallenge.Type.flowId,
-        commandId: typeof OAuthActionChallenge.Type.commandId,
         revision: OAuthAccountRevision,
         intent: string,
       ) {
@@ -301,7 +281,6 @@ export const makeOAuthAccounts = <
           moduleId: id,
           action,
           flowId,
-          commandId,
           revision,
           intentDigest,
           bindingDigest: yield* hash(
@@ -310,7 +289,6 @@ export const makeOAuthAccounts = <
               id,
               action,
               flowId,
-              commandId,
               intentDigest,
             ]),
           ),
@@ -329,42 +307,17 @@ export const makeOAuthAccounts = <
           ...(proof === undefined ? {} : { proof: Redacted.make(Redacted.value(proof)) }),
         });
 
+        const accepted = yield* authorizeOAuthEvidence(
+          caller,
+          expected,
+          grant,
+          Math.min(policy.maximumEvidenceAgeMillis, maximumAgeMillis),
+        );
+
         const authorization = yield* snapshotOAuth(OAuthActionAuthorization, {
           challenge: expected,
-          evidence: grant.evidence,
-          requirement: {
-            ...grant.requirement,
-            maximumAgeMillis: Math.min(
-              policy.maximumEvidenceAgeMillis,
-              maximumAgeMillis,
-              grant.requirement.maximumAgeMillis,
-            ),
-          },
-        }).pipe(Effect.mapError(() => OAuthActionRequired.make({})));
-
-        const evidence = authorization.evidence;
-
-        if (
-          evidence.flowId !== AuthenticationFlowId.make(expected.flowId) ||
-          evidence.bindingDigest !== expected.bindingDigest ||
-          evidence.revision.subjectId !== expected.revision.subjectId ||
-          evidence.revision.securityRevision !== expected.revision.securityRevision ||
-          new Set(expected.revision.credentials.map((value) => value.credentialId)).size !==
-            expected.revision.credentials.length ||
-          expected.revision.credentials.some(
-            (a) =>
-              !evidence.revision.credentials.some(
-                (b) => a.credentialId === b.credentialId && a.revision === b.revision,
-              ),
-          )
-        )
-          return yield* OAuthActionRequired.make({});
-        if (
-          !(yield* assessAuthentication(evidence, authorization.requirement).pipe(
-            Effect.mapError(() => OAuthActionRequired.make({})),
-          )).satisfied
-        )
-          return yield* OAuthActionRequired.make({});
+          ...accepted,
+        });
 
         return authorization;
       });
@@ -462,13 +415,12 @@ export const makeOAuthAccounts = <
 
           if (expiresAtMillis <= now) return yield* OAuthRejected.make({});
 
-          const context = snapshotOAuthSync(OAuthLinkTransactionContext, {
+          const intent = snapshotOAuthSync(OAuthLinkIntentContext, {
             ...prepared.configuration,
             namespace: "effect-auth/oauth-link-context/v1",
             moduleId: id,
             generation: policy.generation,
             flowId: request.flowId,
-            commandId: request.commandId,
             revision,
             maximumEvidenceAgeMillis: policy.maximumEvidenceAgeMillis,
             returnTarget: target,
@@ -481,51 +433,48 @@ export const makeOAuthAccounts = <
             requestBindingExpiresAtMillis: binder.expiresAtMillis,
             issuedAtMillis: now,
             expiresAtMillis,
-            claimLifetimeMillis: policy.claimLifetimeMillis,
+            exchangeTimeoutMillis: policy.exchangeTimeoutMillis,
           });
 
           const authorization = yield* authorize(
             caller,
             yield* challenge(
               "link-begin",
-              context.flowId,
-              context.commandId,
+              intent.flowId,
               revision,
-              Schema.encodeSync(contextJson)(context),
+              Schema.encodeSync(intentJson)(intent),
             ),
             request.actionProof,
           );
+
+          const context = snapshotOAuthSync(OAuthLinkTransactionContext, {
+            ...intent,
+            authorization,
+          });
 
           const sealed = yield* seal({
             context: snapshotOAuthSync(OAuthLinkTransactionContext, context),
             secrets: snapshotOAuthSync(OAuthTransactionSecrets, prepared.secrets),
           }).pipe(Effect.flatMap((value) => snapshotOAuth(OAuthSealedTransaction, value)));
 
-          const flow = snapshotOAuthSync(OAuthLinkPendingFlow, {
+          const flow = snapshotOAuthSync(OAuthLinkFlow, {
             context,
             sealed,
-            retentionUntilMillis: expiresAtMillis + policy.retentionMillis,
           });
 
           const expected = Schema.encodeSync(flowJson)(flow);
 
-          const receipt = yield* issue(
-            {
-              flow: snapshotOAuthSync(OAuthLinkPendingFlow, flow),
-              authorization: snapshotOAuthSync(OAuthActionAuthorization, authorization),
-            },
-            (value, journal) => {
-              const decision = snapshotOAuthSync(OAuthLinkIssueDecision, value);
+          const receipt = yield* issue(snapshotOAuthSync(OAuthLinkFlow, flow), (value, journal) => {
+            const decision = snapshotOAuthSync(OAuthLinkIssueDecision, value);
 
-              if (
-                decision._tag === "Issued" &&
-                Schema.encodeSync(flowJson)(decision.flow) !== expected
-              )
-                throw OAuthUnavailable.make({});
+            if (
+              decision._tag === "Issued" &&
+              Schema.encodeSync(flowJson)(decision.flow) !== expected
+            )
+              throw OAuthUnavailable.make({});
 
-              return journal.prepare(decision._tag === "Issued");
-            },
-          );
+            return journal.prepare(decision._tag === "Issued");
+          });
 
           if (!(yield* read(receipt))) return yield* OAuthRejected.make({});
 
@@ -570,13 +519,14 @@ export const makeOAuthAccounts = <
             requestBindingVerifier: binder.verifier,
             requestBindingExpiresAtMillis: binder.expiresAtMillis,
             ...(response.issuer === undefined ? {} : { responseIssuer: response.issuer }),
-            nowMillis: DateTime.toEpochMillis(yield* DateTime.now),
           });
 
-          const inspected = yield* preflight(snapshotOAuthSync(OAuthLinkAccess, access));
+          const consumed = yield* consume(access, (value, journal) =>
+            journal.prepare(snapshotOAuthSync(OAuthLinkConsumeDecision, value)),
+          ).pipe(Effect.flatMap(read));
 
-          if (inspected === undefined) return yield* OAuthRejected.make({});
-          const flow = snapshotOAuthSync(OAuthLinkPendingFlow, inspected);
+          if (consumed._tag !== "Consumed") return yield* OAuthRejected.make({});
+          const flow = snapshotOAuthSync(OAuthLinkFlow, consumed.flow);
           const context = flow.context;
 
           if (
@@ -590,220 +540,93 @@ export const makeOAuthAccounts = <
             context.requestBindingVerifier !== binder.verifier ||
             context.requestBindingExpiresAtMillis !== binder.expiresAtMillis ||
             context.expiresAtMillis > binder.expiresAtMillis ||
-            access.nowMillis < context.issuedAtMillis ||
-            access.nowMillis >= context.expiresAtMillis ||
             (context.responseIssuerMode === "required"
               ? response.issuer !== context.issuer
               : response.issuer !== undefined)
           )
             return yield* OAuthUnavailable.make({});
-          const expectedFlow = Schema.encodeSync(flowJson)(flow);
-
-          const authorization = yield* authorize(
-            caller,
-            yield* challenge(
-              "link-complete",
-              context.flowId,
-              context.commandId,
-              context.revision,
-              Schema.encodeSync(contextJson)(context),
-            ),
-            request.actionProof,
-            context.maximumEvidenceAgeMillis,
-          );
-
-          const event = yield* eventFor("linking", caller.subjectId);
-
-          const bytes = yield* randomBytes(32).pipe(
-            Effect.mapError(() => OAuthUnavailable.make({})),
-          );
-
-          const claimId = OAuthClaimId.make(Base64Url.encode(bytes));
-
-          bytes.fill(0);
-
-          const finished = yield* Effect.uninterruptibleMask((restore) =>
-            Effect.gen(function* () {
-              const receipt = yield* restore(
-                claim(
-                  {
-                    access: snapshotOAuthSync(OAuthLinkAccess, access),
-                    flow: snapshotOAuthSync(OAuthLinkPendingFlow, flow),
-                    claimId,
-                    authorization: snapshotOAuthSync(OAuthActionAuthorization, authorization),
-                  },
-                  (value, journal) =>
-                    journal.prepare(snapshotOAuthSync(OAuthLinkClaimDecision, value)),
-                ),
-              );
-
-              const decision = yield* read(receipt);
-
-              if (decision._tag !== "Claimed") return yield* OAuthRejected.make({});
-              const owned = snapshotOAuthSync(OAuthLinkClaim, decision.claim);
-
-              if (
-                owned.claimId !== claimId ||
-                Schema.encodeSync(flowJson)(owned.flow) !== expectedFlow ||
-                owned.claimedAtMillis < context.issuedAtMillis ||
-                owned.claimedAtMillis >= context.expiresAtMillis ||
-                owned.claimExpiresAtMillis !==
-                  owned.claimedAtMillis + context.claimLifetimeMillis ||
-                flow.retentionUntilMillis < owned.claimExpiresAtMillis
-              )
-                return yield* OAuthUnavailable.make({});
-
-              const exchange = Effect.gen(function* () {
-                const secrets = yield* open({
-                  context: snapshotOAuthSync(OAuthLinkTransactionContext, context),
-                  sealed: snapshotOAuthSync(OAuthSealedTransaction, flow.sealed),
-                }).pipe(Effect.flatMap((value) => snapshotOAuth(OAuthTransactionSecrets, value)));
-
-                if (
-                  (context.protocol === "oidc") !== (secrets.oidcNonce !== undefined) ||
-                  (yield* stateDigest(context.flowId, context.provider, secrets.state)) !==
-                    context.stateDigest ||
-                  Redacted.value(secrets.state) !== Redacted.value(response.state)
-                )
-                  return yield* OAuthUnavailable.make({});
-                if (response._tag !== "Code") return yield* OAuthProtocolRejected.make({});
-                const start = yield* DateTime.now;
-
-                if (DateTime.toEpochMillis(start) >= owned.claimExpiresAtMillis)
-                  return yield* OAuthUnavailable.make({});
-
-                const identity = yield* exchangeVerifiedIdentity({
-                  configuration: snapshotOAuthSync(OAuthProtocolConfiguration, context),
-                  response: snapshotOAuthSync(OAuthCallbackResponse, response) as typeof response,
-                  secrets: snapshotOAuthSync(OAuthTransactionSecrets, secrets),
-                  verificationStartedAt: start,
-                }).pipe(
-                  Effect.flatMap((value) => snapshotOAuth(OAuthVerifiedExternalIdentity, value)),
-                );
-
-                if (
-                  identity.identity.provider !== context.provider ||
-                  identity.identity.issuer !== context.issuer
-                )
-                  return yield* OAuthProtocolRejected.make({});
-
-                return identity;
-              });
-
-              const remaining = Math.max(
-                1,
-                owned.claimExpiresAtMillis - DateTime.toEpochMillis(yield* DateTime.now),
-              );
-
-              const exchanged =
-                response._tag === "Error"
-                  ? undefined
-                  : yield* Effect.exit(restore(bounded(exchange, remaining)));
-
-              const rejected =
-                exchanged !== undefined &&
-                Exit.isFailure(exchanged) &&
-                exchanged.cause.reasons.length === 1 &&
-                exchanged.cause.reasons[0]?._tag === "Fail" &&
-                Schema.is(OAuthProtocolRejected)(exchanged.cause.reasons[0].error);
-
-              if (exchanged !== undefined && Exit.isFailure(exchanged) && !rejected)
-                yield* reportAuthFailure("oauth-exchange", exchanged.cause);
-
-              const outcome: OAuthLinkOutcome =
-                exchanged === undefined
-                  ? { _tag: "Cancelled" }
-                  : Exit.isSuccess(exchanged)
-                    ? { _tag: "Verified", identity: exchanged.value }
-                    : rejected
-                      ? { _tag: "Rejected" }
-                      : { _tag: "Ambiguous" };
-
-              const committed = yield* bounded(
-                settle(
-                  {
-                    claim: snapshotOAuthSync(OAuthLinkClaim, owned),
-                    outcome: snapshotOAuthSync(OAuthLinkOutcome, outcome),
-                    authorization: snapshotOAuthSync(OAuthActionAuthorization, authorization),
-                    invalidation: snapshotOAuthSync(SessionInvalidationWindow, invalidation),
-                    nowMillis: DateTime.toEpochMillis(yield* DateTime.now),
-                  },
-                  (value, journal) => {
-                    const decision = snapshotOAuthSync(OAuthLinkDecision, value);
-
-                    if (decision._tag === "Linked") {
-                      const c = decision.credential;
-
-                      if (
-                        outcome._tag !== "Verified" ||
-                        c.moduleId !== id ||
-                        c.revision.subjectId !== caller.subjectId ||
-                        c.identity.provider !== outcome.identity.identity.provider ||
-                        c.identity.issuer !== outcome.identity.identity.issuer ||
-                        c.identity.subject !== outcome.identity.identity.subject ||
-                        !c.revision.credentials.some(
-                          (item) =>
-                            item.credentialId === c.credentialId &&
-                            item.revision === c.credentialRevision,
-                        ) ||
-                        new Set(c.revision.credentials.map((item) => item.credentialId)).size !==
-                          c.revision.credentials.length ||
-                        (decision.changed
-                          ? c.revision.securityRevision === context.revision.securityRevision
-                          : c.revision.securityRevision !== context.revision.securityRevision)
-                      )
-                        throw OAuthUnavailable.make({});
-                      if (decision.changed) journal.stage(event);
-                    } else if (decision._tag === "Conflict") {
-                      if (outcome._tag !== "Verified") throw OAuthUnavailable.make({});
-                    } else if (decision._tag !== "Rejected" && decision._tag !== outcome._tag)
-                      throw OAuthUnavailable.make({});
-
-                    return journal.prepare(decision);
-                  },
-                ),
-                policy.settlementTimeoutMillis,
-              ).pipe(
-                Effect.flatMap(read),
-                Effect.mapError(() => OAuthUnavailable.make({})),
-              );
-
-              if (
-                exchanged !== undefined &&
-                Exit.isFailure(exchanged) &&
-                Cause.hasInterrupts(exchanged.cause)
-              )
-                return yield* Effect.interrupt;
-
-              return committed;
-            }),
-          );
-
-          if (finished._tag === "Ambiguous") return yield* OAuthUnavailable.make({});
-          if (finished._tag === "Conflict") return yield* IdentityConflict.make({});
-          if (finished._tag === "Rejected") return yield* OAuthRejected.make({});
-          if (finished._tag === "Cancelled")
+          if (response._tag === "Error")
             return {
               value: { _tag: "Cancelled" as const, returnTarget: context.returnTarget },
               credentialCommands: clearBinding,
             };
+          if (DateTime.toEpochMillis(yield* DateTime.now) >= context.authorization.validUntilMillis)
+            return yield* OAuthActionRequired.make({});
+
+          const identity = yield* bounded(
+            Effect.gen(function* () {
+              const secrets = yield* open({ context, sealed: flow.sealed }).pipe(
+                Effect.flatMap((value) => snapshotOAuth(OAuthTransactionSecrets, value)),
+              );
+
+              if (
+                (context.protocol === "oidc") !== (secrets.oidcNonce !== undefined) ||
+                (yield* stateDigest(context.flowId, context.provider, secrets.state)) !==
+                  context.stateDigest ||
+                Redacted.value(secrets.state) !== Redacted.value(response.state)
+              )
+                return yield* OAuthUnavailable.make({});
+
+              return yield* exchangeVerifiedIdentity({
+                configuration: snapshotOAuthSync(OAuthProtocolConfiguration, context),
+                response,
+                secrets,
+                verificationStartedAt: yield* DateTime.now,
+              }).pipe(
+                Effect.flatMap((value) => snapshotOAuth(OAuthVerifiedExternalIdentity, value)),
+              );
+            }),
+            context.exchangeTimeoutMillis,
+          ).pipe(
+            Effect.catchTag("TimeoutError", () => Effect.fail(OAuthUnavailable.make({}))),
+            Effect.catchTag("OAuthProtocolRejected", () => Effect.fail(OAuthRejected.make({}))),
+          );
+
+          if (
+            identity.identity.provider !== context.provider ||
+            identity.identity.issuer !== context.issuer
+          )
+            return yield* OAuthRejected.make({});
+          const event = yield* eventFor("linking", caller.subjectId);
+
+          const finished = yield* link({ flow, identity }, (value, journal) => {
+            const decision = snapshotOAuthSync(OAuthLinkDecision, value);
+
+            if (decision._tag === "Linked") {
+              const c = decision.credential;
+
+              if (
+                c.moduleId !== id ||
+                c.revision.subjectId !== caller.subjectId ||
+                c.identity.provider !== identity.identity.provider ||
+                c.identity.issuer !== identity.identity.issuer ||
+                c.identity.subject !== identity.identity.subject ||
+                c.revision.securityRevision !== context.revision.securityRevision ||
+                !c.revision.credentials.some(
+                  (item) =>
+                    item.credentialId === c.credentialId && item.revision === c.credentialRevision,
+                ) ||
+                new Set(c.revision.credentials.map((item) => item.credentialId)).size !==
+                  c.revision.credentials.length
+              )
+                throw OAuthUnavailable.make({});
+              if (decision.changed) journal.stage(event);
+            }
+
+            return journal.prepare(decision);
+          }).pipe(Effect.flatMap(read));
+
+          if (finished._tag === "Conflict") return yield* IdentityConflict.make({});
+          if (finished._tag === "Rejected") return yield* OAuthRejected.make({});
 
           return {
-            value: finished.changed
-              ? {
-                  _tag: "Linked" as const,
-                  changed: true as const,
-                  credentialId: finished.credential.credentialId,
-                  returnTarget: context.returnTarget,
-                  invalidation,
-                }
-              : {
-                  _tag: "Linked" as const,
-                  changed: false as const,
-                  credentialId: finished.credential.credentialId,
-                  returnTarget: context.returnTarget,
-                },
-            credentialCommands: finished.changed ? clearChanged : clearBinding,
+            value: {
+              _tag: "Linked" as const,
+              changed: finished.changed,
+              credentialId: finished.credential.credentialId,
+              returnTarget: context.returnTarget,
+            },
+            credentialCommands: clearBinding,
           };
         },
         Effect.tapCause((cause) =>
@@ -817,24 +640,21 @@ export const makeOAuthAccounts = <
           const caller = yield* available(invocation);
           const request = yield* snapshotOAuth(OAuthUnlink, raw);
 
-          const inspection = yield* inspectUnlink(
-            Object.freeze({
-              moduleId: id,
-              subjectId: caller.subjectId,
-              commandId: request.commandId,
-              credentialId: request.credentialId,
-            }),
-          ).pipe(Effect.flatMap((value) => snapshotOAuth(OAuthUnlinkInspection, value)));
+          if (
+            policy.requireImmediateInvalidation &&
+            (invalidation.existingSessions !== "immediate" ||
+              strategy.capabilities.positiveCacheMillis > 0)
+          )
+            return yield* OAuthMethodUnsupported.make({});
 
-          if (inspection._tag === "Rejected") return yield* OAuthRejected.make({});
-          if (inspection._tag === "Conflict") return yield* IdentityConflict.make({});
-          if (inspection._tag === "Replay") {
-            if (inspection.result.credentialId !== request.credentialId)
-              return yield* OAuthUnavailable.make({});
+          const found = yield* readCredential({
+            moduleId: id,
+            subjectId: caller.subjectId,
+            credentialId: request.credentialId,
+          });
 
-            return { value: inspection.result, credentialCommands: [] };
-          }
-          const credential = snapshotOAuthSync(OAuthCredentialSnapshot, inspection.credential);
+          if (found === undefined) return yield* OAuthRejected.make({});
+          const credential = snapshotOAuthSync(OAuthCredentialSnapshot, found);
 
           if (
             credential.moduleId !== id ||
@@ -853,7 +673,6 @@ export const makeOAuthAccounts = <
             yield* challenge(
               "unlink",
               OAuthActionChallenge.fields.flowId.make(request.commandId),
-              request.commandId,
               credential.revision,
               Schema.encodeSync(credentialJson)(credential),
             ),
@@ -861,17 +680,12 @@ export const makeOAuthAccounts = <
           );
 
           const event = yield* eventFor("credential-change", caller.subjectId);
-          const nowMillis = DateTime.toEpochMillis(yield* DateTime.now);
 
           const receipt = yield* unlink(
             {
-              moduleId: id,
-              commandId: request.commandId,
               credential: snapshotOAuthSync(OAuthCredentialSnapshot, credential),
               authorization: snapshotOAuthSync(OAuthActionAuthorization, authorization),
               invalidation: snapshotOAuthSync(SessionInvalidationWindow, invalidation),
-              nowMillis,
-              retentionUntilMillis: nowMillis + policy.retentionMillis,
             },
             (value, journal) => {
               const decision = snapshotOAuthSync(OAuthUnlinkDecision, value);
@@ -879,12 +693,11 @@ export const makeOAuthAccounts = <
               if (decision._tag === "Unlinked") {
                 if (
                   decision.result.credentialId !== credential.credentialId ||
-                  (!decision.replayed &&
-                    Schema.encodeSync(invalidationJson)(decision.result.invalidation) !==
-                      expectedInvalidation)
+                  Schema.encodeSync(invalidationJson)(decision.result.invalidation) !==
+                    expectedInvalidation
                 )
                   throw OAuthUnavailable.make({});
-                if (!decision.replayed) journal.stage(event);
+                journal.stage(event);
               }
 
               return journal.prepare(decision);
@@ -894,12 +707,11 @@ export const makeOAuthAccounts = <
           const decision = yield* read(receipt);
 
           if (decision._tag === "Rejected") return yield* OAuthRejected.make({});
-          if (decision._tag === "Conflict") return yield* IdentityConflict.make({});
           if (decision._tag === "LastSignInMethod") return yield* LastSignInMethod.make({});
 
           return {
             value: decision.result,
-            credentialCommands: decision.replayed ? [] : clearChanged,
+            credentialCommands: clearChanged,
           };
         },
         Effect.tapCause((cause) =>
@@ -918,13 +730,12 @@ export const makeOAuthAccounts = <
           const input = yield* snapshotOAuth(OAuthCleanupInput, {
             moduleId: id,
             limit,
-            nowMillis: DateTime.toEpochMillis(yield* DateTime.now),
           });
 
           const receipt = yield* cleanup(input, (value, journal) => {
-            const result = snapshotOAuthSync(cleanupResult, value);
+            const result = snapshotOAuthSync(CleanupResult, value);
 
-            if (result.terminalized + result.removed > input.limit) throw OAuthUnavailable.make({});
+            if (result.removed > input.limit) throw OAuthUnavailable.make({});
 
             return journal.prepare(result);
           });
@@ -961,7 +772,7 @@ export const makeOAuthAccounts = <
     error: Failure,
     access: "authenticated",
     exposure: "public",
-    replay: "idempotent",
+    replay: "single-use",
     credentials: true,
   });
 

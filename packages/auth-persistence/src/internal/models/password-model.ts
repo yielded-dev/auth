@@ -1,4 +1,4 @@
-import { type RecoveryReference, type LoginIdentifier } from "@yielded/auth/Identity";
+import { type LoginIdentifier } from "@yielded/auth/Identity";
 import type {
   PasswordAction,
   PasswordCredentialSnapshot,
@@ -9,7 +9,7 @@ import type {
 import type { AuthenticationRequirement, SecurityRevision } from "@yielded/auth/Sessions";
 import type { Effect, Redacted } from "effect";
 
-import type { AnyTableModel, TableModel as Table, SqlExpression } from "../query-operations";
+import type { AnyTableModel, TableModel as Table, SqlExpression } from "../table-model";
 import type { PersistenceMappingError, SubjectIdCodec } from "./common";
 
 type ColumnKey<T extends Table> = T["column"];
@@ -230,7 +230,7 @@ export type D1PasswordPersistenceMapping<
   };
 };
 
-export type PasswordRegistrationState = "pending" | "created";
+export type PasswordRegistrationState = "created";
 
 export interface PasswordRegistrationIntent<Registration> {
   readonly moduleId: string;
@@ -246,13 +246,11 @@ export interface PasswordRegistrationTable<Registration, Request extends Table, 
   readonly requestId: ColumnKey<Request>;
   readonly state: ColumnKey<Request>;
   readonly subjectId: ColumnKey<Request>;
-  readonly recoveryReference: ColumnKey<Request>;
   readonly encodeInsert: (
     input: PasswordRegistrationIntent<Registration>,
     state: {
       readonly state: PasswordRegistrationState;
       readonly nativeSubjectId?: NativeSubjectId;
-      readonly recoveryReference?: typeof RecoveryReference.Type;
     },
   ) => Request["insert"];
   /** Replay projection must never expose a stored subject or decode protected intent. */
@@ -289,7 +287,6 @@ export interface PasswordRegistrationProvisioning<
 
 export interface RequiredPasswordRegistrationConstraints {
   readonly request: "unique(registration.moduleId,registration.requestId)";
-  readonly recoveryReference: "unique(registration.recoveryReference)";
   readonly identifier: "unique(identifier.namespace,identifier.value)";
   readonly credentialSubject: "unique(credential.moduleId,credential.subjectId)";
   readonly authorityCredential: "unique(authorityCredential.subjectId,authorityCredential.credentialId)";
@@ -297,7 +294,6 @@ export interface RequiredPasswordRegistrationConstraints {
 
 export const requiredPasswordRegistrationConstraints: RequiredPasswordRegistrationConstraints = {
   request: "unique(registration.moduleId,registration.requestId)",
-  recoveryReference: "unique(registration.recoveryReference)",
   identifier: "unique(identifier.namespace,identifier.value)",
   credentialSubject: "unique(credential.moduleId,credential.subjectId)",
   authorityCredential: "unique(authorityCredential.subjectId,authorityCredential.credentialId)",
@@ -333,40 +329,26 @@ export type PasswordRegistrationMapping<
   readonly allocateCredentialIdSync?: () => string;
   readonly allocateRevision?: Effect.Effect<SecurityRevision, PersistenceMappingError>;
   readonly allocateRevisionSync?: () => SecurityRevision;
-} & (
-    | {
-        readonly mode: "atomic";
-        readonly provisioning: PasswordRegistrationProvisioning<
-          Registration,
-          Subject,
-          NativeSubjectId
-        > &
-          (
-            | {
-                readonly idMode: "allocated";
-                readonly allocateSubjectId: Effect.Effect<NativeSubjectId, PersistenceMappingError>;
-              }
-            | {
-                readonly idMode: "synchronous";
-                readonly allocateSubjectIdSync: () => NativeSubjectId;
-              }
-            | {
-                readonly idMode: "generated";
-                readonly decodeGeneratedId: (
-                  rows: ReadonlyArray<unknown>,
-                ) => Effect.Effect<NativeSubjectId, PersistenceMappingError>;
-              }
-          );
-      }
-    | {
-        readonly mode: "pending";
-        readonly allocateRecoveryReference?: Effect.Effect<
-          typeof RecoveryReference.Type,
-          PersistenceMappingError
-        >;
-        readonly allocateRecoveryReferenceSync?: () => typeof RecoveryReference.Type;
-      }
-  );
+} & {
+  readonly mode: "atomic";
+  readonly provisioning: PasswordRegistrationProvisioning<Registration, Subject, NativeSubjectId> &
+    (
+      | {
+          readonly idMode: "allocated";
+          readonly allocateSubjectId: Effect.Effect<NativeSubjectId, PersistenceMappingError>;
+        }
+      | {
+          readonly idMode: "synchronous";
+          readonly allocateSubjectIdSync: () => NativeSubjectId;
+        }
+      | {
+          readonly idMode: "generated";
+          readonly decodeGeneratedId: (
+            rows: ReadonlyArray<unknown>,
+          ) => Effect.Effect<NativeSubjectId, PersistenceMappingError>;
+        }
+    );
+};
 
 export type AnyPasswordPersistenceMapping<Expression extends SqlExpression = SqlExpression> =
   PasswordPersistenceMapping<

@@ -70,7 +70,7 @@ export const accessProfile = (options: {
     maximumRefreshLifetimeMillis: options.maximumRefreshLifetimeMillis ?? 30 * 24 * 60 * 60 * 1000,
     refreshAheadMillis: 60_000,
     refresh: "rotating",
-    revocation: "cohort",
+    revocation: "provider",
   });
 
 /** Declare GitHub for Http.layer. The host supplies its provider key and

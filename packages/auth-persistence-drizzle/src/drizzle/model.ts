@@ -8,8 +8,6 @@ import {
 import { getTableColumns, type AnyColumn, type InferInsertModel, type Table } from "drizzle-orm";
 import { Context, DateTime, Effect, Layer } from "effect";
 
-export type CommitMode = "interactive" | "synchronous" | "batch";
-
 export {
   PersistenceMappingError,
   isMappedConstraintConflict,

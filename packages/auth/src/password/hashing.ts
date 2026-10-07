@@ -1,4 +1,5 @@
 import { Kdf } from "@yielded/crypto/Kdf";
+import { KdfAdmission } from "@yielded/crypto/KdfAdmission";
 import { Crypto, Effect, Redacted, Schema, type Scope } from "effect";
 
 import { equalBytes } from "../internal/equalBytes";
@@ -15,7 +16,6 @@ import {
 } from "./errors";
 import { EncodedPasswordHash } from "./models";
 import { parsePasswordHash, phcBase64 } from "./password-encoding";
-import { PasswordKdfAdmission } from "./PasswordKdfAdmission";
 
 const encoder = new TextEncoder();
 
@@ -29,7 +29,7 @@ export const make = (input: PasswordHashingConfig = defaultPasswordHashingConfig
 
   return Effect.gen(function* () {
     const config = yield* validatePasswordHashingConfig(snapshot);
-    const admission = yield* PasswordKdfAdmission;
+    const admission = yield* KdfAdmission;
     const kdf = yield* Kdf;
     const crypto = yield* Crypto.Crypto;
 
@@ -86,16 +86,18 @@ export const make = (input: PasswordHashingConfig = defaultPasswordHashingConfig
       prepare: Effect.Effect<P, E2, Scope.Scope>,
       body: (bytes: Uint8Array, prepared: P) => Effect.Effect<A, E, Scope.Scope>,
     ) =>
-      admission.run(
-        Effect.scoped(
-          Effect.gen(function* () {
-            const prepared = yield* prepare;
-            const bytes = yield* passwordBytes(password);
+      admission
+        .run(
+          Effect.scoped(
+            Effect.gen(function* () {
+              const prepared = yield* prepare;
+              const bytes = yield* passwordBytes(password);
 
-            return yield* body(bytes, prepared);
-          }),
-        ),
-      );
+              return yield* body(bytes, prepared);
+            }),
+          ),
+        )
+        .pipe(Effect.catchTag("CryptoKdfBusy", () => Effect.fail(PasswordKdfBusy.make({}))));
 
     return {
       hash: (password: Redacted.Redacted<string>) =>

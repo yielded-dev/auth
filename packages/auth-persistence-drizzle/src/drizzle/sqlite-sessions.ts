@@ -1,4 +1,3 @@
-import { NativeDatabase } from "@yielded/auth-persistence/Adapter";
 import type { LifecycleHooks, HookConfigurationError } from "@yielded/auth/Hooks";
 import {
   AuthenticationAuthority,
@@ -18,7 +17,7 @@ import type { AnySQLiteTable } from "drizzle-orm/sqlite-core";
 import { Context, Effect } from "effect";
 import type { SqlError } from "effect/sql/SqlError";
 
-import { nativeDatabase } from "./native-database";
+import { NativeDatabase, nativeDatabase } from "./native-database";
 import type {
   AuthenticationAuthorityMapping,
   PendingAuthenticationMapping,

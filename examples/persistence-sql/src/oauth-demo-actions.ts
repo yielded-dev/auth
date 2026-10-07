@@ -84,7 +84,7 @@ export const DemoActionsLive = Layer.effectContext(
         )(challenge);
 
         const consumed = yield* sql`UPDATE demo_oauth_action_code SET consumed_context = ${context}
-        WHERE digest = ${hash} AND action = ${challenge.action} AND command_id = ${challenge.commandId}
+        WHERE digest = ${hash} AND action = ${challenge.action} AND command_id = ${challenge.flowId}
           AND security_revision = ${challenge.revision.securityRevision} AND expires_at > ${DateTime.toEpochMillis(now)}
           AND consumed_context IS NULL
           AND EXISTS (SELECT 1 FROM oauth_subject WHERE id = ${ownerId} AND status = 'active'
@@ -96,6 +96,7 @@ export const DemoActionsLive = Layer.effectContext(
         if (consumed.length !== 1) return yield* OAuth.OAuthActionRequired.make({});
 
         return {
+          source: { _tag: "Proof" as const },
           requirement,
           evidence: Sessions.AuthenticationEvidence.make({
             revision: challenge.revision,

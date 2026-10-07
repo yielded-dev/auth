@@ -10,7 +10,7 @@ import {
 } from "@yielded/auth/Sessions";
 import type { DateTime, Effect } from "effect";
 
-import type { TableModel as Table, SqlExpression } from "../query-operations";
+import type { TableModel as Table, SqlExpression } from "../table-model";
 import type { PersistenceMappingError, SubjectIdCodec } from "./common";
 
 type ColumnKey<T extends Table> = T["column"];

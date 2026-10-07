@@ -6,7 +6,6 @@ const uniquePlans: Readonly<Record<string, readonly [string, ReadonlyArray<strin
   "unique(abuseEvent.moduleId,abuseEvent.action,abuseEvent.scopeKind,abuseEvent.scopeKey,abuseEvent.commandId)":
     ["abuseEvent", ["moduleId", "action", "scopeKind", "scopeKey", "commandId"]],
   "unique(admission.moduleId)": ["admission", ["moduleId"]],
-  "unique(attempt.moduleId,attempt.attemptId)": ["attempt", ["moduleId", "attemptId"]],
   "unique(authority.subjectId,authority.credentialId)": [
     "authority",
     ["subjectId", "credentialId"],
@@ -27,8 +26,8 @@ const uniquePlans: Readonly<Record<string, readonly [string, ReadonlyArray<strin
   "unique(connectedFlow.moduleId,connectedFlow.flowId)": ["flow", ["moduleId", "flowId"]],
   "unique(connectedFlow.stateDigest)": ["flow", ["stateDigest"]],
   "unique(connectedGrant.moduleId,connectedGrant.grantId)": ["grant", ["moduleId", "grantId"]],
-  "unique(connectedGrant.moduleId,connectedGrant.subjectId,connectedGrant.profileKey,connectedGrant.activeIdentityKey)":
-    ["grant", ["moduleId", "subjectId", "profileKey", "activeIdentityKey"]],
+  "unique(connectedGrant.moduleId,connectedGrant.subjectId,connectedGrant.profileKey,connectedGrant.identityKey)":
+    ["grant", ["moduleId", "subjectId", "profileKey", "identityKey"]],
   "unique(connectedRevocation.jobId)": ["job", ["jobId"]],
   "unique(continuation.moduleId,continuation.continuationId)": [
     "continuation",
@@ -53,7 +52,6 @@ const uniquePlans: Readonly<Record<string, readonly [string, ReadonlyArray<strin
     "registration",
     ["moduleId", "commandId"],
   ],
-  "unique(emailRegistration.pendingReference)": ["registration", ["pendingReference"]],
   "unique(failureEvent.moduleId,failureEvent.seriesKey,failureEvent.commandId)": [
     "failureEvent",
     ["moduleId", "seriesKey", "commandId"],
@@ -80,7 +78,6 @@ const uniquePlans: Readonly<Record<string, readonly [string, ReadonlyArray<strin
     "registration",
     ["moduleId", "requestId"],
   ],
-  "unique(registration.recoveryReference)": ["registration", ["recoveryReference"]],
   "unique(registrationCommand.moduleId,registrationCommand.commandId)": [
     "command",
     ["moduleId", "commandId"],
@@ -98,17 +95,13 @@ const uniquePlans: Readonly<Record<string, readonly [string, ReadonlyArray<strin
 
 const arrayRoles: Readonly<Record<string, string>> = {
   credentialId: "credential",
+  credentialKey: "credential",
   factor: "authority",
-  credentialOwnership: "credentialOwnership",
-  handleOwnership: "handleOwnership",
-  boundSubjectHandle: "handleOwnership",
   flow: "flow",
   command: "flow",
   admission: "admission",
-  charge: "charge",
   intentFlow: "intent",
   intentCommand: "intent",
-  handle: "handle",
 };
 
 const nestedMappings = [
@@ -188,9 +181,6 @@ export const storageKeyPlans = (
       let mapped = record(target);
 
       if (role === "pending" && mapped.table === undefined) mapped = record(mapped.pending);
-      // OAuth ownership can be integrated into its tuple authority or separate.
-      if (role === "ownership" && mapped.table === undefined)
-        mapped = record(mapped.external ?? mapped.tuple);
       if (!Predicate.isObject(mapped.table)) throw new Error("Missing storage table");
       const columns = columnsFor(mapped.table);
 

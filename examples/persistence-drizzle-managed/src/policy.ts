@@ -10,6 +10,7 @@ import {
   sessionConfiguration,
   sessionRequirement,
 } from "../../shared/account/auth";
+import { authorizePasswordSession } from "../../shared/account/password-authorization";
 import { authSchema } from "./schema";
 
 const SessionReader = AppAuth.sessions
@@ -29,7 +30,11 @@ const EmailActions = Layer.effect(
 
           if (invocation._tag !== "Authenticated" || token === undefined)
             return yield* Email.EmailActionRequired.make({});
-          const source = yield* sessions.inspect(token);
+
+          const source = yield* AppAuth.sessions
+            .inspectInvocation(invocation, token)
+            .pipe(Effect.provideService(AppAuth.sessions.SessionStrategy, sessions));
+
           const original = source.provenance.evidence;
 
           const confirmsRegisteredAddress =
@@ -82,6 +87,7 @@ const PasswordActions = Layer.effect(
   Password.PasswordActionEvidence,
   Effect.gen(function* () {
     const passwords = yield* Password.PasswordPersistence;
+    const sessions = yield* AppAuth.sessions.SessionStrategy;
     const authority = yield* Sessions.AuthenticationAuthority;
     const db = yield* Drizzle.makeWithDefaults({});
     const emails = authSchema.emailCredentials;
@@ -89,7 +95,7 @@ const PasswordActions = Layer.effect(
 
     return Password.PasswordActionEvidence.of({
       verify: Effect.fn("Customers.authorizePasswordChange")(
-        function* ({ challenge, currentPasswordEvidence, recovery }) {
+        function* ({ invocation, challenge, currentPasswordEvidence, recovery }) {
           if (challenge.action === "change-password" && currentPasswordEvidence !== undefined) {
             return {
               evidence: {
@@ -99,6 +105,21 @@ const PasswordActions = Layer.effect(
               },
               requirement,
             };
+          }
+          if (challenge.action === "change-password") {
+            const request = yield* Effect.serviceOption(Auth.AuthRequest);
+            const token = Option.isSome(request) ? request.value.credentials.session : undefined;
+
+            if (invocation._tag !== "Authenticated" || token === undefined)
+              return yield* Password.PasswordActionRequired.make({});
+
+            const source = yield* AppAuth.sessions
+              .inspectInvocation(invocation, token)
+              .pipe(Effect.provideService(AppAuth.sessions.SessionStrategy, sessions));
+
+            return yield* authorizePasswordSession(invocation, challenge, source).pipe(
+              Effect.provideService(Sessions.AuthenticationAuthority, authority),
+            );
           }
           if (
             challenge.action !== "reset-password" ||
@@ -164,7 +185,7 @@ const PasswordActions = Layer.effect(
       ),
     });
   }),
-);
+).pipe(Layer.provide(SessionReader));
 
 const PasskeyActions = Layer.effect(
   Passkey.PasskeyActionEvidence,
@@ -179,7 +200,11 @@ const PasskeyActions = Layer.effect(
 
           if (invocation._tag !== "Authenticated" || token === undefined)
             return yield* Passkey.PasskeyActionRequired.make({});
-          const source = yield* sessions.inspect(token);
+
+          const source = yield* AppAuth.sessions
+            .inspectInvocation(invocation, token)
+            .pipe(Effect.provideService(AppAuth.sessions.SessionStrategy, sessions));
+
           const original = source.provenance.evidence;
 
           if (

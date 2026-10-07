@@ -405,26 +405,6 @@ export const studioStorage = Layer.unwrap(
     const assertions = yield* Native.makePasskeyPersistenceServices(Studio.base);
     const credentials = yield* Native.makePasskeyCredentialServices(Studio.read);
 
-    const enrollment = yield* Native.makePasskeyEnrollmentContextServices({
-      moduleId: Studio.base.moduleId,
-      read: Studio.read,
-      module: Studio.base.module,
-    });
-
-    const select = (purpose: string) =>
-      purpose === "registration"
-        ? registration.passkeyPersistence
-        : purpose === "enrollment"
-          ? management.passkeyPersistence
-          : assertions.passkeyPersistence;
-
-    const persistence = Passkey.PasskeyPersistence.of({
-      ...assertions.passkeyPersistence,
-      context: (input) => select(input.purpose).context(input),
-      claim: (input, prepare) => select(input.ceremony.purpose).claim(input, prepare),
-      settle: (input, prepare) => select(input.claim.ceremony.purpose).settle(input, prepare),
-    });
-
     const totp = yield* Native.makeTotpPersistenceServices({
       moduleId: "studio/totp",
       policy: authenticatorPolicy,
@@ -470,9 +450,8 @@ export const studioStorage = Layer.unwrap(
       Layer.succeed(sessions.StatefulSessionPersistence, state.statefulSessionPersistence),
       Layer.succeed(sessions.SessionRepository, state.sessionRepository),
       Layer.succeed(sessions.SessionStepUpPersistence, stepUp.sessionStepUpPersistence),
-      Layer.succeed(Passkey.PasskeyPersistence, persistence),
+      Layer.succeed(Passkey.PasskeyPersistence, assertions.passkeyPersistence),
       Layer.succeed(Passkey.PasskeyCredentials, credentials.passkeyCredentials),
-      Layer.succeed(Passkey.PasskeyEnrollmentContext, enrollment.passkeyEnrollmentContext),
       Layer.succeed(Passkey.PasskeyManagementPersistence, management.passkeyManagementPersistence),
       Layer.succeed(
         StudioAuth.strategies.registration.RegistrationAuthority,

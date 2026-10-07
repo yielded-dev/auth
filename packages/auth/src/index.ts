@@ -16,7 +16,6 @@ export * as OperationHttpServer from "./OperationHttpServer.ts";
 export * as Operations from "./Operations.ts";
 export * as Passkey from "./Passkey.ts";
 export * as PasskeyContract from "./PasskeyContract.ts";
-export * as PasskeyPassword from "./PasskeyPassword.ts";
 export * as Password from "./Password.ts";
 export * as Persistence from "./Persistence.ts";
 export * as PhoneOtp from "./PhoneOtp.ts";

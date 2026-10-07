@@ -1,4 +1,3 @@
-import { NativeDatabase } from "@yielded/auth-persistence/Adapter";
 import type { LifecycleHooks, HookConfigurationError } from "@yielded/auth/Hooks";
 import { type ProofUnavailable, ProofPersistence } from "@yielded/auth/Proofs";
 import type { AnyRelations } from "drizzle-orm";
@@ -9,10 +8,10 @@ import type { SqlError } from "effect/sql/SqlError";
 
 import { updateValues } from "./model";
 import { Database as DatabaseService } from "./mysql-database";
-import { nativeDatabase } from "./native-database";
+import { NativeDatabase, nativeDatabase } from "./native-database";
+import type { NativeSqlQuery } from "./native-database";
 import type { ProofPersistenceMapping } from "./proof-model";
 import { CurrentProofSql } from "./proof-sql";
-import type { ProofSqlQuery } from "./proof-sql";
 import {
   coordinateTargetProofPersistence,
   makeTargetProofPersistenceServices,
@@ -46,7 +45,7 @@ const configuration = (service: TransactionService | undefined) => ({
   mode: "interactive" as const,
   locking: true,
   standaloneGuard: sqlClientProofStandaloneGuard(service),
-  insertIfAbsent: (query: ProofSqlQuery, selfKey: string, selfValue: unknown) =>
+  insertIfAbsent: (query: NativeSqlQuery, selfKey: string, selfValue: unknown) =>
     query.onDuplicateKeyUpdate({
       set: updateValues([[selfKey, selfValue]]),
     }),

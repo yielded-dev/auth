@@ -1,13 +1,11 @@
-import { NativeDatabase } from "@yielded/auth-persistence/Adapter";
 import type { LifecycleHooks } from "@yielded/auth/Hooks";
 import { PasskeyPersistence } from "@yielded/auth/Passkey";
 import type { Table } from "drizzle-orm";
 import { type Crypto, Effect, Context } from "effect";
 
-import { nativeDatabase } from "./native-database";
+import { NativeDatabase, nativeDatabase } from "./native-database";
 import type {
   PasskeyCredentialMapping,
-  PasskeyEnrollmentContextMapping,
   PasskeyMappingSource,
   PasskeyPersistenceMapping,
   PasskeyPersistenceServices,
@@ -16,17 +14,16 @@ import type {
   PasskeyRegistrationCeremonyMapping,
   PasskeyRegistrationCeremonyServices,
 } from "./passkey-registration-ceremony-model";
+import { makePasskeyWriteTarget } from "./passkey-write-drivers";
 import {
   type PasskeyCoordinatorError,
   coordinateTargetPasskey,
   coordinateTargetPasskeyRegistration,
   makeTargetPasskeyCredentials,
-  makeTargetPasskeyEnrollmentContext,
   makeTargetPasskeyPersistence,
   makeTargetPasskeyRegistration,
   type PasskeyTargetConfiguration,
-} from "./passkey-target";
-import { makePasskeyWriteTarget } from "./passkey-write-drivers";
+} from "./passkey/target";
 import type { SuppliedService } from "./SuppliedService";
 
 // oxlint-disable-next-line no-explicit-any -- inspect only the concrete database's installed generic transaction callback.
@@ -49,12 +46,7 @@ export const makePasskeyTarget = <
     S extends T,
     C extends T,
     F extends T,
-    O extends T,
-    H extends T,
-    M extends T,
     Flow extends T,
-    Admission extends T,
-    Charge extends T,
     N,
     A,
     E,
@@ -66,15 +58,7 @@ export const makePasskeyTarget = <
     acquire: Effect.Effect<Database, DatabaseError, DatabaseRequirements>,
     options: {
       readonly mapping: PasskeyMappingSource<
-        PasskeyPersistenceMapping<
-          PasskeyCredentialMapping<S, C, F, O, H, N>,
-          M,
-          Flow,
-          Admission,
-          Charge,
-          N
-        > &
-          Extra,
+        PasskeyPersistenceMapping<PasskeyCredentialMapping<S, C, F, N>, Flow, N> & Extra,
         RSetup
       >;
       readonly transaction?: never;
@@ -94,12 +78,7 @@ export const makePasskeyTarget = <
     S extends T,
     C extends T,
     F extends T,
-    O extends T,
-    H extends T,
-    M extends T,
     Flow extends T,
-    Admission extends T,
-    Charge extends T,
     N,
     A,
     E,
@@ -113,15 +92,7 @@ export const makePasskeyTarget = <
     acquire: Effect.Effect<Database, DatabaseError, DatabaseRequirements>,
     options: {
       readonly mapping: PasskeyMappingSource<
-        PasskeyPersistenceMapping<
-          PasskeyCredentialMapping<S, C, F, O, H, N>,
-          M,
-          Flow,
-          Admission,
-          Charge,
-          N
-        > &
-          Extra,
+        PasskeyPersistenceMapping<PasskeyCredentialMapping<S, C, F, N>, Flow, N> & Extra,
         RSetup
       >;
       readonly transaction: SuppliedService<TxId, NoInfer<TransactionOf<Database>>, TxShape>;
@@ -141,12 +112,7 @@ export const makePasskeyTarget = <
     S extends T,
     C extends T,
     F extends T,
-    O extends T,
-    H extends T,
-    M extends T,
     Flow extends T,
-    Admission extends T,
-    Charge extends T,
     N,
     A,
     E,
@@ -160,15 +126,7 @@ export const makePasskeyTarget = <
     acquire: Effect.Effect<Database, DatabaseError, DatabaseRequirements>,
     options: {
       readonly mapping: PasskeyMappingSource<
-        PasskeyPersistenceMapping<
-          PasskeyCredentialMapping<S, C, F, O, H, N>,
-          M,
-          Flow,
-          Admission,
-          Charge,
-          N
-        > &
-          Extra,
+        PasskeyPersistenceMapping<PasskeyCredentialMapping<S, C, F, N>, Flow, N> & Extra,
         RSetup
       >;
       readonly transaction?: SuppliedService<TxId, NoInfer<TransactionOf<Database>>, TxShape>;
@@ -197,12 +155,7 @@ export const makePasskeyTarget = <
   }
   function coordinatePasskeyRegistrationCeremony<
     Database extends D,
-    M extends T,
     Flow extends T,
-    Admission extends T,
-    Charge extends T,
-    Intent extends T,
-    H extends T,
     A,
     E,
     R,
@@ -213,7 +166,7 @@ export const makePasskeyTarget = <
     acquire: Effect.Effect<Database, DatabaseError, DatabaseRequirements>,
     options: {
       readonly mapping: PasskeyMappingSource<
-        PasskeyRegistrationCeremonyMapping<M, Flow, Admission, Charge, Intent, H> & Extra,
+        PasskeyRegistrationCeremonyMapping<Flow> & Extra,
         RSetup
       >;
       readonly transaction?: never;
@@ -230,12 +183,7 @@ export const makePasskeyTarget = <
   >;
   function coordinatePasskeyRegistrationCeremony<
     Database extends D,
-    M extends T,
     Flow extends T,
-    Admission extends T,
-    Charge extends T,
-    Intent extends T,
-    H extends T,
     A,
     E,
     R,
@@ -248,7 +196,7 @@ export const makePasskeyTarget = <
     acquire: Effect.Effect<Database, DatabaseError, DatabaseRequirements>,
     options: {
       readonly mapping: PasskeyMappingSource<
-        PasskeyRegistrationCeremonyMapping<M, Flow, Admission, Charge, Intent, H> & Extra,
+        PasskeyRegistrationCeremonyMapping<Flow> & Extra,
         RSetup
       >;
       readonly transaction: SuppliedService<TxId, NoInfer<TransactionOf<Database>>, TxShape>;
@@ -265,12 +213,7 @@ export const makePasskeyTarget = <
   >;
   function coordinatePasskeyRegistrationCeremony<
     Database extends D,
-    M extends T,
     Flow extends T,
-    Admission extends T,
-    Charge extends T,
-    Intent extends T,
-    H extends T,
     A,
     E,
     R,
@@ -283,7 +226,7 @@ export const makePasskeyTarget = <
     acquire: Effect.Effect<Database, DatabaseError, DatabaseRequirements>,
     options: {
       readonly mapping: PasskeyMappingSource<
-        PasskeyRegistrationCeremonyMapping<M, Flow, Admission, Charge, Intent, H> & Extra,
+        PasskeyRegistrationCeremonyMapping<Flow> & Extra,
         RSetup
       >;
       readonly transaction?: SuppliedService<TxId, NoInfer<TransactionOf<Database>>, TxShape>;
@@ -313,80 +256,30 @@ export const makePasskeyTarget = <
 
   return {
     ...makePasskeyWriteTarget<DatabaseId, D, T, Extra, Synchronous>(databaseService, configuration),
-    makePasskeyCredentialServices: <
-      S extends T,
-      C extends T,
-      F extends T,
-      O extends T,
-      H extends T,
-      N,
-      RSetup = never,
-    >(
-      mapping: PasskeyMappingSource<PasskeyCredentialMapping<S, C, F, O, H, N> & Extra, RSetup>,
+    makePasskeyCredentialServices: <S extends T, C extends T, F extends T, N, RSetup = never>(
+      mapping: PasskeyMappingSource<PasskeyCredentialMapping<S, C, F, N> & Extra, RSetup>,
     ) =>
       makeTargetPasskeyCredentials(mapping, configuration).pipe(
-        Effect.provideServiceEffect(NativeDatabase, nativeDatabase(databaseService)),
-      ),
-    makePasskeyEnrollmentContextServices: <
-      S extends T,
-      C extends T,
-      F extends T,
-      O extends T,
-      H extends T,
-      M extends T,
-      N,
-      RSetup = never,
-    >(
-      mapping: PasskeyMappingSource<
-        PasskeyEnrollmentContextMapping<PasskeyCredentialMapping<S, C, F, O, H, N>, M, N> & Extra,
-        RSetup
-      >,
-    ) =>
-      makeTargetPasskeyEnrollmentContext(mapping, configuration).pipe(
         Effect.provideServiceEffect(NativeDatabase, nativeDatabase(databaseService)),
       ),
     makePasskeyPersistenceServices: <
       S extends T,
       C extends T,
       F extends T,
-      O extends T,
-      H extends T,
-      M extends T,
       Flow extends T,
-      Admission extends T,
-      Charge extends T,
       N,
       RSetup = never,
     >(
       mapping: PasskeyMappingSource<
-        PasskeyPersistenceMapping<
-          PasskeyCredentialMapping<S, C, F, O, H, N>,
-          M,
-          Flow,
-          Admission,
-          Charge,
-          N
-        > &
-          Extra,
+        PasskeyPersistenceMapping<PasskeyCredentialMapping<S, C, F, N>, Flow, N> & Extra,
         RSetup
       >,
     ) =>
       makeTargetPasskeyPersistence(mapping, configuration).pipe(
         Effect.provideServiceEffect(NativeDatabase, nativeDatabase(databaseService)),
       ),
-    makePasskeyRegistrationCeremonyServices: <
-      M extends T,
-      Flow extends T,
-      Admission extends T,
-      Charge extends T,
-      Intent extends T,
-      H extends T,
-      RSetup = never,
-    >(
-      mapping: PasskeyMappingSource<
-        PasskeyRegistrationCeremonyMapping<M, Flow, Admission, Charge, Intent, H> & Extra,
-        RSetup
-      >,
+    makePasskeyRegistrationCeremonyServices: <Flow extends T, RSetup = never>(
+      mapping: PasskeyMappingSource<PasskeyRegistrationCeremonyMapping<Flow> & Extra, RSetup>,
     ) =>
       makeTargetPasskeyRegistration(mapping, configuration).pipe(
         Effect.provideServiceEffect(NativeDatabase, nativeDatabase(databaseService)),

@@ -1,4 +1,4 @@
-import { withStorageValidation, NativeDatabase } from "@yielded/auth-persistence/Adapter";
+import { withStorageValidation } from "@yielded/auth-persistence/Adapter";
 import {
   ExternalIdentityMutation,
   type ExternalIdentity,
@@ -26,7 +26,7 @@ import {
   type SubjectProvisioningTables,
 } from "./model";
 import { Database as DatabaseService } from "./mysql-database";
-import { nativeDatabase } from "./native-database";
+import { NativeDatabase, nativeDatabase } from "./native-database";
 import { validateDrizzleStorage } from "./storage-validation";
 
 type RuntimeDatabase = EffectMysql2Database<any>;
@@ -74,13 +74,6 @@ export const makeMysqlSubjectProvisioningServices = Effect.fnUntraced(function* 
   ) as MySqlColumn;
 
   const identifierTable = mapping.identifier.table;
-
-  const identifierNamespaceColumn = column(
-    identifierTable,
-    mapping.identifier.namespace,
-  ) as MySqlColumn;
-
-  const identifierValueColumn = column(identifierTable, mapping.identifier.value) as MySqlColumn;
 
   const findReceipt = Effect.fn("DrizzleMysqlIdentity.findReceipt")(function* (requestId: string) {
     const rows = yield* db
@@ -170,21 +163,8 @@ export const makeMysqlSubjectProvisioningServices = Effect.fnUntraced(function* 
             Effect.flatMap((receipt) => {
               if (receipt !== undefined && receipt.fingerprint === fingerprint)
                 return Effect.succeed(receipt.subjectId as NativeId);
-              if (input.identifier === undefined) return IdentityConflict.make();
 
-              return db
-                .select({
-                  subjectId: column(identifierTable, mapping.identifier.subjectId) as MySqlColumn,
-                })
-                .from(identifierTable as any)
-                .where(
-                  and(
-                    eq(identifierNamespaceColumn, input.identifier.namespace),
-                    eq(identifierValueColumn, input.identifier.value),
-                  ),
-                )
-                .limit(1)
-                .pipe(Effect.flatMap(() => IdentityConflict.make()));
+              return IdentityConflict.make();
             }),
           );
         },

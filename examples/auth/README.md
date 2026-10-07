@@ -49,8 +49,9 @@ credentials, HTTPS forwarding, and the isolated development-state reset.
 
 The examples allow sign-in and current-owner grant metadata/use. Management requires
 an application-owned exact-action verifier and is denied until one is installed.
-Run cohort revocation maintenance through an application-owned scheduler if enabling
-management for a provider that supports remote revocation.
+Run provider revocation jobs through an application-owned scheduler if enabling
+management for a provider that supports remote revocation. A provider may revoke a
+newer grant while processing an older job; local deletion cannot prevent that remote race.
 
 ## Shared GitHub callback host
 

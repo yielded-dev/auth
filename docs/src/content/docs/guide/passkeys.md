@@ -170,7 +170,8 @@ Here `response` is the serialized string obtained from
 `Redacted.value(assertion.response)` in the browser ceremony above, with `Redacted`
 imported from `effect`. Send it through the protected transport; the server injects
 the original request-binding cookie. A session
-is issued only after server verification and the current account checks succeed.
+is issued only after server verification, single-use challenge consumption, and the
+current account checks succeed. If session issuance fails, begin a new ceremony.
 The client exposes the same calls as `client.auth.signIn(...)` and
 `client.auth.completeSignIn(...)`. The
 [Atom workflow](./client#compose-a-passkey-workflow) connects these steps.
@@ -193,7 +194,9 @@ export const PasskeyProtocolLive = PasskeyServer.layer.pipe(Layer.provide(Passke
 
 Install `@yielded/auth-simplewebauthn` and its `@simplewebauthn/server` peer.
 Both the strategy and verifier require `PasskeyConfig`. Use your actual relying-party
-ID and exact allowed origins; changing them can make existing passkeys unusable.
+ID and exact allowed origins. Challenges retain the selected profile until expiry
+when configuration changes during a rolling deploy. New ceremonies use the new
+configuration; changing the RP ID can make existing passkeys unusable.
 
 ## Supply the services
 
@@ -224,15 +227,23 @@ export const AuthLive = AppAuth.layer.pipe(
 The relative imports are your application modules. `PasskeyPersistenceLive`
 provides ceremony and credential storage through [the passkey adapters](../reference/adapters#passkeys).
 `AuthDependencies` provides shared [crypto, session, account, and key configuration](../reference/adapters#compose-the-application-layer).
-The method supplies its default policy and empty hooks.
+The method supplies its default policy and empty hooks. Admission uses Effect
+`RateLimiter` token buckets for global, subject, and target budgets. The default
+store is process-local, resets with the runtime, and rejects new keys when its
+10,000 active buckets are full. Multi-replica applications must provide a shared
+`RateLimiter` or `RateLimiterStore` to coordinate these limits.
+Begin and completion requests each consume a global token and any known subject
+or target token, including rejected requests. Discoverable sign-in charges its
+subject after credential lookup. A full ten-token subject bucket covers five
+enrollment begin/completion pairs before it needs to refill.
 
 ## Registration and management
 
-| Task                                   | Strategy and methods                                                 |
-| -------------------------------------- | -------------------------------------------------------------------- |
-| Create an account with a passkey       | `Passkey.makeRegistration` → `register`, `completeRegistration`.     |
-| Add, list, rename, or remove a passkey | `Passkey.makeManagement` and its authenticated operations.           |
-| Confirm a protected password change    | `PasskeyPassword` binds the assertion to a prepared password intent. |
+| Task                                   | Strategy and methods                                                               |
+| -------------------------------------- | ---------------------------------------------------------------------------------- |
+| Create an account with a passkey       | `Passkey.makeRegistration` → `register`, `completeRegistration`.                   |
+| Add, list, rename, or remove a passkey | `Passkey.makeManagement` and its authenticated operations.                         |
+| Confirm a protected password change    | Use session step-up, then authorize the password change from its recent assurance. |
 
 These require explicit application authority. A registration ceremony must not
 silently become a login ceremony or link an existing account. See
@@ -241,11 +252,15 @@ silently become a login ceremony or link an existing account. See
 `PasskeyActionEvidence` supplies authorization for enrollment and removal. The
 application chooses its freshness requirement; `management.maximumEvidenceAgeMillis`
 sets a finite upper bound, and individual action requirements can be stricter.
+Enrollment asks for authorization once at begin, retains it with the challenge,
+and re-assesses it under the subject lock at completion. Completion takes no second
+action proof. The credential cap is authoritative at completion.
 Choose a short window, such as five minutes, for adding a credential; session
 validity alone does not establish recent authentication. Adding a
 passkey preserves existing sessions without refreshing their authentication time or
 adding assurance. Removal still invalidates authentication and protects the last
-usable sign-in method.
+usable sign-in method. `requireImmediateInvalidation` applies to removal; enrollment
+and metadata remain available with stateless sessions.
 
 The [managed example](https://github.com/yielded-dev/auth/tree/main/examples/persistence-drizzle-managed)
 shows enrollment from a signed-in account, a saved-key list, and passkey sign-in with

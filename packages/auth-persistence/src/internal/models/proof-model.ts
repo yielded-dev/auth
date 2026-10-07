@@ -11,7 +11,7 @@ import type {
 import type { TokenDigest } from "@yielded/auth/Schema";
 import type { Effect } from "effect";
 
-import type { AnyTableModel, TableModel as Table, SqlExpression } from "../query-operations";
+import type { AnyTableModel, TableModel as Table, SqlExpression } from "../table-model";
 import type { PersistenceMappingError, SubjectIdCodec } from "./common";
 
 type ColumnKey<T extends Table> = T["column"];

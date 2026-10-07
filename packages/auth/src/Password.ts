@@ -54,8 +54,6 @@ export {
   validatePasswordHashingConfig,
 } from "./password/configuration";
 
-export { PasswordKdfAdmission } from "./password/PasswordKdfAdmission";
-
 export {
   type PasswordMutationInput,
   PasswordPersistence,
@@ -68,36 +66,6 @@ export {
   defaultPasswordPolicy,
   validatePasswordPolicy,
 } from "./password/policy";
-
-export {
-  type PasswordPreparedAuthorization,
-  type PasswordPreparedCompletionPlan,
-} from "./password/methods/prepared";
-
-export {
-  PasswordPreparedConfiguration,
-  type PasswordPreparedContext,
-  PasswordPreparedCredential,
-  PasswordPreparedIntentId,
-  PasswordPreparedReady,
-  PasswordPreparedReadyJson,
-  PasswordPreparedRequirement,
-  PasswordPreparedReservation,
-  PasswordPreparedReset,
-  PasswordPreparedResult,
-  PasswordPreparedVersion,
-  decodePasswordPreparedReady,
-  encodePasswordPreparedReady,
-  snapshotPasswordPreparedReady,
-  snapshotPasswordPreparedReservation,
-  validatePasswordPreparedConfiguration,
-} from "./password/methods/preparedModels";
-
-export {
-  type PasswordPreparedMutation,
-  type PasswordPreparedPersistence,
-  type PasswordPreparedReserveDecision,
-} from "./password/methods/PasswordPreparedPersistence";
 
 export {
   type PasswordRegistrationDecision,

@@ -41,6 +41,14 @@ export type Transaction<T extends AnyRelations = AnyRelations> = DatabaseValue<T
   readonly rollback: () => EffectTransactionRollbackError;
 };
 
+/** Construct a query handle inside an existing asynchronous SQL owner. */
+export const makeTransactionHandle = <T extends AnyRelations>(
+  database: DatabaseValue<T>,
+): Transaction<T> => ({
+  ...database,
+  rollback: () => new EffectTransactionRollbackError(),
+});
+
 /**
  * Keep the application's Drizzle query configuration and capture its SQL client.
  * Effect SQL owns storage.transaction, so cryptography may suspend before commit.

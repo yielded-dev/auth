@@ -11,8 +11,7 @@ export type CredentialSlot =
   | "registration"
   | "request-binding"
   | "session-step-up"
-  | "password-intent"
-  | "connected-intent";
+  | "password-intent";
 
 /** Private delivery instructions. Never include these in a Schema/RPC success or lifecycle event. */
 export type AuthCredentialCommand =
@@ -64,7 +63,6 @@ const slot = Schema.Literals([
   "request-binding",
   "session-step-up",
   "password-intent",
-  "connected-intent",
 ]);
 
 const decodeCommand = Schema.decodeSync(

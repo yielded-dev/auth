@@ -16,9 +16,7 @@ const Registration = Schema.Struct({
 const entryPolicy = {
   generation: 1,
   lifetimeMillis: 60_000,
-  claimLifetimeMillis: 30_000,
-  retentionMillis: 120_000,
-  settlementTimeoutMillis: 5_000,
+  exchangeTimeoutMillis: 30_000,
 };
 
 export class GitHubAuth extends Auth.Service<GitHubAuth>()("example/GitHubAuth", {
@@ -162,7 +160,7 @@ export const githubProfileConnection = (input: {
     maximumRefreshLifetimeMillis: 30 * 24 * 60 * 60 * 1000,
     refreshAheadMillis: 60_000,
     refresh: "rotating",
-    revocation: "cohort",
+    revocation: "provider",
   });
 
   const connected = OAuth.makeConnectedModule("example/github-api", {
@@ -170,7 +168,6 @@ export const githubProfileConnection = (input: {
     profiles: [profile],
     maximumEvidenceAgeMillis: 60_000,
     refreshClaimLifetimeMillis: 30_000,
-    useAdmissionLifetimeMillis: 5_000,
   });
 
   const shared = Layer.mergeAll(

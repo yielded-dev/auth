@@ -1,7 +1,7 @@
 import { Context, type Effect, Layer } from "effect";
 
 import type {
-  OAuthConnectedProtectionContext,
+  OAuthConnectedTokenContext,
   OAuthConnectedSealedTokens,
   OAuthConnectedTokenMaterial,
 } from "./connectedModels";
@@ -19,11 +19,11 @@ export class OAuthConnectedTokenProtector extends Context.Service<
   OAuthConnectedTokenProtector,
   {
     readonly seal: (input: {
-      readonly context: OAuthConnectedProtectionContext;
+      readonly context: OAuthConnectedTokenContext;
       readonly material: OAuthConnectedTokenMaterial;
     }) => Effect.Effect<OAuthConnectedSealedTokens, OAuthUnavailable>;
     readonly open: (input: {
-      readonly context: OAuthConnectedProtectionContext;
+      readonly context: OAuthConnectedTokenContext;
       readonly sealed: OAuthConnectedSealedTokens;
     }) => Effect.Effect<OAuthConnectedTokenMaterial, OAuthUnavailable>;
   }

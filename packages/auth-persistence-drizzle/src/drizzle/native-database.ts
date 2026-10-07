@@ -1,23 +1,53 @@
-import type {
-  TransactionNativeDatabase,
-  SessionSqlDatabase,
-  PasswordSqlDatabase,
-  EmailSqlDatabase,
-  ProofSqlDatabase,
-} from "@yielded/auth-persistence/Adapter";
-import { Effect } from "effect";
+import type { SQL } from "drizzle-orm";
+import type { EffectDrizzleQueryError } from "drizzle-orm/effect-core";
+import { Context, Effect } from "effect";
+import type { SqlError } from "effect/sql/SqlError";
 
-/** Drizzle omits its captured $client from database class types, and only D1
- * exposes batch. Its generic query builders implement the SQL kernel contracts
- * through drizzleQueryOperations. The selected driver mode controls native calls. */
+import type { TransactionNativeDatabase } from "./transaction-owner";
+
+/** The captured native Drizzle owner; never a shared/raw SQL resource. */
+export class NativeDatabase extends Context.Service<NativeDatabase, TransactionNativeDatabase>()(
+  "effect-auth/persistence/NativeDatabase",
+) {}
+
+export type NativeDatabaseHandle = NativeSqlDatabase & TransactionNativeDatabase;
+
+/* oxlint-disable no-explicit-any -- only native query-builder handles are erased; domain values use mapped codecs. */
+export interface NativeSqlQuery<A = ReadonlyArray<any>> extends Effect.Effect<
+  A,
+  EffectDrizzleQueryError | SqlError
+> {
+  readonly getSQL: () => SQL;
+  readonly toSQL: () => { readonly sql: string; readonly params: ReadonlyArray<unknown> };
+  readonly from: (...args: ReadonlyArray<any>) => NativeSqlQuery<A>;
+  readonly where: (...args: ReadonlyArray<any>) => NativeSqlQuery<A>;
+  readonly limit: (...args: ReadonlyArray<any>) => NativeSqlQuery<A>;
+  readonly orderBy: (...args: ReadonlyArray<any>) => NativeSqlQuery<A>;
+  readonly for: (...args: ReadonlyArray<any>) => NativeSqlQuery<A>;
+  readonly set: (...args: ReadonlyArray<any>) => NativeSqlQuery<A>;
+  readonly values: (...args: ReadonlyArray<any>) => NativeSqlQuery<A>;
+  readonly returning: (...args: ReadonlyArray<any>) => NativeSqlQuery<A>;
+  readonly $returningId: (...args: ReadonlyArray<any>) => NativeSqlQuery<A>;
+  readonly innerJoin: (...args: ReadonlyArray<any>) => NativeSqlQuery<A>;
+  readonly onConflictDoNothing: (...args: ReadonlyArray<any>) => NativeSqlQuery<A>;
+  readonly onDuplicateKeyUpdate: (...args: ReadonlyArray<any>) => NativeSqlQuery<A>;
+}
+
+export interface NativeSqlDatabase {
+  readonly maxParameters?: number;
+  readonly select: (...args: ReadonlyArray<any>) => NativeSqlQuery;
+  readonly insert: (...args: ReadonlyArray<any>) => NativeSqlQuery;
+  readonly update: (...args: ReadonlyArray<any>) => NativeSqlQuery;
+  readonly delete: (...args: ReadonlyArray<any>) => NativeSqlQuery;
+  readonly transaction: <A, E, R>(
+    body: (transaction: NativeSqlDatabase) => Effect.Effect<A, E, R>,
+  ) => Effect.Effect<A, E | SqlError, R>;
+}
+
+/** Driver makers supply actual query objects and their captured native client.
+ * Drizzle class declarations omit that client and D1's batch method. */
 export const nativeDatabase = <Database, E, R>(acquire: Effect.Effect<Database, E, R>) =>
   Effect.map(
     acquire,
-    (database) =>
-      database as unknown as Database &
-        TransactionNativeDatabase &
-        SessionSqlDatabase &
-        PasswordSqlDatabase &
-        EmailSqlDatabase &
-        ProofSqlDatabase,
+    (database) => database as unknown as Database & TransactionNativeDatabase & NativeSqlDatabase,
   );

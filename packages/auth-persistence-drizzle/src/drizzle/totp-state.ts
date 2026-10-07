@@ -1,3 +1,4 @@
+import { randomId, digest } from "@yielded/auth-persistence/Adapter";
 import { AuthenticationRequirement, SecurityRevision } from "@yielded/auth/Sessions";
 import {
   TotpUnavailable,
@@ -7,10 +8,9 @@ import {
   type TotpDecision,
 } from "@yielded/auth/Totp";
 /* oxlint-disable no-explicit-any -- private native driver bridge; public makers preserve table and ID types. */
-import { sql, type SQL } from "drizzle-orm";
+import { inArray, sql, type SQL } from "drizzle-orm";
 import { Context, Effect, Schema } from "effect";
 
-import { randomId, digest } from "./crypto";
 import { both, makeTransactionRows, type TransactionOwner } from "./transaction-owner";
 export const unavailable = () => TotpUnavailable.make({});
 
@@ -46,18 +46,12 @@ export const captureTotp = Effect.fn("TotpNative.capture")(function* (
   const selected = yield* owner.read(
     subject.table,
     equal(subject.table, { [subject.id]: nativeId }),
-    { limit: 1 },
+    { limit: 1, condition: subject.activeCondition },
   );
 
   const subjectRow = selected.rows[0];
 
-  if (
-    subjectRow === undefined ||
-    !(yield* owner.check(
-      sql`exists(select 1 from ${subject.table} where ${both(owner.exact(subject.table, subjectRow), subject.activeCondition)})`,
-    ))
-  )
-    return undefined;
+  if (subjectRow === undefined || !selected.conditionHolds) return undefined;
 
   const scope = yield* scopeFor(mapping.moduleId, subjectId),
     found = yield* owner.read(factor.table, equal(factor.table, { [factor.scope]: scope }), {
@@ -79,11 +73,10 @@ export const captureTotp = Effect.fn("TotpNative.capture")(function* (
         record.version === row![factor.version]),
   );
 
-  return {
+  const captured = {
     nativeId,
     subjectRow,
     factorRow: row,
-    factorObservation: found,
     scope,
     snapshot: {
       revision: {
@@ -102,6 +95,20 @@ export const captureTotp = Effect.fn("TotpNative.capture")(function* (
       record,
     },
   };
+
+  owner.postconditions.push(
+    () => both(...owner.matchRows(subject.table, selected.where, [captured.subjectRow])),
+    () =>
+      both(
+        ...owner.matchRows(
+          factor.table,
+          found.where,
+          captured.factorRow === undefined ? [] : [captured.factorRow],
+        ),
+      ),
+  );
+
+  return captured;
 });
 
 const reject: TotpDecision = { _tag: "Rejected" };
@@ -121,7 +128,7 @@ export const mutateTotp = Effect.fn("TotpNative.mutate")(function* (
 
   if (captured === undefined) return reject;
 
-  const { snapshot, subjectRow, factorRow, factorObservation, scope, nativeId } = captured,
+  const { snapshot, subjectRow, factorRow, scope, nativeId } = captured,
     current = snapshot.record,
     policy = input.policy,
     action = input.action;
@@ -146,7 +153,7 @@ export const mutateTotp = Effect.fn("TotpNative.mutate")(function* (
 
   const management = ["Enroll", "Confirm", "Disable", "Regenerate"].includes(action._tag);
 
-  const commandObservation = management
+  const commandRows = management
     ? yield* owner.read(
         mapping.factor.table,
         equal(mapping.factor.table, { [mapping.factor.scope]: commandScope }),
@@ -154,7 +161,7 @@ export const mutateTotp = Effect.fn("TotpNative.mutate")(function* (
       )
     : undefined;
 
-  if (commandObservation !== undefined && commandObservation.rows.length !== 0) return reject;
+  if (commandRows !== undefined && commandRows.rows.length !== 0) return reject;
   const timeGuards: SQL[] = [];
 
   const timeBound = (start: number, end: number) => {
@@ -195,22 +202,73 @@ export const mutateTotp = Effect.fn("TotpNative.mutate")(function* (
       return reject;
     const auth = mapping.credential;
 
-    for (const revision of [...evidence.revision.credentials].sort((a, b) =>
+    const expected = [...evidence.revision.credentials].sort((a, b) =>
       a.credentialId.localeCompare(b.credentialId),
-    )) {
-      const found = yield* owner.read(
-        auth.table,
-        equal(auth.table, { [auth.id]: revision.credentialId, [auth.subjectId]: nativeId }),
-        { limit: 1 },
-      );
+    );
 
-      const row = found.rows[0];
+    // Preserve sorted lock order and budget the compiled mapping predicate as
+    // well as each ID's IN, CASE comparison and CASE ordinal parameters.
+    const baseParameters = owner.database
+      .select({
+        condition: sql`case when ${auth.activeCondition} then 1 else 0 end`,
+      })
+      .from(auth.table)
+      .where(equal(auth.table, { [auth.subjectId]: nativeId }))
+      .limit(1)
+      .toSQL().params.length;
 
-      if (row === undefined || row[auth.revision] !== revision.revision) return reject;
-      const condition = sql`exists(select 1 from ${auth.table} where ${both(owner.exact(auth.table, row), auth.activeCondition)})`;
+    const size = owner.batch
+      ? 64
+      : Math.max(1, Math.min(64, Math.floor((owner.maxParameters - baseParameters - 1) / 3)));
 
-      if (!(yield* owner.check(condition))) return reject;
-      credentialGuards.push({ credentialId: revision.credentialId, condition });
+    for (let offset = 0; offset < expected.length; offset += size) {
+      const group = expected.slice(offset, offset + size);
+
+      const vector = owner.batch
+        ? undefined
+        : yield* owner.read(
+            auth.table,
+            both(
+              equal(auth.table, { [auth.subjectId]: nativeId }),
+              inArray(
+                col(auth.table, auth.id),
+                group.map((item) => item.credentialId),
+              ),
+            ),
+            {
+              limit: group.length,
+              admit: false,
+              condition: auth.activeCondition,
+              orderBy: sql`case ${sql.join(
+                group.map(
+                  (item, index) =>
+                    sql`when ${equal(auth.table, { [auth.id]: item.credentialId })} then ${index}`,
+                ),
+                sql` `,
+              )} else ${group.length} end`,
+            },
+          );
+
+      for (const revision of group) {
+        const matched = vector?.rows.find((row) => row[auth.id] === revision.credentialId);
+
+        const found =
+          matched === undefined
+            ? yield* owner.read(
+                auth.table,
+                equal(auth.table, { [auth.id]: revision.credentialId, [auth.subjectId]: nativeId }),
+                { limit: 1, condition: auth.activeCondition },
+              )
+            : vector!;
+
+        const row = matched ?? found.rows[0];
+
+        if (row === undefined || row[auth.revision] !== revision.revision || !found.conditionHolds)
+          return reject;
+        const condition = sql`exists(select 1 from ${auth.table} where ${both(owner.exact(auth.table, row), auth.activeCondition)})`;
+
+        credentialGuards.push({ credentialId: revision.credentialId, condition });
+      }
     }
 
     const eligible = evidence.proofs.filter((proof) =>
@@ -451,7 +509,10 @@ export const mutateTotp = Effect.fn("TotpNative.mutate")(function* (
         [subject.factorEnabled]: subject.encodeEnabled(next.secret !== null),
       };
 
-    yield* owner.update(subject.table, subjectKey, updates);
+    yield* owner.write(
+      owner.database.update(subject.table).set(updates).where(equal(subject.table, subjectKey)),
+    );
+    captured.subjectRow = { ...subjectRow, ...updates };
     const idKey = { [auth.id]: next.credentialId, [auth.subjectId]: nativeId };
     const existing = yield* owner.read(auth.table, equal(auth.table, idKey), { limit: 1 });
 
@@ -469,16 +530,26 @@ export const mutateTotp = Effect.fn("TotpNative.mutate")(function* (
         [auth.status]: auth.encodeStatus(next.secret !== null),
       };
 
-      existing.rows = (yield* owner.insert(auth.table, values, {
-        [auth.id]: next.credentialId,
-      })).rows;
-    } else
-      yield* owner.update(auth.table, idKey, {
+      const inserted = yield* owner.insert(auth.table, values, { [auth.id]: next.credentialId });
+
+      owner.postconditions.push(
+        ...owner.matchRows(auth.table, equal(auth.table, idKey), inserted.rows),
+      );
+    } else {
+      const changes = {
         [auth.revision]: next.revision,
         [auth.status]: auth.encodeStatus(next.secret !== null),
-      });
-    // Management proof observations precede its own credential/revision mutation.
-    // Retain all unrelated credential authority checks at final commit.
+      };
+
+      yield* owner.write(
+        owner.database.update(auth.table).set(changes).where(equal(auth.table, idKey)),
+      );
+      owner.postconditions.push(
+        ...owner.matchRows(auth.table, equal(auth.table, idKey), [
+          { ...existing.rows[0]!, ...changes },
+        ]),
+      );
+    }
   }
 
   const state = encodeTotpRecord(next),
@@ -492,11 +563,19 @@ export const mutateTotp = Effect.fn("TotpNative.mutate")(function* (
         insert[factor.state] === state &&
         insert[factor.version] === next.version,
     );
-    factorObservation.rows = (yield* owner.insert(factor.table, insert, {
+    captured.factorRow = (yield* owner.insert(factor.table, insert, {
       [factor.scope]: scope,
-    })).rows;
-  } else yield* owner.update(factor.table, { [factor.scope]: scope }, values);
-  if (commandObservation !== undefined) {
+    })).rows[0];
+  } else {
+    yield* owner.write(
+      owner.database
+        .update(factor.table)
+        .set(values)
+        .where(equal(factor.table, { [factor.scope]: scope })),
+    );
+    captured.factorRow = { ...factorRow, ...values };
+  }
+  if (commandRows !== undefined) {
     const values = factor.encodeInsert({
       scope: commandScope,
       state: "totp-command/v1",
@@ -504,11 +583,11 @@ export const mutateTotp = Effect.fn("TotpNative.mutate")(function* (
     });
 
     invariant(values[factor.scope] === commandScope && values[factor.state] === "totp-command/v1");
-    commandObservation.rows = (yield* owner.insert(factor.table, values, {
-      [factor.scope]: commandScope,
-    })).rows;
+    const inserted = yield* owner.insert(factor.table, values, { [factor.scope]: commandScope });
+
+    owner.postconditions.push(...owner.matchRows(factor.table, commandRows.where, inserted.rows));
   }
-  // Exact pre-write observations plus final readback are asserted by the common owner.
+  // The operation retains its final factor, subject revision, and command receipt.
   // Include active subject and native time at finalization, including on rejection commits.
   guards.push(
     sql`exists(select 1 from ${subject.table} where ${both(equal(subject.table, subjectKey), subject.activeCondition)})`,

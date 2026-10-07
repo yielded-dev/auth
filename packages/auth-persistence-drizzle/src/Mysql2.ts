@@ -82,15 +82,7 @@ export {
   coordinateMysqlSessionStepUp as coordinateSessionStepUp,
 } from "./drizzle/mysql-sessions";
 
-export {
-  makeMySqlPasswordPreparedPersistenceServices as makePasswordPreparedPersistenceServices,
-  coordinateMySqlPasswordPreparedPersistence as coordinatePasswordPreparedPersistence,
-} from "./drizzle/mysql-password-prepared";
-
-export { passwordPreparedPersistenceLayer } from "./drizzle/password-prepared-target";
-
 import { makeOAuthTarget } from "./drizzle/oauth-drivers";
-import { mysqlOAuthTransaction } from "./drizzle/oauth-mysql";
 import { sqlClientOAuthStandaloneGuard } from "./drizzle/oauth-target";
 
 const oauthTarget = makeOAuthTarget<
@@ -101,7 +93,6 @@ const oauthTarget = makeOAuthTarget<
   mode: "interactive",
   dialect: "mysql",
   locking: true,
-  transaction: mysqlOAuthTransaction,
   standaloneGuard: sqlClientOAuthStandaloneGuard,
 });
 
@@ -121,8 +112,7 @@ export const {
 } = oauthTarget;
 
 import { makePasskeyTarget } from "./drizzle/passkey-drivers";
-import { unavailable as passkeyUnavailable } from "./drizzle/passkey-state";
-import { sqlClientPasskeyStandaloneGuard } from "./drizzle/passkey-target";
+import { sqlClientPasskeyStandaloneGuard } from "./drizzle/passkey/target";
 import { mysqlTransaction } from "./drizzle/transaction-mysql";
 
 const passkeyTarget = makePasskeyTarget<
@@ -134,13 +124,11 @@ const passkeyTarget = makePasskeyTarget<
   dialect: "mysql",
   locking: true,
   standaloneGuard: sqlClientPasskeyStandaloneGuard,
-  transaction: (database, body) => mysqlTransaction(passkeyUnavailable, database, body),
 });
 
 export const {
   makePasskeyCredentialServices,
   makePasskeyPersistenceServices,
-  makePasskeyEnrollmentContextServices,
   makePasskeyRegistrationCeremonyServices,
   coordinatePasskeyPersistence,
   coordinatePasskeyRegistrationCeremony,

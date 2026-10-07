@@ -1,10 +1,6 @@
 /* oxlint-disable no-explicit-any -- D1 plans bridge consumer-owned Drizzle rows and SQL statements. */
 import type { D1Client } from "@effect/sql-d1/D1Client";
-import {
-  NativeDatabase,
-  requireStandalone,
-  samePasswordCredentialSnapshot as sameSnapshot,
-} from "@yielded/auth-persistence/Adapter";
+import { samePasswordCredentialSnapshot as sameSnapshot } from "@yielded/auth-persistence/Adapter";
 import {
   coordinateCommit,
   CurrentCommitJournal,
@@ -41,9 +37,9 @@ import {
   type SecurityRevision,
 } from "@yielded/auth/Sessions";
 import {
+  getTableColumns,
   and,
   eq,
-  getTableColumns,
   inArray,
   sql,
   type AnyRelations,
@@ -61,7 +57,7 @@ import { CurrentD1PlanningDatabase, makeD1Owner } from "./d1-planning";
 import { compileD1ProofCompletionPlan, type D1ProtectedProofMutation } from "./d1-proofs";
 import { D1BatchStatements } from "./D1BatchStatements";
 import { column, isMappedConstraintConflict, PersistenceMappingError, updateValues } from "./model";
-import { nativeDatabase } from "./native-database";
+import { NativeDatabase, nativeDatabase } from "./native-database";
 import {
   type AnyPasswordRegistrationMapping,
   type D1PasswordPersistenceMapping,
@@ -476,22 +472,20 @@ const probeProofCompletion = Effect.fn("DrizzleD1.probeProofCompletion")(functio
 
   const marker = `effect-auth-proof-guard:protected:${input.continuationId}`;
 
-  const once = coordinateCommit(
-    () =>
-      Effect.gen(function* () {
-        const compiled = yield* compileD1ProofCompletionPlan(
-          mapping,
-          plan,
-          { statements: [], appliedCondition: sql`false` },
-          () => false,
-        );
+  const once = coordinateCommit(() =>
+    Effect.gen(function* () {
+      const compiled = yield* compileD1ProofCompletionPlan(
+        mapping,
+        plan,
+        { statements: [], appliedCondition: sql`false` },
+        () => false,
+      );
 
-        if (compiled.statements.length === 0) return false;
-        yield* database.$client.batch(compiled.statements);
+      if (compiled.statements.length === 0) return false;
+      yield* database.$client.batch(compiled.statements);
 
-        return false;
-      }),
-    { mode: "batch" },
+      return false;
+    }),
   );
 
   return yield* once.pipe(
@@ -1403,7 +1397,6 @@ export const makeD1PasswordPersistenceServices = Effect.fnUntraced(function* <
 
   const standalone = Effect.gen(function* () {
     if (yield* hasCommitScope) return yield* unavailable();
-    yield* requireStandalone(unavailable, database.$client.transactionService);
   });
 
   const run = <Out, Err, Env>(plan: Effect.Effect<Planned<Out>, Err, Env>) =>
@@ -1501,127 +1494,120 @@ export function coordinateD1PasswordPersistence<
 
       if (yield* hasCommitScope) return yield* unavailable();
 
-      const result = yield* coordinateCommit(
-        () =>
-          Effect.gen(function* () {
-            const statements: Statement<any>[] = [];
-            let mutation: Planned<any> | undefined;
+      const result = yield* coordinateCommit(() =>
+        Effect.gen(function* () {
+          const statements: Statement<any>[] = [];
+          let mutation: Planned<any> | undefined;
 
-            const nativeCollector = D1BatchStatements.of({
-              append: (statement) => Effect.sync(() => statements.push(statement)),
-            });
+          const nativeCollector = D1BatchStatements.of({
+            append: (statement) => Effect.sync(() => statements.push(statement)),
+          });
 
-            const owner = yield* makeD1Owner(unavailable()).pipe(
-              Effect.provideService(D1BatchStatements, nativeCollector),
+          const owner = yield* makeD1Owner(unavailable()).pipe(
+            Effect.provideService(D1BatchStatements, nativeCollector),
+          );
+
+          const plans = makePasswordPlans(
+            options.mapping as unknown as Mapping,
+            options.proofMapping,
+          );
+
+          const run = <Out, Err, Env>(plan: Effect.Effect<Planned<Out>, Err, Env>) =>
+            coordinateCommit(() =>
+              Effect.gen(function* () {
+                const journal = yield* CurrentCommitJournal;
+                const planned = yield* plan;
+
+                yield* owner.check;
+                if (mutation !== undefined) return yield* unavailable();
+                const guarded = { ...planned, journalGuard: journal.prepare(undefined) };
+
+                mutation = guarded;
+                statements.push(...guarded.statements);
+
+                return guarded.receipt;
+              }),
+            ).pipe(
+              Effect.map((result) => result.value),
+              Effect.provideService(CurrentD1PlanningDatabase, database),
+              Effect.provideService(LifecycleHooks, hooks),
             );
 
-            const plans = makePasswordPlans(
-              options.mapping as unknown as Mapping,
-              options.proofMapping,
-            );
-
-            const run = <Out, Err, Env>(plan: Effect.Effect<Planned<Out>, Err, Env>) =>
-              coordinateCommit(
-                () =>
-                  Effect.gen(function* () {
-                    const journal = yield* CurrentCommitJournal;
-                    const planned = yield* plan;
-
-                    yield* owner.check;
-                    if (mutation !== undefined) return yield* unavailable();
-                    const guarded = { ...planned, journalGuard: journal.prepare(undefined) };
-
-                    mutation = guarded;
-                    statements.push(...guarded.statements);
-
-                    return guarded.receipt;
-                  }),
-                { mode: "batch" },
-              ).pipe(
-                Effect.map((result) => result.value),
-                Effect.provideService(CurrentD1PlanningDatabase, database),
-                Effect.provideService(LifecycleHooks, hooks),
-              );
-
-            const service: PasswordPersistence["Service"] = {
-              findCredential: (input) =>
-                owner.run(
-                  plans
-                    .findCredential(input)
-                    .pipe(
-                      Effect.provideService(CurrentD1PlanningDatabase, database),
-                      translateFailure,
-                    ),
-                ),
-              rehashIfCurrent: (input) =>
-                owner.run(run(plans.rehashIfCurrent(input)).pipe(translateFailure)),
-              readForSubject: (input) =>
-                owner.run(
-                  plans
-                    .readForSubject(input)
-                    .pipe(
-                      Effect.provideService(CurrentD1PlanningDatabase, database),
-                      Effect.provideService(LifecycleHooks, hooks),
-                      translateFailure,
-                    ),
-                ),
-              recoveryTarget: (input) =>
-                owner.run(
-                  plans
-                    .recoveryTarget(input)
-                    .pipe(
-                      Effect.provideService(CurrentD1PlanningDatabase, database),
-                      Effect.provideService(LifecycleHooks, hooks),
-                      translateFailure,
-                    ),
-                ),
-              addIfAbsent: (input, prepare) =>
-                owner.run(run(plans.addIfAbsent(input, prepare)).pipe(translateFailure)),
-              replaceIfCurrent: (input, prepare) =>
-                owner.run(run(plans.replaceIfCurrent(input, prepare)).pipe(translateFailure)),
-              checkReset: (input) =>
-                owner.run(
-                  plans
-                    .checkReset(input)
-                    .pipe(
-                      Effect.provideService(CurrentD1PlanningDatabase, database),
-                      Effect.provideService(LifecycleHooks, hooks),
-                      translateFailure,
-                    ),
-                ),
-              resetWithProof: (input, prepare) =>
-                owner.run(run(plans.resetWithProof(input, prepare)).pipe(translateFailure)),
-            };
-
-            const provided = Context.make(PasswordPersistence, service).pipe(
-              Context.add(D1BatchStatements, owner.collector),
-            );
-
-            const value = yield* owner.close(Effect.provideContext(body, provided));
-
-            if (mutation?.journalGuard !== undefined) {
-              const status = yield* Effect.result(mutation.journalGuard.read);
-
-              if (status._tag === "Success" || status.failure._tag !== "CommitPending")
-                return yield* unavailable();
-            }
-            // Re-assert the password's final state after application statements.
-            yield* database.$client
-              .batch([...statements, ...(mutation?.postconditions ?? [])])
-              .pipe(
-                Effect.catchCause((cause) =>
-                  Effect.failCause(
-                    Cause.map(cause, (error) =>
-                      everyFailureMatches(cause, mutation?.retryable) ? unavailable() : error,
-                    ),
+          const service: PasswordPersistence["Service"] = {
+            findCredential: (input) =>
+              owner.run(
+                plans
+                  .findCredential(input)
+                  .pipe(
+                    Effect.provideService(CurrentD1PlanningDatabase, database),
+                    translateFailure,
                   ),
-                ),
-                translateFailure,
-              );
+              ),
+            rehashIfCurrent: (input) =>
+              owner.run(run(plans.rehashIfCurrent(input)).pipe(translateFailure)),
+            readForSubject: (input) =>
+              owner.run(
+                plans
+                  .readForSubject(input)
+                  .pipe(
+                    Effect.provideService(CurrentD1PlanningDatabase, database),
+                    Effect.provideService(LifecycleHooks, hooks),
+                    translateFailure,
+                  ),
+              ),
+            recoveryTarget: (input) =>
+              owner.run(
+                plans
+                  .recoveryTarget(input)
+                  .pipe(
+                    Effect.provideService(CurrentD1PlanningDatabase, database),
+                    Effect.provideService(LifecycleHooks, hooks),
+                    translateFailure,
+                  ),
+              ),
+            addIfAbsent: (input, prepare) =>
+              owner.run(run(plans.addIfAbsent(input, prepare)).pipe(translateFailure)),
+            replaceIfCurrent: (input, prepare) =>
+              owner.run(run(plans.replaceIfCurrent(input, prepare)).pipe(translateFailure)),
+            checkReset: (input) =>
+              owner.run(
+                plans
+                  .checkReset(input)
+                  .pipe(
+                    Effect.provideService(CurrentD1PlanningDatabase, database),
+                    Effect.provideService(LifecycleHooks, hooks),
+                    translateFailure,
+                  ),
+              ),
+            resetWithProof: (input, prepare) =>
+              owner.run(run(plans.resetWithProof(input, prepare)).pipe(translateFailure)),
+          };
 
-            return value;
-          }),
-        { mode: "batch" },
+          const provided = Context.make(PasswordPersistence, service).pipe(
+            Context.add(D1BatchStatements, owner.collector),
+          );
+
+          const value = yield* owner.close(Effect.provideContext(body, provided));
+
+          if (mutation?.journalGuard !== undefined) {
+            const status = yield* Effect.result(mutation.journalGuard.read);
+
+            if (status._tag === "Success" || status.failure._tag !== "CommitPending")
+              return yield* unavailable();
+          }
+          yield* database.$client.batch([...statements, ...(mutation?.postconditions ?? [])]).pipe(
+            Effect.catchCause((cause) =>
+              Effect.failCause(
+                Cause.map(cause, (error) =>
+                  everyFailureMatches(cause, mutation?.retryable) ? unavailable() : error,
+                ),
+              ),
+            ),
+            translateFailure,
+          );
+
+          return value;
+        }),
       ).pipe(Effect.provideService(LifecycleHooks, hooks));
 
       return result.value;
@@ -1677,7 +1663,6 @@ const planRegistration = Effect.fn("Drizzle.planRegistration")(function* <Regist
     readonly credentialRevision: SecurityRevision;
     readonly verifierVersion: SecurityRevision;
     readonly nativeSubjectId?: unknown;
-    readonly recoveryReference?: any;
   },
   prepare: PreparePasswordCommit<import("@yielded/auth/Password").PasswordRegistrationDecision, A>,
 ) {
@@ -1700,24 +1685,6 @@ const planRegistration = Effect.fn("Drizzle.planRegistration")(function* <Regist
     replacement: input.replacement,
   };
 
-  if (mapping.mode === "pending") {
-    if (allocated.recoveryReference === undefined) return yield* unavailable();
-
-    return {
-      receipt: prepare({ _tag: "Pending", reference: allocated.recoveryReference }, journal),
-      statements: [
-        yield* statement(
-          database.insert(mapping.registration.table).values(
-            mapping.registration.encodeInsert(intent, {
-              state: "pending",
-              recoveryReference: allocated.recoveryReference,
-            }),
-          ),
-        ),
-      ],
-      retryable: (cause: unknown) => isMappedConstraintConflict(mapping.isRequestConflict, cause),
-    };
-  }
   if (mapping.provisioning.idMode === "generated" || allocated.nativeSubjectId === undefined)
     return yield* unavailable();
   if ((yield* registrationIdentifierRows(mapping, input.identifier)).length > 0)
@@ -1808,17 +1775,12 @@ const allocateRegistration = <Registration>(mapping: RegistrationMapping<Registr
     const verifierVersion = yield* allocate(mapping.allocateRevision, mapping.allocateRevisionSync);
 
     const nativeSubjectId =
-      mapping.mode !== "atomic" || mapping.provisioning.idMode === "generated"
+      mapping.provisioning.idMode === "generated"
         ? undefined
         : yield* allocate(
             mapping.provisioning.allocateSubjectId,
             mapping.provisioning.allocateSubjectIdSync,
           );
-
-    const recoveryReference =
-      mapping.mode === "pending"
-        ? yield* allocate(mapping.allocateRecoveryReference, mapping.allocateRecoveryReferenceSync)
-        : undefined;
 
     return {
       credentialId,
@@ -1827,7 +1789,6 @@ const allocateRegistration = <Registration>(mapping: RegistrationMapping<Registr
       credentialRevision,
       verifierVersion,
       ...(nativeSubjectId === undefined ? {} : { nativeSubjectId }),
-      ...(recoveryReference === undefined ? {} : { recoveryReference }),
     };
   });
 
@@ -1838,8 +1799,7 @@ const makeRegistrationPlans = <Registration>(mapping: RegistrationMapping<Regist
   ) =>
     Effect.gen(function* () {
       if (!validRegistrationConstraints(mapping)) return yield* unavailable();
-      if (mapping.mode === "atomic" && mapping.provisioning.idMode === "generated")
-        return yield* unavailable();
+      if (mapping.provisioning.idMode === "generated") return yield* unavailable();
       const allocated = yield* allocateRegistration(mapping);
 
       return yield* planRegistration(mapping, input, allocated, prepare);
@@ -1915,78 +1875,74 @@ export function coordinateD1PasswordRegistration<
 
       if (yield* hasCommitScope) return yield* unavailable();
 
-      const result = yield* coordinateCommit(
-        () =>
-          Effect.gen(function* () {
-            const statements: Statement<any>[] = [];
-            let mutation: Planned<any> | undefined;
+      const result = yield* coordinateCommit(() =>
+        Effect.gen(function* () {
+          const statements: Statement<any>[] = [];
+          let mutation: Planned<any> | undefined;
 
-            const nativeCollector = D1BatchStatements.of({
-              append: (statement) => Effect.sync(() => statements.push(statement)),
-            });
+          const nativeCollector = D1BatchStatements.of({
+            append: (statement) => Effect.sync(() => statements.push(statement)),
+          });
 
-            const owner = yield* makeD1Owner(unavailable()).pipe(
-              Effect.provideService(D1BatchStatements, nativeCollector),
+          const owner = yield* makeD1Owner(unavailable()).pipe(
+            Effect.provideService(D1BatchStatements, nativeCollector),
+          );
+
+          const plans = makeRegistrationPlans(
+            options.mapping as unknown as RegistrationMapping<Registration>,
+          );
+
+          const run = <Out, Err, Env>(plan: Effect.Effect<Planned<Out>, Err, Env>) =>
+            coordinateCommit(() =>
+              Effect.gen(function* () {
+                const journal = yield* CurrentCommitJournal;
+                const planned = yield* plan;
+
+                yield* owner.check;
+                if (mutation !== undefined) return yield* unavailable();
+                const guarded = { ...planned, journalGuard: journal.prepare(undefined) };
+
+                mutation = guarded;
+                statements.push(...guarded.statements);
+
+                return guarded.receipt;
+              }),
+            ).pipe(
+              Effect.map((result) => result.value),
+              Effect.provideService(CurrentD1PlanningDatabase, database),
+              Effect.provideService(LifecycleHooks, hooks),
             );
 
-            const plans = makeRegistrationPlans(
-              options.mapping as unknown as RegistrationMapping<Registration>,
-            );
+          const service: PasswordRegistrationAuthority<Registration> = {
+            register: (input, prepare) =>
+              owner.run(run(plans.register(input, prepare)).pipe(translateFailure)),
+          };
 
-            const run = <Out, Err, Env>(plan: Effect.Effect<Planned<Out>, Err, Env>) =>
-              coordinateCommit(
-                () =>
-                  Effect.gen(function* () {
-                    const journal = yield* CurrentCommitJournal;
-                    const planned = yield* plan;
+          const provided = Context.make(options.target, service).pipe(
+            Context.add(D1BatchStatements, owner.collector),
+          );
 
-                    yield* owner.check;
-                    if (mutation !== undefined) return yield* unavailable();
-                    const guarded = { ...planned, journalGuard: journal.prepare(undefined) };
+          const value = yield* owner.close(Effect.provideContext(body, provided));
 
-                    mutation = guarded;
-                    statements.push(...guarded.statements);
+          if (mutation?.journalGuard !== undefined) {
+            const status = yield* Effect.result(mutation.journalGuard.read);
 
-                    return guarded.receipt;
-                  }),
-                { mode: "batch" },
-              ).pipe(
-                Effect.map((result) => result.value),
-                Effect.provideService(CurrentD1PlanningDatabase, database),
-                Effect.provideService(LifecycleHooks, hooks),
-              );
-
-            const service: PasswordRegistrationAuthority<Registration> = {
-              register: (input, prepare) =>
-                owner.run(run(plans.register(input, prepare)).pipe(translateFailure)),
-            };
-
-            const provided = Context.make(options.target, service).pipe(
-              Context.add(D1BatchStatements, owner.collector),
-            );
-
-            const value = yield* owner.close(Effect.provideContext(body, provided));
-
-            if (mutation?.journalGuard !== undefined) {
-              const status = yield* Effect.result(mutation.journalGuard.read);
-
-              if (status._tag === "Success" || status.failure._tag !== "CommitPending")
-                return yield* unavailable();
-            }
-            yield* database.$client.batch(statements).pipe(
-              Effect.catchCause((cause) =>
-                Effect.failCause(
-                  Cause.map(cause, (error) =>
-                    everyFailureMatches(cause, mutation?.retryable) ? unavailable() : error,
-                  ),
+            if (status._tag === "Success" || status.failure._tag !== "CommitPending")
+              return yield* unavailable();
+          }
+          yield* database.$client.batch([...statements, ...(mutation?.postconditions ?? [])]).pipe(
+            Effect.catchCause((cause) =>
+              Effect.failCause(
+                Cause.map(cause, (error) =>
+                  everyFailureMatches(cause, mutation?.retryable) ? unavailable() : error,
                 ),
               ),
-              translateFailure,
-            );
+            ),
+            translateFailure,
+          );
 
-            return value;
-          }),
-        { mode: "batch" },
+          return value;
+        }),
       ).pipe(Effect.provideService(LifecycleHooks, hooks));
 
       return result.value;
@@ -2037,18 +1993,16 @@ const executeStandalone = <A, E, R>(
   Effect.suspend(() => {
     let retryable: ((cause: unknown) => boolean) | undefined;
 
-    const once = coordinateCommit(
-      () =>
-        Effect.gen(function* () {
-          const database = yield* CurrentD1PlanningDatabase;
-          const planned = yield* plan;
+    const once = coordinateCommit(() =>
+      Effect.gen(function* () {
+        const database = yield* CurrentD1PlanningDatabase;
+        const planned = yield* plan;
 
-          retryable = planned.retryable;
-          yield* database.$client.batch(planned.statements);
+        retryable = planned.retryable;
+        yield* database.$client.batch(planned.statements);
 
-          return planned.receipt;
-        }),
-      { mode: "batch" },
+        return planned.receipt;
+      }),
     ).pipe(Effect.map((result) => result.value));
 
     return once.pipe(

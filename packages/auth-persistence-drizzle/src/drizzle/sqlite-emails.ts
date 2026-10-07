@@ -1,4 +1,3 @@
-import { NativeDatabase } from "@yielded/auth-persistence/Adapter";
 import { EmailAddressPersistence, type EmailUnavailable } from "@yielded/auth/Email";
 import type { LifecycleHooks, HookConfigurationError } from "@yielded/auth/Hooks";
 /* oxlint-disable no-explicit-any -- proof mapping tables are independently typed by the proof owner; this driver forwards them unchanged to the shared target. */
@@ -18,7 +17,6 @@ import type {
 } from "./email-model";
 import type { EmailRegistrationAuthority } from "./email-registration";
 import { CurrentEmailSql } from "./email-sql";
-import type { EmailSqlQuery } from "./email-sql";
 import {
   coordinateTargetEmailAddress,
   coordinateTargetEmailRegistration,
@@ -27,9 +25,9 @@ import {
   makeTargetEmailSignInServices,
   type EmailTargetConfiguration,
 } from "./email-target";
-import { nativeDatabase } from "./native-database";
+import { NativeDatabase, nativeDatabase } from "./native-database";
+import type { NativeSqlQuery } from "./native-database";
 import type { ProofPersistenceMapping } from "./proof-model";
-import type { ProofSqlQuery } from "./proof-sql";
 import type { DatabaseValue as DODatabase } from "./sqlite-do-database";
 import {
   type TransactionService,
@@ -66,17 +64,20 @@ export const sqliteEmailConfiguration = (
   standaloneGuard: EmailTargetConfiguration["standaloneGuard"],
   proofStandaloneGuard: EmailTargetConfiguration["proof"]["standaloneGuard"],
   coordinatorGuard?: EmailTargetConfiguration["coordinatorGuard"],
+  maxParameters?: number,
 ): EmailTargetConfiguration => ({
   mode,
   locking: false,
+  ...(maxParameters === undefined ? {} : { maxParameters }),
   standaloneGuard,
   ...(coordinatorGuard === undefined ? {} : { coordinatorGuard }),
-  generatedSubjectRows: (query: EmailSqlQuery) => query.returning(),
+  generatedSubjectRows: (query: NativeSqlQuery) => query.returning(),
   proof: {
     mode,
     locking: false,
+    ...(maxParameters === undefined ? {} : { maxParameters }),
     standaloneGuard: proofStandaloneGuard,
-    insertIfAbsent: (query: ProofSqlQuery) => query.onConflictDoNothing(),
+    insertIfAbsent: (query: NativeSqlQuery) => query.onConflictDoNothing(),
   },
 });
 
