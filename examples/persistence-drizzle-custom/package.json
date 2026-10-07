@@ -11,6 +11,8 @@
     "@effect/atom-react": "catalog:",
     "@effect/platform-bun": "catalog:",
     "@effect/sql-sqlite-bun": "catalog:",
+    "@fontsource-variable/ibm-plex-sans": "catalog:",
+    "@fontsource/ibm-plex-mono": "catalog:",
     "@simplewebauthn/browser": "catalog:",
     "@simplewebauthn/server": "catalog:",
     "@yielded/auth": "workspace:*",

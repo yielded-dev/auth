@@ -1,3 +1,5 @@
+import "@fontsource-variable/ibm-plex-sans/wght.css";
+import "@fontsource/ibm-plex-mono/latin-400.css";
 import { RegistryContext, useAtom, useAtomValue } from "@effect/atom-react";
 import { Identity, OAuth, Operations } from "@yielded/auth";
 import { Cause, Schema } from "effect";
@@ -5,6 +7,7 @@ import { AtomRegistry, type AsyncResult } from "effect/reactivity";
 import { useState } from "react";
 import { createRoot } from "react-dom/client";
 
+import { Brand } from "../../shared/account/brand";
 import {
   auth,
   begin,
@@ -53,13 +56,11 @@ function Settings() {
   return (
     <main>
       <header>
-        <a className="wordmark" href="/oauth-settings">
-          <span>y</span>yielded<span className="wordmark-divider">/</span>auth
-        </a>
-        <span className="local-indicator">GITHUB · ACCOUNT SETTINGS</span>
+        <Brand href="/oauth-settings" />
+        <span className="local-indicator">ACCOUNT SETTINGS</span>
       </header>
       <section className="intro">
-        <p className="eyebrow">EXAMPLE 03 / OAUTH</p>
+        <p className="eyebrow">CONNECTED ACCOUNTS</p>
         <h1>
           Your ways <span>to sign in.</span>
         </h1>
@@ -87,7 +88,7 @@ function Settings() {
               </p>
               <p className="hint">Choose another GitHub account when linking a new identity.</p>
               <button className="primary" disabled={busy} onClick={() => start("link")}>
-                Link another account <span>→</span>
+                Link another account <span aria-hidden="true">→</span>
               </button>
               <div className="button-row">
                 <button className="secondary" disabled={busy} onClick={() => start("sign-in")}>
@@ -102,7 +103,7 @@ function Settings() {
             <>
               <p className="description">Use an identity already linked to this account.</p>
               <button className="primary submit" disabled={busy} onClick={() => start("sign-in")}>
-                Sign in with GitHub <span>→</span>
+                Sign in with GitHub <span aria-hidden="true">→</span>
               </button>
               <Failure result={session} />
             </>
@@ -122,15 +123,14 @@ function Settings() {
               After signing in, see the identities that can open your account, add another, or
               remove one you no longer use.
             </p>
-            <p className="hint">
-              Provider API grants are separate. This example keeps no provider access tokens.
-            </p>
           </section>
         )}
       </div>
       <footer>
-        <p>Effect Atom · direct Effect SQL · private HttpOnly credentials</p>
-        <p>Provider consent opens at GitHub</p>
+        <p>Yielded Auth · GitHub account linking</p>
+        <a href="https://yielded.dev/auth/guide/examples/">
+          Explore the examples <span aria-hidden="true">↗</span>
+        </a>
       </footer>
     </main>
   );
