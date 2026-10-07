@@ -8,7 +8,7 @@ import type { Fragment } from "effect/sql/Statement";
 import { type OAuthAccountsMapping, OAuthEligibilityFact } from "../models/oauth-model";
 import type { NativeSqlTables } from "../native-sql-table";
 import { makeConditionalSqlInsert } from "../session-native-record";
-import { anySqlCondition, exactSqlText } from "../sql-change";
+import { anySqlCondition, exactSqlText, sqlTextBytes } from "../sql-change";
 import { makeSqlCommitExecutor, SqlBatchCommit, CurrentSqlCommit } from "../sql-commit";
 import type { SqlExpression, TableModel } from "../table-model";
 import { makeOAuthNativeFlow } from "./native-flow";
@@ -101,10 +101,12 @@ export const makeNativeOAuthAccountsServices = Effect.fnUntraced(function* (
           );
 
           const s = mapping.subject;
+          const orderedId = sqlTextBytes(sql, credential.column(c.credentialId));
 
           // Bound candidate work before resolving identities. Each final read uses
           // its columns' own codecs and rechecks live ownership/authority/policy.
           // A removed candidate can leave a short page; the cursor still advances.
+          // Match exact credential identity even when the column's collation does not.
           const rows = yield* sql`select ${credential.fields("page_")} from ${credential.name}
             where ${exactSqlText(sql, credential.column(c.moduleId), credential.value(c.moduleId, input.moduleId))}
               and ${credential.column(c.subjectId)} = ${credential.value(c.subjectId, nativeId)}
@@ -112,8 +114,8 @@ export const makeNativeOAuthAccountsServices = Effect.fnUntraced(function* (
               and exists(select 1 from ${state.subject.name}
                 where ${state.subject.column(s.id)} = ${state.subject.value(s.id, nativeId)}
                   and ${tables.expression(s.activeCondition)})
-              ${input.cursor === undefined ? sql`` : sql`and ${credential.column(c.credentialId)} > ${credential.value(c.credentialId, input.cursor)}`}
-            order by ${credential.column(c.credentialId)} limit ${input.limit + 1}`;
+              ${input.cursor === undefined ? sql`` : sql`and ${orderedId} > ${sqlTextBytes(sql, credential.value(c.credentialId, input.cursor))}`}
+            order by ${orderedId} limit ${input.limit + 1}`;
 
           const selected = rows.slice(0, input.limit);
           const items: Array<M.OAuthLinkedAccount> = [];

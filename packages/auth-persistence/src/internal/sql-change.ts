@@ -25,14 +25,14 @@ export const anySqlCondition: (conditions: ReadonlyArray<Fragment>) => Fragment 
   "1 = 0",
 );
 
+/** Exact text comparison and ordering, independent of the column's collation. */
+export const sqlTextBytes = (sql: SqlClient, value: Fragment) =>
+  sql.onDialectOrElse({
+    mysql: () => sql`binary ${value}`,
+    pg: () => sql`convert_to(cast(${value} as text), 'UTF8')`,
+    orElse: () => sql`cast(${value} as blob)`,
+  });
+
 /** Keep the indexed predicate and reject collation aliases of security tokens. */
 export const exactSqlText = (sql: SqlClient, left: Fragment, right: Fragment) =>
-  sql.and([
-    sql`${left} = ${right}`,
-    sql.onDialectOrElse({
-      mysql: () => sql`binary ${left} = binary ${right}`,
-      pg: () =>
-        sql`convert_to(cast(${left} as text), 'UTF8') = convert_to(cast(${right} as text), 'UTF8')`,
-      orElse: () => sql`cast(${left} as blob) = cast(${right} as blob)`,
-    }),
-  ]);
+  sql.and([sql`${left} = ${right}`, sql`${sqlTextBytes(sql, left)} = ${sqlTextBytes(sql, right)}`]);
