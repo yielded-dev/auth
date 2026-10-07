@@ -1,5 +1,36 @@
 # @yielded/auth-persistence-drizzle
 
+## 0.1.0-beta.26
+
+### Minor Changes
+
+- [#148](https://github.com/yielded-dev/auth/pull/148) [`dcdce5a`](https://github.com/yielded-dev/auth/commit/dcdce5a7c23647b58206974bdc4101b45d0df37f) Thanks [@danieljvdm](https://github.com/danieljvdm)! - BEHAVIOR CHANGE: Consume OAuth callbacks once, confirm account links only at begin, and preserve existing sessions when linking. Replace prepared connections and durable unlink replay with direct operations; reset development OAuth flow, registration-intent, connected-grant, and revocation state and update the explicit mappings.
+
+- [#148](https://github.com/yielded-dev/auth/pull/148) [`dcdce5a`](https://github.com/yielded-dev/auth/commit/dcdce5a7c23647b58206974bdc4101b45d0df37f) Thanks [@danieljvdm](https://github.com/danieljvdm)! - Replace passkey claim leases with single-use challenge consumption, retain enrollment authorization from begin, allow in-progress ceremonies to finish with their selected RP profile during rolling deploys, and apply immediate-invalidation requirements only to removal.
+
+  BEHAVIOR CHANGE: Remove enrollment completion action proofs, passkey generations, and mutation replay flags; replace `PasskeyCleanupResult` with `CleanupResult` from `@yielded/auth/Persistence`, reset development passkey tables and profile records, and supply a shared Effect limiter for coordinated limits across replicas.
+
+- [#148](https://github.com/yielded-dev/auth/pull/148) [`dcdce5a`](https://github.com/yielded-dev/auth/commit/dcdce5a7c23647b58206974bdc4101b45d0df37f) Thanks [@danieljvdm](https://github.com/danieljvdm)! - Remove prepared password intents, pending registration, and unused hook composition APIs; use synchronous idempotent provisioning and recent session step-up for password changes.
+
+  BEHAVIOR CHANGE: Replace `PasswordKdfAdmission` with `KdfAdmission` from `@yielded/crypto/KdfAdmission`, complete provisioning before returning, and use passkey sign-in followed by a password change when recovering with a passkey. Remove hook outbox/deferred options and the second argument to `coordinateCommit`; provide a shared Effect rate limiter to coordinate password attempt budgets across replicas.
+
+### Patch Changes
+
+- [#149](https://github.com/yielded-dev/auth/pull/149) [`03b57e3`](https://github.com/yielded-dev/auth/commit/03b57e3186eb3bed3e4207ae7cf1a82f9ebbc349) Thanks [@danieljvdm](https://github.com/danieljvdm)! - Complete email, password recovery, and phone flows with the original proof reference and secret; reissue through the request operation after cooldown, with fresh per-code guess counts and one local delivery. BEHAVIOR CHANGE: configure shared token-bucket stores across replicas and reset the replaced development proof, command, registration-receipt, and phone identifier storage; retired phone numbers remain occupied. Call `SmsProofDelivery.layer(send)` without a vendor policy (`ProofVendorPolicy` and `ProofDeliveryStatus` are removed), drop `requestId`, `fingerprint`, `replayLifetimeMillis` and `cleanup` from custom `PhoneAdmission` services, and remove the `sendCount` column from proof mappings.
+
+- [#149](https://github.com/yielded-dev/auth/pull/149) [`03b57e3`](https://github.com/yielded-dev/auth/commit/03b57e3186eb3bed3e4207ae7cf1a82f9ebbc349) Thanks [@danieljvdm](https://github.com/danieljvdm)! - Carry complete active factor revisions through password lookup and action authorization without adding factor proofs. BEHAVIOR CHANGE: custom password snapshots and authentication-authority captures must return the full vector, treating requested credential IDs as required anchors even when the list is empty.
+
+- [#152](https://github.com/yielded-dev/auth/pull/152) [`9b6ffb6`](https://github.com/yielded-dev/auth/commit/9b6ffb62679862890cbbb6604bdada5827c00400) Thanks [@danieljvdm](https://github.com/danieljvdm)! - Use shared native SQL workflows through mapped tables or `NativeSqlTables`, with far fewer database round trips per operation. BEHAVIOR CHANGE: update custom adapters to the current `/Adapter` exports and replace removed query-kernel, observation-fence, and legacy transaction helpers.
+
+- [#151](https://github.com/yielded-dev/auth/pull/151) [`821d0a2`](https://github.com/yielded-dev/auth/commit/821d0a222aca754d1b3e2928dab0b6b9cd23b0d1) Thanks [@danieljvdm](https://github.com/danieljvdm)! - Reuse authoritative session and factor snapshots within a request, preserve fresh step-up assurance without extending absolute expiry, and keep existing sessions when regenerating recovery codes. BEHAVIOR CHANGE: reset development session and pending state, map current subject policy and shared pending kinds, implement bounded browser-login cleanup, and replace removed strategy verification, preparation, row-version and flow-deduplication contracts.
+
+- [#152](https://github.com/yielded-dev/auth/pull/152) [`9b6ffb6`](https://github.com/yielded-dev/auth/commit/9b6ffb62679862890cbbb6604bdada5827c00400) Thanks [@danieljvdm](https://github.com/danieljvdm)! - Reuse the captured OAuth grant for token-use authorization and conditional refresh claims. BEHAVIOR CHANGE: update custom use authorities to accept the supplied snapshot, custom persistence to claim the exact stored grant, and OAuth mappings to remove `decodeActionRequirement`.
+
+- [#146](https://github.com/yielded-dev/auth/pull/146) [`730d296`](https://github.com/yielded-dev/auth/commit/730d296952af8473be2701eb33b404a8f02f9429) Thanks [@danieljvdm](https://github.com/danieljvdm)! - Keep cached session reads database-free by deferring composed SQL persistence initialization until its first storage operation. Start cookie caching automatically for existing browser sessions after enabling `cacheFor`, without requiring another sign-in or renewal.
+- Updated dependencies [[`03b57e3`](https://github.com/yielded-dev/auth/commit/03b57e3186eb3bed3e4207ae7cf1a82f9ebbc349), [`03b57e3`](https://github.com/yielded-dev/auth/commit/03b57e3186eb3bed3e4207ae7cf1a82f9ebbc349), [`9b6ffb6`](https://github.com/yielded-dev/auth/commit/9b6ffb62679862890cbbb6604bdada5827c00400), [`821d0a2`](https://github.com/yielded-dev/auth/commit/821d0a222aca754d1b3e2928dab0b6b9cd23b0d1), [`9b6ffb6`](https://github.com/yielded-dev/auth/commit/9b6ffb62679862890cbbb6604bdada5827c00400), [`dcdce5a`](https://github.com/yielded-dev/auth/commit/dcdce5a7c23647b58206974bdc4101b45d0df37f), [`dcdce5a`](https://github.com/yielded-dev/auth/commit/dcdce5a7c23647b58206974bdc4101b45d0df37f), [`730d296`](https://github.com/yielded-dev/auth/commit/730d296952af8473be2701eb33b404a8f02f9429), [`dcdce5a`](https://github.com/yielded-dev/auth/commit/dcdce5a7c23647b58206974bdc4101b45d0df37f)]:
+  - @yielded/auth@0.1.0-beta.26
+  - @yielded/auth-persistence@0.1.0-beta.26
+
 ## 0.1.0-beta.25
 
 ### Patch Changes
