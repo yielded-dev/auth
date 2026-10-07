@@ -52,7 +52,7 @@ export const nativeTarget = Effect.fnUntraced(function* (configuration: NativeTa
       physical(
         work.pipe(
           Effect.provideService(SqlClient.SqlClient, database.$client),
-          Effect.provideService(SqlBatchCommit, batch),
+          Effect.provideService(SqlBatchCommit, configuration.mode === "batch" ? batch : undefined),
         ),
         database,
         configuration,

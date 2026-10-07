@@ -59,15 +59,15 @@ const sameRevision = (a: AuthenticationRevision, b: AuthenticationRevision) =>
 export const makeNativePhoneServices = Effect.fnUntraced(function* (
   tables: NativeSqlTables,
   mapping: AnyPhoneMapping,
-  batch?: SqlBatchCommit["Service"],
 ): Effect.fn.Return<
   {
     readonly phonePersistence: P.PhonePersistence["Service"];
     readonly phoneSignInTargets: P.PhoneSignInTargets["Service"];
   },
   P.PhoneOtpUnavailable,
-  SqlClient | LifecycleHooks | Crypto.Crypto
+  SqlClient | LifecycleHooks | Crypto.Crypto | SqlBatchCommit
 > {
+  const batch = yield* SqlBatchCommit;
   const sql = (yield* SqlClient).withoutTransforms();
   const executor = yield* makeSqlCommitExecutor(unavailable);
   const crypto = yield* Crypto.Crypto;

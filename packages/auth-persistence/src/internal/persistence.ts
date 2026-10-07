@@ -47,6 +47,7 @@ import {
   makeAuthenticationAuthorityWorkflow,
   makeStatefulSessionWorkflow,
 } from "./session-workflow";
+import { SqlBatchCommit } from "./sql-commit";
 import { requireStandalone } from "./standalone";
 import { makeMappings } from "./storage-mapping";
 import {
@@ -440,6 +441,7 @@ export const createPersistence = <T extends object, R, Database extends object =
         // The checked capability metadata above determines exactly these service keys.
         return context as Context.Context<Ports<C, Id, A>>;
       }).pipe(
+        Effect.provideService(SqlBatchCommit, undefined),
         withStorageValidation,
         Effect.mapError((error) =>
           Schema.is(PersistenceConfigurationError)(error)

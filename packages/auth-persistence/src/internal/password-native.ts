@@ -45,12 +45,12 @@ export const makeNativePasswordServices = Effect.fnUntraced(function* (
   tables: NativeSqlTables,
   mapping: AnyPasswordPersistenceMapping,
   proofs?: AnyProofPersistenceMapping,
-  batch?: SqlBatchCommit["Service"],
 ): Effect.fn.Return<
   { readonly passwordPersistence: P.PasswordPersistence["Service"] },
   P.PasswordUnavailable,
-  SqlClient | LifecycleHooks | Crypto.Crypto
+  SqlClient | LifecycleHooks | Crypto.Crypto | SqlBatchCommit
 > {
+  const batch = yield* SqlBatchCommit;
   const sql = (yield* SqlClient).withoutTransforms();
   const executor = yield* makeSqlCommitExecutor(unavailable);
   const crypto = yield* Crypto.Crypto;

@@ -378,12 +378,12 @@ export const makeNativeProofStore = Effect.fnUntraced(function* (
 export const makeNativeProofServices = Effect.fnUntraced(function* (
   tables: NativeSqlTables,
   mapping: AnyProofPersistenceMapping,
-  batch?: SqlBatchCommit["Service"],
 ): Effect.fn.Return<
   { readonly proofPersistence: P.ProofPersistence["Service"] },
   P.ProofUnavailable,
-  SqlClient | LifecycleHooks | Crypto.Crypto
+  SqlClient | LifecycleHooks | Crypto.Crypto | SqlBatchCommit
 > {
+  const batch = yield* SqlBatchCommit;
   const executor = yield* makeSqlCommitExecutor(unavailable);
   const store = yield* makeNativeProofStore(tables, mapping, batch !== undefined);
 

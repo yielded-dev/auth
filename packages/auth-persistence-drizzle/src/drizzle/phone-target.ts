@@ -39,7 +39,7 @@ const services = Effect.fnUntraced(function* (
   const target = yield* nativeTarget(configuration);
   const mapping: SharedMapping = { ...source, proofs: nativeProofMapping(source.proofs) };
 
-  return yield* target.provide(makeNativePhoneServices(target.tables, mapping, target.batch));
+  return yield* target.provide(makeNativePhoneServices(target.tables, mapping));
 });
 
 export const makeTargetPhonePersistenceServices = (

@@ -59,12 +59,13 @@ export const makeNativeEmailAddressServices = Effect.fnUntraced(function* (
   tables: NativeSqlTables,
   mapping: AnyEmailAddressMapping,
   proofs?: AnyProofPersistenceMapping,
-  batch?: SqlBatchCommit["Service"],
 ): Effect.fn.Return<
   { readonly emailAddressPersistence: E.EmailAddressPersistence["Service"] },
   never,
-  SqlClient | LifecycleHooks | Crypto.Crypto
+  SqlClient | LifecycleHooks | Crypto.Crypto | SqlBatchCommit
 > {
+  const batch = yield* SqlBatchCommit;
+
   const sql = (yield* SqlClient).withoutTransforms(),
     executor = yield* makeSqlCommitExecutor(unavailable),
     crypto = yield* Crypto.Crypto;

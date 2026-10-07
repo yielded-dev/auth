@@ -34,9 +34,7 @@ export const makeTargetProofPersistenceServices = Effect.fnUntraced(function* (
   if (configuration.mode === "batch" && source.d1?.primary !== true) return yield* unavailable();
   const target = yield* nativeTarget(configuration);
 
-  return yield* target.provide(
-    makeNativeProofServices(target.tables, nativeProofMapping(source), target.batch),
-  );
+  return yield* target.provide(makeNativeProofServices(target.tables, nativeProofMapping(source)));
 });
 
 export const coordinateTargetProofPersistence = <Transaction, A, E, R>(

@@ -53,7 +53,6 @@ export const makeTargetPasswordPersistenceServices = Effect.fnUntraced(function*
       target.tables,
       mapped(mapping),
       proofs === undefined ? undefined : nativeProofMapping(proofs),
-      target.batch,
     ),
   );
 });
