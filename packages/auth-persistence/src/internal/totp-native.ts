@@ -534,9 +534,10 @@ export const makeNativeTotpServices = Effect.fnUntraced(function* (
     const policyCondition = sql`exists(select 1 from ${subject.name} where ${ownerKey} and ${policyGuard})`;
     const fresh = sql.and([...timeGuards, sql`${engineNow} >= ${now}`]);
 
-    const initial = sql.and([
+    // A factor UPDATE pins scope and version itself, and MySQL rejects a subquery
+    // on the table being updated (error 1093), so only inserts add initialFactor.
+    const unchangedFactor = sql.and([
       initialAuthority,
-      initialFactor,
       policyCondition,
       fresh,
       ...guards,
@@ -593,7 +594,7 @@ export const makeNativeTotpServices = Effect.fnUntraced(function* (
       values = { [f.state]: encoded, [f.version]: next.version };
 
     const afterAuthority = sql`exists(select 1 from ${subject.name} where ${ownerKey} and ${exact(subject, s.securityRevision, nextRevision)} and ${active})`;
-    const writeGuard = semantic ? sql`${afterAuthority} and ${fresh}` : initial;
+    const writeGuard = semantic ? sql`${afterAuthority} and ${fresh}` : unchangedFactor;
 
     if (factorRow === undefined) {
       const insert = {
@@ -602,7 +603,13 @@ export const makeNativeTotpServices = Effect.fnUntraced(function* (
         ...values,
       };
 
-      yield* stage(conditionalInsert(factor, insert, writeGuard));
+      yield* stage(
+        conditionalInsert(
+          factor,
+          insert,
+          semantic ? writeGuard : sql.and([writeGuard, initialFactor]),
+        ),
+      );
     } else
       yield* stage(
         sql`${factor.update(values)} where ${exact(factor, f.scope, scope)} and ${exact(factor, f.version, current!.version)} and ${writeGuard}`,

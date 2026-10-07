@@ -105,7 +105,11 @@ const makeIntent = Effect.fnUntraced(function* (
       access.requestBindingExpiresAtMillis !== context.requestBindingExpiresAtMillis ||
       access.credentialDigest !== value.credentialDigest ||
       engineNow < value.issuedAtMillis ||
-      engineNow >= value.expiresAtMillis
+      // A bound decision stays replayable through retention after the intent expires.
+      engineNow >=
+        (inspection.application._tag === "Unbound"
+          ? value.expiresAtMillis
+          : value.retentionUntilMillis)
     )
       return undefined;
 
@@ -196,7 +200,7 @@ export const makeNativeOAuthRegistrationIntentServices = Effect.fnUntraced(funct
           if (
             value.identity.provider !== context.provider ||
             value.identity.issuer !== context.issuer ||
-            value.verifiedAtMillis < context.issuedAtMillis ||
+            value.issuedAtMillis < context.issuedAtMillis ||
             value.verifiedAtMillis > value.issuedAtMillis ||
             value.issuedAtMillis >= value.expiresAtMillis ||
             value.expiresAtMillis > context.requestBindingExpiresAtMillis ||
@@ -226,8 +230,12 @@ export const makeNativeOAuthRegistrationIntentServices = Effect.fnUntraced(funct
 
           const statement = conditionalInsert(intent, values, eligible);
 
-          if (batch !== undefined) yield* state.change(statement);
-          else if ((yield* executeSqlChange(sql, statement)) !== 1) return yield* rejected();
+          if (batch !== undefined) {
+            // D1 classifies eligibility before staging, as the row count does for
+            // interactive owners; the batch still asserts the conditional insert.
+            if ((yield* sql`select 1 where ${eligible}`).length === 0) return yield* rejected();
+            yield* state.change(statement);
+          } else if ((yield* executeSqlChange(sql, statement)) !== 1) return yield* rejected();
           if (Option.isSome(external))
             yield* state.finish(
               "oauth-registration-intent-issued",

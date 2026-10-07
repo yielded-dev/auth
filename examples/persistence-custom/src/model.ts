@@ -46,7 +46,6 @@ export type Session = typeof Session.Type;
 const Proof = Schema.Struct({
   record: Proofs.ProofRecord,
   failedAttempts: Schema.Natural,
-  sendCount: Schema.Literal(1),
 });
 
 const Passkey = Schema.Struct({

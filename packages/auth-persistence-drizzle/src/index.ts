@@ -196,7 +196,7 @@ export { oauthConnectedOwnershipReferences } from "./drizzle/oauth-connected-ref
 export {
   oauthConnectedPersistenceLayer,
   oauthConnectedRevocationsLayer,
-} from "./drizzle/oauth-connected-target";
+} from "./drizzle/oauth-target";
 
 export { passwordPersistenceLayer, passwordRegistrationLayer } from "./drizzle/password-target";
 export { proofPersistenceLayer } from "./drizzle/proof-target";

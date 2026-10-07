@@ -25,7 +25,6 @@ import {
   sameRevision,
   storage,
   unavailable,
-  matchesAcceptedAction,
 } from "./state";
 
 export const makeNativeOAuthConnectedServices = Effect.fnUntraced(function* (
@@ -225,22 +224,6 @@ export const makeNativeOAuthConnectedServices = Effect.fnUntraced(function* (
               )
             )
               return yield* rejected();
-            if (
-              !(yield* matchesAcceptedAction(
-                input.authorization,
-                {
-                  moduleId: c.moduleId,
-                  action: "connected-complete",
-                  flowId: c.flowId,
-                  revision: c.revision,
-                  intent: yield* Schema.encodeEffect(
-                    Schema.fromJsonString(M.OAuthConnectedTransactionContext),
-                  )(c),
-                },
-                current.now,
-              ))
-            )
-              return yield* rejected();
             deadline = Math.min(deadline, input.authorization.validUntilMillis);
             authorization = policy({
               subjectId: current.nativeId,
@@ -421,25 +404,6 @@ export const makeNativeOAuthConnectedServices = Effect.fnUntraced(function* (
           if (
             current === undefined ||
             !sameRevision(current.revision, authorization.challenge.revision)
-          )
-            return yield* rejected();
-          if (
-            !(yield* matchesAcceptedAction(
-              authorization,
-              {
-                moduleId: key.moduleId,
-                action: "connected-disconnect",
-                flowId: authorization.challenge.flowId,
-                revision: current.revision,
-                intent: yield* Schema.encodeEffect(
-                  Schema.fromJsonString(M.OAuthConnectedDisconnectIntent),
-                )({
-                  key,
-                  grantVersion: version,
-                }),
-              },
-              current.now,
-            ))
           )
             return yield* rejected();
           const old = yield* state.readGrant(key, current.nativeId, batch === undefined);

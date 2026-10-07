@@ -4,6 +4,7 @@ import {
   AuthenticationFlowId,
   SecurityRevision,
   type PendingConsumption,
+  PendingAuthenticationKind,
 } from "@yielded/auth/Sessions";
 import { Effect, Schema } from "effect";
 import { SqlClient } from "effect/sql/SqlClient";
@@ -20,14 +21,11 @@ import type { NativeSqlTables, SqlTable } from "./native-sql-table";
 import { makeConditionalSqlInsert } from "./session-native-record";
 import { sessionInvariant } from "./session-native-state";
 import { exactSqlText, executeSqlChange } from "./sql-change";
-import { appendSqlBatchStatement, CurrentSqlCommit, registerSqlCommitReceipt } from "./sql-commit";
+import { appendSqlBatchStatement, registerSqlCommitReceipt } from "./sql-commit";
 import type { AnyTableModel } from "./table-model";
 
-export const SessionPendingKind = Schema.Literals(["Login", "StepUp"]);
-export type SessionPendingKind = typeof SessionPendingKind.Type;
-
 export const StoredSessionPending = Schema.Struct({
-  kind: SessionPendingKind,
+  kind: PendingAuthenticationKind,
   digest: TokenDigest,
   version: SecurityRevision,
   flowId: AuthenticationFlowId,
@@ -64,7 +62,7 @@ export const makeNativeSessionPending = Effect.fnUntraced(function* (
   const millis = (t: SqlTable, key: string) =>
     tables.expression(mapping.clock.toMillis(t.column(key)));
 
-  const scope = (t: SqlTable, kind: SessionPendingKind) =>
+  const scope = (t: SqlTable, kind: PendingAuthenticationKind) =>
     sql.and([exact(t, p.moduleId, mapping.moduleId), exact(t, p.kind, kind)]);
 
   const live = (t: SqlTable) =>
@@ -75,11 +73,11 @@ export const makeNativeSessionPending = Effect.fnUntraced(function* (
       sql`${t.column(p.failedAttempts)} < ${t.column(p.attemptLimit)}`,
     ]);
 
-  const predicate = (t: SqlTable, kind: SessionPendingKind, digest: TokenDigest) =>
+  const predicate = (t: SqlTable, kind: PendingAuthenticationKind, digest: TokenDigest) =>
     sql.and([scope(t, kind), exact(t, p.digest, digest), live(t)]);
 
   const decode = Effect.fnUntraced(function* (
-    kind: SessionPendingKind,
+    kind: PendingAuthenticationKind,
     row: Record<string, unknown>,
   ) {
     sessionInvariant(
@@ -102,7 +100,7 @@ export const makeNativeSessionPending = Effect.fnUntraced(function* (
     });
   });
 
-  const read = Effect.fnUntraced(function* (kind: SessionPendingKind, digest: TokenDigest) {
+  const read = Effect.fnUntraced(function* (kind: PendingAuthenticationKind, digest: TokenDigest) {
     const rows =
       yield* sql`select ${table.fields("pending_")}, ${now} as engine_now from ${table.name} where ${predicate(table, kind, digest)} limit 2`;
 
@@ -155,7 +153,11 @@ export const makeNativeSessionPending = Effect.fnUntraced(function* (
     yield* stage(conditionalInsert(table, row, condition), 1);
   });
 
-  const consumption = (kind: SessionPendingKind, input: PendingConsumption, native: unknown) =>
+  const consumption = (
+    kind: PendingAuthenticationKind,
+    input: PendingConsumption,
+    native: unknown,
+  ) =>
     sql.and([
       predicate(table, kind, input.digest),
       exact(table, p.version, input.version),
@@ -165,7 +167,7 @@ export const makeNativeSessionPending = Effect.fnUntraced(function* (
     ]);
 
   const consume = (
-    kind: SessionPendingKind,
+    kind: PendingAuthenticationKind,
     input: PendingConsumption,
     native: unknown,
     condition: Fragment = sql`1 = 1`,
@@ -175,7 +177,7 @@ export const makeNativeSessionPending = Effect.fnUntraced(function* (
       1,
     );
 
-  const reject = (kind: SessionPendingKind, digest: TokenDigest) =>
+  const reject = (kind: PendingAuthenticationKind, digest: TokenDigest) =>
     stage(
       sql`${table.update({ [p.failedAttempts]: sql`${table.column(p.failedAttempts)} + 1` })} where ${predicate(table, kind, digest)}`,
     );
@@ -183,7 +185,7 @@ export const makeNativeSessionPending = Effect.fnUntraced(function* (
   const clockCondition = (record: StoredSessionPending) => sql`${now} < ${record.expiresAtMillis}`;
 
   const consumedCondition = (
-    kind: SessionPendingKind,
+    kind: PendingAuthenticationKind,
     input: PendingConsumption,
     native: unknown,
   ) =>
@@ -213,13 +215,6 @@ export const prepareNativeSession = <Value, A>(
   project: (value: Value, journal: CommitJournal) => PreparedCommit<A>,
 ) =>
   Effect.gen(function* () {
-    const owner = yield* CurrentSqlCommit;
-
-    if (owner.mode === "batch" && owner.statements.length === 0) {
-      const sql = yield* SqlClient;
-
-      yield* appendSqlBatchStatement(sql`select 1`);
-    }
     const receipt = project(value, yield* CurrentCommitJournal);
 
     yield* registerSqlCommitReceipt(receipt);

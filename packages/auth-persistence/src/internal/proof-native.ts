@@ -64,6 +64,7 @@ export const makeNativeProofStore = Effect.fnUntraced(function* (
   const subject = tables(mapping.subject.table);
   const mysql = sql.onDialectOrElse({ mysql: () => true, orElse: () => false });
   const locking = sql.onDialectOrElse({ sqlite: () => sql``, orElse: () => sql`for update` });
+  const rowLocks = !batch && sql.onDialectOrElse({ sqlite: () => false, orElse: () => true });
   const now = tables.expression(mapping.clock.engineNowMillis);
   const millis = (key: string) => tables.expression(mapping.clock.toMillis(proof.column(key)));
   const instant = (value: Fragment) => tables.expression(mapping.clock.fromMillis(sql`(${value})`));
@@ -200,7 +201,6 @@ export const makeNativeProofStore = Effect.fnUntraced(function* (
       [p.issuedAt]: issuedAt,
       [p.expiresAt]: expiresAt,
       [p.failedAttempts]: 0,
-      [p.sendCount]: 1,
     };
 
     if (mysql) {
@@ -230,7 +230,6 @@ export const makeNativeProofStore = Effect.fnUntraced(function* (
       p.issuedAt,
       p.expiresAt,
       p.failedAttempts,
-      p.sendCount,
     ];
 
     const excluded = proof.as("excluded");
@@ -290,6 +289,11 @@ export const makeNativeProofStore = Effect.fnUntraced(function* (
             exact(p.verifierDigest, input.candidate.digest),
           ]),
     ]);
+
+    // No subject lock serializes an identifier-bound proof. Lock its row first so
+    // concurrent wrong guesses cannot all compare before any of them is charged.
+    if (input.binding._tag === "Identifier" && rowLocks)
+      yield* sql`select 1 from ${proof.name} where ${current} ${locking}`;
 
     const deletion = sql`delete from ${proof.name} where ${valid}`;
 
@@ -394,13 +398,7 @@ export const makeNativeProofServices = Effect.fnUntraced(function* (
   const prepare = <Value, A>(value: Value, project: P.PrepareProofCommit<Value, A>) =>
     Effect.gen(function* () {
       const journal = yield* CurrentCommitJournal;
-      const owner = yield* CurrentSqlCommit;
 
-      if (owner.mode === "batch" && owner.statements.length === 0) {
-        const sql = yield* SqlClient;
-
-        yield* appendSqlBatchStatement(sql`select 1`);
-      }
       const receipt = project(value, journal);
 
       invariant(receipt?._tag === "PreparedCommit" && Effect.isEffect(receipt.read));

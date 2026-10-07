@@ -107,7 +107,7 @@ export const makeNativeSignedSessionValidityServices = Effect.fnUntraced(functio
   const signedSessionValidity: SignedSessionValidity = {
     verify: (record) =>
       executor
-        .read(
+        .verify(
           Effect.gen(function* () {
             const nativeSubject = yield* mapping.subjectId.toNative(record.subjectId),
               nativeSession = yield* mapping.sessionId.toNative(record.sessionId);

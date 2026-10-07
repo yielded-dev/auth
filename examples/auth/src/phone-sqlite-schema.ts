@@ -54,7 +54,6 @@ export const proof = sqliteTable(
     issuedAt: text().notNull(),
     expiresAt: text().notNull(),
     failedAttempts: integer().notNull(),
-    sendCount: integer().notNull(),
   },
   (t) => [
     uniqueIndex("phone_proof_series_unique").on(t.moduleId, t.purpose, t.seriesKey),
@@ -144,7 +143,6 @@ export const proofs = {
     issuedAt: "issuedAt",
     expiresAt: "expiresAt",
     failedAttempts: "failedAttempts",
-    sendCount: "sendCount",
     encodeInsert: ({ record, seriesKey }) => ({
       moduleId: record.moduleId,
       purpose: record.purpose,
@@ -156,7 +154,6 @@ export const proofs = {
       issuedAt: encodeInstant(0),
       expiresAt: encodeInstant(0),
       failedAttempts: 0,
-      sendCount: 1,
     }),
   },
 } satisfies ProofPersistenceMapping<typeof proof, typeof customer, number>;
@@ -253,7 +250,7 @@ export const migrate = Effect.gen(function* () {
     "create table phone_customer(customerNo integer primary key, enabled integer not null, security text not null,segment text not null,locale text not null)",
     "create table phone_identifier(moduleId text not null,credentialId text not null,namespace text not null,value text not null,customerNo integer not null,custody text not null,verifiedAt text,enabled integer not null,unique(namespace,value))",
     "create table phone_factor(key text primary key,customerNo integer not null,revision text not null,enabled integer not null)",
-    "create table phone_proof(moduleId text not null,purpose text not null,seriesKey text not null,proofId text not null,binding text not null,verifierKeyId text not null,verifierDigest text not null,issuedAt text not null,expiresAt text not null,failedAttempts integer not null,sendCount integer not null,unique(moduleId,purpose,seriesKey),unique(moduleId,proofId))",
+    "create table phone_proof(moduleId text not null,purpose text not null,seriesKey text not null,proofId text not null,binding text not null,verifierKeyId text not null,verifierDigest text not null,issuedAt text not null,expiresAt text not null,failedAttempts integer not null,unique(moduleId,purpose,seriesKey),unique(moduleId,proofId))",
   ])
     yield* client.unsafe(statement);
 });

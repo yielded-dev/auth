@@ -8,21 +8,14 @@ import type { Fragment } from "effect/sql/Statement";
 import { type OAuthAccountsMapping, OAuthEligibilityFact } from "../models/oauth-model";
 import type { NativeSqlTables } from "../native-sql-table";
 import { makeConditionalSqlInsert } from "../session-native-record";
-import { exactSqlText } from "../sql-change";
+import { anySqlCondition, exactSqlText } from "../sql-change";
 import { makeSqlCommitExecutor, SqlBatchCommit, CurrentSqlCommit } from "../sql-commit";
 import type { SqlExpression, TableModel } from "../table-model";
 import { makeOAuthNativeFlow } from "./native-flow";
 import { makeOAuthNativeMutation } from "./native-mutation";
 import { prepareOAuthNative } from "./native-sign-in";
 import { makeOAuthNativeState } from "./native-state";
-import {
-  invariant,
-  oauthIdentityKey,
-  sameRevision,
-  satisfies,
-  unavailable,
-  matchesAcceptedAction,
-} from "./state";
+import { invariant, oauthIdentityKey, sameRevision, satisfies, unavailable } from "./state";
 
 // Physical metadata is validated by the adapter; schema values remain typed.
 export type OAuthNativeAccountsMapping = OAuthAccountsMapping<
@@ -61,9 +54,6 @@ export const makeNativeOAuthAccountsServices = Effect.fnUntraced(function* (
   );
 
   const { sql, now, credential, authority } = state;
-
-  const any = (conditions: ReadonlyArray<Fragment>) =>
-    conditions.length === 0 ? sql`1 = 0` : sql.or(conditions);
 
   const c = mapping.credential;
   const a = mapping.authority;
@@ -142,25 +132,6 @@ export const makeNativeOAuthAccountsServices = Effect.fnUntraced(function* (
             context.provider !== verified.identity.provider ||
             context.issuer !== verified.identity.issuer ||
             current.now >= context.expiresAtMillis
-          )
-            return yield* rejected();
-
-          const intent = yield* Schema.encodeEffect(
-            Schema.fromJsonString(M.OAuthLinkIntentContext),
-          )(context);
-
-          if (
-            !(yield* matchesAcceptedAction(
-              context.authorization,
-              {
-                moduleId: context.moduleId,
-                action: "link-begin",
-                flowId: context.flowId,
-                revision: context.revision,
-                intent,
-              },
-              current.now,
-            ))
           )
             return yield* rejected();
 
@@ -346,24 +317,6 @@ export const makeNativeOAuthAccountsServices = Effect.fnUntraced(function* (
           if (current === undefined || !sameRevision(current.revision, captured.revision))
             return yield* rejected();
 
-          const intent = yield* Schema.encodeEffect(
-            Schema.fromJsonString(M.OAuthCredentialSnapshot),
-          )(captured);
-
-          if (
-            !(yield* matchesAcceptedAction(
-              authorization,
-              {
-                moduleId: captured.moduleId,
-                action: "unlink",
-                flowId: authorization.challenge.flowId,
-                revision: captured.revision,
-                intent,
-              },
-              current.now,
-            ))
-          )
-            return yield* rejected();
           const key = yield* oauthIdentityKey(captured.identity);
 
           const target = credentialCondition(
@@ -475,22 +428,23 @@ export const makeNativeOAuthAccountsServices = Effect.fnUntraced(function* (
 
           if (!facts.some((fact) => fact.usablePrimary) || !satisfies(facts, requirement))
             return yield* prepareOAuthNative({ _tag: "LastSignInMethod" }, prepare);
-          const present = (entry: (typeof methods)[number]) => any(entry.conditions);
+
+          const present = (entry: (typeof methods)[number]) => anySqlCondition(entry.conditions);
 
           // Preserve a usable remaining method through application work. These
           // predicates describe eligible credential identities, not observed rows.
           const remaining = sql.and([
-            any(methods.filter((entry) => entry.fact.usablePrimary).map(present)),
-            any(
+            anySqlCondition(methods.filter((entry) => entry.fact.usablePrimary).map(present)),
+            anySqlCondition(
               requirement.alternatives.map((alternative) =>
                 sql.and([
                   ...alternative.factors.map((factor) =>
-                    any(
+                    anySqlCondition(
                       methods.filter((entry) => entry.fact.factors.includes(factor)).map(present),
                     ),
                   ),
                   sql`(${sql.join(" + ", false)(methods.map((entry) => sql`case when ${present(entry)} then 1 else 0 end`))}) >= ${alternative.minimumCredentials}`,
-                  any(
+                  anySqlCondition(
                     methods
                       .filter(
                         (entry) =>

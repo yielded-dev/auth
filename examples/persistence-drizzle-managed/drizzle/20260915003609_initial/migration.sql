@@ -119,8 +119,7 @@ CREATE TABLE `customer_auth_proofs` (
 	`verifier_digest` text NOT NULL,
 	`issued_at` integer NOT NULL,
 	`expires_at` integer NOT NULL,
-	`failed_attempts` integer NOT NULL,
-	`send_count` integer NOT NULL
+	`failed_attempts` integer NOT NULL
 );
 --> statement-breakpoint
 CREATE UNIQUE INDEX `customer_auth_proofs_key_0` ON `customer_auth_proofs` (`module_id`,`purpose`,`series_key`);

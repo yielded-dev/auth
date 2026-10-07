@@ -19,7 +19,6 @@ export interface ProofTable<Proof extends Table> {
   readonly issuedAt: Column<Proof>;
   readonly expiresAt: Column<Proof>;
   readonly failedAttempts: Column<Proof>;
-  readonly sendCount: Column<Proof>;
   readonly encodeInsert: (input: {
     readonly record: ProofIssueRecord;
     readonly seriesKey: string;

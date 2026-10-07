@@ -6,7 +6,7 @@ on:
     branches: [main]
   pull_request:
     # Retargeting changes the diff without changing the head commit.
-    # Every run reports the stable required check, including metadata edits.
+    # The jobs below ignore title and description edits.
     types: [opened, reopened, synchronize, ready_for_review, edited]
 
 permissions:
@@ -14,7 +14,8 @@ permissions:
 
 concurrency:
   # Complete main baselines; supersede older runs only on the same PR.
-  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  # Metadata edits must not cancel a run that is validating the PR.
+  group: ci-${{ github.event_name == 'pull_request' && (github.event.action != 'edited' || github.event.changes.base) && github.ref || github.run_id }}
   cancel-in-progress: true
 
 env:
@@ -25,6 +26,7 @@ env:
 jobs:
   changes:
     name: Select required checks
+    if: github.event.action != 'edited' || github.event.changes.base
     runs-on: ubuntu-latest
     timeout-minutes: 3
     permissions:
@@ -241,9 +243,10 @@ jobs:
           key: ${{ steps.setup.outputs.cache-key }}
 
   ready:
-    name: ready
+    # A skipped metadata edit must not replace the required check's real result.
+    name: ${{ github.event.action == 'edited' && !github.event.changes.base && 'PR metadata edit' || 'ready' }}
     needs: [changes, checks, test, build, docs]
-    if: ${{ !cancelled() && github.event_name == 'pull_request' }}
+    if: ${{ !cancelled() && (github.event.action != 'edited' || github.event.changes.base) && github.event_name == 'pull_request' }}
     runs-on: ubuntu-latest
     timeout-minutes: 3
     steps:

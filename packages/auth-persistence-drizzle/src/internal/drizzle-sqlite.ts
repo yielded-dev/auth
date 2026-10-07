@@ -77,5 +77,4 @@ export const sqlitePersistence = <R>(acquire: Effect.Effect<object, never, R | S
     makeTable,
     describe,
     acquire: nativeDatabase(acquire),
-    maxParameters: (database) => database.maxParameters,
   });

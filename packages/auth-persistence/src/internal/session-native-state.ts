@@ -19,7 +19,7 @@ import type { Fragment } from "effect/sql/Statement";
 import { PersistenceMappingError } from "./mapping-error";
 import type { SessionAuthorityTables, SessionExecution } from "./models/session-model";
 import type { NativeSqlTables, SqlTable } from "./native-sql-table";
-import { exactSqlText } from "./sql-change";
+import { anySqlCondition, exactSqlText } from "./sql-change";
 import type { AnyTableModel } from "./table-model";
 
 export const sessionUnavailable = () => SessionUnavailable.make({});
@@ -128,7 +128,7 @@ export const makeNativeSessionAuthorityState = Effect.fnUntraced(function* (
   };
 
   const requested = (table: SqlTable, ids: ReadonlyArray<string>) =>
-    ids.length === 0 ? sql`1 = 0` : sql.or(ids.map((value) => exact(table, c.credentialId, value)));
+    anySqlCondition(ids.map((value) => exact(table, c.credentialId, value)));
 
   const decode = Effect.fnUntraced(function* (
     subjectId: SubjectId,

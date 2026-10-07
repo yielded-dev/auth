@@ -133,13 +133,3 @@ export const ProofDeliveryOutcome = Schema.Union([
 ]);
 
 export type ProofDeliveryOutcome = typeof ProofDeliveryOutcome.Type;
-
-export const ProofDeliveryStatus = Schema.Literals([
-  "accepted",
-  "failed",
-  "ambiguous",
-  "unavailable",
-  "not-dispatched",
-]);
-
-export type ProofDeliveryStatus = typeof ProofDeliveryStatus.Type;

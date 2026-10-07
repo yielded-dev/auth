@@ -313,7 +313,7 @@ export const makeNativeStatefulSessionServices = Effect.fnUntraced(function* <Cl
       ),
     verify: ({ digest }) =>
       executor
-        .read(verify(digest))
+        .verify(verify(digest))
         .pipe(
           Effect.flatMap((record) =>
             record === undefined ? Effect.fail(SessionInvalid.make({})) : Effect.succeed(record),

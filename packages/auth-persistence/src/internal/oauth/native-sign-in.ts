@@ -1,16 +1,10 @@
 import { CurrentCommitJournal, type LifecycleHooks } from "@yielded/auth/Hooks";
 import * as M from "@yielded/auth/OAuth";
 import { Crypto, Effect } from "effect";
-import { SqlClient } from "effect/sql/SqlClient";
+import type { SqlClient } from "effect/sql/SqlClient";
 
 import type { NativeSqlTables } from "../native-sql-table";
-import {
-  appendSqlBatchStatement,
-  CurrentSqlCommit,
-  makeSqlCommitExecutor,
-  registerSqlCommitReceipt,
-  SqlBatchCommit,
-} from "../sql-commit";
+import { makeSqlCommitExecutor, registerSqlCommitReceipt, SqlBatchCommit } from "../sql-commit";
 import { makeOAuthNativeFlow } from "./native-flow";
 import { makeOAuthNativeState, type OAuthNativeReadMapping } from "./native-state";
 import { invariant, unavailable } from "./state";
@@ -21,13 +15,7 @@ export const prepareOAuthNative = <Value, A>(
 ) =>
   Effect.gen(function* () {
     const journal = yield* CurrentCommitJournal;
-    const owner = yield* CurrentSqlCommit;
 
-    if (owner.mode === "batch" && owner.statements.length === 0) {
-      const sql = yield* SqlClient;
-
-      yield* appendSqlBatchStatement(sql`select 1`);
-    }
     const receipt = prepare(value, journal);
 
     invariant(receipt?._tag === "PreparedCommit" && Effect.isEffect(receipt.read));

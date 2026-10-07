@@ -3,9 +3,6 @@ import { Predicate, Schema } from "effect";
 // These are mapping contracts, not a parser for arbitrary constraint declarations.
 // Role aliases are explicit because their documentation names differ from mapping fields.
 const uniquePlans: Readonly<Record<string, readonly [string, ReadonlyArray<string>]>> = {
-  "unique(abuseEvent.moduleId,abuseEvent.action,abuseEvent.scopeKind,abuseEvent.scopeKey,abuseEvent.commandId)":
-    ["abuseEvent", ["moduleId", "action", "scopeKind", "scopeKey", "commandId"]],
-  "unique(admission.moduleId)": ["admission", ["moduleId"]],
   "unique(authority.subjectId,authority.credentialId)": [
     "authority",
     ["subjectId", "credentialId"],
@@ -14,26 +11,10 @@ const uniquePlans: Readonly<Record<string, readonly [string, ReadonlyArray<strin
     "authorityCredential",
     ["subjectId", "credentialId"],
   ],
-  "unique(command.moduleId,command.commandId)": ["command", ["moduleId", "commandId"]],
-  "unique(connectedAdmission.admissionId)": ["admission", ["admissionId"]],
-  "unique(connectedClient.clientKey)": ["client", ["clientKey"]],
-  "unique(connectedCohort.cohortKey)": ["cohort", ["cohortKey"]],
-  "unique(connectedCommand.moduleId,connectedCommand.commandId)": [
-    "command",
-    ["moduleId", "commandId"],
-  ],
-  "unique(connectedFlow.moduleId,connectedFlow.commandId)": ["flow", ["moduleId", "commandId"]],
-  "unique(connectedFlow.moduleId,connectedFlow.flowId)": ["flow", ["moduleId", "flowId"]],
-  "unique(connectedFlow.stateDigest)": ["flow", ["stateDigest"]],
   "unique(connectedGrant.moduleId,connectedGrant.grantId)": ["grant", ["moduleId", "grantId"]],
   "unique(connectedGrant.moduleId,connectedGrant.subjectId,connectedGrant.profileKey,connectedGrant.identityKey)":
     ["grant", ["moduleId", "subjectId", "profileKey", "identityKey"]],
   "unique(connectedRevocation.jobId)": ["job", ["jobId"]],
-  "unique(continuation.moduleId,continuation.continuationId)": [
-    "continuation",
-    ["moduleId", "continuationId"],
-  ],
-  "unique(continuation.moduleId,continuation.digest)": ["continuation", ["moduleId", "digest"]],
   "unique(credential.credentialId)": ["credential", ["credentialId"]],
   "unique(credential.identityKey)": ["credential", ["identityKey"]],
   "unique(credential.moduleId,credential.credentialId)": [
@@ -41,33 +22,16 @@ const uniquePlans: Readonly<Record<string, readonly [string, ReadonlyArray<strin
     ["moduleId", "credentialId"],
   ],
   "unique(credential.moduleId,credential.subjectId)": ["credential", ["moduleId", "subjectId"]],
-  "unique(emailCommand.moduleId,emailCommand.commandId)": ["command", ["moduleId", "commandId"]],
   "unique(emailCredential.moduleId,emailCredential.credentialId)": [
     "credential",
     ["moduleId", "credentialId"],
   ],
   "unique(emailCredential.moduleId,emailCredential.identifierNamespace,emailCredential.identifierValue)":
     ["credential", ["moduleId", "identifierNamespace", "identifierValue"]],
-  "unique(emailRegistration.moduleId,emailRegistration.commandId)": [
-    "registration",
-    ["moduleId", "commandId"],
-  ],
-  "unique(failureEvent.moduleId,failureEvent.seriesKey,failureEvent.commandId)": [
-    "failureEvent",
-    ["moduleId", "seriesKey", "commandId"],
-  ],
-  "unique(flow.flowId)": ["flow", ["flowId"]],
-  "unique(flow.moduleId,flow.commandId)": ["flow", ["moduleId", "commandId"]],
   "unique(flow.moduleId,flow.flowId)": ["flow", ["moduleId", "flowId"]],
   "unique(flow.stateDigest)": ["flow", ["stateDigest"]],
-  "unique(generation.moduleId,generation.deliveryId)": ["generation", ["moduleId", "deliveryId"]],
-  "unique(generation.moduleId,generation.proofId)": ["generation", ["moduleId", "proofId"]],
   "unique(identifier.namespace,identifier.value)": ["identifier", ["namespace", "value"]],
-  "unique(intent.digest)": ["intent", ["digest"]],
-  "unique(intent.flowId)": ["intent", ["flowId"]],
-  "unique(intent.moduleId,intent.commandId)": ["intent", ["moduleId", "commandId"]],
   "unique(intent.moduleId,intent.flowId)": ["intent", ["moduleId", "flowId"]],
-  "unique(intent.moduleId,intent.intentId)": ["intent", ["moduleId", "intentId"]],
   "unique(intent.moduleId,intent.reference)": ["intent", ["moduleId", "reference"]],
   "unique(ownership.identityKey)": ["ownership", ["identityKey"]],
   "unique(proof.moduleId,proof.purpose,proof.seriesKey)": [
@@ -76,29 +40,11 @@ const uniquePlans: Readonly<Record<string, readonly [string, ReadonlyArray<strin
   ],
   "unique(proof.moduleId,proof.proofId)": ["proof", ["moduleId", "proofId"]],
   "unique(pending.digest)": ["pending", ["digest"]],
-  "unique(pending.flowId)": ["pending", ["flowId"]],
-  "unique(rateScope.moduleId,rateScope.purpose,rateScope.action,rateScope.scopeKind,rateScope.scopeKey)":
-    ["rateScope", ["moduleId", "purpose", "action", "scopeKind", "scopeKey"]],
-  "unique(registration.moduleId,registration.requestId)": [
-    "registration",
-    ["moduleId", "requestId"],
-  ],
-  "unique(registrationCommand.moduleId,registrationCommand.commandId)": [
-    "command",
-    ["moduleId", "commandId"],
-  ],
-  "unique(request.moduleId,request.requestId)": ["request", ["moduleId", "requestId"]],
-  "unique(series.moduleId,series.purpose,series.scopeKey)": [
-    "series",
-    ["moduleId", "purpose", "scopeKey"],
-  ],
   "unique(session.digest)": ["session", ["digest"]],
   "unique(tombstone.moduleId,tombstone.subjectId,tombstone.sessionId)": [
     "tombstone",
     ["moduleId", "subjectId", "sessionId"],
   ],
-  "unique(tuple.identityKey)": ["ownership.tuple", ["identityKey"]],
-  "unique(unlinkCommand.moduleId,unlinkCommand.commandId)": ["command", ["moduleId", "commandId"]],
 };
 
 const arrayRoles: Readonly<Record<string, string>> = {
@@ -106,10 +52,6 @@ const arrayRoles: Readonly<Record<string, string>> = {
   credentialKey: "credential",
   factor: "authority",
   flow: "flow",
-  command: "flow",
-  admission: "admission",
-  intentFlow: "intent",
-  intentCommand: "intent",
 };
 
 const nestedMappings = [
@@ -124,12 +66,7 @@ const nestedMappings = [
   "source",
 ];
 
-const constraintGroups = [
-  "constraints",
-  "tupleConstraints",
-  "registrationConstraints",
-  "managementConstraints",
-];
+const constraintGroups = ["constraints"];
 
 const MappingRecord = Schema.Record(Schema.String, Schema.Unknown);
 const record = Schema.decodeUnknownSync(MappingRecord);
@@ -172,8 +109,7 @@ export const storageKeyPlans = (
           keys = ["requestId"];
         } else throw new Error("Unknown storage constraint");
       } else if (Array.isArray(declaration) && declaration.every(Predicate.isString)) {
-        const mappedRole =
-          group === "managementConstraints" && name === "command" ? "command" : arrayRoles[name];
+        const mappedRole = arrayRoles[name];
 
         if (mappedRole === undefined) throw new Error("Unknown storage constraint");
         role = mappedRole;

@@ -121,8 +121,7 @@ CREATE TABLE `app_proofs` (
 	`c_verifier_digest` text NOT NULL,
 	`c_issued_at` integer NOT NULL,
 	`c_expires_at` integer NOT NULL,
-	`c_failed_attempts` integer NOT NULL,
-	`c_send_count` integer NOT NULL
+	`c_failed_attempts` integer NOT NULL
 );
 --> statement-breakpoint
 CREATE UNIQUE INDEX `app_proofs_key_0` ON `app_proofs` (`c_module_id`,`c_purpose`,`c_series_key`);

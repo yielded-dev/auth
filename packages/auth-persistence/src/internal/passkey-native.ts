@@ -38,6 +38,7 @@ export const preparePasskeyNative = <Value, A>(
 ) =>
   Effect.gen(function* () {
     const journal = yield* CurrentCommitJournal;
+
     const receipt = prepare(value, journal);
 
     passkeyNativeInvariant(receipt?._tag === "PreparedCommit" && Effect.isEffect(receipt.read));

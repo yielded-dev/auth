@@ -51,7 +51,6 @@ const initial = Effect.gen(function* () {
   "c_issued_at" ${integerType} not null,
   "c_expires_at" ${integerType} not null,
   "c_failed_attempts" ${integerType} not null,
-  "c_send_count" ${integerType} not null,
   unique ("c_module_id", "c_purpose", "c_series_key"),
   unique ("c_module_id", "c_proof_id")
 )`);

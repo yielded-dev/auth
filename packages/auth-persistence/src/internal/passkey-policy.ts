@@ -1,16 +1,14 @@
 import {
   PasskeyUnavailable,
-  PasskeyCeremony,
+  type PasskeyCeremony,
   PasskeyCredential,
-  PasskeyProfile,
-  PasskeyRevision,
+  type PasskeyRevision,
   snapshotPasskeySync,
   type PasskeyAccess,
   type PasskeyActionAuthorization,
   type PasskeyManagementPolicy,
   type PasskeyRequirement,
 } from "@yielded/auth/Passkey";
-import type { SubjectId } from "@yielded/auth/Schema";
 import { Crypto, DateTime, Effect, Schema } from "effect";
 
 const invariant: (value: unknown) => asserts value = (value) => {
@@ -21,7 +19,7 @@ const encoder = new TextEncoder();
 
 const decoder = new TextDecoder("utf-8", { fatal: true });
 
-/** RP tuples and admission scopes have no collation-dependent string identity. */
+/** RP tuples have no collation-dependent string identity. */
 export const passkeyKey = Effect.fnUntraced(function* (
   kind: string,
   fields: ReadonlyArray<string>,
@@ -83,13 +81,7 @@ export const passkeyStorage = <S extends Schema.Codec<unknown, unknown, never, n
 };
 
 // Legal 32 x 16 x 2048 origins require more than one MiB before JSON escaping.
-export const passkeyCeremonyStorage = passkeyStorage(PasskeyCeremony, 512 * 1024);
-
 export const passkeyCredentialStorage = passkeyStorage(PasskeyCredential, 512 * 1024);
-
-export const passkeyProfileStorage = passkeyStorage(PasskeyProfile, 256 * 1024);
-
-export const passkeyRevisionStorage = passkeyStorage(PasskeyRevision, 256 * 1024);
 
 export const samePasskeyCredential = (left: PasskeyCredential, right: PasskeyCredential) => {
   const semantic = (value: PasskeyCredential) => ({
@@ -131,13 +123,6 @@ const contextPurpose = {
   Enrollment: "enrollment",
   Registration: "registration",
 } as const;
-
-export const passkeyKnownSubject = (ceremony: PasskeyCeremony): SubjectId | undefined =>
-  "target" in ceremony.context
-    ? ceremony.context.target.revision.subjectId
-    : ceremony.context._tag === "Enrollment"
-      ? ceremony.context.revision.subjectId
-      : undefined;
 
 export const validPasskeyCeremony = (ceremony: PasskeyCeremony) =>
   ceremony.expiresAtMillis > ceremony.issuedAtMillis &&
@@ -259,10 +244,3 @@ export const assessPasskeyAction = (
 
   return { notBeforeMillis: now, expiresBeforeMillis: expiresBefore };
 };
-
-export const passkeyTargetRevision = (ceremony: PasskeyCeremony) =>
-  "target" in ceremony.context
-    ? ceremony.context.target.revision
-    : ceremony.context._tag === "Enrollment"
-      ? ceremony.context.revision
-      : undefined;

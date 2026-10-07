@@ -121,10 +121,11 @@ export const makeNativeOAuthRevocationServices = Effect.fnUntraced(function* (
           );
           const engineNow = yield* Schema.decodeEffect(Schema.Int)(Number(rows[0].engine_now));
 
-          const deadline = Math.min(
-            engineNow + input.lifetimeMillis,
-            mapping.clock.decodeInstant(row[j.retentionUntil]),
-          );
+          const deadline = engineNow + input.lifetimeMillis;
+
+          // A claim always gets its full lifetime; retention extends to cover it so
+          // cleanup cannot delete a job while its revocation attempt is live.
+          const retention = Math.max(mapping.clock.decodeInstant(row[j.retentionUntil]), deadline);
 
           const claim = M.snapshotOAuthSync(M.OAuthConnectedRevocationClaim, {
             job: value,
@@ -134,7 +135,7 @@ export const makeNativeOAuthRevocationServices = Effect.fnUntraced(function* (
           });
 
           yield* change(
-            sql`${job.update({ [j.state]: "Claimed", [j.claimId]: claimId, [j.claimedAt]: mapping.clock.encodeInstant(engineNow), [j.claimExpiresAt]: mapping.clock.encodeInstant(deadline) })} where ${pending} and ${exact(j.jobId, value.jobId)} and ${exact(j.snapshot, encoded)} and ${now} >= ${engineNow} and ${now} < ${deadline}`,
+            sql`${job.update({ [j.state]: "Claimed", [j.claimId]: claimId, [j.claimedAt]: mapping.clock.encodeInstant(engineNow), [j.claimExpiresAt]: mapping.clock.encodeInstant(deadline), [j.retentionUntil]: mapping.clock.encodeInstant(retention) })} where ${pending} and ${exact(j.jobId, value.jobId)} and ${exact(j.snapshot, encoded)} and ${now} >= ${engineNow} and ${now} < ${deadline}`,
           );
           if (Option.isSome(external))
             yield* finish(

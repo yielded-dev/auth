@@ -90,8 +90,8 @@ export class PasswordPersistence extends Context.Service<
     ) => Effect.Effect<PreparedCommit<A>, PasswordUnavailable>;
     /** Compose proof predicates + replacement/invalidation atomically. Never call an
      * independently committing ProofPersistence.redeem. redeemed iff ALL apply.
-     * D1 preplans before batch; exact lost guard discards success journal before a
-     * separate zero-write rejected receipt. Unknown SQL failure remains unavailable.
+     * On D1 a lost guard aborts the batch and returns unavailable, as does any
+     * unknown SQL failure.
      */
     readonly resetWithProof: <A>(
       input: PasswordMutationInput & { readonly redemption: ProofRedemptionPlan },

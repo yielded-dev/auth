@@ -114,7 +114,6 @@ export const makeMappings = Effect.fnUntraced(function* (input: MappingInput) {
       issuedAt: "issuedAt",
       expiresAt: "expiresAt",
       failedAttempts: "failedAttempts",
-      sendCount: "sendCount",
       encodeInsert: () => ({}),
     },
   });

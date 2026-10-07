@@ -22,7 +22,6 @@ export const AuthPersistence: PersistenceApi<Table> & { readonly table: typeof t
       unique: table.unique,
     }),
     nativeTables: makeNativeSqlTables,
-    maxParameters: (client) => client.onDialectOrElse({ sqlite: () => 96, orElse: () => 16_000 }),
     acquire: Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
 

@@ -64,7 +64,6 @@ export const proofs = sqliteTable(
     issuedAt: integer("c_issued_at").notNull(),
     expiresAt: integer("c_expires_at").notNull(),
     failedAttempts: integer("c_failed_attempts").notNull(),
-    sendCount: integer("c_send_count").notNull(),
   },
   (table) => [
     uniqueIndex("app_proofs_key_0").on(table.moduleId, table.purpose, table.seriesKey),

@@ -50,7 +50,7 @@ export const phoneConsumer = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 
   yield* sql`drop table phone_proof`;
-  yield* sql`create table phone_proof(moduleId text not null,purpose text not null,seriesKey text not null,proofId text not null,binding text not null,verifierKeyId text not null,verifierDigest text not null,issuedAt text not null,expiresAt text not null,failedAttempts integer not null,sendCount integer not null,unique(moduleId,proofId))`;
+  yield* sql`create table phone_proof(moduleId text not null,purpose text not null,seriesKey text not null,proofId text not null,binding text not null,verifierKeyId text not null,verifierDigest text not null,issuedAt text not null,expiresAt text not null,failedAttempts integer not null,unique(moduleId,proofId))`;
 
   const drifted = yield* makePhonePersistenceServices(mapping).pipe(Effect.result);
   let entered = false;

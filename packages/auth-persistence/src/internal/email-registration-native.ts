@@ -28,7 +28,6 @@ import { makeNativeProofStore } from "./proof-native";
 import { exactSqlText, executeSqlChange } from "./sql-change";
 import {
   appendSqlBatchStatement,
-  CurrentSqlCommit,
   makeSqlCommitExecutor,
   registerSqlBatchPostcondition,
   registerSqlCommitReceipt,
@@ -119,11 +118,8 @@ export const makeNativeEmailRegistrationServices = Effect.fnUntraced(function* <
     project: PrepareEmailCommit<EmailRegistrationDecision, A>,
   ) =>
     Effect.gen(function* () {
-      const receipt = project(decision, yield* CurrentCommitJournal),
-        owner = yield* CurrentSqlCommit;
+      const receipt = project(decision, yield* CurrentCommitJournal);
 
-      if (owner.mode === "batch" && owner.statements.length === 0)
-        yield* appendSqlBatchStatement(sql`select 1`);
       yield* registerSqlCommitReceipt(receipt);
 
       return receipt;
