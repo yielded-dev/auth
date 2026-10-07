@@ -14,6 +14,10 @@ database and keys under `.data/`; accounts from the Drizzle examples are separat
 Set the Cloudflare credentials in [.env.example](.env.example) to deliver email
 from `hello@effect-agent.com`.
 
+The current schema replaces the old proof tables with one current-code table.
+Reset this example's development database before running it against older data;
+this also resets its accounts, sessions, and credentials.
+
 ## Native browser sign-in
 
 `/login` also serves [the Electron example](../browser-login-electron) and iOS
@@ -64,7 +68,7 @@ AUTH_DATA_DIR=/tmp/yielded-oauth-pg PERSISTENCE_DIALECT=pg \
 ```
 
 The consumer signs in, retains an encrypted grant, links another login identity,
-lists grants, unlinks the login with durable command replay, registers a new user,
+lists grants, unlinks the login, rejects an absent-link retry, registers a new user,
 and signs that user in. It closes and reopens its SQL client, then lists and uses
 the original retained grant. Login links and provider API grants are separate:
 `listAccountConnections` lists grants; application SQL reads the login inventory.

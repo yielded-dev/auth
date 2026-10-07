@@ -80,18 +80,23 @@ export const captureSessionAuthority = Effect.fnUntraced(function* (
   if (requested.length !== credentialIds.length) return yield* stale();
   const current = yield* store.readAuthority(subjectId, requested, locking, flowId);
 
+  const credentials = current.credentials.filter((credential) => credential.active);
+
   if (
     current.subject === undefined ||
     !current.subject.active ||
-    current.credentials.length !== requested.length ||
-    current.credentials.some((credential) => !credential.active)
+    current.credentials.length > 4096 ||
+    credentials.length > 64 ||
+    new Set(current.credentials.map((credential) => credential.credentialId)).size !==
+      current.credentials.length ||
+    requested.some((id) => !credentials.some((credential) => credential.credentialId === id))
   )
     return yield* stale();
 
   const revision: AuthenticationRevision = {
     subjectId,
     securityRevision: current.subject.securityRevision,
-    credentials: current.credentials
+    credentials: credentials
       .map(({ credentialId, revision }) => ({ credentialId, revision }))
       .sort((a, b) => a.credentialId.localeCompare(b.credentialId)),
   };

@@ -10,17 +10,21 @@ import {
 import { Crypto, DateTime, Effect, Layer, Option, Schema, Redacted } from "effect";
 import { Base64Url } from "effect/encoding";
 
+import {
+  cancelProof,
+  cleanupProofs,
+  copyProofRows,
+  issueProof,
+  redeemProof,
+  type ProofRows,
+} from "../../shared/proof-store";
+
 export const Claims = Schema.Struct({ team: Schema.String, number: Schema.FiniteFromString });
 const budget = { limit: 30, windowMillis: 60_000 };
 
 const proofPolicy = {
   lifetimeMillis: 60_000,
-  continuationLifetimeMillis: 30_000,
   maximumFailedAttempts: 3,
-  maximumDeliveryAttempts: 1,
-  deliveryClaimMillis: 5_000,
-  deliveryRetryMillis: 10_000,
-  requestRetentionMillis: 120_000,
   abuse: {
     issues: budget,
     attempts: budget,
@@ -93,10 +97,6 @@ const requirement: Sessions.AuthenticationRequirement = {
   maximumAgeMillis: 60_000,
 };
 
-const bindingKey = Schema.encodeSync(
-  Schema.fromJsonString(Schema.toCodecJson(Schema.toType(Proofs.ProofBinding))),
-);
-
 interface Subject {
   id: AuthSchema.SubjectId;
   security: string;
@@ -111,25 +111,10 @@ interface Identifier {
   revision: string;
   verifiedAt: number;
 }
-interface Proof {
-  record: Proofs.ProofRecord;
-  used: boolean;
-  claimed: boolean;
-  failed: number;
-}
-interface Continuation {
-  input: Proofs.ProofCompletionInput;
-  expires: number;
-  used: boolean;
-}
 interface State {
   subjects: Map<string, Subject>;
   identifiers: Map<string, Identifier>;
-  proofs: Map<string, Proof>;
-  continuations: Map<string, Continuation>;
-  requests: Map<string, { fingerprint: string; receipt: Proofs.ProofRequestReceipt }>;
-  windows: Map<string, number[]>;
-  commands: Set<string>;
+  proofs: ProofRows;
   sessions: Map<Sessions.SessionId, Sessions.StatefulSessionRecord<typeof Claims.Type>>;
   flows: Set<string>;
 }
@@ -137,11 +122,7 @@ interface State {
 const clone = (s: State): State => ({
   subjects: new Map([...s.subjects].map(([k, v]) => [k, { ...v }])),
   identifiers: new Map([...s.identifiers].map(([k, v]) => [k, { ...v }])),
-  proofs: new Map([...s.proofs].map(([k, v]) => [k, { ...v }])),
-  continuations: new Map([...s.continuations].map(([k, v]) => [k, { ...v }])),
-  requests: new Map(s.requests),
-  windows: new Map([...s.windows].map(([k, v]) => [k, [...v]])),
-  commands: new Set(s.commands),
+  proofs: copyProofRows(s.proofs),
   sessions: new Map(s.sessions),
   flows: new Set(s.flows),
 });
@@ -158,10 +139,6 @@ export const makeEmailConsumer = Effect.gen(function* () {
     subjects: new Map(),
     identifiers: new Map(),
     proofs: new Map(),
-    continuations: new Map(),
-    requests: new Map(),
-    windows: new Map(),
-    commands: new Set(),
     sessions: new Map(),
     flows: new Set(),
   };
@@ -237,211 +214,36 @@ export const makeEmailConsumer = Effect.gen(function* () {
     verifiedAtMillis: i.verifiedAt,
     credentialId: i.credentialId,
     credentialRevision: Sessions.SecurityRevision.make(i.revision),
-    revision: revision(s, i.subjectId, [i.credentialId]),
+    revision: revision(s, i.subjectId, [
+      ...[...s.identifiers.values()]
+        .filter((identifier) => identifier.subjectId === i.subjectId)
+        .map((identifier) => identifier.credentialId),
+      "fixture-factor",
+    ]),
   });
 
   const validBinding = (s: State, b: Proofs.ProofBinding) =>
     b._tag === "Identifier" || current(s, b.revision);
 
-  const charge = (s: State, keys: readonly string[], now: number) => {
-    const buckets = keys.map((k) => {
-      const v = (s.windows.get(k) ?? []).filter((t) => t > now - budget.windowMillis);
-
-      s.windows.set(k, v);
-
-      return v;
-    });
-
-    if (buckets.some((v) => v.length >= budget.limit)) return false;
-    for (const v of buckets) v.push(now);
-
-    return true;
-  };
-
-  const continuationValid = (s: State, i: Proofs.ProofCompletionInput, now: number) => {
-    const c = s.continuations.get(i.continuationId);
-
-    return (
-      c !== undefined &&
-      !c.used &&
-      c.expires > now &&
-      c.input.moduleId === i.moduleId &&
-      c.input.purpose === i.purpose &&
-      c.input.continuationDigest === i.continuationDigest &&
-      bindingKey(c.input.binding) === bindingKey(i.binding) &&
-      validBinding(s, i.binding)
-    );
-  };
-
   const proofStore = Proofs.ProofPersistence.of({
     issue: (input, prepare) =>
-      own((s, journal, now) => {
-        const r = input.record;
-        const old = s.requests.get(r.requestId);
-
-        if (old) {
-          if (old.fingerprint !== r.fingerprint) throw Email.EmailUnavailable.make({});
-
-          return prepare({ _tag: "Existing", receipt: old.receipt }, journal);
-        }
-
-        const receipt = {
-          requestId: r.requestId,
-          reference: { proofId: r.proofId, purpose: r.purpose, keyId: r.verifier.keyId },
-        };
-
-        const allowed =
-          charge(
-            s,
-            [`issue:${r.moduleId}`, `issue:${r.moduleId}:${r.binding.identifier.value}`],
-            now,
-          ) &&
-          input.eligible &&
-          validBinding(s, r.binding);
-
-        s.requests.set(r.requestId, { fingerprint: r.fingerprint, receipt });
-        if (allowed) {
-          for (const p of s.proofs.values())
-            if (
-              p.record.moduleId === r.moduleId &&
-              p.record.binding.identifier.value === r.binding.identifier.value
-            )
-              p.used = true;
-          s.proofs.set(r.proofId, { record: r, used: false, claimed: false, failed: 0 });
-        }
-
-        return prepare(
-          allowed ? { _tag: "Issued", record: r } : { _tag: "Suppressed", receipt },
-          journal,
-        );
-      }).pipe(Effect.mapError(() => Proofs.ProofUnavailable.make({}))),
-    attempt: (input, prepare) =>
-      own((s, journal, now) => {
-        const allowed = charge(
-          s,
-          [
-            `attempt:${input.moduleId}`,
-            `attempt:${input.moduleId}:${input.binding.identifier.value}`,
-          ],
-          now,
-        );
-
-        const p = s.proofs.get(input.proofId);
-
-        const valid =
-          allowed &&
-          p &&
-          !p.used &&
-          p.failed < input.policy.maximumFailedAttempts &&
-          p.record.expiresAtMillis > now &&
-          p.record.moduleId === input.moduleId &&
-          p.record.purpose === input.purpose &&
-          bindingKey(p.record.binding) === bindingKey(input.binding) &&
-          validBinding(s, input.binding) &&
-          p.record.verifier.keyId === input.candidate?.keyId &&
-          p.record.verifier.digest === input.candidate?.digest;
-
-        if (!valid) {
-          if (p) p.failed++;
-
-          return prepare({ _tag: "Rejected" }, journal);
-        }
-
-        const expires = Math.min(
-          p.record.expiresAtMillis,
-          now + input.policy.continuationLifetimeMillis,
-        );
-
-        const result = prepare(
-          {
-            _tag: "Accepted",
-            continuation: {
-              continuationId: input.continuationId,
-              purpose: input.purpose,
-              expiresAtMillis: expires,
-            },
-          },
-          journal,
-        );
-
-        p.used = true;
-        s.continuations.set(input.continuationId, {
-          input: {
-            moduleId: input.moduleId,
-            purpose: input.purpose,
-            binding: input.binding,
-            continuationId: input.continuationId,
-            continuationDigest: input.continuationDigest,
-            nowMillis: now,
-          },
-          expires,
-          used: false,
-        });
-
-        return result;
-      }).pipe(Effect.mapError(() => Proofs.ProofUnavailable.make({}))),
-    complete: (input, prepare) =>
-      own((s, journal, now) => {
-        const valid = continuationValid(s, input, now);
-        const result = prepare(valid ? "completed" : "rejected", journal);
-
-        if (valid) s.continuations.get(input.continuationId)!.used = true;
-
-        return result;
-      }).pipe(Effect.mapError(() => Proofs.ProofUnavailable.make({}))),
-    claimDelivery: (input, prepare) =>
-      own((s, journal, now) => {
-        const p = s.proofs.get(input.proofId);
-
-        if (
-          !p ||
-          p.used ||
-          p.claimed ||
-          p.record.expiresAtMillis <= now ||
-          p.record.moduleId !== input.moduleId ||
-          p.record.version !== input.version ||
-          p.record.deliveryId !== input.deliveryId
-        )
-          return prepare({ _tag: "Declined" }, journal);
-        p.claimed = true;
-
-        return prepare({ _tag: "Claimed", claimVersion: p.record.version }, journal);
-      }).pipe(Effect.mapError(() => Proofs.ProofUnavailable.make({}))),
-    settleDelivery: (input, prepare) =>
-      own((s, journal) => {
-        const p = s.proofs.get(input.proofId);
-
-        if (p && p.record.version === input.version && input.outcome._tag === "DefiniteFailure")
-          p.used = true;
-
-        return prepare(undefined, journal);
-      }).pipe(Effect.mapError(() => Proofs.ProofUnavailable.make({}))),
+      own((s, journal, now) => prepare(issueProof(s.proofs, input, now), journal)).pipe(
+        Effect.mapError(() => Proofs.ProofUnavailable.make({})),
+      ),
+    redeem: (input, prepare) =>
+      own((s, journal, now) => prepare(redeemProof(s.proofs, input, now), journal)).pipe(
+        Effect.mapError(() => Proofs.ProofUnavailable.make({})),
+      ),
     cancel: (input, prepare) =>
       own((s, journal) => {
-        for (const p of s.proofs.values())
-          if (
-            p.record.moduleId === input.moduleId &&
-            bindingKey(p.record.binding) === bindingKey(input.binding)
-          )
-            p.used = true;
+        cancelProof(s.proofs, input);
 
         return prepare(undefined, journal);
       }).pipe(Effect.mapError(() => Proofs.ProofUnavailable.make({}))),
     cleanup: (input, prepare) =>
-      own((s, journal, now) => {
-        let removed = 0;
-        let hasMore = false;
-
-        for (const [id, p] of s.proofs)
-          if (p.record.moduleId === input.moduleId && p.record.expiresAtMillis <= now) {
-            if (removed < input.limit) {
-              s.proofs.delete(id);
-              removed++;
-            } else hasMore = true;
-          }
-
-        return prepare({ removed, hasMore }, journal);
-      }).pipe(Effect.mapError(() => Proofs.ProofUnavailable.make({}))),
+      own((s, journal, now) => prepare(cleanupProofs(s.proofs, input, now), journal)).pipe(
+        Effect.mapError(() => Proofs.ProofUnavailable.make({})),
+      ),
   });
 
   const subjectRequirement = (id: AuthSchema.SubjectId): Sessions.AuthenticationRequirement =>
@@ -468,9 +270,14 @@ export const makeEmailConsumer = Effect.gen(function* () {
   const authority = Sessions.AuthenticationAuthority.of({
     capture: (id, ids) =>
       Effect.suspend(() => {
-        const r = revision(state, id, ids);
+        const r = revision(state, id, [
+          ...[...state.identifiers.values()]
+            .filter((identifier) => identifier.subjectId === id)
+            .map((identifier) => identifier.credentialId),
+          "fixture-factor",
+        ]);
 
-        return current(state, r)
+        return current(state, revision(state, id, ids)) && current(state, r)
           ? Effect.succeed({ revision: r, requirement: subjectRequirement(id) })
           : Effect.fail(Sessions.StaleAuthentication.make({}));
       }),
@@ -519,18 +326,16 @@ export const makeEmailConsumer = Effect.gen(function* () {
               input.authorization.requirement.maximumAgeMillis,
         ) &&
         !s.identifiers.has(input.target.value) &&
-        continuationValid(s, input.completion.input, now) &&
-        !s.commands.has(input.commandId) &&
         (action === "verify" ||
           (source &&
-            s.identifiers.get(source.identifier.value)?.credentialId === source.credentialId));
+            s.identifiers.get(source.identifier.value)?.credentialId === source.credentialId)) &&
+        validBinding(s, input.redemption.input.binding) &&
+        redeemProof(s.proofs, input.redemption.input, now) === "redeemed";
 
-      input.completion.prepare(valid ? "completed" : "rejected", journal, (v) => v);
+      input.redemption.prepare(valid ? "redeemed" : "rejected", journal, (v) => v);
       const result = prepare(valid ? "changed" : "rejected", journal);
 
       if (valid) {
-        s.commands.add(input.commandId);
-        s.continuations.get(input.completion.input.continuationId)!.used = true;
         row.security = String(Number(row.security) + 1);
         if (source) s.identifiers.delete(source.identifier.value);
         s.identifiers.set(input.target.value, {
@@ -564,14 +369,8 @@ export const makeEmailConsumer = Effect.gen(function* () {
           eligible: !state.identifiers.has(input.target.value),
         });
       }),
-    checkCompletion: (input) =>
-      DateTime.now.pipe(
-        Effect.map((now) => continuationValid(state, input, DateTime.toEpochMillis(now))),
-      ),
     verifyWithProof: (input, prepare) => mutate("verify", input, prepare),
     changeWithProof: (input, prepare) => mutate("change", input, prepare),
-    cleanup: (_input, prepare) =>
-      own((_s, journal) => prepare({ removed: 0, hasMore: false }, journal)),
   });
 
   const actions = Email.EmailActionEvidence.of({
@@ -632,15 +431,13 @@ export const makeEmailConsumer = Effect.gen(function* () {
       own((s, journal, now) => {
         const valid =
           !s.identifiers.has(input.identifier.value) &&
-          !s.commands.has(input.commandId) &&
-          continuationValid(s, input.completion.input, now);
+          validBinding(s, input.redemption.input.binding) &&
+          redeemProof(s.proofs, input.redemption.input, now) === "redeemed";
 
-        input.completion.prepare(valid ? "completed" : "rejected", journal, (v) => v);
+        input.redemption.prepare(valid ? "redeemed" : "rejected", journal, (v) => v);
         const result = prepare(valid ? { _tag: "Registered" } : { _tag: "Rejected" }, journal);
 
         if (valid) {
-          s.commands.add(input.commandId);
-          s.continuations.get(input.completion.input.continuationId)!.used = true;
           const id = AuthSchema.SubjectId.make(`email-subject:${++sequence}`);
 
           s.subjects.set(id, {

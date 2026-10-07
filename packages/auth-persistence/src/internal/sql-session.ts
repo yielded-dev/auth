@@ -203,7 +203,7 @@ export const makeSqlStatefulSessionOwner = <Claims>(
   const store: StatefulSessionStore<Claims> = {
     ...makeSqlSessionVerification(sql, mapping),
     readSubject,
-    readAuthority: (id, requested, locking, flowId) =>
+    readAuthority: (id, _requested, locking, flowId) =>
       Effect.gen(function* () {
         const native = yield* mapping.subjectId.toNative(id);
         const nativeSubject = sqlValue(sql, subjects, mapping.subject.id, native);
@@ -222,9 +222,8 @@ export const makeSqlStatefulSessionOwner = <Claims>(
           ), ${aliases.session_credentials} as ${materialized} (
             select * from ${sqlTable(sql, credentials)}
             where ${credentialOwner} = ${sqlValue(sql, credentials, mapping.credential.subjectId, native)}
-              and ${requested.length === 0 ? sql`false` : sql`${credentialId} in ${sql.in(requested)}`}
               and (select count(*) from ${aliases.session_authority}) >= 0
-            order by ${credentialId} ${lock(locking)}
+            order by ${credentialId} limit 4097 ${lock(locking)}
           ), ${aliases.session_flow} as ${materialized} (
             select * from ${sqlTable(sql, flows)}
             where ${flowId === undefined ? sql`false` : sql`${flowKey} = ${flowId}`}

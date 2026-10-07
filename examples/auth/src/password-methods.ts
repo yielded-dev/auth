@@ -184,26 +184,13 @@ const program = Effect.gen(function* () {
     if (!resetUrl) return yield* Effect.die("reset link missing from email");
     const extracted = yield* EmailDelivery.parseLinkFragment(Redacted.make(new URL(resetUrl).hash));
 
-    const proof = yield* auth.verifyReset({
-      flowId: "reset-flow",
-      email,
-      reference: request.reference,
-      secret: Redacted.value(extracted.secret),
-    });
-
-    const continuation = [...collector]
-      .reverse()
-      .find((command) => command._tag === "Issue" && command.slot === "proof-continuation");
-
-    if (continuation?._tag !== "Issue") return yield* Effect.die("private continuation missing");
-
     const resetInput = {
       flowId: "reset-flow",
       email,
       commandId: "reset-command",
       newPassword: resetPassword,
-      continuationId: proof.continuation.continuationId,
-      credential: Redacted.value(continuation.credential),
+      reference: request.reference,
+      secret: Redacted.value(extracted.secret),
     };
 
     yield* auth.completeReset(resetInput);

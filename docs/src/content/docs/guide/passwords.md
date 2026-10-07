@@ -202,7 +202,7 @@ defaults to 10,000 ms (allowed range: 1–30,000); a timed-out check returns
 
 ## Recover a password
 
-Recovery uses `requestReset` → `verifyReset` → `completeReset` and requires an
+Recovery uses `requestReset` → `completeReset` and requires an
 independently verified email address. Users who have a passkey sign in with it,
 complete step-up if required, then change their password. The definition above selects reset links.
 Auth builds the link and renders the email; your `EmailDelivery` service only
@@ -238,8 +238,9 @@ response such as “If this address is eligible, check your email.” The receip
 not reveal account eligibility or whether a message was sent.
 
 To resend, retain the flow ID and use a fresh request ID after the cooldown.
-A new reset attempt leaves an existing unexpired link or code usable and sends no
-new email. Ignored requests do not extend its expiry (five minutes by default).
+A request with that same complete binding replaces the previous code when the
+cooldown permits it. Another binding cannot replace an unexpired code. Suppressed
+requests do not extend its expiry (five minutes by default).
 
 Auth supplies a network rate limiter, and HTTP derives the caller from the socket
 peer automatically. Checks precede target lookup, including unknown addresses and
@@ -252,15 +253,7 @@ intentional confirmation before submitting. A landing-page GET must never consum
 the proof. See [link handling](./email-delivery#handle-links) for the private-state
 and response-header boundaries. For codes, use the saved reference and entered code.
 
-In the next request, verify the submitted secret:
-
-```ts
-const auth = yield* AppAuth;
-const verified = yield* auth.verifyReset({ flowId, email, reference, secret });
-```
-
-Retain `verified.continuation.continuationId`. Its matching credential is issued
-through the private `proof-continuation` channel. Complete with the same flow and email:
+Submit the reference, secret, and replacement together:
 
 ```ts
 const auth = yield* AppAuth;
@@ -269,16 +262,16 @@ const result = yield* auth.completeReset({
   email,
   commandId,
   newPassword,
-  continuationId,
-  credential,
+  reference,
+  secret,
 });
 ```
 
-These are server-side inputs. For browser endpoints, map `credential` to the
-`proof-continuation` slot through the contract's `requestFields`, so the HTTP adapter
-reads the private cookie. Never return secrets in ordinary operation results or logs,
-or make the browser copy an HttpOnly cookie into JSON. Generate `commandId` once per
-completion submission. Completion changes the password; sign in separately for a session.
+Generate `commandId` once per submission. Hashing and independent action policy run
+before storage locks. The mutation owner rechecks current authority, redeems the
+proof, and replaces the password atomically; a protected-write failure rolls back
+redemption. Completion changes the password; sign in separately for a session.
+Never return secrets in ordinary operation results or logs.
 
 ### Delivery and retry boundaries
 
@@ -288,17 +281,13 @@ application scope that outlives requests, as shown in [email delivery](./email-d
 Work may start before the response is sent. Application hooks and persistence can
 still vary in latency.
 
-Provider acceptance does not prove inbox delivery.
-The transport distinguishes definite rejection from uncertain acceptance. Neither
-Auth nor the transport should automatically resend an uncertain message; this email
-service makes no deduplication promise and requires `maximumDeliveryAttempts: 1`.
-
-An exact `requestReset` retry can recover a generic receipt, not guarantee another
-send. Scheduled dispatch is a process-local continuation after persistence commits, not a
-durable outbox. A crash can leave an unsent proof. Let the user check their inbox
-and, if needed, explicitly start a new flow under the configured cooldown and attempt
-limits. A consumed proof or an unknown commit outcome does not authorize repeating
-a password mutation.
+Provider acceptance does not prove inbox delivery. Each confirmed issuance submits
+one private delivery task and invokes the transport at most once in that process.
+There is no dispatch retry or durable outbox; queue rejection, interruption, or a
+crash can leave a code unsent. Unknown commit outcomes never schedule delivery.
+Request again explicitly after the cooldown with the original binding. The request
+ID is correlation only. A consumed proof or unknown mutation outcome does not
+authorize repeating a password change.
 
 See the [complete password composition](https://github.com/yielded-dev/auth/blob/main/examples/auth/src/password-methods.ts)
 for a reset-link journey using a private local email collector.

@@ -7,11 +7,9 @@ export type CredentialSlot =
   | "session"
   | "session-cache"
   | "pending-proof"
-  | "proof-continuation"
   | "registration"
   | "request-binding"
-  | "session-step-up"
-  | "password-intent";
+  | "session-step-up";
 
 /** Private delivery instructions. Never include these in a Schema/RPC success or lifecycle event. */
 export type AuthCredentialCommand =
@@ -58,11 +56,9 @@ const slot = Schema.Literals([
   "session",
   "session-cache",
   "pending-proof",
-  "proof-continuation",
   "registration",
   "request-binding",
   "session-step-up",
-  "password-intent",
 ]);
 
 const decodeCommand = Schema.decodeSync(

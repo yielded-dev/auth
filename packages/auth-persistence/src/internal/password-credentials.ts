@@ -8,6 +8,7 @@ import {
   type PasswordCredentialSnapshot,
 } from "@yielded/auth/Password";
 import { reportPersistenceFailure } from "@yielded/auth/Persistence";
+import { SecurityRevision } from "@yielded/auth/Sessions";
 import { Effect, Option, Redacted, Schema } from "effect";
 import { SqlClient } from "effect/sql";
 
@@ -64,12 +65,13 @@ export const makePasswordCredentials = Effect.fnUntraced(function* (
   const sql = (yield* SqlClient.SqlClient).withoutTransforms();
   const parent = yield* Effect.serviceOption(CurrentCommitJournal);
 
-  const [s, i, c] = yield* sqlMapping(
+  const [s, i, c, a] = yield* sqlMapping(
     () =>
       [
         table(mapping.subject.table),
         table(mapping.identifier.table),
         table(mapping.credential.table),
+        table(mapping.authorityCredential.table),
       ] as const,
   ).pipe(failure);
 
@@ -106,21 +108,26 @@ export const makePasswordCredentials = Effect.fnUntraced(function* (
     const subjectTable = s.as("password_subject");
     const identifierTable = i.as("password_identifier");
     const credentialTable = c.as("password_credential");
+    const authorityTable = a.as("password_authority");
+    const authority = mapping.authorityCredential;
 
     const rows = yield* sqlMapping(
       () =>
-        sql<Row>`select ${subjectTable.fields("subject_")}, ${identifierTable.fields("identifier_")}, ${credentialTable.fields("credential_")}
+        sql<Row>`select ${subjectTable.fields("subject_")}, ${identifierTable.fields("identifier_")}, ${credentialTable.fields("credential_")}, ${authorityTable.fields("authority_")}
       from ${subjectTable.name}
       inner join ${identifierTable.name} on ${identifierTable.column(mapping.identifier.namespace)} = ${identifierTable.value(mapping.identifier.namespace, identifier.namespace)}
         and ${identifierTable.column(mapping.identifier.value)} = ${identifierTable.value(mapping.identifier.value, identifier.value)}
         and ${identifierTable.column(mapping.identifier.subjectId)} = ${identifierTable.value(mapping.identifier.subjectId, nativeId)}
       inner join ${credentialTable.name} on ${credentialTable.column(mapping.credential.moduleId)} = ${credentialTable.value(mapping.credential.moduleId, moduleId)}
         and ${credentialTable.column(mapping.credential.subjectId)} = ${credentialTable.value(mapping.credential.subjectId, nativeId)}
-      where ${subjectTable.column(mapping.subject.id)} = ${subjectTable.value(mapping.subject.id, nativeId)}
+      left join ${authorityTable.name} on ${authorityTable.column(authority.subjectId)} = ${authorityTable.value(authority.subjectId, nativeId)}
+        ${authority.status === undefined || authority.d1ActiveStatusValue === undefined ? sql`` : sql`and ${authorityTable.column(authority.status)} = ${authorityTable.value(authority.status, authority.d1ActiveStatusValue)}`}
+      where ${subjectTable.column(mapping.subject.id)} = ${subjectTable.value(mapping.subject.id, nativeId)} order by ${authorityTable.column(authority.credentialId)} limit 4097
       `,
     ).pipe(Effect.flatten);
 
-    if (rows.length !== 1) return undefined;
+    if (rows.length === 0) return undefined;
+    if (rows.length > 4096) return yield* unavailable();
 
     const [subject, identifierRow, credential] = yield* sqlMapping(
       () =>
@@ -147,7 +154,42 @@ export const makePasswordCredentials = Effect.fnUntraced(function* (
       mapping.credential.decode({ moduleId, subject, identifier: identifierRow, credential }),
     ).pipe(Effect.flatten, Effect.flatMap(snapshotPasswordCredential));
 
-    return captured;
+    const factors = new Map<string, SecurityRevision>();
+
+    for (const row of rows) {
+      const factor = yield* sqlMapping(() => a.decode(row, "authority_"));
+
+      if (factor[authority.credentialId] === null || factor[authority.credentialId] === undefined)
+        continue;
+      if (!mapping.subjectId.equals(nativeId, factor[authority.subjectId]))
+        return yield* unavailable();
+      if (
+        authority.status !== undefined &&
+        authority.isActiveStatus?.(factor[authority.status]) !== true
+      )
+        continue;
+
+      const credentialId = yield* Schema.decodeUnknownEffect(Schema.String)(
+        factor[authority.credentialId],
+      );
+
+      const revision = yield* Schema.decodeUnknownEffect(SecurityRevision)(
+        factor[authority.revision],
+      );
+
+      if (factors.has(credentialId)) return yield* unavailable();
+      factors.set(credentialId, revision);
+    }
+    if (factors.size > 64 || factors.get(captured.credentialId) !== captured.credentialRevision)
+      return undefined;
+
+    return yield* snapshotPasswordCredential({
+      ...captured,
+      revision: {
+        ...captured.revision,
+        credentials: [...factors].map(([credentialId, revision]) => ({ credentialId, revision })),
+      },
+    });
   });
 
   return {

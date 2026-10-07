@@ -84,6 +84,15 @@ outside them.
   for global, subject and target budgets. Multi-instance deployments must provide a
   shared Effect `RateLimiter` or `RateLimiterStore`. Hosts own network admission
   and limits for malformed traffic.
+- Proof issue and attempt limits use bounded token buckets and charge suppressed,
+  repeated requests, unknown targets and malformed candidate secrets. Schema-invalid
+  requests are covered by host ingress. Supply a shared store across replicas.
+  Each code has its own durable failed-attempt count and resend cooldown. One
+  confirmed issue permits one local delivery; unknown commits never dispatch, and
+  crashes can leave codes unsent. Protected mutations redeem atomically with their
+  writes; sign-in consumes before independent session issuance and restarts on failure.
+- Retired phone identifiers remain permanent tombstones. Matching a recycled number
+  never authorizes provisioning, transfer or account linking.
 - Identity selection, account provisioning, transaction authority, and
   authorization policy belong to the application. Provider claims and email
   addresses never select a subject on their own. Provisioning completes synchronously

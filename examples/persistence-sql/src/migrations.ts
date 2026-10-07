@@ -12,6 +12,8 @@ const initial = Effect.gen(function* () {
     `create table customers (customer_key text primary key, enabled ${booleanType} not null, auth_revision text not null, display_name text not null)`,
   );
   yield* sql.unsafe(`create table "app_identifiers" (
+  "c_module_id" text,
+  "c_credential_id" text,
   "c_namespace" text not null,
   "c_value" text not null,
   "c_subject_id" text not null,
@@ -38,111 +40,20 @@ const initial = Effect.gen(function* () {
   unique ("c_module_id", "c_subject_id"),
   unique ("c_module_id", "c_credential_id")
 )`);
-  yield* sql.unsafe(`create table "app_password_commands" (
-  "c_module_id" text not null,
-  "c_command_id" text not null,
-  "c_action" text not null,
-  "c_binding_digest" text not null,
-  "c_decision" text not null,
-  "c_retention_until" ${integerType} not null,
-  unique ("c_module_id", "c_command_id")
-)`);
-  yield* sql.unsafe(`create table "app_proof_requests" (
-  "c_module_id" text not null,
-  "c_request_id" text not null,
-  "c_fingerprint" text not null,
-  "c_proof_id" text not null,
-  "c_purpose" text not null,
-  "c_key_id" text not null,
-  "c_created_at" ${integerType} not null,
-  "c_retention_until" ${integerType} not null,
-  "c_receipt" text not null,
-  unique ("c_module_id", "c_request_id")
-)`);
-  yield* sql.unsafe(`create table "app_proof_series" (
+  yield* sql.unsafe(`create table "app_proofs" (
   "c_module_id" text not null,
   "c_purpose" text not null,
-  "c_scope_key" text not null,
-  "c_active_proof_id" text,
-  "c_last_issue_at" ${integerType},
-  "c_version" text not null,
-  unique ("c_module_id", "c_purpose", "c_scope_key")
-)`);
-  yield* sql.unsafe(`create table "app_proof_generations" (
-  "c_module_id" text not null,
-  "c_purpose" text not null,
-  "c_proof_id" text not null,
-  "c_request_id" text not null,
   "c_series_key" text not null,
-  "c_delivery_id" text not null,
+  "c_proof_id" text not null,
   "c_binding" text not null,
   "c_verifier_key_id" text not null,
   "c_verifier_digest" text not null,
   "c_issued_at" ${integerType} not null,
   "c_expires_at" ${integerType} not null,
-  "c_version" text not null,
-  "c_state" text not null,
+  "c_failed_attempts" ${integerType} not null,
   "c_send_count" ${integerType} not null,
-  "c_delivery_state" text not null,
-  "c_claim_version" text,
-  "c_claim_deadline" ${integerType},
-  "c_retry_at" ${integerType},
-  "c_delivery_retry_millis" ${integerType} not null,
-  "c_retention_until" ${integerType} not null,
-  "c_fingerprint" text not null,
-  unique ("c_module_id", "c_proof_id"),
-  unique ("c_module_id", "c_delivery_id")
-)`);
-  yield* sql.unsafe(`create table "app_proof_continuations" (
-  "c_module_id" text not null,
-  "c_purpose" text not null,
-  "c_continuation_id" text not null,
-  "c_digest" text not null,
-  "c_proof_id" text not null,
-  "c_series_key" text not null,
-  "c_binding" text not null,
-  "c_expires_at" ${integerType} not null,
-  "c_consumed" ${booleanType} not null,
-  "c_version" text not null,
-  "c_retention_until" ${integerType} not null,
-  unique ("c_module_id", "c_continuation_id"),
-  unique ("c_module_id", "c_digest")
-)`);
-  yield* sql.unsafe(`create table "app_proof_scopes" (
-  "c_module_id" text not null,
-  "c_purpose" text not null,
-  "c_action" text not null,
-  "c_scope_kind" text not null,
-  "c_scope_key" text not null,
-  unique ("c_module_id", "c_purpose", "c_action", "c_scope_kind", "c_scope_key")
-)`);
-  yield* sql.unsafe(`create table "app_proof_abuse" (
-  "c_module_id" text not null,
-  "c_purpose" text not null,
-  "c_action" text not null,
-  "c_scope_kind" text not null,
-  "c_scope_key" text not null,
-  "c_command_id" text not null,
-  "c_occurred_at" ${integerType} not null,
-  "c_retention_until" ${integerType} not null,
-  unique ("c_module_id", "c_action", "c_scope_kind", "c_scope_key", "c_command_id")
-)`);
-  yield* sql.unsafe(`create table "app_proof_failures" (
-  "c_module_id" text not null,
-  "c_purpose" text not null,
-  "c_series_key" text not null,
-  "c_command_id" text not null,
-  "c_occurred_at" ${integerType} not null,
-  "c_retention_until" ${integerType} not null,
-  unique ("c_module_id", "c_series_key", "c_command_id")
-)`);
-  yield* sql.unsafe(`create table "app_proof_commands" (
-  "c_module_id" text not null,
-  "c_command_id" text not null,
-  "c_kind" text not null,
-  "c_decision" text not null,
-  "c_retention_until" ${integerType} not null,
-  unique ("c_module_id", "c_command_id")
+  unique ("c_module_id", "c_purpose", "c_series_key"),
+  unique ("c_module_id", "c_proof_id")
 )`);
   yield* sql.unsafe(`create table "app_sessions" (
   "c_session_id" text not null,
@@ -170,13 +81,7 @@ const initial = Effect.gen(function* () {
 const account = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const booleanType = sql.onDialectOrElse({ pg: () => "boolean", orElse: () => "integer" });
-  const integerType = sql.onDialectOrElse({ pg: () => "bigint", orElse: () => "integer" });
 
-  yield* sql.unsafe(`create table "app_password_registrations" (
-  "c_module_id" text not null,
-  "c_request_id" text not null,
-  unique ("c_module_id", "c_request_id")
-)`);
   yield* sql.unsafe(`create table "app_email_credentials" (
   "c_module_id" text not null,
   "c_subject_id" text not null,
@@ -187,14 +92,6 @@ const account = Effect.gen(function* () {
   "c_active" ${booleanType} not null,
   unique ("c_module_id", "c_credential_id"),
   unique ("c_module_id", "c_identifier_namespace", "c_identifier_value")
-)`);
-  yield* sql.unsafe(`create table "app_email_commands" (
-  "c_module_id" text not null,
-  "c_command_id" text not null,
-  "c_action" text not null,
-  "c_binding_digest" text not null,
-  "c_retention_until" ${integerType} not null,
-  unique ("c_module_id", "c_command_id")
 )`);
 });
 

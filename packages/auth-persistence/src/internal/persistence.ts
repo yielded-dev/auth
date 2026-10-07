@@ -10,7 +10,7 @@ import {
 } from "@yielded/auth/Passkey";
 import { PasswordPersistence, PasswordUnavailable } from "@yielded/auth/Password";
 import { hooksLayer } from "@yielded/auth/Persistence";
-import { PhoneAdmission, PhoneSignInTargets, PhoneOtpUnavailable } from "@yielded/auth/PhoneOtp";
+import { PhoneSignInTargets, PhoneOtpUnavailable } from "@yielded/auth/PhoneOtp";
 import { ProofPersistence, ProofUnavailable } from "@yielded/auth/Proofs";
 import { AuthenticationAuthority, SessionUnavailable } from "@yielded/auth/Sessions";
 import { Context, type Crypto, Effect, Layer, Schema } from "effect";
@@ -33,27 +33,15 @@ import {
   type PasskeyRequirement,
   type MappingInput,
 } from "./configuration";
-import type { EmailWorkflowOptions } from "./email-policy";
-import type { EmailAddressStore } from "./email-store";
-import { makeEmailAddressWorkflow } from "./email-workflow";
+import { makeNativeEmailAddressServices } from "./email-native";
 import { PersistenceMappingError } from "./mapping-error";
-import type { AnyEmailAddressMapping } from "./models/email-model";
-import type { AnyPasswordPersistenceMapping } from "./models/password-model";
-import type { AnyProofPersistenceMapping } from "./models/proof-model";
 import type { StatefulSessionMapping } from "./models/session-model";
 import type { NativeSqlTables } from "./native-sql-table";
-import type { PasswordWorkflowOptions } from "./password-policy";
-import type { PasswordStore } from "./password-store";
-import { makePasswordWorkflow } from "./password-workflow";
-import type { PersistenceOwner } from "./persistence-owner";
-import type { PhoneStore } from "./phone-store";
-import { makePhoneWorkflow } from "./phone-workflow";
-import type { ProofWorkflowOptions } from "./proof-policy";
-import type { ProofStore } from "./proof-store";
-import { makeProofWorkflow } from "./proof-workflow";
+import { makeNativePasswordServices } from "./password-native";
+import { makeComposedPhoneTargets } from "./phone-composed";
+import { makeNativeProofServices } from "./proof-native";
 import { makeRegistrationAuthority } from "./registration";
 import type { PasswordRegistrationAuthority } from "./registration-contract";
-import type { PasswordRegistrationStore } from "./registration-store";
 import type { SessionTransactionOwner, StatefulSessionStore } from "./session-store";
 import {
   makeAuthenticationAuthorityWorkflow,
@@ -92,33 +80,6 @@ export interface Backend<T extends object, R, Database extends object = object> 
     mapping: StatefulSessionMapping<Claims, any, any, any, any, any, any, any>,
     database: Database,
   ) => Effect.Effect<SessionTransactionOwner<StatefulSessionStore<Claims>>, never>;
-  readonly proofOwner: (
-    mapping: AnyProofPersistenceMapping,
-    options: ProofWorkflowOptions & { readonly maxParameters?: number },
-    database: Database,
-  ) => Effect.Effect<PersistenceOwner<ProofStore>, never>;
-  readonly passwordOwner: (
-    mapping: AnyPasswordPersistenceMapping,
-    options: PasswordWorkflowOptions & { readonly maxParameters?: number },
-    database: Database,
-    proofMapping?: AnyProofPersistenceMapping,
-  ) => Effect.Effect<PersistenceOwner<PasswordStore>, never>;
-  readonly emailOwner: (
-    mapping: AnyEmailAddressMapping,
-    options: EmailWorkflowOptions & { readonly maxParameters?: number },
-    database: Database,
-    proofMapping?: AnyProofPersistenceMapping,
-  ) => Effect.Effect<PersistenceOwner<EmailAddressStore>, never>;
-  readonly registrationOwner: (
-    mapping: AnyPasswordPersistenceMapping,
-    receipts: object,
-    database: Database,
-  ) => Effect.Effect<PersistenceOwner<PasswordRegistrationStore>, never>;
-  readonly phoneOwner: (
-    storage: MappingInput,
-    options: { readonly dialect: "pg" | "sqlite"; readonly maxParameters?: number },
-    database: Database,
-  ) => Effect.Effect<Pick<PersistenceOwner<PhoneStore>, "transaction">, never, Crypto.Crypto>;
   readonly passkeys: (
     input: ComposedPasskeyInput,
     database: Database,
@@ -173,22 +134,10 @@ export const createPersistence = <T extends object, R, Database extends object =
 
     const roles: StorageRole[] = ["identifiers", "credentials", "sessions", "sessionFlows"];
 
-    if (password) roles.push("passwords", "passwordCommands");
-    if (management) roles.push("passwordRegistrations");
-    if (email) roles.push("emailCredentials", "emailCommands");
-    if (phone) roles.push("phoneState");
+    if (password) roles.push("passwords");
+    if (email) roles.push("emailCredentials");
     if (passkeys.length > 0) roles.push("passkeyCredentials", "passkeyFlows");
-    if (proofs)
-      roles.push(
-        "proofRequests",
-        "proofSeries",
-        "proofGenerations",
-        "proofContinuations",
-        "proofScopes",
-        "proofAbuse",
-        "proofFailures",
-        "proofCommands",
-      );
+    if (proofs) roles.push("proofs");
 
     const ConfigKey = Context.Service<
       ConfigId<A["namespace"]>,
@@ -407,45 +356,24 @@ export const createPersistence = <T extends object, R, Database extends object =
           : undefined;
 
         if (proofConfiguration !== undefined) {
-          const proofOwner = yield* backend.proofOwner(
+          const services = yield* makeNativeProofServices(
+            backend.nativeTables(database),
             proofConfiguration.mapping,
-            proofConfiguration.configuration,
-            database,
           );
 
-          context = Context.add(
-            context,
-            ProofPersistence,
-            yield* makeProofWorkflow(
-              proofConfiguration.mapping,
-              proofConfiguration.configuration,
-              proofOwner,
-            ),
-          );
+          context = Context.add(context, ProofPersistence, services.proofPersistence);
         }
 
         if (password) {
           const mapping = mappings.passwords();
 
-          const options: PasswordWorkflowOptions = {
-            mode: "interactive",
-            locking: dialect === "pg",
-            standaloneGuard: standalone(() => PasswordUnavailable.make({})),
-            ...(proofConfiguration === undefined ? {} : { proof: proofConfiguration.mapping }),
-          };
-
-          const owner = yield* backend.passwordOwner(
+          const services = yield* makeNativePasswordServices(
+            backend.nativeTables(database),
             mapping,
-            { ...options, ...limits },
-            database,
             proofConfiguration?.mapping,
           );
 
-          context = Context.add(
-            context,
-            PasswordPersistence,
-            yield* makePasswordWorkflow(mapping, options, owner, backend.nativeTables(database)),
-          );
+          context = Context.add(context, PasswordPersistence, services.passwordPersistence);
         }
         for (const [name, strategy] of Object.entries(auth.strategies)) {
           if (strategy.persistence?.kind !== "password" || !strategy.persistence.management)
@@ -455,56 +383,37 @@ export const createPersistence = <T extends object, R, Database extends object =
           if (key === undefined)
             return yield* configError(`Missing subject provisioning for ${name}`);
 
-          const owner = yield* backend.registrationOwner(
-            mappings.passwords(),
-            mappings.table("passwordRegistrations"),
-            database,
-          );
-
           const registration = yield* makeRegistrationAuthority(
-            owner,
-            standalone(() => PasswordUnavailable.make({})),
+            backend.nativeTables(database),
+            mappings.passwords(),
             ProvisioningKey,
             name,
           );
 
           context = Context.add(context, key, registration);
         }
-        if (email) {
-          const mapping = mappings.emails();
-
-          const options: EmailWorkflowOptions = {
-            mode: "interactive",
-            locking: dialect === "pg",
-            standaloneGuard: standalone(() => EmailUnavailable.make({})),
-            ...(proofConfiguration === undefined ? {} : { proof: proofConfiguration.mapping }),
-          };
-
-          const owner = yield* backend.emailOwner(
-            mapping,
-            { ...options, ...limits },
-            database,
-            proofConfiguration?.mapping,
-          );
-
+        if (email)
           context = Context.add(
             context,
             EmailAddressPersistence,
-            yield* makeEmailAddressWorkflow(mapping, options, owner),
+            (yield* makeNativeEmailAddressServices(
+              backend.nativeTables(database),
+              mappings.emails(),
+              proofConfiguration?.mapping,
+            )).emailAddressPersistence,
           );
-        }
-        if (phone) {
-          const owner = yield* backend.phoneOwner(storage, { dialect, ...limits }, database);
 
-          context = Context.merge(
+        if (phone)
+          context = Context.add(
             context,
-            yield* makePhoneWorkflow(
-              owner,
+            PhoneSignInTargets,
+            yield* makeComposedPhoneTargets(
+              backend.nativeTables(database),
+              storage,
+              mappings.proofs(),
               features.flatMap((feature) => (feature?.kind === "phone" ? [feature.moduleId] : [])),
-              standalone(() => PhoneOtpUnavailable.make({})),
             ),
           );
-        }
 
         if (passkeys.length > 0) {
           // Auth capability metadata determines whether PasskeyConfig is required.
@@ -618,14 +527,8 @@ export const createPersistence = <T extends object, R, Database extends object =
 
           context = Context.add(context, ProofPersistence, {
             issue: (input, prepare) => Effect.flatMap(persistence, (s) => s.issue(input, prepare)),
-            attempt: (input, prepare) =>
-              Effect.flatMap(persistence, (s) => s.attempt(input, prepare)),
-            complete: (input, prepare) =>
-              Effect.flatMap(persistence, (s) => s.complete(input, prepare)),
-            claimDelivery: (input, prepare) =>
-              Effect.flatMap(persistence, (s) => s.claimDelivery(input, prepare)),
-            settleDelivery: (input, prepare) =>
-              Effect.flatMap(persistence, (s) => s.settleDelivery(input, prepare)),
+            redeem: (input, prepare) =>
+              Effect.flatMap(persistence, (s) => s.redeem(input, prepare)),
             cancel: (input, prepare) =>
               Effect.flatMap(persistence, (s) => s.cancel(input, prepare)),
             cleanup: (input, prepare) =>
@@ -645,7 +548,6 @@ export const createPersistence = <T extends object, R, Database extends object =
               Effect.flatMap(persistence, (s) => s.addIfAbsent(input, prepare)),
             replaceIfCurrent: (input, prepare) =>
               Effect.flatMap(persistence, (s) => s.replaceIfCurrent(input, prepare)),
-            checkReset: (input) => Effect.flatMap(persistence, (s) => s.checkReset(input)),
             resetWithProof: (input, prepare) =>
               Effect.flatMap(persistence, (s) => s.resetWithProof(input, prepare)),
           });
@@ -675,26 +577,17 @@ export const createPersistence = <T extends object, R, Database extends object =
 
           context = Context.add(context, EmailAddressPersistence, {
             target: (input) => Effect.flatMap(persistence, (s) => s.target(input)),
-            checkCompletion: (input) =>
-              Effect.flatMap(persistence, (s) => s.checkCompletion(input)),
             verifyWithProof: (input, prepare) =>
               Effect.flatMap(persistence, (s) => s.verifyWithProof(input, prepare)),
             changeWithProof: (input, prepare) =>
               Effect.flatMap(persistence, (s) => s.changeWithProof(input, prepare)),
-            cleanup: (input, prepare) =>
-              Effect.flatMap(persistence, (s) => s.cleanup(input, prepare)),
           });
         }
         if (phone) {
           const unavailable = () => PhoneOtpUnavailable.make({});
-          const admission = service(PhoneAdmission, unavailable);
           const targets = service(PhoneSignInTargets, unavailable);
 
           context = context.pipe(
-            Context.add(PhoneAdmission, {
-              admit: (input) => Effect.flatMap(admission, (s) => s.admit(input)),
-              cleanup: (input) => Effect.flatMap(admission, (s) => s.cleanup(input)),
-            }),
             Context.add(PhoneSignInTargets, {
               lookup: (input) => Effect.flatMap(targets, (s) => s.lookup(input)),
             }),

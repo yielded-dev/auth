@@ -163,8 +163,6 @@ export class AccountStore extends Context.Service<
 
                   const working: State = next;
                   const now = DateTime.toEpochMillis(yield* DateTime.now);
-
-                  working.charges = working.charges.filter((event) => event.retentionUntil >= now);
                   const checks: Array<(now: number) => boolean> = [];
 
                   const value = yield* body(

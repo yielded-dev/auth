@@ -13,7 +13,7 @@ export const PhoneOtpComplete = Schema.Struct({
   phoneNumber: PhoneNumber,
   requestBinding: RequestBindingCredential,
   reference: ProofReference,
-  code: Schema.RedactedFromValue(Schema.String.check(Schema.isPattern(/^[0-9]{6,10}$/))),
+  code: Schema.RedactedFromValue(Schema.String.check(Schema.isMaxLength(4096))),
 });
 
 export type PhoneOtpComplete = typeof PhoneOtpComplete.Type;

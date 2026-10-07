@@ -8,11 +8,12 @@ import {
   evidenceDeadline,
   invalidate,
   passwordCredential,
+  revision,
   satisfies,
 } from "./accounts";
 import { AppAuth } from "./auth";
 import { nextId, type State } from "./model";
-import { completionCurrent, consumeCompletion } from "./proofs";
+import { redeemInOwner } from "./proofs";
 import { AccountStore } from "./store";
 
 const moduleId = AppAuth.strategies.password.persistence.moduleId;
@@ -154,8 +155,13 @@ export const PasswordsLive = Layer.effectContext(
                     )
                   : undefined;
 
+              const credential =
+                account === undefined ? undefined : passwordCredential(state, account);
+
               return Option.fromNullishOr(
-                account === undefined ? undefined : passwordCredential(state, account),
+                credential === undefined || account === undefined
+                  ? undefined
+                  : { ...credential, revision: revision(state, account) },
               );
             }),
           )
@@ -168,10 +174,7 @@ export const PasswordsLive = Layer.effectContext(
             Effect.gen(function* () {
               if (
                 input.authorization.challenge.action !== "change-password" ||
-                !(yield* mutationCurrent(state, input)) ||
-                state.mutations.some(
-                  (item) => item.moduleId === moduleId && item.commandId === input.commandId,
-                )
+                !(yield* mutationCurrent(state, input))
               )
                 return prepare("rejected", journal);
               const receipt = prepare("changed", journal);
@@ -183,75 +186,36 @@ export const PasswordsLive = Layer.effectContext(
                     evidenceDeadline(input.authorization.evidence, input.authorization.requirement),
               );
               replace(state, input);
-              state.mutations = [
-                ...state.mutations,
-                {
-                  moduleId,
-                  commandId: input.commandId,
-                  subjectId: input.expectedRevision.subjectId,
-                  kind: "password",
-                  retentionUntil: now + 3_600_000,
-                },
-              ];
 
               return receipt;
             }),
           )
           .pipe(Effect.mapError(() => Password.PasswordUnavailable.make({}))),
-      checkReset: (input) =>
-        store
-          .read((state, now) => Effect.succeed(completionCurrent(state, input, now)))
-          .pipe(Effect.catchTag("StoreUnavailable", () => Password.PasswordUnavailable.make({}))),
       resetWithProof: (input, prepare) =>
         store
           .transaction((state, journal, now) =>
             Effect.gen(function* () {
               if (
                 input.authorization.challenge.action !== "reset-password" ||
-                input.completion.input.binding._tag !== "Subject" ||
-                input.completion.input.binding.revision.subjectId !==
+                input.redemption.input.binding._tag !== "Subject" ||
+                input.redemption.input.binding.revision.subjectId !==
                   input.expectedRevision.subjectId ||
-                !completionCurrent(state, input.completion.input, now) ||
-                !(yield* mutationCurrent(state, input)) ||
-                state.mutations.some(
-                  (item) => item.moduleId === moduleId && item.commandId === input.commandId,
-                )
+                !current(state, input.redemption.input.binding.revision) ||
+                !(yield* mutationCurrent(state, input))
               )
                 return prepare("rejected", journal);
+              if (redeemInOwner(state, input.redemption.input, now, journal) !== "redeemed")
+                return prepare("rejected", journal);
               const receipt = prepare("changed", journal);
-
-              const expiresAt =
-                state.continuations.find(
-                  (row) =>
-                    row.id === input.completion.input.continuationId &&
-                    row.moduleId === input.completion.input.moduleId,
-                )?.expiresAt ?? 0;
 
               journal.beforeCommit(
                 (time) =>
                   time >= now &&
                   time <
-                    Math.min(
-                      expiresAt,
-                      evidenceDeadline(
-                        input.authorization.evidence,
-                        input.authorization.requirement,
-                      ),
-                    ),
+                    evidenceDeadline(input.authorization.evidence, input.authorization.requirement),
               );
-              input.completion.prepare("completed", journal, () => undefined);
-              consumeCompletion(state, input.completion.input);
+              input.redemption.prepare("redeemed", journal, () => undefined);
               replace(state, input);
-              state.mutations = [
-                ...state.mutations,
-                {
-                  moduleId,
-                  commandId: input.commandId,
-                  subjectId: input.expectedRevision.subjectId,
-                  kind: "password",
-                  retentionUntil: now + 3_600_000,
-                },
-              ];
 
               return receipt;
             }),
@@ -269,7 +233,6 @@ export const PasswordsLive = Layer.effectContext(
                   return yield* Password.PasswordUnavailable.make({});
                 // A public request ID never adopts an old subject or replaces its password.
                 if (
-                  state.registrations.some((item) => item.requestId === input.requestId) ||
                   state.customers.some(
                     (item) =>
                       item.email === input.identifier.value ||
@@ -305,15 +268,6 @@ export const PasswordsLive = Layer.effectContext(
                     replacement: input.replacement,
                     revision: Sessions.SecurityRevision.make(nextId(state, "password-revision")),
                     verifierVersion: Sessions.SecurityRevision.make(nextId(state, "verifier")),
-                  },
-                ];
-                state.registrations = [
-                  ...state.registrations,
-                  {
-                    requestId: input.requestId,
-                    identifier: input.identifier,
-                    registration: input.registration,
-                    replacement: input.replacement,
                   },
                 ];
 

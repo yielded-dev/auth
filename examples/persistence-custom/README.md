@@ -50,8 +50,12 @@ const PasswordMethodsLive = Layer.effect(
 exclusive writer lock, schema validation, fsync, and atomic rename. Preparation
 failures discard the working copy and receipts. Expiry is checked again immediately
 before publication. An uncertain write disables that store instance until reload;
-request receipts, proof consumption, and delivery claims prevent unsafe replay.
+atomic proof consumption prevents a committed candidate from being redeemed again.
+Delivery is process-local and is not recovered after an unknown commit.
 Only digests and password verifiers are persisted, never codes or session bearers.
+
+The current snapshot schema requires resetting older `.data/accounts.json` files.
+This resets the example accounts and their credentials.
 
 This store supports one process on a local filesystem. After a crash, remove
 `.data/writer.lock` only after confirming the old process has stopped. Production

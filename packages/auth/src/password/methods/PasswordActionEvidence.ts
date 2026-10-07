@@ -1,7 +1,7 @@
 import { Context, type Effect, type Redacted } from "effect";
 
 import type { AuthInvocation } from "../../operations/context";
-import type { ProofCompletionInput } from "../../proofs/ProofPersistence";
+import type { ProofRedemptionInput } from "../../proofs/models";
 import type { AuthenticationEvidence, AuthenticationRequirement } from "../../sessions/models";
 import type { PasswordActionRequired, PasswordUnavailable } from "./errors";
 import type { PasswordActionChallenge } from "./models";
@@ -21,7 +21,7 @@ import type { PasswordActionChallenge } from "./models";
  * No default permits mutation. Login-pending credentials are not action grants.
  * A session is usable only with current revision/factor authority; an unexpired
  * pure-stateless caller alone does not prove current credential-change authority.
- * Current recovery policy may accept a reset continuation for a single-factor
+ * Current recovery policy may accept a reset candidate for a single-factor
  * subject, but it must never erase/bypass enabled MFA. No client factor assertions.
  */
 export class PasswordActionEvidence extends Context.Service<
@@ -32,7 +32,7 @@ export class PasswordActionEvidence extends Context.Service<
       readonly invocation: AuthInvocation;
       readonly proof?: Redacted.Redacted<string>;
       readonly currentPasswordEvidence?: AuthenticationEvidence;
-      readonly recovery?: ProofCompletionInput;
+      readonly recovery?: ProofRedemptionInput;
     }) => Effect.Effect<
       {
         readonly evidence: AuthenticationEvidence;

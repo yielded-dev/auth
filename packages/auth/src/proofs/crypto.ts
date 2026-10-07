@@ -4,8 +4,7 @@ import { Base64Url } from "effect/encoding";
 
 import { TokenDigest } from "../Schema";
 import { ProofConfigurationError, ProofUnavailable } from "./errors";
-import { ProofBinding, type ProofId, type ProofPurpose } from "./models";
-import type { ProofDigest } from "./ProofPersistence";
+import { ProofBinding, type ProofId, type ProofPurpose, type ProofDigest } from "./models";
 
 export const ProofSecretPolicy = Schema.Union([
   Schema.TaggedStruct("Token", {}),
@@ -78,20 +77,6 @@ const DigestInput = Schema.fromJsonString(
     Schema.String,
     Schema.String,
     BindingTuple,
-    Schema.String,
-    Schema.String,
-  ]),
-);
-
-const FingerprintInput = Schema.fromJsonString(
-  Schema.Tuple([
-    Schema.Literal("effect-auth/proof-request/v1"),
-    Schema.String,
-    Schema.String,
-    BindingTuple,
-    Schema.String,
-    Schema.String,
-    Schema.String,
     Schema.String,
     Schema.String,
   ]),
@@ -265,78 +250,12 @@ const makeCrypto = Effect.fn("makeProofCrypto")(function* (
     return { keyId, digest: TokenDigest.make(Base64Url.encode(bytes)) };
   });
 
-  const continuationDigest = Effect.fn("ProofCrypto.continuationDigest")(function* (
-    id: string,
-    binding: ProofBinding,
-    secret: Redacted.Redacted<string>,
-  ) {
-    binding = yield* validateProofBinding(binding);
-    if (!Schema.is(OpaqueSecret)(Redacted.value(secret))) return undefined;
-
-    const message = yield* Schema.encodeEffect(DigestInput)([
-      "effect-auth/proof/v1",
-      moduleId,
-      purpose,
-      id,
-      bindingTuple(binding),
-      "continuation",
-      Redacted.value(secret),
-    ]).pipe(Effect.mapError(() => ProofUnavailable.make({})));
-
-    if (encoder.encode(message).byteLength > 16384) return yield* ProofUnavailable.make({});
-
-    return TokenDigest.make(
-      Base64Url.encode(
-        yield* crypto
-          .digest("SHA-256", encoder.encode(message))
-          .pipe(Effect.mapError(() => ProofUnavailable.make({}))),
-      ),
-    );
-  });
-
-  const fingerprint = Effect.fn("ProofCrypto.fingerprint")(function* (
-    binding: ProofBinding,
-    delivery: {
-      readonly channel: string;
-      readonly vendor: string;
-      readonly template: string;
-      readonly locale: string;
-    },
-    supersedes?: ProofId,
-  ) {
-    binding = yield* validateProofBinding(binding);
-
-    const message = yield* Schema.encodeEffect(FingerprintInput)([
-      "effect-auth/proof-request/v1",
-      moduleId,
-      purpose,
-      bindingTuple(binding),
-      delivery.channel,
-      delivery.vendor,
-      delivery.template,
-      delivery.locale,
-      supersedes ?? "",
-    ]).pipe(Effect.mapError(() => ProofUnavailable.make({})));
-
-    if (encoder.encode(message).byteLength > 16384) return yield* ProofUnavailable.make({});
-
-    return TokenDigest.make(
-      Base64Url.encode(
-        yield* crypto
-          .digest("SHA-256", encoder.encode(message))
-          .pipe(Effect.mapError(() => ProofUnavailable.make({}))),
-      ),
-    );
-  });
-
   return Object.freeze({
     activeKeyId,
     format: policy._tag === "Token" ? ("token" as const) : ("numeric-code" as const),
     generate,
     generateOpaque,
     digest,
-    continuationDigest,
-    fingerprint,
   });
 });
 

@@ -3,7 +3,6 @@ import type {
   PasswordAction,
   PasswordCredentialSnapshot,
   PasswordReplacement,
-  PasswordRegistrationDecision,
   EncodedPasswordHash,
 } from "@yielded/auth/Password";
 import type { AuthenticationRequirement, SecurityRevision } from "@yielded/auth/Sessions";
@@ -11,6 +10,7 @@ import type { Effect, Redacted } from "effect";
 
 import type { AnyTableModel, TableModel as Table, SqlExpression } from "../table-model";
 import type { PersistenceMappingError, SubjectIdCodec } from "./common";
+import type { ProofClock } from "./proof-model";
 
 type ColumnKey<T extends Table> = T["column"];
 
@@ -116,30 +116,11 @@ export interface PasswordCredentialTable<
   }) => Effect.Effect<PasswordCredentialSnapshot, PersistenceMappingError>;
 }
 
-export interface PasswordCommandTable<Command extends Table> {
-  readonly table: Command["table"];
-  readonly moduleId: ColumnKey<Command>;
-  readonly commandId: ColumnKey<Command>;
-  readonly action: ColumnKey<Command>;
-  readonly bindingDigest: ColumnKey<Command>;
-  readonly decision: ColumnKey<Command>;
-  readonly retentionUntil: ColumnKey<Command>;
-  readonly encodeInsert: (input: {
-    readonly moduleId: string;
-    readonly commandId: string;
-    readonly action: string;
-    readonly bindingDigest: string;
-    readonly decision: "changed";
-    readonly retentionUntilMillis: number;
-  }) => Command["insert"];
-}
-
 export interface RequiredPasswordConstraints {
   readonly identifier: "unique(identifier.namespace,identifier.value)";
   readonly authorityCredential: "unique(authorityCredential.subjectId,authorityCredential.credentialId)";
   readonly credentialSubject: "unique(credential.moduleId,credential.subjectId)";
   readonly credentialId: "unique(credential.moduleId,credential.credentialId)";
-  readonly command: "unique(command.moduleId,command.commandId)";
 }
 
 export const requiredPasswordConstraints: RequiredPasswordConstraints = {
@@ -147,30 +128,16 @@ export const requiredPasswordConstraints: RequiredPasswordConstraints = {
   authorityCredential: "unique(authorityCredential.subjectId,authorityCredential.credentialId)",
   credentialSubject: "unique(credential.moduleId,credential.subjectId)",
   credentialId: "unique(credential.moduleId,credential.credentialId)",
-  command: "unique(command.moduleId,command.commandId)",
 };
-
-export interface PasswordConstraintClassifier {
-  /** Match only the mapped command uniqueness constraint. */
-  readonly isCommandConflict: (cause: unknown) => boolean;
-}
-
-export interface PasswordD1Clock<Expression extends SqlExpression = SqlExpression> {
-  readonly engineNow: Expression;
-  readonly engineNowMillis: Expression;
-  readonly engineInstantMinus: (millis: number) => Expression;
-  readonly engineInstantPlus: (millis: number) => Expression;
-}
 
 export interface PasswordPersistenceMapping<
   Subject extends Table,
   Identifier extends Table,
   Credential extends Table,
   AuthorityCredential extends Table,
-  Command extends Table,
   NativeSubjectId,
   Expression extends SqlExpression = SqlExpression,
-> extends PasswordConstraintClassifier {
+> {
   readonly subject: PasswordSubjectTable<Subject, NativeSubjectId>;
   readonly identifier: PasswordIdentifierTable<Identifier, NativeSubjectId, Expression>;
   readonly credential: PasswordCredentialTable<Subject, Identifier, Credential, NativeSubjectId>;
@@ -179,7 +146,6 @@ export interface PasswordPersistenceMapping<
     AuthorityCredential,
     NativeSubjectId
   >;
-  readonly command: PasswordCommandTable<Command>;
   readonly subjectId: SubjectIdCodec<NativeSubjectId>;
   readonly constraints: RequiredPasswordConstraints;
   readonly encodeInstant: (epochMillis: number) => unknown;
@@ -188,49 +154,12 @@ export interface PasswordPersistenceMapping<
   readonly allocateCredentialIdSync?: () => string;
   readonly allocateRevision?: Effect.Effect<SecurityRevision, PersistenceMappingError>;
   readonly allocateRevisionSync?: () => SecurityRevision;
-  readonly commandRetentionMillis: number;
   /** All semantic replacements still bump subject revision. This flag declares
    * authoritative verification's invalidation latency; cookie exposure is separate. */
   readonly sessionInvalidation: "same-authority-immediate" | "original-absolute-expiry";
-  readonly d1?: PasswordD1Clock<Expression>;
+  readonly clock: ProofClock<Expression>;
+  readonly d1?: { readonly primary: true };
 }
-
-export type D1PasswordPersistenceMapping<
-  Subject extends Table,
-  Identifier extends Table,
-  Credential extends Table,
-  AuthorityCredential extends Table,
-  Command extends Table,
-  NativeSubjectId,
-  Expression extends SqlExpression = SqlExpression,
-> = PasswordPersistenceMapping<
-  Subject,
-  Identifier,
-  Credential,
-  AuthorityCredential,
-  Command,
-  NativeSubjectId,
-  Expression
-> & {
-  readonly d1: PasswordD1Clock<Expression>;
-  readonly subject: PasswordSubjectTable<Subject, NativeSubjectId> & {
-    readonly d1ActiveStatusValue: unknown;
-  };
-  readonly identifier: PasswordIdentifierTable<Identifier, NativeSubjectId, Expression> & {
-    readonly d1CurrentCondition: (input: {
-      readonly identifier: LoginIdentifier;
-      readonly nativeSubjectId: NativeSubjectId;
-    }) => Expression;
-  };
-  readonly authorityCredential: PasswordAuthorityCredentialTable<
-    AuthorityCredential,
-    NativeSubjectId
-  > & {
-    readonly d1ActiveStatusValue: unknown;
-  };
-};
-
-export type PasswordRegistrationState = "created";
 
 export interface PasswordRegistrationIntent<Registration> {
   readonly moduleId: string;
@@ -238,31 +167,6 @@ export interface PasswordRegistrationIntent<Registration> {
   readonly identifier: LoginIdentifier;
   readonly registration: Registration;
   readonly replacement: PasswordReplacement;
-}
-
-export interface PasswordRegistrationTable<Registration, Request extends Table, NativeSubjectId> {
-  readonly table: Request["table"];
-  readonly moduleId: ColumnKey<Request>;
-  readonly requestId: ColumnKey<Request>;
-  readonly state: ColumnKey<Request>;
-  readonly subjectId: ColumnKey<Request>;
-  readonly encodeInsert: (
-    input: PasswordRegistrationIntent<Registration>,
-    state: {
-      readonly state: PasswordRegistrationState;
-      readonly nativeSubjectId?: NativeSubjectId;
-    },
-  ) => Request["insert"];
-  /** Replay projection must never expose a stored subject or decode protected intent. */
-  readonly decodeReplay: (row: Request["select"]) => Effect.Effect<
-    Exclude<
-      PasswordRegistrationDecision,
-      {
-        readonly _tag: "Created";
-      }
-    >,
-    PersistenceMappingError
-  >;
 }
 
 export interface PasswordRegistrationProvisioning<
@@ -286,21 +190,18 @@ export interface PasswordRegistrationProvisioning<
 }
 
 export interface RequiredPasswordRegistrationConstraints {
-  readonly request: "unique(registration.moduleId,registration.requestId)";
   readonly identifier: "unique(identifier.namespace,identifier.value)";
   readonly credentialSubject: "unique(credential.moduleId,credential.subjectId)";
   readonly authorityCredential: "unique(authorityCredential.subjectId,authorityCredential.credentialId)";
 }
 
 export const requiredPasswordRegistrationConstraints: RequiredPasswordRegistrationConstraints = {
-  request: "unique(registration.moduleId,registration.requestId)",
   identifier: "unique(identifier.namespace,identifier.value)",
   credentialSubject: "unique(credential.moduleId,credential.subjectId)",
   authorityCredential: "unique(authorityCredential.subjectId,authorityCredential.credentialId)",
 };
 
 export interface PasswordRegistrationConstraintClassifier {
-  readonly isRequestConflict: (cause: unknown) => boolean;
   readonly isIdentifierConflict: (cause: unknown) => boolean;
   readonly isCredentialConflict: (cause: unknown) => boolean;
 }
@@ -311,7 +212,6 @@ export type PasswordRegistrationMapping<
   Identifier extends Table,
   Credential extends Table,
   AuthorityCredential extends Table,
-  Request extends Table,
   NativeSubjectId,
   Expression extends SqlExpression = SqlExpression,
 > = PasswordRegistrationConstraintClassifier & {
@@ -322,7 +222,6 @@ export type PasswordRegistrationMapping<
     AuthorityCredential,
     NativeSubjectId
   >;
-  readonly registration: PasswordRegistrationTable<Registration, Request, NativeSubjectId>;
   readonly subjectId: SubjectIdCodec<NativeSubjectId>;
   readonly constraints: RequiredPasswordRegistrationConstraints;
   readonly allocateCredentialId?: Effect.Effect<string, PersistenceMappingError>;
@@ -356,7 +255,6 @@ export type AnyPasswordPersistenceMapping<Expression extends SqlExpression = Sql
     AnyTableModel,
     AnyTableModel,
     AnyTableModel,
-    AnyTableModel,
     unknown,
     Expression
   >;
@@ -366,7 +264,6 @@ export type AnyPasswordRegistrationMapping<
   Expression extends SqlExpression = SqlExpression,
 > = PasswordRegistrationMapping<
   Registration,
-  AnyTableModel,
   AnyTableModel,
   AnyTableModel,
   AnyTableModel,

@@ -5,7 +5,7 @@ import * as SqliteClient from "@effect/sql-sqlite-node/SqliteClient";
 import { Auth, Email, Password, PhoneOtp, Sessions } from "@yielded/auth";
 import { makeStorageMappings } from "@yielded/auth-persistence/Adapter";
 import { SubjectId } from "@yielded/auth/Schema";
-import { getTableColumns, is, sql } from "drizzle-orm";
+import { is, sql } from "drizzle-orm";
 import * as DrizzleD1 from "drizzle-orm/effect-d1";
 import {
   getTableConfig,
@@ -21,7 +21,7 @@ import type { SqlError } from "effect/sql/SqlError";
 import type { Statement } from "effect/sql/Statement";
 
 import { Database as D1Database } from "../../src/drizzle/d1-database";
-import type { D1ProofPersistenceMapping } from "../../src/drizzle/proof-model";
+import type { ProofPersistenceMapping } from "../../src/drizzle/proof-model";
 import { AuthPersistence } from "../../src/SqliteNode";
 
 const app = Auth.make("test/proof-d1", {
@@ -73,50 +73,21 @@ export const proofMapping = Effect.map(makeStorageMappings(storage), (mappings) 
   mappings.proofs(),
 );
 
-const identifiers = getTableColumns(storage.schema.identifiers);
 const clock = sql`(select now from proof_clock)`;
 
 export const d1Mapping = Effect.map(
   proofMapping,
-  (proofMapping) =>
+  (mapping) =>
     ({
-      ...proofMapping,
-      d1: {
-        engineNow: clock,
+      ...mapping,
+      d1: { primary: true },
+      clock: {
+        ...mapping.clock,
         engineNowMillis: clock,
-        engineInstantMinus: (millis: number) => sql`${clock} - ${millis}`,
-        engineInstantPlus: (millis: number) => sql`${clock} + ${millis}`,
+        toMillis: (value: import("drizzle-orm").SQL) => value,
+        fromMillis: (value: import("drizzle-orm").SQL) => value,
       },
-      authority: {
-        ...proofMapping.authority,
-        identifier: {
-          ...proofMapping.authority.identifier,
-          d1CurrentCondition: ({
-            binding,
-          }: Parameters<typeof proofMapping.authority.identifier.isCurrent>[0]) =>
-            binding._tag === "Identifier"
-              ? sql`not exists(select 1 from ${storage.schema.identifiers}
-              where ${identifiers.namespace} = ${binding.identifier.namespace}
-                and ${identifiers.value} = ${binding.identifier.value})`
-              : sql`0 = 1`,
-        },
-      },
-      // The shared factory erases foreign table shapes; these are the actual Drizzle
-      // tables supplied above. This adapter cast crosses no value/schema boundary.
-    }) as unknown as D1ProofPersistenceMapping<
-      SQLiteTable,
-      SQLiteTable,
-      SQLiteTable,
-      SQLiteTable,
-      SQLiteTable,
-      SQLiteTable,
-      SQLiteTable,
-      SQLiteTable,
-      SQLiteTable,
-      SQLiteTable,
-      SQLiteTable,
-      string
-    >,
+    }) as unknown as ProofPersistenceMapping<SQLiteTable, SQLiteTable, string>,
 );
 
 const quote = (name: string) => '"' + name.replaceAll('"', '""') + '"';

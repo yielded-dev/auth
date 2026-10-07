@@ -122,7 +122,7 @@ const program = Effect.gen(function* () {
           }),
       };
 
-      const latest = (slot: "request-binding" | "proof-continuation" | "session") => {
+      const latest = (slot: "request-binding" | "session") => {
         const command = [...commands].reverse().find((c) => c._tag === "Issue" && c.slot === slot);
 
         if (command?._tag !== "Issue") throw new Error(`missing example ${slot}`);
@@ -162,17 +162,11 @@ const program = Effect.gen(function* () {
           locale: "en",
         });
 
-        const regProof = yield* auth.verifyRegistration("registration", {
-          ...registerBase,
-          reference: requested.reference,
-          secret: Redacted.value(delivered().text).match(/code is ([0-9]+)/)?.[1] ?? "",
-        });
-
         const registered = yield* auth.completeRegistration("registration", {
           ...registerBase,
           commandId: "register-command",
-          continuationId: regProof.continuation.continuationId,
-          credential: latest("proof-continuation"),
+          reference: requested.reference,
+          secret: Redacted.value(delivered().text).match(/code is ([0-9]+)/)?.[1] ?? "",
         });
 
         if (
@@ -191,17 +185,8 @@ const program = Effect.gen(function* () {
 
         const codeSecret = Redacted.value(delivered().text).match(/code is ([0-9]+)/)?.[1] ?? "";
 
-        const duplicate = yield* auth.signIn({
-          ...signInBase,
-          requestId: "code-request",
-          locale: "en",
-        });
-
-        if (duplicate.reference.proofId !== codeRequest.reference.proofId)
-          return yield* Effect.die("request replay changed reference");
-
         const wrongPurpose = yield* auth
-          .verifySignIn({
+          .completeSignIn({
             ...signInBase,
             reference: { ...codeRequest.reference, purpose: "email-address-change" },
             secret: codeSecret,
@@ -211,16 +196,10 @@ const program = Effect.gen(function* () {
         if (wrongPurpose._tag !== "Failure")
           return yield* Effect.die("wrong-purpose proof accepted");
 
-        const codeProof = yield* auth.verifySignIn({
+        const signedIn = yield* auth.completeSignIn({
           ...signInBase,
           reference: codeRequest.reference,
           secret: codeSecret,
-        });
-
-        const signedIn = yield* auth.completeSignIn({
-          ...signInBase,
-          continuationId: codeProof.continuation.continuationId,
-          credential: latest("proof-continuation"),
         });
 
         if (
@@ -289,7 +268,7 @@ const program = Effect.gen(function* () {
         const otherDevice = yield* begin("link-sign-in");
 
         const crossDevice = yield* auth
-          .verifySignIn("link", {
+          .completeSignIn("link", {
             ...linkBase,
             requestBinding: otherDevice.requestBinding,
             reference: extracted.reference,
@@ -302,16 +281,10 @@ const program = Effect.gen(function* () {
 
         // The next explicit operation represents intentional confirmation in the
         // originating client, using its retained binder/target rather than URL fields.
-        const linkProof = yield* auth.verifySignIn("link", {
+        const linked = yield* auth.completeSignIn("link", {
           ...linkBase,
           reference: linkRequest.reference,
           secret: Redacted.value(extracted.secret),
-        });
-
-        const linked = yield* auth.completeSignIn("link", {
-          ...linkBase,
-          continuationId: linkProof.continuation.continuationId,
-          credential: latest("proof-continuation"),
         });
 
         if (linked.completion._tag !== "Authenticated" || linked.returnTarget !== "/account")
@@ -329,19 +302,10 @@ const program = Effect.gen(function* () {
             ...verifyBase,
             requestId: "verify-request",
             locale: "en",
-            actionProof: "fixture:verify-request",
           })
           .pipe(Effect.provideService(Auth.AuthRequest, { ...call, invocation: caller }));
 
         const verifyCode = Redacted.value(delivered().text).match(/code is ([0-9]+)/)?.[1] ?? "";
-
-        const verifiedProof = yield* auth
-          .verifyEmailAddress("addresses", {
-            ...verifyBase,
-            reference: verifyRequest.reference,
-            secret: verifyCode,
-          })
-          .pipe(Effect.provideService(Auth.AuthRequest, { ...call, invocation: caller }));
 
         const beforeVerification = commands.filter(
           (c) => c._tag === "Issue" && c.slot === "session",
@@ -350,8 +314,8 @@ const program = Effect.gen(function* () {
         const verified = yield* auth
           .completeEmailVerification("addresses", {
             ...verifyBase,
-            continuationId: verifiedProof.continuation.continuationId,
-            credential: latest("proof-continuation"),
+            reference: verifyRequest.reference,
+            secret: verifyCode,
             actionProof: "fixture:verify-complete",
           })
           .pipe(Effect.provideService(Auth.AuthRequest, { ...call, invocation: caller }));
@@ -388,16 +352,10 @@ const program = Effect.gen(function* () {
           locale: "en",
         });
 
-        const refreshProof = yield* auth.verifySignIn({
+        const refreshed = yield* auth.completeSignIn({
           ...refreshBase,
           reference: refreshRequest.reference,
           secret: Redacted.value(delivered().text).match(/code is ([0-9]+)/)?.[1] ?? "",
-        });
-
-        const refreshed = yield* auth.completeSignIn({
-          ...refreshBase,
-          continuationId: refreshProof.continuation.continuationId,
-          credential: latest("proof-continuation"),
         });
 
         if (refreshed.completion._tag !== "Authenticated")
@@ -426,22 +384,13 @@ const program = Effect.gen(function* () {
             ...changeBase,
             requestId: "change-request",
             locale: "en",
-            actionProof: "fixture:change-request",
-          })
-          .pipe(Effect.provideService(Auth.AuthRequest, { ...call, invocation: changeCaller }));
-
-        const changeProof = yield* auth
-          .verifyEmailChange("addresses", {
-            ...changeBase,
-            reference: changeRequest.reference,
-            secret: Redacted.value(delivered().text).match(/code is ([0-9]+)/)?.[1] ?? "",
           })
           .pipe(Effect.provideService(Auth.AuthRequest, { ...call, invocation: changeCaller }));
 
         const changeInput = {
           ...changeBase,
-          continuationId: changeProof.continuation.continuationId,
-          credential: latest("proof-continuation"),
+          reference: changeRequest.reference,
+          secret: Redacted.value(delivered().text).match(/code is ([0-9]+)/)?.[1] ?? "",
           actionProof: "fixture:change-complete",
         };
 
@@ -466,17 +415,11 @@ const program = Effect.gen(function* () {
           locale: "en",
         });
 
-        const mfaProof = yield* auth.verifySignIn({
-          ...mfaBase,
-          reference: mfaRequest.reference,
-          secret: Redacted.value(delivered().text).match(/code is ([0-9]+)/)?.[1] ?? "",
-        });
-
         const mfa = yield* auth
           .completeSignIn({
             ...mfaBase,
-            continuationId: mfaProof.continuation.continuationId,
-            credential: latest("proof-continuation"),
+            reference: mfaRequest.reference,
+            secret: Redacted.value(delivered().text).match(/code is ([0-9]+)/)?.[1] ?? "",
           })
           .pipe(Effect.result);
 

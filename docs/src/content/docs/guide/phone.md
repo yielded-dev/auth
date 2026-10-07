@@ -77,20 +77,30 @@ signIn({ phoneNumber })
   → session or additional-factor result
 ```
 
-A consumed code cannot be reused if session issuance subsequently fails. Request
-a new code. SMS proves possession; it does not provide phishing resistance.
+A consumed code cannot be reused if session issuance subsequently fails. Start a
+new ceremony. To reissue before consumption, call the same request operation after
+cooldown with its original flow and private `requestBinding`; a new binder cannot
+replace a live code. SMS proves possession, without phishing resistance.
+
+Phone network-request, network-attempt, and message limits use `PhoneAdmission`.
+Its default token buckets allow 10 requests, 100 attempts, and 10 global message
+reservations per minute. Suppressed requests also spend these allowances. Configure
+`PhoneAdmission.layer(policy)` to change them; supply a shared Effect
+`RateLimiterStore` across replicas. The bounded process-local default retains
+active buckets and fails closed at capacity. Per-code failures and resend cooldown
+remain in the proof row; see [proof limits](./codes#proof-expiry-and-rate-limits).
 
 ## Supply the services
 
 The strategy handles code generation and verification. Supply these implementations:
 
-| Layer or service           | What it does                                                        | Where it comes from                           |
-| -------------------------- | ------------------------------------------------------------------- | --------------------------------------------- |
-| `PhonePersistenceLive`     | Finds the account for a phone number and enforces admission limits. | Your database, using a library adapter below. |
-| `ProofPersistenceLive`     | Stores code digests, expiry, failed attempts, and consumption.      | Your database, using a library adapter below. |
-| `PhoneDeliveryEligibility` | Decides which destination numbers you support.                      | Your application policy.                      |
-| `SessionClaims`            | Returns the session fields declared in `AppAuth.claims`.            | Your application.                             |
-| `SmsDelivery`              | Sends the message.                                                  | `Twilio.layer` or another transport.          |
+| Layer or service           | What it does                                                   | Where it comes from                           |
+| -------------------------- | -------------------------------------------------------------- | --------------------------------------------- |
+| `PhonePersistenceLive`     | Finds the account and owns protected number changes.           | Your database, using a library adapter below. |
+| `ProofPersistenceLive`     | Stores code digests, expiry, failed attempts, and consumption. | Your database, using a library adapter below. |
+| `PhoneDeliveryEligibility` | Decides which destination numbers you support.                 | Your application policy.                      |
+| `SessionClaims`            | Returns the session fields declared in `AppAuth.claims`.       | Your application.                             |
+| `SmsDelivery`              | Sends the message.                                             | `Twilio.layer` or another transport.          |
 
 `PhonePersistenceLive` and `ProofPersistenceLive` are names for the Layers you build
 below, not package exports. The adapters implement the storage operations; you
@@ -203,6 +213,9 @@ a number change. Start with `auth.begin(input)` and finish with
 `auth.completeLifecycle(input)`. Supply `PhoneRequestContext`
 for each request, as for sign-in.
 
+A changed number leaves its original identifier row permanently retired, retaining
+its subject and credential identity. A later registration cannot adopt that number;
+reassignment requires an explicit independently authorized recovery workflow.
 Do not link accounts because their phone strings match. See the
 [complete phone composition](https://github.com/yielded-dev/auth/blob/main/examples/auth/src/phone-sqlite-bun.ts).
 

@@ -3,14 +3,14 @@ import { Auth, Email, Hooks, Proofs } from "@yielded/auth";
 import { makeStorageMappings } from "@yielded/auth-persistence/Adapter";
 import { TokenDigest } from "@yielded/auth/Schema";
 import { getTableColumns, sql } from "drizzle-orm";
-import { integer, sqliteTable, text, type SQLiteTable } from "drizzle-orm/sqlite-core";
+import { type SQLiteTable } from "drizzle-orm/sqlite-core";
 import { Context, Effect, Layer, Schema } from "effect";
 import { SqlClient } from "effect/sql";
 import { expect } from "vite-plus/test";
 
 import * as D1 from "../src/D1";
 import {
-  type D1EmailRegistrationMapping,
+  type EmailRegistrationMapping,
   requiredEmailRegistrationConstraints,
 } from "../src/drizzle/email-model";
 import { PersistenceMappingError } from "../src/drizzle/model";
@@ -21,15 +21,6 @@ import { database, d1Database, d1Mapping, storage } from "./fixtures/proof-sqlit
 // User-requested finding 3 regression: real proof issuance/attempt and public raw
 // registration authority, including the independently compiled D1 atomic batch.
 const Registration = Schema.Struct({ displayName: Schema.String });
-
-const registrations = sqliteTable("email_registrations", {
-  moduleId: text("module_id").notNull(),
-  commandId: text("command_id").notNull(),
-  fingerprint: text().notNull(),
-  state: text().notNull(),
-  subjectId: text("subject_id"),
-  retentionUntil: integer("retention_until").notNull(),
-});
 
 const moduleId = "mailbox";
 
@@ -48,36 +39,21 @@ const mappings = Effect.gen(function* () {
   const email = (yield* makeStorageMappings(storage)).emails();
   const d1 = yield* d1Mapping;
 
-  const proofMapping: Effect.Success<typeof d1Mapping> = {
-    ...d1,
-    authority: {
-      ...d1.authority,
-      identifier: {
-        ...d1.authority.identifier,
-        isCurrent: (input, rows) =>
-          input.purpose === "email-code-registration" &&
-          input.binding._tag === "Identifier" &&
-          (rows.length === 0 ||
-            (rows.length === 1 && rows[0]!.active === true && rows[0]!.verifiedAt === null)),
-        d1CurrentCondition: ({ binding, purpose }) =>
-          purpose === "email-code-registration" && binding._tag === "Identifier"
-            ? sql`not exists(
-              select 1 from ${storage.schema.identifiers}
-              where ${columns.namespace} = ${binding.identifier.namespace}
-                and ${columns.value} = ${binding.identifier.value}
-                and (${columns.active} <> 1 or ${columns.verifiedAt} is not null))`
-            : sql`false`,
-      },
-    },
-  };
+  const proofMapping = d1;
 
   const mapping = {
     mode: "atomic",
     ...email,
     d1: d1.d1,
-    subject: { ...email.subject, d1ActiveStatusValue: true },
+    clock: d1.clock,
+    subject: { ...email.subject, activeStatusValue: true },
     identifier: {
       ...email.identifier,
+      d1MutableTargetCondition: (input: {
+        identifier: { namespace: string; value: string };
+        nativeSubjectId: string;
+      }) =>
+        sql`${columns.namespace} = ${input.identifier.namespace} and ${columns.value} = ${input.identifier.value} and ${columns.subjectId} = ${input.nativeSubjectId} and ${columns.active} = 1 and ${columns.verifiedAt} is null`,
       d1CurrentCondition: (input: {
         identifier: { namespace: string; value: string };
         nativeSubjectId: string;
@@ -87,16 +63,14 @@ const mappings = Effect.gen(function* () {
         and ${columns.subjectId} = ${input.nativeSubjectId} and ${columns.revision} = ${input.bindingRevision}
         and ${columns.active} = 1 and ${columns.verifiedAt} is not null`,
     },
-    credential: { ...email.credential, d1ActiveStatusValue: true },
-    authorityCredential: { ...email.authorityCredential, d1ActiveStatusValue: true },
+    credential: { ...email.credential, activeStatusValue: true },
+    authorityCredential: { ...email.authorityCredential, activeStatusValue: true },
     constraints: requiredEmailRegistrationConstraints,
     inspect: () => Effect.succeed({ fingerprint, eligible: true }),
     snapshotRegistration: (value: typeof Registration.Type) =>
       Schema.decodeEffect(Registration)(value).pipe(
         Effect.mapError((cause) => PersistenceMappingError.make({ operation: "mapping", cause })),
       ),
-    retentionMillis: 3_600_000,
-    isRequestConflict: () => false,
     isIdentifierConflict: (cause: unknown) =>
       cause instanceof Error &&
       cause.message.includes("UNIQUE constraint failed: proof_test_identifiers"),
@@ -112,40 +86,14 @@ const mappings = Effect.gen(function* () {
         revision: values.securityRevision,
       }),
     },
-    registration: {
-      table: registrations,
-      moduleId: "moduleId",
-      commandId: "commandId",
-      fingerprint: "fingerprint",
-      state: "state",
-      subjectId: "subjectId",
-      retentionUntil: "retentionUntil",
-      encodeInsert: (
-        input: { moduleId: string; commandId: string; fingerprint: string },
-        value: {
-          state: string;
-          nativeSubjectId?: string;
-          retentionUntilMillis: number;
-        },
-      ) => ({
-        moduleId: input.moduleId,
-        commandId: input.commandId,
-        fingerprint: input.fingerprint,
-        state: value.state,
-        subjectId: value.nativeSubjectId ?? null,
-        retentionUntil: value.retentionUntilMillis,
-      }),
-      decodeReplay: () => Effect.succeed({ _tag: "Rejected" as const }),
-    },
     // Production shared mappings erase table types; these are the same concrete
     // Drizzle tables. No persisted value crosses a schema through this adapter cast.
-  } as unknown as D1EmailRegistrationMapping<
+  } as unknown as EmailRegistrationMapping<
     typeof Registration.Type,
     typeof subjects,
     SQLiteTable,
     SQLiteTable,
     SQLiteTable,
-    typeof registrations,
     string
   >;
 
@@ -155,10 +103,6 @@ const mappings = Effect.gen(function* () {
 const seed = Effect.gen(function* () {
   const client = yield* SqlClient.SqlClient;
 
-  yield* client`create table email_registrations (
-    module_id text not null, command_id text not null, fingerprint text not null,
-    state text not null, subject_id text, retention_until integer not null,
-    unique(module_id, command_id))`;
   yield* client`create table application_data (subject_id text primary key, contents text not null)`;
   yield* client`insert into subjects values ('squatter', 1, 'old-security')`;
   yield* client`insert into application_data values ('squatter', 'attacker-owned data')`;
@@ -186,63 +130,42 @@ const services = Effect.fnUntraced(function* (mode: "interactive" | "d1") {
       });
 });
 
-const continuation = Effect.gen(function* () {
+const redemption = Effect.gen(function* () {
   const store = yield* Proofs.ProofPersistence;
 
-  const record: Proofs.ProofRecord = {
+  const record: Proofs.ProofIssueRecord = {
     moduleId: `${moduleId}/registration`,
     purpose: Proofs.ProofPurpose.make("email-code-registration"),
     proofId: Proofs.ProofId.make("mailbox-proof"),
-    requestId: Proofs.ProofRequestId.make("mailbox-request"),
-    fingerprint,
-    deliveryId: Proofs.ProofDeliveryId.make("mailbox-delivery"),
     binding: Proofs.IdentifierProofBinding.make({
       identifier,
       flowId: "registration-flow",
       contextDigest: TokenDigest.make("private-flow-binding"),
     }),
     verifier: { keyId: "key", digest: TokenDigest.make("correct-secret-digest") },
-    issuedAtMillis: 0,
-    expiresAtMillis: 300_000,
-    version: Proofs.ProofVersion.make("proof-version"),
   };
 
   const issued = yield* store.issue(
-    { record, eligible: true, policy: Proofs.defaultProofPolicy },
+    { record, eligible: true, lifetimeMillis: 300_000, resendCooldownMillis: 0 },
     (value, journal) => journal.prepare(value),
   );
 
   expect((yield* issued.read)._tag).toBe("Issued");
 
-  const input: Proofs.ProofCompletionPlan["input"] = {
-    moduleId: record.moduleId,
-    purpose: record.purpose,
-    binding: record.binding,
-    nowMillis: 0,
-    continuationId: Proofs.ProofContinuationId.make("mailbox-continuation"),
-    continuationDigest: TokenDigest.make("private-continuation"),
-  };
-
-  const attempted = yield* store.attempt(
-    {
-      ...input,
-      proofId: record.proofId,
-      candidate: record.verifier,
-      nowMillis: 0,
-      policy: Proofs.defaultProofPolicy,
-    },
-    (value, journal) => journal.prepare(value),
-  );
-
-  expect((yield* attempted.read)._tag).toBe("Accepted");
-
   return {
-    input,
+    input: {
+      moduleId: record.moduleId,
+      purpose: record.purpose,
+      proofId: record.proofId,
+      binding: record.binding,
+      candidate: record.verifier,
+      maximumFailedAttempts: 5,
+    },
     prepare: (decision, journal, project) => journal.prepare(project(decision)),
-  } satisfies Proofs.ProofCompletionPlan;
+  } satisfies Proofs.ProofRedemptionPlan;
 });
 
-const complete = Effect.fnUntraced(function* (completion: Proofs.ProofCompletionPlan) {
+const complete = Effect.fnUntraced(function* (plan: Proofs.ProofRedemptionPlan) {
   const authority = yield* RegistrationAuthority;
 
   const prepared = yield* authority.registerWithProof(
@@ -252,7 +175,8 @@ const complete = Effect.fnUntraced(function* (completion: Proofs.ProofCompletion
       identifier,
       registration: { displayName: "Mailbox owner" },
       fingerprint,
-      completion,
+      requestId: `email-registration:${moduleId}:${plan.input.proofId}`,
+      redemption: plan,
     },
     (value, journal) => journal.prepare(value),
   );
@@ -270,8 +194,7 @@ const state = Effect.gen(function* () {
     data: yield* client`select * from application_data`,
     credentials: yield* client`select * from proof_test_credentials order by credential_id`,
     email: yield* client`select * from proof_test_emailCredentials`,
-    receipts: yield* client`select * from email_registrations`,
-    continuations: yield* client`select consumed from proof_test_proofContinuations`,
+    proofs: yield* client`select proof_id from proof_test_proofs`,
   };
 });
 
@@ -309,7 +232,7 @@ it.effect.each([
 
         yield* client`update subjects set active = 0 where id = 'squatter'`;
       }
-      const completion = yield* continuation;
+      const completion = yield* redemption;
       const before = yield* state;
 
       expect((yield* complete(completion))._tag).toBe("Registered");
@@ -331,8 +254,7 @@ it.effect.each([
       expect(after.credentials).toContainEqual(before.credentials[0]);
       expect(after.email).toHaveLength(1);
       expect(after.email[0]!.subject_id).toBe("mailbox-owner");
-      expect(after.receipts).toHaveLength(1);
-      expect(after.continuations).toEqual([{ consumed: 1 }]);
+      expect(after.proofs).toEqual([]);
       expect((yield* complete(completion))._tag).toBe("Rejected");
       expect(yield* state).toEqual(after);
     }).pipe(Effect.provide(layers(mode))),
@@ -342,7 +264,7 @@ it.effect.each(["interactive", "d1"] as const)(
   "%s protected-write failure preserves the old subject and usable proof",
   (mode) =>
     Effect.gen(function* () {
-      const completion = yield* continuation;
+      const completion = yield* redemption;
       const before = yield* state;
       const client = yield* SqlClient.SqlClient;
 
@@ -366,7 +288,7 @@ it.effect("D1 rejects a verified binding committed after registration planning",
   });
 
   return Effect.gen(function* () {
-    const completion = yield* continuation;
+    const completion = yield* redemption;
 
     interfere = true;
 
@@ -382,7 +304,6 @@ it.effect("D1 rejects a verified binding committed after registration planning",
       revision: "verified-binding",
     });
     expect(saved.email).toEqual([]);
-    expect(saved.receipts).toEqual([]);
-    expect(saved.continuations).toEqual([{ consumed: 0 }]);
+    expect(saved.proofs).toEqual([{ proof_id: "mailbox-proof" }]);
   }).pipe(Effect.provide(layers("d1", beforeBatch)));
 });

@@ -140,7 +140,6 @@ const invalidationJson = Schema.fromJsonString(SessionInvalidationWindow);
 const clearChanged: ReadonlyArray<AuthCredentialCommand> = Object.freeze([
   Object.freeze({ _tag: "Clear" as const, slot: "session" as const }),
   Object.freeze({ _tag: "Clear" as const, slot: "pending-proof" as const }),
-  Object.freeze({ _tag: "Clear" as const, slot: "proof-continuation" as const }),
   Object.freeze({ _tag: "Clear" as const, slot: "request-binding" as const }),
 ]);
 

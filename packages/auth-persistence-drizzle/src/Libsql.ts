@@ -7,12 +7,9 @@ import {
 import type { AnySQLiteTable } from "drizzle-orm/sqlite-core";
 import { Context, Effect, Layer } from "effect";
 
-import { sqlClientEmailStandaloneGuard } from "./drizzle/email-target";
 import { NativeDatabase, nativeDatabase } from "./drizzle/native-database";
 import { sqlClientOAuthStandaloneGuard } from "./drizzle/oauth-target";
 import { sqlClientPasskeyStandaloneGuard } from "./drizzle/passkey/target";
-import { sqlClientPasswordStandaloneGuard } from "./drizzle/password-target";
-import { sqlClientProofStandaloneGuard } from "./drizzle/proof-target";
 import { sqlClientSessionStandaloneGuard } from "./drizzle/session-target";
 
 /** The application-owned Drizzle database used to construct persistence services. */
@@ -28,14 +25,13 @@ import type {
   IdentityTables,
   SubjectProvisioningTables,
 } from "./drizzle/model";
-import { makeSqliteEmailTarget, sqliteEmailConfiguration } from "./drizzle/sqlite-emails";
+import { makePasswordTarget } from "./drizzle/password-drivers";
+import { makeProofTarget } from "./drizzle/proof-drivers";
 import {
   makeSqliteExternalIdentityServices,
   makeSqliteIdentityServices,
   makeSqliteSubjectProvisioningServices,
 } from "./drizzle/sqlite-identity";
-import { makeSqlitePasswordTarget, sqlitePasswordConfiguration } from "./drizzle/sqlite-passwords";
-import { makeSqliteProofTarget, sqliteProofConfiguration } from "./drizzle/sqlite-proofs";
 import { makeSqliteSessionTarget, sqliteSessionConfiguration } from "./drizzle/sqlite-sessions";
 
 const sessionTarget = makeSqliteSessionTarget<Database, EffectLibsqlDatabase<AnyRelations>>(
@@ -43,38 +39,31 @@ const sessionTarget = makeSqliteSessionTarget<Database, EffectLibsqlDatabase<Any
   (service) => sqliteSessionConfiguration("interactive", sqlClientSessionStandaloneGuard(service)),
 );
 
-const proofTarget = makeSqliteProofTarget<Database, EffectLibsqlDatabase<AnyRelations>>(
-  Database,
-  (service) => sqliteProofConfiguration("interactive", sqlClientProofStandaloneGuard(service)),
-);
+const proofTarget = makeProofTarget(Database, {
+  mode: "native",
+  dialect: "sqlite",
+  transactionConstructor: PasskeyTransaction,
+});
 
-const passwordTarget = makeSqlitePasswordTarget<Database, EffectLibsqlDatabase<AnyRelations>>(
-  Database,
-  (service) =>
-    sqlitePasswordConfiguration(
-      "interactive",
-      sqlClientPasswordStandaloneGuard(service),
-      sqlClientProofStandaloneGuard(service),
-    ),
-);
+const passwordTarget = makePasswordTarget(Database, {
+  mode: "native",
+  dialect: "sqlite",
+  transactionConstructor: PasskeyTransaction,
+});
 
-const emailTarget = makeSqliteEmailTarget<Database, EffectLibsqlDatabase<AnyRelations>>(
-  Database,
-  (service) =>
-    sqliteEmailConfiguration(
-      "interactive",
-      sqlClientEmailStandaloneGuard(service),
-      sqlClientProofStandaloneGuard(service),
-    ),
-);
+import { makeEmailTarget } from "./drizzle/email-drivers";
 
 export const {
-  coordinateEmailAddress,
-  coordinateEmailRegistration,
+  makeEmailSignInServices,
   makeEmailAddressServices,
   makeEmailRegistrationServices,
-  makeEmailSignInServices,
-} = emailTarget;
+  coordinateEmailAddress,
+  coordinateEmailRegistration,
+} = makeEmailTarget(Database, {
+  mode: "native",
+  dialect: "sqlite",
+  transactionConstructor: PasskeyTransaction,
+});
 
 export const {
   coordinatePasswordPersistence,
@@ -206,20 +195,12 @@ const totpTarget = makeTotpTarget<
 
 export const { makeTotpPersistenceServices, coordinateTotpPersistence } = totpTarget;
 
-import { makePhoneTarget, sqlClientPhoneStandaloneGuard } from "./drizzle/phone-target";
+import { makePhoneTarget } from "./drizzle/phone-drivers";
 
-const phoneTarget = makePhoneTarget<
+export const { makePhonePersistenceServices, coordinatePhonePersistence } = makePhoneTarget(
   Database,
-  EffectLibsqlDatabase<AnyRelations>,
-  AnySQLiteTable<{ dialect: "sqlite" }>
->(Database, {
-  mode: "interactive",
-  dialect: "sqlite",
-  locking: false,
-  standaloneGuard: sqlClientPhoneStandaloneGuard,
-});
-
-export const { makePhonePersistenceServices, coordinatePhonePersistence } = phoneTarget;
+  { mode: "native", dialect: "sqlite", transactionConstructor: PasskeyTransaction },
+);
 
 import { drizzleMigrationsLayer } from "./internal/drizzle-migrations";
 import { sqlitePersistence } from "./internal/drizzle-sqlite";

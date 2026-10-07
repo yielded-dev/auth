@@ -20,7 +20,9 @@ export const PasswordReplacement = Schema.Struct({
 
 export type PasswordReplacement = typeof PasswordReplacement.Type;
 
-/** Storage/private value. Verifier version changes on rehash; semantic revisions do not. */
+/** Private coherent snapshot with the complete active factor revision vector.
+ * The vector does not prove those factors; proofs identify actual verifications.
+ * Verifier version changes on rehash; semantic revisions do not. */
 export const PasswordCredentialSnapshot = Schema.Struct({
   moduleId: Schema.NonEmptyString,
   revision: AuthenticationRevision,

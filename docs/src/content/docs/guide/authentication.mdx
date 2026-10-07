@@ -130,14 +130,14 @@ Use the [Argon2id Layer](./passwords.md#supply-the-services) for hashing and
 Multi-step methods return a public flow ID between calls; the private binding that ties the steps
 to one browser travels as a cookie, like the session.
 
-| Method                                         | Calls                                                                         |
-| ---------------------------------------------- | ----------------------------------------------------------------------------- |
-| [Password](/auth/guide/passwords/)             | `signIn` → session or additional factor.                                      |
-| [Email code or magic link](/auth/guide/codes/) | `beginSignIn` → `signIn` sends the proof → `verifySignIn` → `completeSignIn`. |
-| [SMS code](/auth/guide/phone/)                 | `signIn` sends the code → `completeSignIn`.                                   |
-| [Passkey](/auth/guide/passkeys/)               | `signIn` → browser ceremony → `completeSignIn`.                               |
-| [OAuth](/auth/guide/oauth/)                    | `signIn` → provider redirect → `completeSignIn`.                              |
-| [TOTP](/auth/guide/totp/)                      | First factor returns a pending proof → `verifyPending`.                       |
+| Method                                         | Calls                                                                   |
+| ---------------------------------------------- | ----------------------------------------------------------------------- |
+| [Password](/auth/guide/passwords/)             | `signIn` → session or additional factor.                                |
+| [Email code or magic link](/auth/guide/codes/) | `beginSignIn` → `signIn` sends the proof → `completeSignIn` redeems it. |
+| [SMS code](/auth/guide/phone/)                 | `signIn` sends the code → `completeSignIn`.                             |
+| [Passkey](/auth/guide/passkeys/)               | `signIn` → browser ceremony → `completeSignIn`.                         |
+| [OAuth](/auth/guide/oauth/)                    | `signIn` → provider redirect → `completeSignIn`.                        |
+| [TOTP](/auth/guide/totp/)                      | First factor returns a pending proof → `verifyPending`.                 |
 
 ## When a response is lost
 

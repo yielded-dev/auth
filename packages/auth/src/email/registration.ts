@@ -10,18 +10,11 @@ import { makeOperation, operationGroup } from "../operations/operation";
 import type { makeRequestBinding } from "../operations/requestBinding";
 import { RequestBindingCredential, RequestBindingFlowId } from "../operations/requestBinding";
 import { proofRequestAdmission } from "../proofs/admission";
-import type { ProofCompletionPlan } from "../proofs/completion";
 import { readProofCommit } from "../proofs/dispatch";
 import type { ProofBinding } from "../proofs/models";
-import {
-  ProofContinuation,
-  ProofContinuationId,
-  ProofId,
-  ProofReference,
-  ProofRequestId,
-  ProofRequestReceipt,
-} from "../proofs/models";
+import { ProofReference, ProofRequestId, ProofRequestReceipt } from "../proofs/models";
 import type { makeProofModule } from "../proofs/module";
+import type { ProofRedemptionPlan } from "../proofs/redemption";
 import { Email, Locale, TokenDigest } from "../Schema";
 import type { PrepareEmailCommit } from "./EmailAddressPersistence";
 import {
@@ -37,8 +30,6 @@ const Failure = Schema.Union([EmailRejected, EmailUnavailable, EmailMethodUnsupp
 type Failure = typeof Failure.Type;
 
 const Success = Schema.TaggedStruct("RegistrationAccepted", {});
-
-const AttemptSuccess = Schema.Struct({ continuation: ProofContinuation });
 
 const noAmbient = Effect.fn("EmailRegistration.noAmbient")(function* () {
   if (yield* hasCommitScope) return yield* EmailMethodUnsupported.make({});
@@ -84,19 +75,11 @@ export const makeEmailRegistration = <
     locale: Locale,
   });
 
-  const ResendInput = Schema.Struct({ ...RequestInput.fields, supersedes: ProofId });
-
-  const AttemptInput = Schema.Struct({
-    ...base,
-    reference: ProofReference,
-    secret: Schema.RedactedFromValue(Schema.String.check(Schema.isMaxLength(4096))),
-  });
-
   const CompleteInput = Schema.Struct({
     ...base,
     commandId: EmailCommandId,
-    continuationId: ProofContinuationId,
-    credential: Schema.RedactedFromValue(Schema.String.check(Schema.isMaxLength(4096))),
+    reference: ProofReference,
+    secret: Schema.RedactedFromValue(Schema.String.check(Schema.isMaxLength(4096))),
   });
 
   const RegistrationAuthority = Context.Service<
@@ -113,7 +96,7 @@ export const makeEmailRegistration = <
         { readonly fingerprint: TokenDigest; readonly eligible: boolean },
         EmailUnavailable
       >;
-      /** One physical owner consumes completion and synchronously creates the subject,
+      /** One physical owner redeems the proof and synchronously creates the subject,
        * verified identifier and active email credential. Provision idempotently by
        * requestId; never adopt a prior subject or issue a session in this transaction.
        */
@@ -121,10 +104,12 @@ export const makeEmailRegistration = <
         input: {
           readonly moduleId: string;
           readonly commandId: EmailCommandId;
+          /** Stable for this redeemed proof, independently of completion retries. */
+          readonly requestId: string;
           readonly identifier: LoginIdentifier;
           readonly registration: Registration["Type"];
           readonly fingerprint: TokenDigest;
-          readonly completion: ProofCompletionPlan;
+          readonly redemption: ProofRedemptionPlan;
         },
         prepare: PrepareEmailCommit<EmailRegistrationDecision, A>,
       ) => Effect.Effect<PreparedCommit<A>, EmailUnavailable>;
@@ -145,11 +130,7 @@ export const makeEmailRegistration = <
     {
       readonly request: (
         input: typeof RequestInput.Type,
-        supersedes?: ProofId,
       ) => Effect.Effect<ProofRequestReceipt, Failure>;
-      readonly attempt: (
-        input: typeof AttemptInput.Type,
-      ) => Effect.Effect<AuthOperationResult<typeof AttemptSuccess.Type>, Failure>;
       readonly planComplete: (input: typeof CompleteInput.Type) => Effect.Effect<Plan, Failure>;
     }
   >(`effect-auth/email/${moduleId}/Registrations`);
@@ -231,7 +212,7 @@ export const makeEmailRegistration = <
       });
 
       return Registrations.of({
-        request: Effect.fn("EmailRegistration.request")(function* (input, supersedes) {
+        request: Effect.fn("EmailRegistration.request")(function* (input) {
           yield* noAmbient();
           const current = yield* bound(input);
 
@@ -241,7 +222,6 @@ export const makeEmailRegistration = <
               binding: current.binding,
               locale: input.locale,
               eligible: current.eligible,
-              ...(supersedes === undefined ? {} : { supersedes }),
             })
             .pipe(
               Effect.flatMap(readProofCommit),
@@ -252,33 +232,14 @@ export const makeEmailRegistration = <
 
           return dispatch.receipt;
         }),
-        attempt: Effect.fn("EmailRegistration.attempt")(function* (input) {
-          yield* noAmbient();
-          const current = yield* bound(input);
-
-          const result = yield* proofs
-            .prepareAttempt({
-              reference: input.reference,
-              credential: input.secret,
-              binding: current.binding,
-            })
-            .pipe(Effect.flatMap(readProofCommit), Effect.mapError(emailCompletionFailure));
-
-          if (result.value._tag === "Rejected") return yield* EmailRejected.make({});
-
-          return {
-            value: { continuation: result.value.continuation },
-            credentialCommands: result.credentialCommands,
-          };
-        }),
         planComplete: Effect.fn("EmailRegistration.planComplete")(function* (input) {
           yield* noAmbient();
           const current = yield* bound(input);
 
-          const completion = yield* proofs
-            .planComplete({
-              continuationId: input.continuationId,
-              credential: input.credential,
+          const redemption = yield* proofs
+            .planRedeem({
+              reference: input.reference,
+              credential: input.secret,
               binding: current.binding,
             })
             .pipe(Effect.mapError(emailCompletionFailure));
@@ -311,10 +272,11 @@ export const makeEmailRegistration = <
               {
                 moduleId,
                 commandId,
+                requestId: `email-registration:${moduleId}:${input.reference.proofId}`,
                 identifier: current.identifier,
                 registration: current.data,
                 fingerprint: current.fingerprint,
-                completion,
+                redemption,
               },
               (decision, journal) => {
                 if (decision._tag === "Registered") journal.stage(event);
@@ -325,10 +287,7 @@ export const makeEmailRegistration = <
                   credentialCommands:
                     decision._tag === "Rejected"
                       ? []
-                      : [
-                          { _tag: "Clear", slot: "proof-continuation" },
-                          { _tag: "Clear", slot: "request-binding" },
-                        ],
+                      : [{ _tag: "Clear", slot: "request-binding" }],
                 });
               },
             );
@@ -351,27 +310,7 @@ export const makeEmailRegistration = <
     error: Failure,
     access: "any",
     exposure: "public",
-    replay: "idempotent",
-  });
-
-  const Resend = makeOperation(`${moduleId}/registration/resend`, {
-    authorize: () => admitRequest,
-    payload: ResendInput,
-    success: ProofRequestReceipt,
-    error: Failure,
-    access: "any",
-    exposure: "public",
-    replay: "idempotent",
-  });
-
-  const Attempt = makeOperation(`${moduleId}/registration/attempt`, {
-    payload: AttemptInput,
-    success: AttemptSuccess,
-    error: Failure,
-    access: "any",
-    exposure: "public",
-    replay: "single-use",
-    credentials: true,
+    replay: "non-idempotent",
   });
 
   const Complete = makeOperation(`${moduleId}/registration/complete`, {
@@ -388,16 +327,6 @@ export const makeEmailRegistration = <
     Request.handlerLayer(
       Effect.fn("EmailRegistration.Request")(function* (input) {
         return yield* (yield* Registrations).request(input);
-      }),
-    ),
-    Resend.handlerLayer(
-      Effect.fn("EmailRegistration.Resend")(function* (input) {
-        return yield* (yield* Registrations).request(input, input.supersedes);
-      }),
-    ),
-    Attempt.credentialHandlerLayer(
-      Effect.fn("EmailRegistration.Attempt")(function* (input) {
-        return yield* (yield* Registrations).attempt(input);
       }),
     ),
     Complete.credentialHandlerLayer(
@@ -419,7 +348,7 @@ export const makeEmailRegistration = <
     layer,
     proof,
     handlersLayer,
-    operations: { Request, Resend, Attempt, Complete },
-    group: operationGroup(Request, Resend, Attempt, Complete),
+    operations: { Request, Complete },
+    group: operationGroup(Request, Complete),
   });
 };

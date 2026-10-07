@@ -938,7 +938,7 @@ assert.equal(await Effect.runPromise(root.Identity.stringSubjectId.toSubject("co
 for (const bundler of ["esbuild", "vite"]) {
   const persistence = await import("./bundles/" + bundler + "/persistence/entry.mjs");
   assert.ok(persistence.storage.schema.passwords);
-  assert.equal(persistence.storage.schema.proofRequests, undefined);
+  assert.equal(persistence.storage.schema.proofs, undefined);
   const passkey = await import("./bundles/" + bundler + "/passkey-group/entry.mjs");
   const { Schema } = await import("effect");
   const sessions = contracts.SessionContract.makeSessionContract("consumer/session", Schema.Struct({}));

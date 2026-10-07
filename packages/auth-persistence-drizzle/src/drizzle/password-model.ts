@@ -1,13 +1,12 @@
 import type * as Shared from "@yielded/auth-persistence/Adapter";
 import type { SQL, Table } from "drizzle-orm";
 
+import type { ClockMapping } from "./native-clock";
 import type { DrizzleTableModel } from "./table-model";
 
 export {
   type RequiredPasswordConstraints,
   requiredPasswordConstraints,
-  type PasswordConstraintClassifier,
-  type PasswordRegistrationState,
   type PasswordRegistrationIntent,
   type RequiredPasswordRegistrationConstraints,
   requiredPasswordRegistrationConstraints,
@@ -41,51 +40,22 @@ export type PasswordCredentialTable<
   NativeSubjectId
 >;
 
-export type PasswordCommandTable<Command extends Table> = Shared.PasswordCommandTable<
-  DrizzleTableModel<Command>
->;
-
-export type PasswordD1Clock = Shared.PasswordD1Clock<SQL>;
-
 export type PasswordPersistenceMapping<
   Subject extends Table,
   Identifier extends Table,
   Credential extends Table,
   AuthorityCredential extends Table,
-  Command extends Table,
   NativeSubjectId,
-> = Shared.PasswordPersistenceMapping<
-  DrizzleTableModel<Subject>,
-  DrizzleTableModel<Identifier>,
-  DrizzleTableModel<Credential>,
-  DrizzleTableModel<AuthorityCredential>,
-  DrizzleTableModel<Command>,
-  NativeSubjectId,
-  SQL
+> = ClockMapping<
+  Shared.PasswordPersistenceMapping<
+    DrizzleTableModel<Subject>,
+    DrizzleTableModel<Identifier>,
+    DrizzleTableModel<Credential>,
+    DrizzleTableModel<AuthorityCredential>,
+    NativeSubjectId,
+    SQL
+  >
 >;
-
-export type D1PasswordPersistenceMapping<
-  Subject extends Table,
-  Identifier extends Table,
-  Credential extends Table,
-  AuthorityCredential extends Table,
-  Command extends Table,
-  NativeSubjectId,
-> = Shared.D1PasswordPersistenceMapping<
-  DrizzleTableModel<Subject>,
-  DrizzleTableModel<Identifier>,
-  DrizzleTableModel<Credential>,
-  DrizzleTableModel<AuthorityCredential>,
-  DrizzleTableModel<Command>,
-  NativeSubjectId,
-  SQL
->;
-
-export type PasswordRegistrationTable<
-  Registration,
-  Request extends Table,
-  NativeSubjectId,
-> = Shared.PasswordRegistrationTable<Registration, DrizzleTableModel<Request>, NativeSubjectId>;
 
 export type PasswordRegistrationProvisioning<
   Registration,
@@ -103,7 +73,6 @@ export type PasswordRegistrationMapping<
   Identifier extends Table,
   Credential extends Table,
   AuthorityCredential extends Table,
-  Request extends Table,
   NativeSubjectId,
 > = Shared.PasswordRegistrationMapping<
   Registration,
@@ -111,7 +80,6 @@ export type PasswordRegistrationMapping<
   DrizzleTableModel<Identifier>,
   DrizzleTableModel<Credential>,
   DrizzleTableModel<AuthorityCredential>,
-  DrizzleTableModel<Request>,
   NativeSubjectId,
   SQL
 >;
@@ -121,13 +89,11 @@ export type AnyPasswordPersistenceMapping = PasswordPersistenceMapping<
   Table,
   Table,
   Table,
-  Table,
   unknown
 >;
 
 export type AnyPasswordRegistrationMapping<Registration = unknown> = PasswordRegistrationMapping<
   Registration,
-  Table,
   Table,
   Table,
   Table,

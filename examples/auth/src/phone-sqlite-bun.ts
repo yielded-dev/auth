@@ -25,6 +25,7 @@ import { SqlClient } from "effect/sql";
 
 import { keyring, phone, sessionPolicy, sessions, shopAuth } from "./phone-application";
 import {
+  admissionPolicy,
   customer,
   credential,
   identifier,
@@ -48,8 +49,8 @@ export const phoneConsumer = Effect.gen(function* () {
   // Phone completion owns these proof writes, even without a separate proof service.
   const sql = yield* SqlClient.SqlClient;
 
-  yield* sql`drop table phone_proof_command`;
-  yield* sql`create table phone_proof_command(moduleId text not null,commandId text not null,kind text not null,decision text not null,retentionUntil text not null)`;
+  yield* sql`drop table phone_proof`;
+  yield* sql`create table phone_proof(moduleId text not null,purpose text not null,seriesKey text not null,proofId text not null,binding text not null,verifierKeyId text not null,verifierDigest text not null,issuedAt text not null,expiresAt text not null,failedAttempts integer not null,sendCount integer not null,unique(moduleId,proofId))`;
 
   const drifted = yield* makePhonePersistenceServices(mapping).pipe(Effect.result);
   let entered = false;
@@ -66,17 +67,17 @@ export const phoneConsumer = Effect.gen(function* () {
 
   assert(
     drifted._tag === "Failure" && Schema.is(PhoneOtp.PhoneConfigurationError)(drifted.failure),
-    "Phone storage accepted a missing proof-command key",
+    "Phone storage accepted a missing proof-series key",
   );
   assert(
     driftedOwner._tag === "Failure" &&
       Schema.is(PhoneOtp.PhoneConfigurationError)(driftedOwner.failure) &&
       !entered,
-    "Phone coordination accepted a missing proof-command key",
+    "Phone coordination accepted a missing proof-series key",
   );
-  yield* sql`create unique index phone_command_unique on phone_proof_command(moduleId,commandId)`;
+  yield* sql`create unique index phone_proof_series_unique on phone_proof(moduleId,purpose,seriesKey)`;
   yield* coordinate;
-  assert(entered, "Phone coordination did not recover after restoring the proof-command key");
+  assert(entered, "Phone coordination did not recover after restoring the proof-series key");
 
   const phoneStorage = phonePersistenceLayer(makePhonePersistenceServices(mapping));
   const proofServices = yield* makeProofPersistenceServices(proofs);
@@ -197,9 +198,13 @@ export const phoneConsumer = Effect.gen(function* () {
     })),
   ).pipe(Layer.provide(strategy));
 
-  const dependencies = Layer.mergeAll(ports, strategy, completion, actionEvidence).pipe(
-    Layer.provideMerge(base),
-  );
+  const dependencies = Layer.mergeAll(
+    ports,
+    strategy,
+    completion,
+    actionEvidence,
+    PhoneOtp.PhoneAdmission.layer(admissionPolicy),
+  ).pipe(Layer.provideMerge(base));
 
   return yield* Effect.gen(function* () {
     const auth = yield* shopAuth.make,
@@ -295,27 +300,19 @@ export const phoneConsumer = Effect.gen(function* () {
 
     assert(wrong._tag === "Failure", "wrong code accepted");
 
-    const resendInput = {
+    const reissueInput = {
       ...registered.input,
       requestId: crypto.randomUUID(),
       requestBinding: registered.binding,
-      reference: registered.challenge.reference,
     };
 
-    const resent = yield* as(Operations.guest, auth.resend(resendInput));
-    const delivered = sent.length;
-    const duplicateResend = yield* as(Operations.guest, auth.resend(resendInput));
-
-    assert(
-      duplicateResend.reference.proofId === resent.reference.proofId && sent.length === delivered,
-      "resend retry duplicated SMS",
-    );
+    const resent = yield* as(Operations.guest, auth.begin(reissueInput));
     const superseded = yield* complete(registered, Operations.guest).pipe(Effect.result);
 
     assert(superseded._tag === "Failure", "superseded code accepted");
     registered = {
       ...registered,
-      input: { ...registered.input, requestId: resendInput.requestId },
+      input: { ...registered.input, requestId: reissueInput.requestId },
       challenge: resent,
     };
     const registration = yield* complete(registered, Operations.guest);

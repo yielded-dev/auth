@@ -165,11 +165,10 @@ the email, phone, and OAuth flows currently require explicit action schemas.
 
 Map private method inputs through `requestFields` when declaring an action:
 
-| Method input                                                         | Credential slot      |
-| -------------------------------------------------------------------- | -------------------- |
-| Email, phone, or OAuth `requestBinding`; passkey `bindingCredential` | `request-binding`    |
-| Email continuation `credential`                                      | `proof-continuation` |
-| TOTP `pendingCredential`                                             | `pending-proof`      |
+| Method input                                                         | Credential slot   |
+| -------------------------------------------------------------------- | ----------------- |
+| Email, phone, or OAuth `requestBinding`; passkey `bindingCredential` | `request-binding` |
+| TOTP `pendingCredential`                                             | `pending-proof`   |
 
 The server injects those values from `Auth.AuthRequest`; both named local calls and
 remote payloads omit them. Set `credentials: true` for actions that issue or clear

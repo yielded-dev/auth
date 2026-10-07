@@ -1,16 +1,18 @@
+export { ProofLimiter } from "./proofs/ProofLimiter";
 export { HostIngressLimiter } from "./proofs/HostIngressLimiter";
 export { ProofDispatchScheduler } from "./proofs/ProofDispatchScheduler";
 export { ProofRequestContext } from "./proofs/ProofRequestContext";
 
 export {
+  ProofDigest,
+  ProofIssueDecision,
+  ProofIssueRecord,
+  ProofRecord,
+  ProofRedemptionInput,
+  ProofRedemptionDecision,
   IdentifierChangeProofBinding,
   IdentifierProofBinding,
-  ProofAttemptDecision,
   ProofBinding,
-  ProofCleanupResult,
-  ProofCompletionDecision,
-  ProofContinuation,
-  ProofContinuationId,
   ProofDeliveryId,
   ProofDeliveryOutcome,
   ProofDeliveryStatus,
@@ -20,19 +22,10 @@ export {
   ProofReference,
   ProofRequestId,
   ProofRequestReceipt,
-  ProofVersion,
   SubjectProofBinding,
 } from "./proofs/models";
 
-export {
-  type PrepareProofCommit,
-  type ProofCompletionInput,
-  type ProofDeliveryClaim,
-  type ProofDigest,
-  type ProofIssueDecision,
-  ProofPersistence,
-  type ProofRecord,
-} from "./proofs/ProofPersistence";
+export { type PrepareProofCommit, ProofPersistence } from "./proofs/ProofPersistence";
 
 export {
   type PreparedProofDispatch,
@@ -56,17 +49,12 @@ export {
   ProofError,
   ProofIngressDenied,
   ProofInvalid,
-  ProofRequestConflict,
   ProofUnavailable,
 } from "./proofs/errors";
 
-export { type ProofCompletionPlan } from "./proofs/completion";
+export { type ProofRedemptionPlan } from "./proofs/redemption";
 
-export {
-  type ProofDelivery,
-  type ProofDeliveryMessage,
-  ProofVendorPolicy,
-} from "./proofs/delivery";
+export { type ProofDelivery, type ProofDeliveryMessage } from "./proofs/delivery";
 
 export {
   type ProofKeyring,
