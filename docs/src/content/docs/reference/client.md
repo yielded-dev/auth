@@ -115,6 +115,11 @@ read or written inside them. An account change disposes that account's registry
 before publishing its replacement. Atoms outside this runtime keep their own
 lifetime; invalidation does not make them account-scoped.
 
+Session queries survive the account transition caused by their own verification,
+so establishing the account does not repeat the request. Unrelated account changes
+clear their results and restart verification. Explicit refreshes request the session
+again, including when an SSR seed was supplied.
+
 Named auth mutations survive their own sign-in or sign-out until the result
 settles. Unrelated account changes interrupt pending mutations and clear previous
 results. Custom workflows retire on account replacement, including when they

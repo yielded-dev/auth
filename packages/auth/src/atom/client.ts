@@ -73,7 +73,7 @@ export type AuthAtoms<
   readonly session: QueryAtom<Actions["getSession"], E>;
   readonly client: ClientDefinition<Id, Actions, R>;
   /** Account-scoped queries, effects, state and workflows. Named auth mutations
-   * use the host lifetime so their own successful account change can settle. */
+   * and getSession use the host lifetime so their own account change can settle. */
   readonly runtime: Atom.AtomRuntime<
     ClientService<Id, Actions> | AuthAtomLifetime | DecoderServices<Actions>,
     E | OperationHttpError
@@ -348,9 +348,29 @@ export const make = <
       if (action.mode === "mutation") return [[name, mutation(name)]];
 
       const query = Atom.family((input: RouteInput<Actions[string]["route"]>) => {
-        const session = runtime
-          .atom(call(name, input))
-          .pipe(factory.withReactivity(queryKeys), Atom.withServerValueInitial);
+        // Session verification establishes the account whose registry it retires.
+        // Keep that request with the host, while retiring unrelated session reads.
+        const source =
+          name === "getSession"
+            ? host.atom((get) =>
+                Effect.gen(function* () {
+                  const binding = yield* AuthAtomBinding;
+                  const instance = yield* client;
+                  const origin = {};
+
+                  get.addFinalizer(
+                    binding.subscribe((event) => {
+                      get.setSelf(AsyncResult.initial(true));
+                      if (event.origin !== origin) get.refreshSelf();
+                    }),
+                  );
+
+                  return yield* instance.auth[AuthClientTypeId].call(name, input, { origin });
+                }),
+              )
+            : runtime.atom(call(name, input));
+
+        const session = source.pipe(factory.withReactivity(queryKeys), Atom.withServerValueInitial);
 
         if (
           name !== "getSession" ||
@@ -359,19 +379,22 @@ export const make = <
         )
           return session;
 
-        return Atom.readable((get) => {
-          const result = get(session);
-          const context = get(host);
+        return Atom.readable(
+          (get) => {
+            const result = get(session);
+            const context = get(host);
 
-          if (!AsyncResult.isSuccess(context)) return result;
-          const binding = Context.get(context.value, AuthAtomBinding);
+            if (!AsyncResult.isSuccess(context)) return result;
+            const binding = Context.get(context.value, AuthAtomBinding);
 
-          if (!AsyncResult.isInitial(result)) binding.seedAvailable = false;
+            if (!AsyncResult.isInitial(result)) binding.seedAvailable = false;
 
-          return binding.seedAvailable
-            ? AsyncResult.success(binding.seed, { waiting: true })
-            : result;
-        }).pipe(
+            return binding.seedAvailable
+              ? AsyncResult.success(binding.seed, { waiting: true })
+              : result;
+          },
+          (refresh) => refresh(session),
+        ).pipe(
           Atom.withServerValue((get) => {
             const context = get(host);
 
