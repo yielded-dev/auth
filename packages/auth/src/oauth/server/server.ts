@@ -6,6 +6,7 @@ import {
   Duration,
   Effect,
   Layer,
+  Option,
   Redacted,
   Result,
   Schema,
@@ -25,8 +26,13 @@ import {
   MetadataConfiguration,
   type MetadataOptions,
 } from "./clients";
+import { ConsentRenderer, escapeHtml } from "./consent";
 import {
   Access,
+  Authentication,
+  OpenIdProfile,
+  OpenIdMetadata,
+  UserInfo,
   AssertionAlgorithms,
   Authorization,
   AuthorizationMetadata,
@@ -45,6 +51,7 @@ import {
   Unavailable,
   type Record,
 } from "./models";
+import { makeIdentityTokens, scopedProfile, type IdentitySigningKeys } from "./openid";
 
 const now = DateTime.now.pipe(Effect.map(DateTime.toEpochMillis));
 
@@ -60,14 +67,6 @@ const json = (value: Schema.Json, status = 200) =>
 const redirect = (location: string) =>
   new Response(null, { status: 303, headers: { ...noStore, location } });
 
-const escape = (value: string) =>
-  value
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;");
-
 const LoginPath = Text.check(Schema.isPattern(/^\/(?!\/)[^?#\\\s]*$/));
 
 const AuthorizationCallback = Schema.Struct({
@@ -79,10 +78,15 @@ const AuthorizationCallback = Schema.Struct({
 const AuthorizeQuery = Schema.Struct({
   ...AuthorizationCallback.fields,
   response_type: Schema.Literal("code"),
-  resource: Url,
+  resource: Schema.optionalKey(Url),
   scope: Text,
   code_challenge: Random,
   code_challenge_method: Schema.Literal("S256"),
+  nonce: Schema.optionalKey(Text),
+  prompt: Schema.optionalKey(Schema.Literals(["none", "login", "consent", "select_account"])),
+  max_age: Schema.optionalKey(
+    Schema.NumberFromString.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0)),
+  ),
   state: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(2048))),
 });
 
@@ -90,7 +94,7 @@ const TokenRequest = Schema.Union([
   Schema.Struct({
     grant_type: Schema.Literal("authorization_code"),
     client_id: Text,
-    resource: Url,
+    resource: Schema.optionalKey(Url),
     code: Text,
     redirect_uri: Schema.optionalKey(Url),
     code_verifier: Schema.String.check(Schema.isPattern(/^[A-Za-z0-9._~-]{43,128}$/)),
@@ -98,7 +102,7 @@ const TokenRequest = Schema.Union([
   Schema.Struct({
     grant_type: Schema.Literal("refresh_token"),
     client_id: Text,
-    resource: Url,
+    resource: Schema.optionalKey(Url),
     refresh_token: Text,
     scope: Schema.optionalKey(Text),
   }),
@@ -135,6 +139,15 @@ const parameters = Effect.fnUntraced(function* (params: URLSearchParams) {
     "client_secret",
     "client_assertion",
     "client_assertion_type",
+    "nonce",
+    "prompt",
+    "max_age",
+    "response_mode",
+    "request",
+    "request_uri",
+    "claims",
+    "id_token_hint",
+    "acr_values",
   ]);
 
   const seen = new Set<string>();
@@ -191,14 +204,42 @@ export interface Options {
   readonly keys: SessionSigningKeyring;
 }
 
-/** Authorization-code server for registered clients and CIMD clients. The
- * application supplies identity; Effect owns the MCP protocol and transport.
- * Token rotation uses a single durable CAS. A lost commit response never
- * permits replaying issuance: the client must start authorization again.
- */
-export const make = <const Id extends string>(
+export interface OpenIdOptions extends Omit<Options, "resource" | "clientMetadata"> {
+  readonly identityKeys: IdentitySigningKeys;
+}
+
+export interface OpenIdIdentity {
+  /** Verify the current browser session. Authentication time must be the actual sign-in time. */
+  readonly current: Effect.Effect<
+    Authentication | undefined,
+    Unavailable,
+    HttpServerRequest.HttpServerRequest
+  >;
+  /** Check the same session and account authority at code redemption and UserInfo reads. */
+  readonly active: (authentication: Authentication) => Effect.Effect<boolean, Unavailable>;
+  readonly profile: (
+    input: Pick<Access, "subjectId" | "clientId" | "scopes">,
+  ) => Effect.Effect<OpenIdProfile, Unavailable>;
+}
+
+interface ServerIdentity {
+  readonly current: Effect.Effect<
+    | {
+        readonly subjectId: SubjectId;
+        readonly authentication?: Authentication;
+      }
+    | undefined,
+    Unavailable,
+    HttpServerRequest.HttpServerRequest
+  >;
+  readonly openId?: Omit<OpenIdIdentity, "current">;
+}
+
+/** One grant state machine serves OAuth and opt-in OpenID authentication. */
+const makeServer = <const Id extends string, R>(
   id: Id,
   input: { readonly scopes: readonly [string, ...string[]] },
+  identitySource: Effect.Effect<ServerIdentity, never, R>,
 ) => {
   const scopes = [...input.scopes];
 
@@ -207,22 +248,10 @@ export const make = <const Id extends string>(
     token: `/oauth/${id}/token`,
     revoke: `/oauth/${id}/revoke`,
     metadata: "/.well-known/oauth-authorization-server",
+    openIdMetadata: "/.well-known/openid-configuration",
+    jwks: `/oauth/${id}/jwks`,
+    userInfo: `/oauth/${id}/userinfo`,
   } as const;
-
-  const Identity = Context.Service<
-    { readonly server: Id; readonly kind: "identity" },
-    {
-      /** Verify the application's session on every consent GET and POST. Returning
-       * undefined redirects GET to login; POST fails closed. Never infer identity
-       * from MCP client metadata, query parameters or provider profile fields.
-       */
-      readonly current: Effect.Effect<
-        SubjectId | undefined,
-        Unavailable,
-        HttpServerRequest.HttpServerRequest
-      >;
-    }
-  >()(`effect-auth/OAuthServer/${id}/Identity`);
 
   const Service = Context.Service<
     { readonly server: Id; readonly kind: "server" },
@@ -240,7 +269,7 @@ export const make = <const Id extends string>(
     }
   >()(`effect-auth/OAuthServer/${id}`);
 
-  const layer = (options: Options) =>
+  const layer = (options: Options & { readonly identityKeys?: IdentitySigningKeys }) =>
     Layer.effect(
       Service,
       Effect.gen(function* () {
@@ -287,7 +316,27 @@ export const make = <const Id extends string>(
         );
 
         const store = yield* Persistence;
-        const identity = yield* Identity;
+
+        const consentRenderer = Option.getOrElse(
+          yield* Effect.serviceOption(ConsentRenderer),
+          () => ConsentRenderer.default,
+        );
+
+        const identity = yield* identitySource;
+
+        if ((identity.openId === undefined) !== (options.identityKeys === undefined))
+          return yield* ConfigurationError.make({});
+
+        const openId =
+          options.identityKeys === undefined
+            ? undefined
+            : yield* makeIdentityTokens(options.identityKeys);
+
+        if (
+          openId !== undefined &&
+          (config.clientMetadata !== undefined || !config.scopes.includes("openid"))
+        )
+          return yield* ConfigurationError.make({});
         const crypto = yield* Crypto.Crypto;
         const namespace = `${config.origin}/oauth/${id}`;
         const resourceMetadataPath = `/.well-known/oauth-protected-resource${resourceUrl.pathname === "/" ? "" : resourceUrl.pathname}`;
@@ -356,7 +405,12 @@ export const make = <const Id extends string>(
 
           return (
             matchesRedirect(client, record.authorization.redirectUri) &&
-            record.authorization.scopes.every((scope) => config.scopes.includes(scope))
+            record.authorization.scopes.every((scope) => config.scopes.includes(scope)) &&
+            (identity.openId === undefined ||
+              (record.status !== "Code" && record.status !== "Active") ||
+              (record.authentication !== undefined &&
+                record.authentication.expiresAtMillis > (yield* now) &&
+                (yield* identity.openId.active(record.authentication))))
           );
         });
 
@@ -441,6 +495,92 @@ export const make = <const Id extends string>(
             if (url.origin !== config.origin) return json({ error: "invalid_request" }, 400);
             const request = HttpServerRequest.fromWeb(web);
 
+            if (openId !== undefined && web.method === "GET" && url.pathname === paths.jwks)
+              return json(openId.jwks);
+            if (
+              openId !== undefined &&
+              web.method === "GET" &&
+              url.pathname === paths.openIdMetadata
+            )
+              return json(
+                OpenIdMetadata.make({
+                  issuer: config.origin,
+                  authorization_endpoint: `${config.origin}${paths.authorize}`,
+                  token_endpoint: `${config.origin}${paths.token}`,
+                  userinfo_endpoint: `${config.origin}${paths.userInfo}`,
+                  jwks_uri: `${config.origin}${paths.jwks}`,
+                  revocation_endpoint: `${config.origin}${paths.revoke}`,
+                  response_types_supported: ["code"],
+                  response_modes_supported: ["query"],
+                  grant_types_supported: ["authorization_code"],
+                  subject_types_supported: ["public"],
+                  id_token_signing_alg_values_supported: ["RS256"],
+                  token_endpoint_auth_methods_supported: [
+                    "none",
+                    "client_secret_basic",
+                    "client_secret_post",
+                    "private_key_jwt",
+                  ],
+                  token_endpoint_auth_signing_alg_values_supported: AssertionAlgorithms,
+                  code_challenge_methods_supported: ["S256"],
+                  authorization_response_iss_parameter_supported: true,
+                  scopes_supported: config.scopes,
+                  claims_supported: [
+                    "iss",
+                    "sub",
+                    "aud",
+                    "exp",
+                    "iat",
+                    "auth_time",
+                    "sid",
+                    "nonce",
+                    ...Object.keys(OpenIdProfile.fields),
+                  ],
+                  claims_parameter_supported: false,
+                  request_parameter_supported: false,
+                  request_uri_parameter_supported: false,
+                }),
+              );
+            if (
+              openId !== undefined &&
+              identity.openId !== undefined &&
+              (web.method === "GET" || web.method === "POST") &&
+              url.pathname === paths.userInfo
+            ) {
+              const authorization = web.headers.get("authorization");
+
+              if (authorization === null || !/^Bearer /i.test(authorization))
+                return new Response(null, {
+                  status: 401,
+                  headers: { ...noStore, "www-authenticate": 'Bearer realm="userinfo"' },
+                });
+
+              const access = yield* verify(Redacted.make(authorization.slice(7))).pipe(
+                Effect.result,
+              );
+
+              if (Result.isFailure(access)) {
+                if (access.failure._tag === "OAuthServerUnavailable") return yield* access.failure;
+
+                return new Response(null, {
+                  status: 401,
+                  headers: { ...noStore, "www-authenticate": 'Bearer error="invalid_token"' },
+                });
+              }
+
+              const profile = yield* identity.openId.profile(access.success).pipe(
+                Effect.flatMap(Schema.decodeEffect(OpenIdProfile)),
+                Effect.mapError(() => Unavailable.make({})),
+              );
+
+              return json(
+                UserInfo.make({
+                  sub: access.success.subjectId,
+                  ...scopedProfile(profile, access.success.scopes),
+                }),
+              );
+            }
+
             if (web.method === "GET" && url.pathname === paths.metadata)
               return json(
                 AuthorizationMetadata.make({
@@ -449,7 +589,10 @@ export const make = <const Id extends string>(
                   token_endpoint: `${config.origin}${paths.token}`,
                   revocation_endpoint: `${config.origin}${paths.revoke}`,
                   response_types_supported: ["code"],
-                  grant_types_supported: ["authorization_code", "refresh_token"],
+                  grant_types_supported:
+                    openId === undefined
+                      ? ["authorization_code", "refresh_token"]
+                      : ["authorization_code"],
                   token_endpoint_auth_methods_supported: [
                     "none",
                     "client_secret_basic",
@@ -508,7 +651,26 @@ export const make = <const Id extends string>(
                     Effect.mapError(() => reject()),
                   );
 
-                  if (query.resource !== config.resource) return yield* reject("invalid_target");
+                  if (
+                    (query.resource ?? (openId === undefined ? undefined : config.resource)) !==
+                    config.resource
+                  )
+                    return yield* reject("invalid_target");
+                  if (
+                    openId !== undefined &&
+                    ((params.response_mode !== undefined && params.response_mode !== "query") ||
+                      ["request", "request_uri", "claims", "id_token_hint", "acr_values"].some(
+                        (key) => params[key] !== undefined,
+                      ))
+                  )
+                    return yield* reject();
+                  if (
+                    openId === undefined &&
+                    (query.nonce !== undefined ||
+                      query.prompt !== undefined ||
+                      query.max_age !== undefined)
+                  )
+                    return yield* reject();
                   if (
                     client.grantTypes !== undefined &&
                     !client.grantTypes.includes("authorization_code")
@@ -516,7 +678,10 @@ export const make = <const Id extends string>(
                     return yield* reject("unauthorized_client");
                   const requested = yield* scopeList(query.scope);
 
-                  if (!requested.every((scope) => config.scopes.includes(scope)))
+                  if (
+                    (openId !== undefined && !requested.includes("openid")) ||
+                    !requested.every((scope) => config.scopes.includes(scope))
+                  )
                     return yield* reject("invalid_scope");
 
                   return { query, requested };
@@ -528,7 +693,7 @@ export const make = <const Id extends string>(
                   );
 
                   if (subject === undefined) return json({ error: validation.failure.error }, 400);
-                  yield* Schema.decodeEffect(SubjectId)(subject).pipe(
+                  yield* Schema.decodeEffect(SubjectId)(subject.subjectId).pipe(
                     Effect.mapError(() => Unavailable.make({})),
                   );
 
@@ -546,7 +711,7 @@ export const make = <const Id extends string>(
                     return response;
 
                   return new Response(
-                    `<!doctype html><html lang="en"><meta charset="utf-8"><title>Authorization failed</title><main><h1>Authorization failed</h1><p>${escape(validation.failure.error)}</p><a href="${escape(response.headers.get("location") ?? "")}">Return to ${escape(new URL(redirectUri).host)}</a></main></html>`,
+                    `<!doctype html><html lang="en"><meta charset="utf-8"><title>Authorization failed</title><main><h1>Authorization failed</h1><p>${escapeHtml(validation.failure.error)}</p><a href="${escapeHtml(response.headers.get("location") ?? "")}">Return to ${escapeHtml(new URL(redirectUri).host)}</a></main></html>`,
                     {
                       status: 400,
                       headers: {
@@ -568,6 +733,10 @@ export const make = <const Id extends string>(
                   redirectUri,
                   scopes: requested,
                   challenge: query.code_challenge,
+                  ...(query.nonce === undefined ? {} : { nonce: query.nonce }),
+                  ...(query.prompt === undefined ? {} : { prompt: query.prompt }),
+                  ...(query.max_age === undefined ? {} : { maxAgeSeconds: query.max_age }),
+                  ...(openId === undefined ? {} : { requestedAtMillis: yield* now }),
                   ...(query.state === undefined ? {} : { state: query.state }),
                 });
 
@@ -600,23 +769,65 @@ export const make = <const Id extends string>(
               )
                 return yield* reject();
 
-              const subjectId = yield* identity.current.pipe(
+              const current = yield* identity.current.pipe(
                 Effect.provideService(HttpServerRequest.HttpServerRequest, request),
               );
 
-              if (subjectId === undefined)
+              const authorization = record.authorization;
+              const authentication = current?.authentication;
+
+              const stale =
+                openId !== undefined &&
+                (authentication === undefined ||
+                  (authorization.prompt === "login" &&
+                    authentication.authenticatedAtMillis <
+                      (authorization.requestedAtMillis ?? Infinity)) ||
+                  (authorization.maxAgeSeconds !== undefined &&
+                    authentication.authenticatedAtMillis <
+                      (authorization.requestedAtMillis ?? Infinity) -
+                        authorization.maxAgeSeconds * 1000));
+
+              if (current === undefined || stale) {
+                if (authorization.prompt === "none")
+                  return callback(authorization, { error: "login_required" });
+
                 return web.method === "GET"
                   ? redirect(config.loginPath)
                   : yield* reject("access_denied");
+              }
+              const subjectId = current.subjectId;
+
+              if (openId !== undefined) {
+                if (authentication === undefined) return yield* Unavailable.make({});
+
+                const verified = yield* Schema.decodeEffect(Authentication)(authentication).pipe(
+                  Effect.mapError(() => Unavailable.make({})),
+                );
+
+                const time = yield* now;
+
+                if (
+                  verified.subjectId !== subjectId ||
+                  verified.authenticatedAtMillis > time ||
+                  verified.expiresAtMillis <= time
+                )
+                  return yield* Unavailable.make({});
+              }
+              if (authorization.prompt === "none")
+                return callback(authorization, { error: "consent_required" });
               yield* Schema.decodeEffect(SubjectId)(subjectId).pipe(
                 Effect.mapError(() => Unavailable.make({})),
               );
               if (web.method === "GET") {
-                if (record.subjectId !== subjectId) {
+                if (
+                  record.subjectId !== subjectId ||
+                  record.authentication?.sessionId !== authentication?.sessionId
+                ) {
                   const next: Record = {
                     ...record,
                     status: "Consent",
                     subjectId,
+                    ...(authentication === undefined ? {} : { authentication }),
                     version: yield* random,
                   };
 
@@ -626,7 +837,18 @@ export const make = <const Id extends string>(
                 const client = yield* clientFor(record.authorization.clientId);
 
                 return new Response(
-                  `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Authorize access</title><main><h1>Allow ${escape(client.name)}?</h1>${config.clients.some((c) => c.clientId === client.clientId) ? "" : `<p>Client: ${escape(new URL(client.clientId).hostname)}</p>`}<p>Access to ${escape(config.resource)} as ${escape(subjectId)}.</p><ul>${record.authorization.scopes.map((scope) => `<li>${escape(scope)}</li>`).join("")}</ul><p>Return to ${escape(new URL(record.authorization.redirectUri).host)}.</p>${new URL(record.authorization.redirectUri).protocol === "http:" ? "<p>A local application will receive this authorization. Only continue if you started this connection.</p>" : ""}<form method="post" action="${paths.authorize}"><input type="hidden" name="csrf" value="${record.version}"><button name="decision" value="approve">Allow</button><button name="decision" value="deny">Deny</button></form></main></html>`,
+                  yield* consentRenderer.render({
+                    clientName: client.name,
+                    clientId: client.clientId,
+                    registered: config.clients.some((value) => value.clientId === client.clientId),
+                    subjectId,
+                    resource: config.resource,
+                    scopes: record.authorization.scopes,
+                    redirectUri: record.authorization.redirectUri,
+                    action: paths.authorize,
+                    loginPath: config.loginPath,
+                    csrf: record.version,
+                  }),
                   {
                     headers: {
                       ...noStore,
@@ -635,7 +857,7 @@ export const make = <const Id extends string>(
                       // The clean consent URL carries no authorization parameters.
                       "referrer-policy": "same-origin",
                       // Browsers also apply form-action to the post-consent redirect.
-                      "content-security-policy": `default-src 'none'; form-action 'self' ${new URL(record.authorization.redirectUri).origin}; frame-ancestors 'none'; base-uri 'none'`,
+                      "content-security-policy": `default-src 'none'; style-src 'self'; img-src 'self'; font-src 'self'; form-action 'self' ${new URL(record.authorization.redirectUri).origin}; frame-ancestors 'none'; base-uri 'none'`,
                       "x-frame-options": "DENY",
                       "x-content-type-options": "nosniff",
                     },
@@ -645,7 +867,8 @@ export const make = <const Id extends string>(
               if (
                 web.headers.get("origin") !== config.origin ||
                 record.status !== "Consent" ||
-                record.subjectId !== subjectId
+                record.subjectId !== subjectId ||
+                record.authentication?.sessionId !== authentication?.sessionId
               )
                 return yield* reject("access_denied");
 
@@ -684,7 +907,10 @@ export const make = <const Id extends string>(
                 `${config.origin}${paths.token}`,
               );
 
-              if (body.grant_type !== "authorization_code" && body.grant_type !== "refresh_token")
+              if (
+                (openId !== undefined && body.grant_type !== "authorization_code") ||
+                (body.grant_type !== "authorization_code" && body.grant_type !== "refresh_token")
+              )
                 return yield* reject("unsupported_grant_type");
 
               const query = yield* Schema.decodeUnknownEffect(TokenRequest)({
@@ -694,7 +920,11 @@ export const make = <const Id extends string>(
 
               if (client.grantTypes !== undefined && !client.grantTypes.includes(query.grant_type))
                 return yield* reject("unauthorized_client");
-              if (query.resource !== config.resource) return yield* reject("invalid_target");
+              if (
+                (query.resource ?? (openId === undefined ? undefined : config.resource)) !==
+                config.resource
+              )
+                return yield* reject("invalid_target");
 
               const token = yield* decode(
                 Redacted.make(
@@ -721,7 +951,7 @@ export const make = <const Id extends string>(
                   );
 
                 if (
-                  (query.redirect_uri !== undefined &&
+                  ((openId !== undefined || query.redirect_uri !== undefined) &&
                     query.redirect_uri !== record.authorization.redirectUri) ||
                   digest !== record.authorization.challenge
                 )
@@ -752,18 +982,49 @@ export const make = <const Id extends string>(
                 version: yield* random,
                 authorization: { ...record.authorization, scopes: requested },
                 expiresAtMillis:
-                  expected === "code" ? time + 30 * 86400_000 : record.expiresAtMillis,
+                  openId !== undefined
+                    ? time + 600_000
+                    : expected === "code"
+                      ? time + 30 * 86400_000
+                      : record.expiresAtMillis,
               };
 
-              const accessExpiry = Math.min(time + 600_000, next.expiresAtMillis);
+              const accessExpiry = Math.min(
+                time + 600_000,
+                next.expiresAtMillis,
+                record.authentication?.expiresAtMillis ?? Infinity,
+              );
+
               const access = yield* encode("access", token.grantId, next.version, accessExpiry);
 
-              const refresh = yield* encode(
-                "refresh",
-                token.grantId,
-                next.version,
-                next.expiresAtMillis,
-              );
+              const refresh =
+                openId === undefined
+                  ? yield* encode("refresh", token.grantId, next.version, next.expiresAtMillis)
+                  : undefined;
+
+              let idToken: Redacted.Redacted<string> | undefined;
+
+              if (openId !== undefined && identity.openId !== undefined) {
+                if (record.authentication === undefined) return yield* reject("invalid_grant");
+
+                const profile = yield* identity.openId.profile({
+                  subjectId: record.subjectId,
+                  clientId: record.authorization.clientId,
+                  scopes: requested,
+                });
+
+                idToken = yield* openId.issue({
+                  issuer: config.origin,
+                  clientId: record.authorization.clientId,
+                  authentication: record.authentication,
+                  ...(record.authorization.nonce === undefined
+                    ? {}
+                    : { nonce: record.authorization.nonce }),
+                  profile,
+                  scopes: requested,
+                  nowMillis: time,
+                });
+              }
 
               // Sign locally before the only commit; deliver credentials only after confirmation.
               yield* commit(token.grantId, record, next).pipe(
@@ -777,7 +1038,8 @@ export const make = <const Id extends string>(
                   access_token: Redacted.value(access),
                   token_type: "Bearer",
                   expires_in: Math.floor((accessExpiry - time) / 1000),
-                  refresh_token: Redacted.value(refresh),
+                  ...(refresh === undefined ? {} : { refresh_token: Redacted.value(refresh) }),
+                  ...(idToken === undefined ? {} : { id_token: Redacted.value(idToken) }),
                   scope: requested.join(" "),
                 }),
               );
@@ -872,6 +1134,9 @@ export const make = <const Id extends string>(
         route(paths.token),
         route(paths.revoke),
         route(paths.metadata),
+        route(paths.openIdMetadata),
+        route(paths.jwks),
+        route(paths.userInfo),
         route(new URL(server.resourceMetadata).pathname as `/${string}`),
       );
     }),
@@ -929,5 +1194,65 @@ export const make = <const Id extends string>(
       }),
     );
 
-  return { Service, Identity, layer, routes, middleware, paths };
+  return { Service, layer, routes, middleware, paths };
+};
+
+/** Authorization-code server for MCP/resource authorization. */
+export const make = <const Id extends string>(
+  id: Id,
+  input: { readonly scopes: readonly [string, ...string[]] },
+) => {
+  const Identity = Context.Service<
+    { readonly server: Id; readonly kind: "identity" },
+    {
+      readonly current: Effect.Effect<
+        SubjectId | undefined,
+        Unavailable,
+        HttpServerRequest.HttpServerRequest
+      >;
+    }
+  >()(`effect-auth/OAuthServer/${id}/Identity`);
+
+  const server = makeServer(
+    id,
+    input,
+    Effect.map(Identity, (identity): ServerIdentity => ({
+      current: Effect.map(identity.current, (subjectId) =>
+        subjectId === undefined ? undefined : { subjectId },
+      ),
+    })),
+  );
+
+  return { ...server, Identity, layer: (options: Options) => server.layer(options) };
+};
+
+/** Registered-client OpenID Connect code flow with PKCE, RS256 and explicit consent.
+ * Applications own authentication, current session validity and profile disclosure.
+ * Refresh tokens, dynamic registration and front/back-channel logout are not enabled.
+ */
+export const makeOpenId = <const Id extends string>(id: Id) => {
+  const Identity = Context.Service<
+    { readonly server: Id; readonly kind: "openid-identity" },
+    OpenIdIdentity
+  >()(`effect-auth/OAuthServer/${id}/OpenIdIdentity`);
+
+  const server = makeServer(
+    id,
+    { scopes: ["openid", "profile", "email"] },
+    Effect.map(Identity, (identity): ServerIdentity => ({
+      current: Effect.map(identity.current, (authentication) =>
+        authentication === undefined
+          ? undefined
+          : { subjectId: authentication.subjectId, authentication },
+      ),
+      openId: identity,
+    })),
+  );
+
+  return {
+    ...server,
+    Identity,
+    layer: (options: OpenIdOptions) =>
+      server.layer({ ...options, resource: `${options.origin}${server.paths.userInfo}` }),
+  };
 };

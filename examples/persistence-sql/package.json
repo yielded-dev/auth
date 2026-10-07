@@ -12,6 +12,7 @@
     "@effect/platform-bun": "catalog:",
     "@effect/sql-pglite": "catalog:",
     "@effect/sql-sqlite-bun": "catalog:",
+    "@effect/sql-sqlite-do": "catalog:",
     "@fontsource-variable/ibm-plex-sans": "catalog:",
     "@fontsource/ibm-plex-mono": "catalog:",
     "@simplewebauthn/browser": "catalog:",
@@ -20,14 +21,17 @@
     "@yielded/auth-persistence": "workspace:*",
     "@yielded/auth-simplewebauthn": "workspace:*",
     "@yielded/crypto": "workspace:*",
+    "@yielded/jose": "workspace:*",
     "effect": "catalog:",
     "react": "catalog:",
     "react-dom": "catalog:",
     "tldts": "catalog:"
   },
   "devDependencies": {
+    "@cloudflare/workers-types": "catalog:",
     "@types/react": "catalog:",
     "@types/react-dom": "catalog:",
+    "alchemy": "catalog:",
     "typescript": "catalog:",
     "vite-plus": "catalog:"
   }

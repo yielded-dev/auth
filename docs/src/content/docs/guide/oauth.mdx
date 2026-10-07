@@ -163,11 +163,50 @@ operations in that contract. See the [client guide](./client.mdx) for custom que
 invalidation and [account reference](../reference/oauth#linked-login-inventory) for
 pagination and metadata policy.
 
+## Shared sign-in across applications
+
+Use `OAuthServer.makeOpenId("yielded")` when one service owns a shared identity
+and several applications consume it. Each application registers an exact callback
+and authenticates through an OpenID client. Auth owns provider credentials and
+the shared account; each application owns its permissions, data and local session.
+
+<FlowMap
+  title="Shared identity, application-owned sessions"
+  description="GitHub authenticates the Yielded account at auth.yielded.dev. After explicit consent, Agent verifies an OpenID code exchange and creates its own host-only session. Future applications register separate clients and callbacks."
+  columns={3}
+  nodes={[
+    { id: "github", at: [1, 1], owner: "external", title: "GitHub" },
+    { id: "auth", at: [1, 2], owner: "app", title: "Yielded Auth", code: "auth.yielded.dev" },
+    { id: "oidc", at: [2, 2], owner: "library", title: "OpenID + consent", code: "OAuthServer.makeOpenId(…)" },
+    { id: "agent", at: [2, 3], owner: "app", title: "Yielded Agent", note: "Its own account and session" },
+  ]}
+  edges={[
+    { from: "github", to: "auth", label: "Provider sign-in" },
+    { from: "auth", to: "oidc", label: "Verified session" },
+    { from: "oidc", to: "agent", label: "Code + PKCE" },
+  ]}
+/>
+
+Provide `Identity.current`, `Identity.active`, and `Identity.profile` to verify
+the session, recheck its current authority, and choose the claims an app may see.
+Supply durable grant storage, separate consent and RSA signing keys, and static
+client registrations. Keep the pending request in the server's private cookie;
+your sign-in workflow returns to `server.paths.authorize` after authentication.
+
+The [runnable browser example](https://github.com/yielded-dev/auth/tree/main/examples/persistence-sql#shared-yielded-sign-in)
+shows GitHub → Yielded Auth → Agent with Effect Atom workflows and a SQLite
+Durable Object deployment. It explicitly confirms the account and destination.
+Signing out of Auth stops future identity access; an existing Agent session ends
+when Agent signs it out. See the [OpenID reference](../reference/oauth#shared-openid-sign-in)
+for the supported profile and key lifecycle.
+
 ## Local and preview environments
 
 `OAuthProxy` lets localhost and preview deployments share one registered OAuth
 callback. A trusted callback server holds the provider credentials and verifies
 identity. Each app keeps its own accounts, cookies, and sessions.
+It shares the provider callback, not a central account or sign-in session; use
+the OpenID composition above for that relationship.
 
 Register the callback server with your provider, then register each app's exact
 completion URL and a separate secret on that server. In each app, use

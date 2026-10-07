@@ -12,6 +12,10 @@ const SettingsClient = Client.make(SettingsApi, { baseUrl: location.origin });
 export const auth = AuthAtom.make(SettingsClient, { runtime: factory });
 export const notice = Atom.make<string | null>(null);
 export const cursor = Atom.make<string | undefined>(undefined);
+export const sharedSignIn = Atom.make(location.pathname === "/sign-in");
+const authorizationPath = "/oauth/yielded/authorize";
+
+export const continueSignIn = Atom.fnSync(() => location.assign(authorizationPath));
 
 export const linkedAccounts = Atom.make((get) => {
   const page = get(cursor);
@@ -31,7 +35,12 @@ const attempt = Atom.kvs({
 export const begin = runtime.fn<typeof Attempt.Type.kind>()(
   Effect.fn("OAuthSettings.begin")(function* (kind, get) {
     get.set(notice, null);
-    const input = { provider: "github", callbackId: "github", returnTarget: "/oauth-settings" };
+
+    const input = {
+      provider: "github",
+      callbackId: "github",
+      returnTarget: kind === "sign-in" && get(sharedSignIn) ? authorizationPath : "/oauth-settings",
+    };
 
     const started =
       kind === "link"
@@ -109,6 +118,13 @@ export const complete = runtime.fn<void>()(
     } else {
       const result = yield* get.setResult(auth.completeSignIn, input);
 
+      if ("returnTarget" in result && result.returnTarget === authorizationPath) {
+        get.set(sharedSignIn, true);
+        if ("completion" in result && result.completion._tag === "Authenticated")
+          return yield* Effect.sync(() => location.replace(authorizationPath));
+        yield* Effect.sync(() => history.replaceState(null, "", "/sign-in"));
+      }
+
       get.set(
         notice,
         "_tag" in result && result._tag === "Cancelled"
@@ -136,6 +152,9 @@ export const signOut = runtime.fn<void>()(
     yield* get.setResult(auth.signOut, undefined);
     get.set(attempt, null);
     get.set(cursor, undefined);
-    get.set(notice, "Signed out.");
+    get.set(
+      notice,
+      "Signed out of Yielded Auth. Existing Agent sessions are separate; sign out there to end them.",
+    );
   }),
 );

@@ -6,9 +6,27 @@ const material = Schema.RedactedFromValue(
   Schema.String.check(Schema.isPattern(/^[A-Za-z0-9_-]{43}$/)),
 );
 
-const Keys = Schema.fromJsonString(
+export const SettingsKeyMaterial = Schema.fromJsonString(
   Schema.Struct({ session: material, transaction: material, binding: material }),
 );
+
+export const settingsKeysLayer = (keys: typeof SettingsKeyMaterial.Type) => {
+  const keyring = (key: Redacted.Redacted<string>) => ({
+    activeKeyId: "v1",
+    keys: [{ id: "v1", material: key }],
+  });
+
+  return Layer.mergeAll(
+    Layer.succeed(Sessions.SessionSigningKeys, keyring(keys.session)),
+    OAuth.OAuthTransactionProtector.layer(keyring(keys.transaction)),
+    OAuth.OAuthLinkTransactionProtector.layer(keyring(keys.transaction)),
+    Auth.RequestBindingConfig.layer({
+      generation: 1,
+      lifetimeMillis: 600_000,
+      keyring: keyring(keys.binding),
+    }),
+  );
+};
 
 export const SettingsKeysLive = Layer.unwrap(
   Effect.gen(function* () {
@@ -31,7 +49,7 @@ export const SettingsKeysLive = Layer.unwrap(
       const keys = { session: yield* random, transaction: yield* random, binding: yield* random };
 
       yield* fs
-        .writeFileString(filename, yield* Schema.encodeEffect(Keys)(keys), {
+        .writeFileString(filename, yield* Schema.encodeEffect(SettingsKeyMaterial)(keys), {
           flag: "wx",
           mode: 0o600,
         })
@@ -41,21 +59,10 @@ export const SettingsKeysLive = Layer.unwrap(
           ),
         );
     }
-    const keys = yield* Schema.decodeEffect(Keys)(yield* fs.readFileString(filename));
 
-    const keyring = (key: Redacted.Redacted<string>) => ({
-      activeKeyId: "v1",
-      keys: [{ id: "v1", material: key }],
-    });
-
-    return Layer.mergeAll(
-      Layer.succeed(Sessions.SessionSigningKeys, keyring(keys.session)),
-      OAuth.OAuthTransactionProtector.layer(keyring(keys.transaction)),
-      OAuth.OAuthLinkTransactionProtector.layer(keyring(keys.transaction)),
-      Auth.RequestBindingConfig.layer({
-        generation: 1,
-        lifetimeMillis: 600_000,
-        keyring: keyring(keys.binding),
+    return settingsKeysLayer(
+      yield* Schema.decodeEffect(SettingsKeyMaterial)(yield* fs.readFileString(filename), {
+        reportInput: false,
       }),
     );
   }),

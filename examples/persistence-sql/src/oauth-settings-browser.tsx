@@ -12,10 +12,12 @@ import {
   auth,
   begin,
   complete,
+  continueSignIn,
   cursor,
   linkedAccounts,
   notice,
   signOut,
+  sharedSignIn,
   unlink,
 } from "./oauth-settings-client";
 import { CallbackExpired } from "./oauth-settings-contract";
@@ -50,6 +52,8 @@ function Settings() {
   const completion = useAtomValue(complete);
   const [outResult, out] = useAtom(signOut);
   const message = useAtomValue(notice);
+  const signingIn = useAtomValue(sharedSignIn);
+  const [, proceed] = useAtom(continueSignIn);
   const signedIn = session._tag === "Success" ? session.value : null;
   const busy = beginResult.waiting || completion.waiting || outResult.waiting;
 
@@ -57,14 +61,26 @@ function Settings() {
     <main>
       <header>
         <Brand href="/oauth-settings" />
-        <span className="local-indicator">ACCOUNT SETTINGS</span>
+        <span className="local-indicator">
+          {signingIn ? "YIELDED ACCOUNT" : "ACCOUNT SETTINGS"}
+        </span>
       </header>
       <section className="intro">
-        <p className="eyebrow">CONNECTED ACCOUNTS</p>
-        <h1>
-          Your ways <span>to sign in.</span>
-        </h1>
-        <p>Link an identity you control. Keep a way back into your account.</p>
+        <p className="eyebrow">{signingIn ? "SHARED SIGN-IN" : "CONNECTED ACCOUNTS"}</p>
+        {signingIn ? (
+          <h1>
+            Your Yielded <span>account.</span>
+          </h1>
+        ) : (
+          <h1>
+            Your ways <span>to sign in.</span>
+          </h1>
+        )}
+        <p>
+          {signingIn
+            ? "Sign in, then choose whether to continue to the requesting app."
+            : "Link an identity you control. Keep a way back into your account."}
+        </p>
       </section>
       {message && (
         <p className="notice success" role="status">
@@ -82,6 +98,11 @@ function Settings() {
           ) : signedIn ? (
             <>
               <p className="description">Signed in as {signedIn.claims.displayName}.</p>
+              {signingIn && (
+                <button className="primary" disabled={busy} onClick={() => proceed()}>
+                  Continue with this account →
+                </button>
+              )}
               <p className="hint">
                 Account changes require sign-in within the last five minutes. Linking keeps this
                 session; removing a method signs out every session.

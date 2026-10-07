@@ -12,8 +12,9 @@ Start with the [OAuth guide](../guide/oauth) for the flow and choice of API.
 origin-dependent `cookieName`. It implements authorization code with S256 PKCE,
 Client ID Metadata Documents (CIMD), and pre-registered public or confidential
 clients for MCP's 2026-07-28 authorization profile. Effect owns the MCP transport.
-OIDC ID tokens, dynamic registration, client-credentials grants,
-and optional MCP authorization extensions are not supported.
+For shared browser sign-in, use the separate [OpenID profile](#shared-openid-sign-in).
+Dynamic registration, client-credentials grants, and optional MCP authorization
+extensions are not supported.
 
 Provide these to `oauth.layer`:
 
@@ -193,6 +194,65 @@ static registration, or `MCP_CLIENT_METADATA_ORIGIN` to accept CIMD clients
 from that trusted origin. The callback origin also sets the example's CORS policy;
 apply the network restrictions above when enabling metadata discovery. The example listens on
 port 3000 and owns `strava-mcp.sqlite`; use HTTPS outside loopback development.
+
+## Shared OpenID sign-in
+
+`OAuthServer.makeOpenId(id)` serves authorization code with S256 PKCE, RS256 ID
+tokens, discovery, JWKS and UserInfo for statically registered applications. The
+same grant storage and replay protection used by `make` owns each authorization.
+Clients verify the issuer, audience, signature, nonce and PKCE before creating
+their own application session. No cross-domain cookie is needed.
+
+Supply the normal server options except `resource` and `clientMetadata`, plus:
+
+| Input                                                      | Ownership                                                                                                                            |
+| ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `identityKeys`                                             | `{ activeKeyId, privateKey: Redacted<unknown>, publicKeys: Jwk.PublicJwk[] }`; matching RSA signing key and public verification keys |
+| `server.Identity.current`                                  | Verify the browser session and return `Authentication` or `undefined`                                                                |
+| `server.Identity.active(authentication)`                   | Recheck session revocation and current subject security revision                                                                     |
+| `server.Identity.profile({ subjectId, clientId, scopes })` | Authorize disclosure of `name`, `preferred_username`, `email`, and `email_verified`                                                  |
+
+`Authentication` contains `subjectId`, `sessionId`, `securityRevision`,
+`authenticatedAtMillis`, and `expiresAtMillis`. Preserve the actual authentication
+time; viewing consent is not a new authentication. Expected dependency failures
+use `OAuthServer.Unavailable`. Applications own account provisioning and must not
+join accounts merely because two providers report the same email.
+
+| Route (ID `yielded`)                    | Behavior                                         |
+| --------------------------------------- | ------------------------------------------------ |
+| `GET /.well-known/openid-configuration` | Issuer, endpoints and supported profile          |
+| `GET /oauth/yielded/jwks`               | Public signing keys only                         |
+| `GET/POST /oauth/yielded/authorize`     | Bound consent and explicit approve/deny          |
+| `POST /oauth/yielded/token`             | Single-use code redemption; ID and access tokens |
+| `GET/POST /oauth/yielded/userinfo`      | Bearer header authentication and scoped profile  |
+| `POST /oauth/yielded/revoke`            | Revoke the token's grant                         |
+
+Request `openid`, optionally `profile` and `email`; `resource` is unnecessary.
+The callback must match the registration and code redemption must include it.
+`nonce` is returned unchanged in the signed ID token. The supported single
+`prompt` values are `login`, `select_account`, `consent`, and `none`; `max_age`
+requires sufficiently recent authentication. Interactive requests always show
+consent. `none` returns `login_required` or `consent_required` because remembered
+consent is not implemented. Unsupported request objects, claims parameters and
+response modes are rejected.
+
+ID tokens last at most five minutes and access tokens at most ten, both bounded
+by the originating session's expiry. Code redemption and UserInfo check current
+session authority. Revocation cannot retract an ID token already accepted by an
+app: that app owns its local session and logout. Refresh tokens, dynamic clients,
+and front/back-channel or RP-initiated logout are not implemented. This is a
+focused profile, not a claim of OpenID certification. Retain old public keys until
+their issued ID tokens expire; protect private keys separately from consent keys.
+
+Both server profiles accept an optional `OAuthServer.ConsentRenderer` Layer.
+Its default renders plain HTML. Custom renderers must escape displayed values
+and preserve the supplied POST action, `csrf`, and `decision=approve|deny`.
+The response permits same-origin styles, images and fonts, but no scripts or
+frames. Consent binds both the account and, for OpenID, its session; switching
+either invalidates the previous form.
+
+The [runnable Yielded example](https://github.com/yielded-dev/auth/tree/main/examples/persistence-sql#shared-yielded-sign-in)
+composes GitHub sign-in, branded consent, current-session checks and durable SQL.
 
 ## Retained access
 
