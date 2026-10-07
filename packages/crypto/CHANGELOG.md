@@ -1,5 +1,13 @@
 # @yielded/crypto
 
+## 0.1.0-beta.29
+
+### Minor Changes
+
+- [#160](https://github.com/yielded-dev/auth/pull/160) [`536a76b`](https://github.com/yielded-dev/auth/commit/536a76b6cd7d653b456adfcf0f81d275cda77660) Thanks [@danieljvdm](https://github.com/danieljvdm)! - Reduce portable Argon2id and HMAC scheduling overhead and XChaCha buffer allocation. Reuse AES-GCM and signature keys through scoped imports.
+
+  BEHAVIOR CHANGE: Custom `Aead` services must implement `importKey`; custom `Signature` services must implement `importPrivateKey` and `importPublicKey` with scoped key ownership.
+
 ## 0.1.0-beta.28
 
 No changes in this release.
