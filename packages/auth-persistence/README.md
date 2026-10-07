@@ -27,6 +27,12 @@ on SQLite/D1 or PostgreSQL. Its operations require standalone commits.
 Applications own subject provisioning, policy, claims, delivery, and their database
 connection and migration runner.
 
+The explicit `/Testing` subpath supplies isolated, non-durable SQLite storage for
+seeded password sign-in and stateful sessions in Node.js tests. It requires the
+optional `@effect/sql-sqlite-node` peer and stays outside production import paths.
+See [in-memory testing](../../docs/src/content/docs/guide/storage.mdx#in-memory-tests)
+for coverage, clock composition, and the runnable public-import consumer test.
+
 The composed Layer covers password sign-in and management, email address verification
 and changes, phone sign-in, and passkey sign-in and management with stateful sessions
 on PostgreSQL and SQLite. The `/Adapter` module has two integration levels:

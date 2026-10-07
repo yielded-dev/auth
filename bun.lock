@@ -259,8 +259,12 @@
         "vite-plus": "catalog:",
       },
       "peerDependencies": {
+        "@effect/sql-sqlite-node": "catalog:",
         "effect": "^4.0.0",
       },
+      "optionalPeers": [
+        "@effect/sql-sqlite-node",
+      ],
     },
     "packages/auth-persistence-drizzle": {
       "name": "@yielded/auth-persistence-drizzle",

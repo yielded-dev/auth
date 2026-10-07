@@ -13,11 +13,12 @@ sessions; core does not require an ORM or a particular database.
 
 Choose how to provide those services:
 
-| Start with                        | When it fits                                                 |
-| --------------------------------- | ------------------------------------------------------------ |
-| [Managed tables](#managed-tables) | You want auth storage supplied alongside your account table. |
-| [Your schema](#your-schema)       | You already own SQL tables and migrations.                   |
-| [Your services](#your-services)   | Your backend needs a custom store or transaction model.      |
+| Start with                          | When it fits                                                             |
+| ----------------------------------- | ------------------------------------------------------------------------ |
+| [Managed tables](#managed-tables)   | You want auth storage supplied alongside your account table.             |
+| [Your schema](#your-schema)         | You already own SQL tables and migrations.                               |
+| [Your services](#your-services)     | Your backend needs a custom store or transaction model.                  |
+| [In-memory tests](#in-memory-tests) | You need seeded password sign-in and stateful sessions in Node.js tests. |
 
 Replacing storage Layers keeps your contract, `AppAuth`, and client unchanged. Moving existing data still
 requires an application-owned migration.
@@ -171,6 +172,70 @@ transaction boundaries, including D1 and Durable Objects.
 
 The file-store example supports one process on a local filesystem. It illustrates
 the service boundary; replication and production storage operations remain yours.
+
+## In-memory tests
+
+Import `@yielded/auth-persistence/Testing` explicitly for tests with one
+`Password.make()` sign-in strategy and `Sessions.stateful()`. It creates and seeds
+a scoped SQLite `:memory:` database using the real SQL authority and session
+implementations. Each acquisition starts fresh; reusing a Layer within one build
+shares its state. Closing the scope discards everything. This is process-local,
+non-durable test storage, never a production default.
+
+Install the optional driver alongside the persistence package:
+
+```sh
+bun add -d @yielded/auth-persistence@beta @effect/sql-sqlite-node
+```
+
+The driver requires Node.js 24 or newer with `node:sqlite` support.
+This helper is not a browser, Bun, D1, or PostgreSQL emulator. Its native dependency
+is absent from core and the persistence package's production import paths.
+
+```ts
+import * as Testing from "@yielded/auth-persistence/Testing";
+import { Redacted } from "effect";
+
+const TestPersistence = Testing.layer(AppAuth, {
+  subjects: [{
+    subjectId: "reader",
+    email: "reader@example.invalid",
+    password: Redacted.make("test passphrase"),
+  }],
+  requirement, // Your explicit AuthenticationRequirement
+  clock: "test",
+});
+```
+
+Provide this Layer to `AppAuth.layer`, alongside your password strategy's
+`SessionClaims`, `PasswordHashing`, and Effect `Crypto` Layers. Seed passwords are
+byte-preserving and hashed with that same hasher. Email addresses are normalized;
+they remain unverified. `active: false` seeds a disabled subject. Invalid seeds or
+duplicate subject IDs/emails fail acquisition. Application claims, authentication
+requirements, session lifetime, and private credential delivery remain explicit.
+
+In `it.effect`, use `clock: "test"` and call `Testing.syncClock` after each
+`TestClock.adjust` or `setTime`, between auth operations. SQL and auth then use the
+same test instant. Omit `clock` for real SQLite engine time and use a live Effect
+clock. Provide your own `Crypto` Layer for deterministic entropy; the helper
+never replaces cryptography. Advance/synchronize time only while auth operations
+are idle; this helper does not prove independent-clock races or crash recovery.
+
+Coverage is existing-account password sign-in and stateful session issuance,
+verification, renewal, listing, revocation, and sign-out. Renewal invalidates the
+previous credential, and retrying it fails. Sign-in remains non-idempotent.
+Other strategies, password management, and other session modes are rejected with
+`PersistenceConfigurationError` during acquisition. Direct unsupported password
+management port calls fail with `PasswordUnavailable`. No registration, proof
+delivery, MFA, identity-mutation, or OAuth services are supplied.
+
+The [public-import consumer test](https://github.com/yielded-dev/auth/blob/main/examples/auth/test/in-memory.test.ts)
+shows the complete composition, private credential collector, deterministic
+entropy, expiry, renewal, sign-out, and isolation. Run it from a repository checkout:
+
+```sh
+vp -C examples/auth test test/in-memory.test.ts
+```
 
 ## Run each level
 
