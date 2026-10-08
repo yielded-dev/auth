@@ -44,9 +44,9 @@ Run `vp run @yielded/example-auth#example:zoom` with `APP_ORIGIN`,
 `OAUTH_TRANSACTION_KEY`. Register `/auth/zoom/callback` on an HTTPS origin
 forwarded to `127.0.0.1:3000`. Development state is `examples/auth/zoom-auth.sqlite`.
 
-| Concern                  | Behavior                                           |
-| ------------------------ | -------------------------------------------------- |
-| Issuer                   | Exact `https://zoom.us`                            |
-| Token exchange           | `client_secret_basic`, S256 PKCE, advertised RS256 |
-| Response issuer          | Zoom advertises RFC 9207 `iss`                     |
-| Access                   | Sign-in only                                       |
+| Concern         | Behavior                                           |
+| --------------- | -------------------------------------------------- |
+| Issuer          | Exact `https://zoom.us`                            |
+| Token exchange  | `client_secret_basic`, S256 PKCE, advertised RS256 |
+| Response issuer | Zoom advertises RFC 9207 `iss`                     |
+| Access          | Sign-in only                                       |

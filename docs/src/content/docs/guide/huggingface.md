@@ -45,9 +45,9 @@ Run `vp run @yielded/example-auth#example:huggingface` with `APP_ORIGIN`,
 on an HTTPS origin forwarded to `127.0.0.1:3000`. Development state is
 `examples/auth/huggingface-auth.sqlite`.
 
-| Concern                  | Behavior                                                      |
-| ------------------------ | ------------------------------------------------------------- |
-| Issuer                   | Exact `https://huggingface.co`                                |
-| Token exchange           | `client_secret_basic`, S256 PKCE, advertised RS256            |
-| Response issuer          | Not advertised; use a distinct callback                       |
-| Access                   | Sign-in only                                                  |
+| Concern         | Behavior                                           |
+| --------------- | -------------------------------------------------- |
+| Issuer          | Exact `https://huggingface.co`                     |
+| Token exchange  | `client_secret_basic`, S256 PKCE, advertised RS256 |
+| Response issuer | Not advertised; use a distinct callback            |
+| Access          | Sign-in only                                       |

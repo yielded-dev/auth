@@ -79,12 +79,12 @@ over.
 
 ## Protocol profile
 
-| Concern                  | Behavior                                                         |
-| ------------------------ | ---------------------------------------------------------------- |
-| Issuer                   | `https://gitlab.com` or the configured self-hosted issuer        |
-| Authorization / callback | `/oauth/authorize`, authorization code, query response           |
-| Token exchange           | `/oauth/token`, `client_secret_basic`                            |
-| Signature                | Advertised RS256; issuer, audience, expiry and nonce verified    |
-| PKCE                     | S256                                                             |
+| Concern                  | Behavior                                                          |
+| ------------------------ | ----------------------------------------------------------------- |
+| Issuer                   | `https://gitlab.com` or the configured self-hosted issuer         |
+| Authorization / callback | `/oauth/authorize`, authorization code, query response            |
+| Token exchange           | `/oauth/token`, `client_secret_basic`                             |
+| Signature                | Advertised RS256; issuer, audience, expiry and nonce verified     |
+| PKCE                     | S256                                                              |
 | Response issuer          | GitLab does not advertise RFC 9207 `iss`; use a distinct callback |
-| Access                   | Sign-in only; no retained API access                             |
+| Access                   | Sign-in only; no retained API access                              |

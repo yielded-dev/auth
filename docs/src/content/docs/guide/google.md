@@ -104,14 +104,14 @@ not needed.
 The preset uses Google's [discovery document](https://accounts.google.com/.well-known/openid-configuration)
 with these constraints:
 
-| Concern                  | Behavior                                                                                   |
-| ------------------------ | ------------------------------------------------------------------------------------------ |
-| Issuer                   | Exact `https://accounts.google.com`                                                        |
-| Authorization / callback | `/o/oauth2/v2/auth`, authorization code, query response                                    |
-| Token exchange           | `https://oauth2.googleapis.com/token`, `client_secret_post`                                |
-| Signature                | Advertised RS256, keys at Google's JWKS; issuer, audience, expiry and nonce verified       |
-| PKCE                     | S256 challenge and captured verifier on every exchange                                     |
-| Response issuer          | Google advertises RFC 9207 `iss`                                                           |
+| Concern                  | Behavior                                                                                    |
+| ------------------------ | ------------------------------------------------------------------------------------------- |
+| Issuer                   | Exact `https://accounts.google.com`                                                         |
+| Authorization / callback | `/o/oauth2/v2/auth`, authorization code, query response                                     |
+| Token exchange           | `https://oauth2.googleapis.com/token`, `client_secret_post`                                 |
+| Signature                | Advertised RS256, keys at Google's JWKS; issuer, audience, expiry and nonce verified        |
+| PKCE                     | S256 challenge and captured verifier on every exchange                                      |
+| Response issuer          | Google advertises RFC 9207 `iss`                                                            |
 | Access                   | Sign-in only; `access_type=offline` is sent; no retained access is installed in this preset |
 
 Use `registrations` with one active generation and retired previous generations
