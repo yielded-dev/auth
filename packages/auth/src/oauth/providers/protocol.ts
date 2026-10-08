@@ -8,9 +8,11 @@ import { OAuthProtocol } from "../OAuthProtocol";
 import { OAuthProviderKey } from "../schema";
 import { OAuthProtocolRejected, OAuthRejected, OAuthUnavailable } from "../signInErrors";
 import {
+  OAuthAuthorizationPrompt,
   OAuthCallbackId,
   OAuthCodeResponse,
   OAuthDisplayProfile,
+  OAuthLoginHint,
   OAuthProtocolConfiguration,
   OAuthProtocolPreparation,
   OAuthTransactionSecrets,
@@ -27,6 +29,12 @@ const beginInput = Schema.Struct({
   provider: OAuthProviderKey,
   callbackId: Schema.optionalKey(OAuthCallbackId),
   flowId: RequestBindingFlowId,
+  prompt: Schema.optionalKey(OAuthAuthorizationPrompt),
+  loginHint: Schema.optionalKey(OAuthLoginHint),
+});
+
+const userInfoSubject = Schema.Struct({
+  sub: Schema.NonEmptyString.check(Schema.isMaxLength(1024)),
 });
 
 const exchangeInput = Schema.toType(
@@ -122,10 +130,12 @@ export const makeOpenIdConnectOAuthProtocol = Effect.fn("makeOpenIdConnectOAuthP
         Effect.mapError(unavailable),
       );
 
-      const pkce = yield* Pkce.make().pipe(
-        Effect.provideService(Crypto.Crypto, crypto),
-        Effect.mapError(unavailable),
-      );
+      const pkce = provider.pkceS256
+        ? yield* Pkce.make().pipe(
+            Effect.provideService(Crypto.Crypto, crypto),
+            Effect.mapError(unavailable),
+          )
+        : undefined;
 
       const nonce =
         provider.protocol === "oidc"
@@ -140,7 +150,7 @@ export const makeOpenIdConnectOAuthProtocol = Effect.fn("makeOpenIdConnectOAuthP
           redirectUri: callback.redirectUri,
           scopes: provider.scopes,
           state,
-          codeChallenge: pkce.challenge,
+          ...(pkce === undefined ? {} : { codeChallenge: pkce.challenge }),
           ...(nonce === undefined ? {} : { nonce }),
           ...(provider.authorizationParameters === undefined
             ? {}
@@ -148,6 +158,8 @@ export const makeOpenIdConnectOAuthProtocol = Effect.fn("makeOpenIdConnectOAuthP
           ...(provider.protocol === "oidc" && provider.maxAgeSeconds !== undefined
             ? { maxAgeSeconds: provider.maxAgeSeconds }
             : {}),
+          ...(request.prompt === undefined ? {} : { prompt: request.prompt }),
+          ...(request.loginHint === undefined ? {} : { loginHint: request.loginHint }),
         })
         .pipe(Effect.mapError(unavailable));
 
@@ -165,7 +177,7 @@ export const makeOpenIdConnectOAuthProtocol = Effect.fn("makeOpenIdConnectOAuthP
         secrets: {
           namespace: "effect-auth/oauth-transaction-secrets/v1" as const,
           state,
-          pkceVerifier: pkce.verifier,
+          ...(pkce === undefined ? {} : { pkceVerifier: pkce.verifier }),
           ...(nonce === undefined ? {} : { oidcNonce: nonce }),
         },
       };
@@ -200,6 +212,7 @@ export const makeOpenIdConnectOAuthProtocol = Effect.fn("makeOpenIdConnectOAuthP
           return yield* unavailable();
         if (
           (provider.protocol === "oidc") !== (request.secrets.oidcNonce !== undefined) ||
+          provider.pkceS256 !== (request.secrets.pkceVerifier !== undefined) ||
           Redacted.value(request.response.state) !== Redacted.value(request.secrets.state) ||
           (provider.responseIssuerMode === "required"
             ? request.response.issuer !== provider.issuer
@@ -215,7 +228,9 @@ export const makeOpenIdConnectOAuthProtocol = Effect.fn("makeOpenIdConnectOAuthP
           .codeGrant({
             code: request.response.code,
             redirectUri: saved.redirectUri,
-            pkceVerifier: request.secrets.pkceVerifier,
+            ...(request.secrets.pkceVerifier === undefined
+              ? {}
+              : { pkceVerifier: request.secrets.pkceVerifier }),
             ...(provider.tokenParameters === undefined
               ? {}
               : { parameters: provider.tokenParameters }),
@@ -252,10 +267,24 @@ export const makeOpenIdConnectOAuthProtocol = Effect.fn("makeOpenIdConnectOAuthP
               ),
             );
 
-          const profile = yield* decodeOidcProfile(
-            Redacted.value(verified.claims),
-            provider.issuer,
-          );
+          const claims =
+            provider.userInfo === "merge"
+              ? yield* Effect.gen(function* () {
+                  const userInfo = yield* entry.client
+                    .fetchProfile(grant.accessToken)
+                    .pipe(Effect.mapError(unavailable));
+
+                  const subject = yield* Schema.decodeUnknownEffect(userInfoSubject)(userInfo).pipe(
+                    Effect.mapError(rejected),
+                  );
+
+                  if (subject.sub !== verified.subject) return yield* rejected();
+
+                  return { ...userInfo, ...Redacted.value(verified.claims) };
+                })
+              : Redacted.value(verified.claims);
+
+          const profile = yield* decodeOidcProfile(claims, provider.profileSchema);
 
           return yield* snapshotOAuth(OAuthVerifiedExternalIdentity, {
             identity: {

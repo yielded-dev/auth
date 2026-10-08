@@ -3,7 +3,15 @@ import { Effect, type Redacted, Schema } from "effect";
 import { OAuthProviderKey, OAuthGeneration } from "../schema";
 import { OAuthCallbackId, OAuthIssuer, OAuthRedirectUri } from "../signInModels";
 import { authentication as providerAuthentication } from "./configuration";
-import { OpenIdConnectConfigurationError, type OpenIdConnectAuthentication } from "./models";
+import {
+  defaultIdTokenSignedResponseAlgs,
+  type IdTokenSignedResponseAlg,
+  OpenIdConnectConfigurationError,
+  type OpenIdConnectAuthentication,
+  type OidcProfileSchema,
+  type OidcUserInfoMode,
+} from "./models";
+import { OidcUserProfile } from "./profile";
 
 /** A single callback is named after its provider unless callbackId is supplied.
  * Use callbacks for multiple destinations. URLs are validated, never inferred. */
@@ -114,6 +122,8 @@ export type ProviderOptions<P> = P extends { readonly protocol: "oauth" | "oidc"
       | "responseIssuerMode"
       | "idTokenSignedResponseAlg"
       | "pkceS256"
+      | "userInfo"
+      | "profileSchema"
     > &
       RegistrationOptions &
       AuthenticationOptions & {
@@ -121,10 +131,51 @@ export type ProviderOptions<P> = P extends { readonly protocol: "oauth" | "oidc"
         readonly issuer: string;
         /** Defaults to required. Explicitly opt out only when the host does not support RFC 9207. */
         readonly responseIssuerMode?: "required" | "unsupported";
+        /** Defaults to true. Set false only for issuers that cannot complete
+         * authorization-code + S256 PKCE. */
+        readonly pkceS256?: boolean;
       } & (P extends { readonly protocol: "oidc" }
-        ? { readonly idTokenSignedResponseAlg?: "RS256" }
-        : { readonly pkceS256?: true })
+        ? {
+            readonly idTokenSignedResponseAlg?:
+              | IdTokenSignedResponseAlg
+              | ReadonlyArray<IdTokenSignedResponseAlg>;
+            /** Defaults to id-token. merge fetches UserInfo and fills missing claims. */
+            readonly userInfo?: OidcUserInfoMode;
+            /** Defaults to OidcUserProfile. Presets pass their own schema. */
+            readonly profileSchema?: OidcProfileSchema;
+          }
+        : {})
   : never;
+
+export const resolveIdTokenAlgorithms = (
+  value: IdTokenSignedResponseAlg | ReadonlyArray<IdTokenSignedResponseAlg> | undefined,
+): ReadonlyArray<IdTokenSignedResponseAlg> =>
+  defaultIdTokenSignedResponseAlgs.filter((algorithm) =>
+    (value === undefined
+      ? defaultIdTokenSignedResponseAlgs
+      : typeof value === "string"
+        ? [value]
+        : value
+    ).includes(algorithm),
+  );
+
+export const resolveOidcDefaults = <
+  P extends {
+    readonly idTokenSignedResponseAlg?:
+      | IdTokenSignedResponseAlg
+      | ReadonlyArray<IdTokenSignedResponseAlg>;
+    readonly pkceS256?: boolean;
+    readonly userInfo?: OidcUserInfoMode;
+    readonly profileSchema?: OidcProfileSchema;
+  },
+>(
+  input: P,
+) => ({
+  idTokenSignedResponseAlg: resolveIdTokenAlgorithms(input.idTokenSignedResponseAlg),
+  pkceS256: input.pkceS256 !== false,
+  userInfo: input.userInfo === "merge" ? ("merge" as const) : ("id-token" as const),
+  profileSchema: input.profileSchema ?? OidcUserProfile,
+});
 
 export const resolveProvider = Effect.fnUntraced(function* <
   P extends {

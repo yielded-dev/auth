@@ -1,7 +1,7 @@
 # @yielded/oauth
 
 Native Effect OAuth authorization-code and refresh flows, PKCE S256, and signed
-RS256 OpenID Connect. Runtime dependencies are Effect and `@yielded/jose`.
+OpenID Connect. Runtime dependencies are Effect and `@yielded/jose`.
 
 Use `OAuth.make` for an installed client and `Oidc.makeVerifier` for its OIDC
 verifier. Both require `HttpClient` and an owning `Scope`; keep that scope open
@@ -53,8 +53,11 @@ The current Fetch reference is captured when constructing the client/verifier.
 Each verifier owns one scoped JOSE JWKS cache: at most 64 keys and 64 waiters, a
 10-minute cache lifetime and a 30-second refresh cooldown. There is no global
 issuer cache, background polling, stale-on-error fallback, or token-supplied key
-endpoint. The supported profile requires advertised code, S256 and RS256 support;
-other OAuth grants and ID-token signature algorithms are outside this profile.
+endpoint. The supported profile requires advertised `code` and at least one of RS256,
+PS256, ES256 or EdDSA. S256 PKCE is required unless `pkceS256` is set false on
+the verifier. Authorization URLs accept optional `prompt` and `loginHint`.
+Omit `codeChallenge` and `pkceVerifier` only for issuers that cannot complete
+authorization-code + PKCE. Other OAuth grants remain outside this profile.
 
 See [third-party notices](THIRD_PARTY_NOTICES.md) for pinned upstream contract
 sources and licenses.

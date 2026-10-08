@@ -31,6 +31,10 @@ const makeVerifier = Effect.fn("OpenIdConnect.makeVerifier")(function* (
   metadata: OAuth.Metadata,
   clientId: string,
   timeoutSeconds: number,
+  options: {
+    readonly algorithms: ReadonlyArray<Oidc.IdTokenAlgorithm>;
+    readonly pkceS256: boolean;
+  },
 ) {
   const context = yield* Effect.context<Crypto.Crypto | Signature>();
 
@@ -38,6 +42,8 @@ const makeVerifier = Effect.fn("OpenIdConnect.makeVerifier")(function* (
     metadata,
     clientId,
     timeoutMs: timeoutSeconds * 1000,
+    algorithms: options.algorithms,
+    pkceS256: options.pkceS256,
   }).pipe(Effect.mapError(configurationError));
 
   return {
@@ -73,7 +79,10 @@ export const installConfigurations = Effect.fn("OpenIdConnect.installConfigurati
       provider.protocol === "oidc"
         ? {
             ...entry,
-            verifier: yield* makeVerifier(entry.metadata, provider.clientId, timeoutSeconds),
+            verifier: yield* makeVerifier(entry.metadata, provider.clientId, timeoutSeconds, {
+              algorithms: provider.idTokenSignedResponseAlg,
+              pkceS256: provider.pkceS256,
+            }),
           }
         : entry,
     );
@@ -109,7 +118,10 @@ export const installConnectedConfigurations = Effect.fn(
       provider.protocol === "oidc"
         ? {
             ...entry,
-            verifier: yield* makeVerifier(entry.metadata, provider.clientId, timeoutSeconds),
+            verifier: yield* makeVerifier(entry.metadata, provider.clientId, timeoutSeconds, {
+              algorithms: provider.idTokenSignedResponseAlg,
+              pkceS256: provider.pkceS256,
+            }),
           }
         : entry,
     );

@@ -394,6 +394,8 @@ export const makeOAuthAccounts = <
               provider: request.provider,
               ...(request.callbackId === undefined ? {} : { callbackId: request.callbackId }),
               flowId: request.flowId,
+              ...(request.prompt === undefined ? {} : { prompt: request.prompt }),
+              ...(request.loginHint === undefined ? {} : { loginHint: request.loginHint }),
             }),
           ).pipe(Effect.flatMap((value) => snapshotOAuth(OAuthProtocolPreparation, value)));
 

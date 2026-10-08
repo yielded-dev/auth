@@ -4,8 +4,10 @@ import { origin } from "../../internal/origin";
 import { RequestBindingFlowId } from "../../operations/requestBindingModels";
 import { OAuthProviderKey } from "../schema";
 import {
+  OAuthAuthorizationPrompt,
   OAuthCallbackId,
   OAuthInstant,
+  OAuthLoginHint,
   OAuthProtocolConfiguration,
   OAuthProtocolPreparation,
   OAuthVerifiedExternalIdentity,
@@ -68,6 +70,8 @@ export const Begin = Schema.Struct({
   redirectUri: CompletionUrl,
   flowId: RequestBindingFlowId,
   verifierDigest: Random,
+  prompt: Schema.optionalKey(OAuthAuthorizationPrompt),
+  loginHint: Schema.optionalKey(OAuthLoginHint),
 });
 
 export const Prepared = Schema.Struct({

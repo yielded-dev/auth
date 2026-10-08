@@ -7,7 +7,14 @@ import { OAuthCallbackId, OAuthIssuer, OAuthRedirectUri } from "../../signInMode
 import { freezeOAuth } from "../../signInSnapshot";
 import type { ConnectedOptions, ProviderConnectedOAuth } from "../compatibility";
 import { callbackEndpoint, endpoint } from "../configuration";
-import { OpenIdConnectConfigurationError, type OpenIdConnectAuthentication } from "../models";
+import {
+  advertisedIdTokenAlgorithms,
+  IdTokenSignedResponseAlg,
+  OidcUserInfoMode,
+  OpenIdConnectConfigurationError,
+  type OidcProfileSchema,
+  type OpenIdConnectAuthentication,
+} from "../models";
 import { install, type NativeProvider } from "../native";
 import { resolveOptions } from "../options";
 import type {
@@ -81,7 +88,15 @@ const optionsSchema = <R>(providerCohort: boolean) =>
           Schema.Struct({
             ...common,
             protocol: Schema.Literal("oidc"),
-            idTokenSignedResponseAlg: Schema.Literal("RS256"),
+            idTokenSignedResponseAlg: Schema.Array(IdTokenSignedResponseAlg).check(
+              Schema.isMinLength(1),
+              Schema.isMaxLength(4),
+            ),
+            pkceS256: Schema.Boolean,
+            userInfo: OidcUserInfoMode,
+            profileSchema: Schema.declare<OidcProfileSchema>((input): input is OidcProfileSchema =>
+              Schema.isSchema(input),
+            ),
             maxAgeSeconds: Schema.optionalKey(
               Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 86400 })),
             ),
@@ -97,7 +112,7 @@ const optionsSchema = <R>(providerCohort: boolean) =>
             protocol: Schema.Literal("oauth"),
             authorizationEndpoint: text(2048),
             tokenEndpoint: text(2048),
-            pkceS256: Schema.Literal(true),
+            pkceS256: Schema.Boolean,
             identitySource: Schema.Struct({
               url: text(2048),
               headers: Schema.optionalKey(fields),
@@ -207,6 +222,7 @@ const metadataSchema = Schema.Struct({
   authorization_endpoint: text(2048),
   token_endpoint: text(2048),
   jwks_uri: Schema.optionalKey(text(2048)),
+  userinfo_endpoint: Schema.optionalKey(text(2048)),
   revocation_endpoint: Schema.optionalKey(text(2048)),
   code_challenge_methods_supported: Schema.optionalKey(
     Schema.Array(text(64)).check(Schema.isMaxLength(64)),
@@ -357,7 +373,10 @@ export const prepareConnectedConfigurations = Effect.fn(
         new Set(profile.scopes).size !== profile.scopes.length ||
         new Set(profile.resources).size !== profile.resources.length ||
         profile.refreshAheadMillis >= profile.maximumAccessLifetimeMillis ||
-        (provider.protocol === "oidc" && !profile.scopes.includes("openid")) ||
+        (provider.protocol === "oidc" &&
+          (new Set(provider.idTokenSignedResponseAlg).size !==
+            provider.idTokenSignedResponseAlg.length ||
+            !profile.scopes.includes("openid"))) ||
         (provider.resourceIndicators === "unsupported" && profile.resources.length !== 0) ||
         (profile.retention === "access-only" && profile.refresh !== "unsupported") ||
         (profile.retention === "access-and-refresh" &&
@@ -443,16 +462,23 @@ export const installConnectedProvider = Effect.fn("OpenIdConnect.installConnecte
     if (tokenAuthentication && !tokenAuthentication.includes(provider.authentication.method))
       return yield* configurationError("authentication");
     if (provider.protocol === "oidc") {
+      const algorithms = advertisedIdTokenAlgorithms(
+        metadata.id_token_signing_alg_values_supported,
+        provider.idTokenSignedResponseAlg,
+      );
+
       if (
-        !metadata.code_challenge_methods_supported?.includes("S256") ||
+        algorithms === undefined ||
         !metadata.response_types_supported?.includes("code") ||
-        !metadata.id_token_signing_alg_values_supported?.includes("RS256") ||
         metadata.jwks_uri === undefined ||
+        (provider.pkceS256 && !metadata.code_challenge_methods_supported?.includes("S256")) ||
+        (provider.userInfo === "merge" && metadata.userinfo_endpoint === undefined) ||
         (provider.profiles.some((profile) => profile.retention === "access-and-refresh") &&
           !metadata.grant_types_supported?.includes("refresh_token"))
       )
         return yield* configurationError("metadata");
       yield* endpoint(metadata.jwks_uri);
+      if (metadata.userinfo_endpoint !== undefined) yield* endpoint(metadata.userinfo_endpoint);
     } else yield* endpoint(provider.identitySource.url);
     if (provider.revocation.mode === "rfc7009") {
       if (
@@ -479,7 +505,11 @@ export const installConnectedProvider = Effect.fn("OpenIdConnect.installConnecte
       clientId: provider.clientId,
       authentication: provider.authentication,
       timeoutMs: timeoutSeconds * 1000,
-      ...(provider.protocol === "oauth" ? { profile: provider.identitySource } : {}),
+      ...(provider.protocol === "oauth"
+        ? { profile: provider.identitySource }
+        : provider.userInfo === "merge" && metadata.userinfo_endpoint !== undefined
+          ? { profile: { url: metadata.userinfo_endpoint } }
+          : {}),
       ...(provider.revocation.mode === "rfc7009"
         ? { revocationAuthentication: provider.revocation.authentication }
         : {}),

@@ -59,6 +59,8 @@ export {
   OAuthConsumeDecision,
   OAuthCodeResponse,
   OAuthCallbackResponse,
+  OAuthAuthorizationPrompt,
+  OAuthLoginHint,
   OAuthSignInInput,
   OAuthSignInBegin,
   OAuthSignInComplete,

@@ -8,6 +8,32 @@ import {
 import type { TokenCompatibility, tokenCompatibility } from "./compatibility";
 import type { DiscoveryProfile, discoveryProfile } from "./discovery";
 
+export const IdTokenSignedResponseAlg = Schema.Literals(["RS256", "PS256", "ES256", "EdDSA"]);
+export type IdTokenSignedResponseAlg = typeof IdTokenSignedResponseAlg.Type;
+
+export const defaultIdTokenSignedResponseAlgs: readonly IdTokenSignedResponseAlg[] = [
+  "RS256",
+  "PS256",
+  "ES256",
+  "EdDSA",
+];
+
+export const advertisedIdTokenAlgorithms = (
+  advertised: ReadonlyArray<string> | undefined,
+  allowed: ReadonlyArray<IdTokenSignedResponseAlg>,
+): ReadonlyArray<IdTokenSignedResponseAlg> | undefined => {
+  const supported = defaultIdTokenSignedResponseAlgs.filter(
+    (algorithm) => allowed.includes(algorithm) && advertised?.includes(algorithm),
+  );
+
+  return supported.length === 0 ? undefined : supported;
+};
+
+export const OidcUserInfoMode = Schema.Literals(["id-token", "merge"]);
+export type OidcUserInfoMode = typeof OidcUserInfoMode.Type;
+
+export type OidcProfileSchema = Schema.Codec<Schema.JsonObject>;
+
 export class OpenIdConnectConfigurationError extends Schema.TaggedError<OpenIdConnectConfigurationError>()(
   "OpenIdConnectConfigurationError",
   {
@@ -56,7 +82,10 @@ export interface OpenIdConnectOidcProvider extends ProviderGeneration {
   /** @internal Provider-specific discovery metadata, retained by the configuration codec. */
   readonly [discoveryProfile]?: typeof DiscoveryProfile.Type;
   readonly protocol: "oidc";
-  readonly idTokenSignedResponseAlg: "RS256";
+  readonly idTokenSignedResponseAlg: ReadonlyArray<IdTokenSignedResponseAlg>;
+  readonly pkceS256: boolean;
+  readonly userInfo: OidcUserInfoMode;
+  readonly profileSchema: OidcProfileSchema;
   readonly maxAgeSeconds?: number;
 }
 
@@ -66,7 +95,7 @@ export interface OpenIdConnectOAuthProvider<R = never> extends ProviderGeneratio
   readonly protocol: "oauth";
   readonly authorizationEndpoint: string;
   readonly tokenEndpoint: string;
-  readonly pkceS256: true;
+  readonly pkceS256: boolean;
   readonly identitySource: {
     readonly url: string;
     readonly headers?: Readonly<Record<string, string>>;

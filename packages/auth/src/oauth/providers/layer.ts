@@ -12,6 +12,7 @@ import type {
 } from "./models";
 import { installConfigurations, installConnectedConfigurations, type Requirements } from "./oidc";
 import {
+  resolveOidcDefaults,
   resolveOptions,
   resolveProvider,
   type ProviderOptions as RegistrationInput,
@@ -56,15 +57,12 @@ const resolve = <R>(providers: ReadonlyArray<Provider<R>>) =>
         ? {
             ...(yield* resolveProvider(input)),
             scopes: input.scopes === undefined ? ["openid"] : input.scopes,
-            idTokenSignedResponseAlg:
-              input.idTokenSignedResponseAlg === undefined
-                ? ("RS256" as const)
-                : input.idTokenSignedResponseAlg,
+            ...resolveOidcDefaults(input),
           }
         : {
             ...(yield* resolveProvider(input)),
             scopes: input.scopes === undefined ? [] : input.scopes,
-            pkceS256: input.pkceS256 === undefined ? (true as const) : input.pkceS256,
+            pkceS256: input.pkceS256 !== false,
           };
     }),
   );
@@ -115,8 +113,10 @@ export const provider = <R = never>(
 
 /** One protocol Layer for all OAuth/OIDC hosts. Each provider defaults to
  * generation 1, active issuance, callback ID equal to its provider key, required
- * response issuer validation and S256 PKCE. OIDC defaults to RS256 and the openid
- * scope; plain OAuth defaults to no scopes. clientSecret uses client_secret_basic
+ * response issuer validation and S256 PKCE. OIDC defaults to advertised
+ * RS256/PS256/ES256/EdDSA, the openid scope, ID-token profile claims, and
+ * OidcUserProfile. Set pkceS256 false only for issuers that cannot complete
+ * PKCE. Plain OAuth defaults to no scopes. clientSecret uses client_secret_basic
  * unless tokenEndpointAuthMethod is supplied. Discovery must confirm the host's
  * capabilities. Invalid configuration fails when building the Layer.
  *

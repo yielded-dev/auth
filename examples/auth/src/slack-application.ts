@@ -52,14 +52,15 @@ export const makeSlackExample = (config: {
     }).pipe(
       Layer.provideMerge(LibsqlClient.layer({ url: `file:${config.filename}`, intMode: "number" })),
     ),
-    Layer.succeed(AppAuth.strategies.oauth.SessionClaims, {
-      resolve: Effect.fnUntraced(function* ({ identity }) {
-        if (identity.profile?.providerData?.["https://slack.com/team_id"] !== config.teamId)
-          return yield* OAuth.OAuthUnavailable.make({});
-
-        return { role: "owner" as const };
+    Layer.succeed(
+      AppAuth.strategies.oauth.SessionClaims,
+      AppAuth.strategies.oauth.SessionClaims.of({
+        resolve: ({ identity }) =>
+          identity.profile?.providerData?.["https://slack.com/team_id"] !== config.teamId
+            ? OAuth.OAuthUnavailable.make({})
+            : Effect.succeed({ role: "owner" as const }),
       }),
-    }),
+    ),
     Auth.RequestBindingConfig.layer({
       generation: 1,
       lifetimeMillis: 600_000,

@@ -124,6 +124,8 @@ export const provider = (
               callbackId: callback.callbackId,
               redirectUri: callback.redirectUri,
               verifierDigest: yield* digest(verifier),
+              ...(input.prompt === undefined ? {} : { prompt: input.prompt }),
+              ...(input.loginHint === undefined ? {} : { loginHint: input.loginHint }),
             });
 
             const prepared = yield* request("prepare", body).pipe(
@@ -173,6 +175,7 @@ export const provider = (
               input.configuration.provider !== binding.provider ||
               callback === undefined ||
               input.response.issuer !== input.configuration.issuer ||
+              input.secrets.pkceVerifier === undefined ||
               Redacted.value(input.response.state) !== Redacted.value(input.secrets.state)
             )
               return yield* OAuthProtocolRejected.make({});

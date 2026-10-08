@@ -2,7 +2,12 @@ import { Effect, Layer } from "effect";
 
 import { OAuthConnectedProtocol } from "../../OAuthConnectedProtocol";
 import { installConnectedConfigurations } from "../oidc";
-import { resolveOptions, resolveProvider, type ProviderOptions } from "../options";
+import {
+  resolveOidcDefaults,
+  resolveOptions,
+  resolveProvider,
+  type ProviderOptions,
+} from "../options";
 import type {
   OpenIdConnectConnectedOAuthProvider,
   OpenIdConnectConnectedOidcProvider,
@@ -33,14 +38,11 @@ export const layer = <R = never>(options: Options<R>) =>
           return input.protocol === "oidc"
             ? {
                 ...(yield* resolveProvider(input)),
-                idTokenSignedResponseAlg:
-                  input.idTokenSignedResponseAlg === undefined
-                    ? ("RS256" as const)
-                    : input.idTokenSignedResponseAlg,
+                ...resolveOidcDefaults(input),
               }
             : {
                 ...(yield* resolveProvider(input)),
-                pkceS256: input.pkceS256 === undefined ? (true as const) : input.pkceS256,
+                pkceS256: input.pkceS256 !== false,
               };
         }),
       ).pipe(
