@@ -33,6 +33,7 @@ import {
   registerSqlPostcondition,
   SqlBatchCommit,
 } from "./sql-commit";
+import { sqlitePolicySnapshot } from "./sqlite-policy-snapshot";
 import { requireStandalone } from "./standalone";
 
 const unavailable = () => P.PasswordUnavailable.make({});
@@ -70,6 +71,15 @@ export const makeNativePasswordServices = Effect.fnUntraced(function* (
     rawPassword = tables(c.table),
     rawAuthority = tables(a.table);
 
+  // Action policy may inspect any application column. Authority columns have
+  // separate checks and securityRevision intentionally changes in this mutation.
+  const policyColumns = rawSubject.keys.filter(
+    (key) => key !== s.id && key !== s.status && key !== s.securityRevision,
+  );
+
+  const policySnapshot = (table: SqlTable) =>
+    batch === undefined ? sql`null` : sqlitePolicySnapshot(sql, table, policyColumns);
+
   const now = tables.expression(mapping.clock.engineNowMillis);
   const lock = sql.onDialectOrElse({ sqlite: () => sql``, orElse: () => sql`for update` });
 
@@ -99,7 +109,7 @@ export const makeNativePasswordServices = Effect.fnUntraced(function* (
     const joined = wanted !== undefined;
 
     const rows =
-      yield* sql`select ${subject.fields("password_subject_")}, ${identifier.fields("password_identifier_")}, ${credential.fields("password_credential_")}${joined ? sql`, ${authority.fields("password_authority_")}` : sql``}, ${now} as engine_now
+      yield* sql`select ${subject.fields("password_subject_")}, ${identifier.fields("password_identifier_")}, ${credential.fields("password_credential_")}${joined ? sql`, ${authority.fields("password_authority_")}` : sql``}, ${now} as engine_now, ${policySnapshot(subject)} as policy_snapshot
       from ${subject.name}
       left join ${identifier.name} on ${subjectKey(identifier, i.subjectId, nativeId)} ${wanted === undefined ? sql`` : sql`and ${exact(identifier, i.namespace, wanted.namespace)} and ${exact(identifier, i.value, wanted.value)}`}
       left join ${credential.name} on ${subjectKey(credential, c.subjectId, nativeId)} and ${exact(credential, c.moduleId, moduleId)}
@@ -193,6 +203,10 @@ export const makeNativePasswordServices = Effect.fnUntraced(function* (
     return {
       nativeId,
       subjectRow,
+      policySnapshot:
+        batch === undefined
+          ? undefined
+          : yield* Schema.decodeUnknownEffect(Schema.String)(rows[0].policy_snapshot),
       identifierRow,
       passwordRow,
       revision,
@@ -239,6 +253,13 @@ export const makeNativePasswordServices = Effect.fnUntraced(function* (
         );
 
         if (state === undefined) return yield* prepare("rejected" as const, project);
+        if (batch !== undefined) ensure(state.policySnapshot !== undefined);
+
+        const policyCondition =
+          batch === undefined
+            ? sql`1 = 1`
+            : sql`exists(select 1 from ${rawSubject.name} where ${subjectKey(rawSubject, s.id, nativeId)} and cast(${policySnapshot(rawSubject)} as blob) = cast(${state.policySnapshot} as blob))`;
+
         const requirement = yield* s.decodeActionRequirement(state.subjectRow, action);
 
         const valid = yield* validatePasswordMutation(
@@ -377,6 +398,7 @@ export const makeNativePasswordServices = Effect.fnUntraced(function* (
               : sql`${rawAuthority.column(a.status)} = ${rawAuthority.value(a.status, a.d1ActiveStatusValue)}`;
 
           const condition = sql.and([
+            policyCondition,
             sql`exists(select 1 from ${rawSubject.name} where ${subjectKey(rawSubject, s.id, nativeId)} and ${exact(rawSubject, s.securityRevision, input.expectedRevision.securityRevision)} and ${rawSubject.column(s.status)} = ${rawSubject.value(s.status, s.d1ActiveStatusValue)})`,
             sql`(select count(*) from ${rawAuthority.name} where ${subjectKey(rawAuthority, a.subjectId, nativeId)} and ${active}) = ${factors.length}`,
             ...factors,
@@ -434,6 +456,7 @@ export const makeNativePasswordServices = Effect.fnUntraced(function* (
 
           const conditions: Array<Fragment> = [
             finalPassword,
+            policyCondition,
             freshness,
             sql`(select count(*) from ${rawAuthority.name} where ${subjectKey(rawAuthority, a.subjectId, nativeId)} and ${active}) = ${expectedFactors.length}`,
             ...expectedFactors.map(

@@ -195,7 +195,7 @@ export const makeNativeAuthenticationAuthorityServices = Effect.fnUntraced(funct
               : yield* consume(input.pending, input.evidence, current.native);
 
           const deadline = Math.min(assessment.validUntil, expires, pendingExpiry ?? Infinity);
-          const condition = sql`${state.authorityCondition(current.revision, current.native)} and ${state.policyCondition(current.row, current.native)} and ${now} >= ${current.now} and ${now} < ${deadline}`;
+          const condition = sql`${state.authorityCondition(current.revision, current.native)} and ${state.policyCondition(current)} and ${now} >= ${current.now} and ${now} < ${deadline}`;
 
           if (batch !== undefined) {
             yield* appendSqlBatchStatement(sqlBatchAssertion(sql, condition));

@@ -38,7 +38,7 @@ export const makeNativeSessionPendingReader = Effect.fnUntraced(function* (
         c = mapping.credential;
 
       const rows =
-        yield* sql`select ${pt.fields("p_")}, ${st.fields("s_")}, ${ct.fields("c_")}, ${now} as engine_now from ${pt.name} join ${st.name} on ${exactSqlText(sql, st.column(s.id), pt.column(p.subjectId))} and ${state.activeSubject(st)} left join ${ct.name} on ${exactSqlText(sql, ct.column(c.subjectId), pt.column(p.subjectId))} and ${state.activeCredential(ct)} where ${pending.predicate(pt, kind, digest)} limit 65`;
+        yield* sql`select ${pt.fields("p_")}, ${st.fields("s_")}, ${ct.fields("c_")}, ${now} as engine_now, ${state.policySnapshot(st)} as policy_snapshot from ${pt.name} join ${st.name} on ${exactSqlText(sql, st.column(s.id), pt.column(p.subjectId))} and ${state.activeSubject(st)} left join ${ct.name} on ${exactSqlText(sql, ct.column(c.subjectId), pt.column(p.subjectId))} and ${state.activeCredential(ct)} where ${pending.predicate(pt, kind, digest)} limit 65`;
 
       if (rows[0] === undefined) return undefined;
       const record = yield* pending.decode(kind, pt.decode(rows[0], "p_"));
@@ -50,6 +50,7 @@ export const makeNativeSessionPendingReader = Effect.fnUntraced(function* (
         st.decode(rows[0], "s_"),
         rows.map((row) => ct.decode(row, "c_")),
         rows[0].engine_now,
+        rows[0].policy_snapshot,
       );
 
       return authority === undefined ? undefined : { record, authority };

@@ -23,7 +23,8 @@ export interface PasswordSubjectTable<Subject extends Table, _NativeSubjectId> {
   readonly decodeRequirement: (
     row: Subject["select"],
   ) => Effect.Effect<AuthenticationRequirement, PersistenceMappingError>;
-  /** Current policy for this exact credential mutation, decoded under the subject lock. */
+  /** Current policy for this exact credential mutation. Interactive drivers hold
+   * the subject lock; D1 guards the physical application columns through commit. */
   readonly decodeActionRequirement: (
     row: Subject["select"],
     action: PasswordAction,

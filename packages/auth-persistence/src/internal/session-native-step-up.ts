@@ -211,7 +211,7 @@ export const makeNativeSessionStepUpServices = Effect.fnUntraced(function* <Clai
           const intent = { ...input, version },
             snapshot = yield* encodeStepUpIntent(intent);
 
-          const condition = sql`${state.authorityCondition(intent.revision, current.native)} and ${state.policyCondition(current.row, current.native)} and ${original.condition} and ${now} >= ${DateTime.toEpochMillis(intent.sourceAuthenticatedAt)} and ${now} < ${DateTime.toEpochMillis(intent.expiresAt)}`;
+          const condition = sql`${state.authorityCondition(intent.revision, current.native)} and ${state.policyCondition(current)} and ${original.condition} and ${now} >= ${DateTime.toEpochMillis(intent.sourceAuthenticatedAt)} and ${now} < ${DateTime.toEpochMillis(intent.expiresAt)}`;
 
           yield* pending
             .insert(
@@ -340,7 +340,7 @@ export const makeNativeSessionStepUpServices = Effect.fnUntraced(function* <Clai
           )
             return yield* SessionStepUpInvalid.make({});
           const snapshot = yield* encodeStepUpIntent(intent);
-          const authority = sql`${state.authorityCondition(evidence.revision, current.native)} and ${state.policyCondition(current.row, current.native)} and ${now} >= ${current.now} and ${now} < ${deadline}`;
+          const authority = sql`${state.authorityCondition(evidence.revision, current.native)} and ${state.policyCondition(current)} and ${now} >= ${current.now} and ${now} < ${deadline}`;
 
           yield* pending.consume(
             "StepUp",

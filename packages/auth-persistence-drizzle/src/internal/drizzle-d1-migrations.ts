@@ -3,11 +3,11 @@ import { PersistenceConfigurationError } from "@yielded/auth-persistence/Adapter
 import { sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
 import { formatToMillis, getMigrationsToRun } from "drizzle-orm/migrator.utils";
-import { upgradeAsyncIfNeeded } from "drizzle-orm/up-migrations/sqlite";
 import { Crypto, DateTime, Effect, Layer, Schema } from "effect";
 
 const MigrationFiles = Schema.Record(Schema.String, Schema.NonEmptyString);
 const MigrationName = Schema.String.check(Schema.isPattern(/^\d{14}_.+$/));
+const JournalColumns = Schema.Array(Schema.Struct({ name: Schema.String }));
 
 const configurationError = () =>
   PersistenceConfigurationError.make({
@@ -64,28 +64,81 @@ export const d1MigrationsLayer = (options: {
           const db = drizzle(client.config.db);
           const name = options.migrationsTable ?? "__drizzle_migrations";
           const table = sql.identifier(name);
-          const { newDb } = await upgradeAsyncIfNeeded(name, db, migrations);
 
-          if (newDb)
-            await db.run(sql`create table if not exists ${table} (
-              id integer primary key, hash text not null, created_at numeric,
-              name text, applied_at text
-            )`);
+          const columns = Schema.decodeUnknownSync(JournalColumns)(
+            await db.all(sql`select name from pragma_table_info(${name})`),
+          ).map((column) => column.name);
 
-          const journal = Schema.decodeUnknownSync(JournalRows)(
-            await db.all(
-              sql`select id, hash, cast(created_at as text) as created_at, name from ${table}`,
-            ),
-          );
+          const newDb = columns.length === 0;
+          const legacy = !newDb && !columns.includes("name");
 
-          const statements = getMigrationsToRun({
-            localMigrations: migrations,
-            dbMigrations: [...journal],
-          }).flatMap((migration) => [
-            ...migration.sql.map((statement) => db.run(sql.raw(statement))),
-            db.run(sql`insert into ${table} (hash, created_at, name, applied_at)
+          if (
+            !newDb &&
+            (!["id", "hash", "created_at"].every((column) => columns.includes(column)) ||
+              legacy === columns.includes("applied_at"))
+          )
+            throw configurationError();
+
+          // Original Drizzle SQLite journals can have NULL serial IDs. Use the
+          // physical rowid to backfill each retained entry without changing it.
+          const journal = newDb
+            ? []
+            : Schema.decodeUnknownSync(JournalRows)(
+                await db.all(sql`select rowid as id, hash, cast(created_at as text) as created_at,
+              ${legacy ? sql`null` : sql`name`} as name from ${table} order by rowid`),
+              ).map((entry) => ({ ...entry }));
+
+          const journalStatements = newDb
+            ? [
+                db.run(sql`create table ${table} (
+                id integer primary key, hash text not null, created_at numeric,
+                name text, applied_at text
+              )`),
+              ]
+            : [];
+
+          if (legacy) {
+            // Match retained entries using Drizzle's timestamp/hash convention,
+            // but stage the upgrade with pending SQL: D1 cannot run BEGIN.
+            journalStatements.push(
+              db.run(sql`alter table ${table} add column name text`),
+              db.run(sql`alter table ${table} add column applied_at text`),
+            );
+            for (const entry of journal) {
+              const millis = Math.floor(Number(entry.created_at) / 1000) * 1000;
+
+              const candidates = migrations.filter(
+                (migration) => migration.folderMillis === millis,
+              );
+
+              const matches =
+                candidates.length === 1
+                  ? candidates
+                  : (candidates.length === 0 ? migrations : candidates).filter(
+                      (migration) => migration.hash === entry.hash,
+                    );
+
+              const match = matches[0];
+
+              if (matches.length !== 1 || match === undefined) throw configurationError();
+              entry.name = match.name;
+              journalStatements.push(
+                db.run(sql`update ${table} set name = ${match.name} where rowid = ${entry.id}`),
+              );
+            }
+          }
+
+          const statements = [
+            ...journalStatements,
+            ...getMigrationsToRun({
+              localMigrations: migrations,
+              dbMigrations: [...journal],
+            }).flatMap((migration) => [
+              ...migration.sql.map((statement) => db.run(sql.raw(statement))),
+              db.run(sql`insert into ${table} (hash, created_at, name, applied_at)
                 values (${migration.hash}, ${migration.folderMillis}, ${migration.name}, ${appliedAt})`),
-          ]);
+            ]),
+          ];
 
           const [first, ...rest] = statements;
 

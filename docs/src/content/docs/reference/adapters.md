@@ -235,7 +235,7 @@ Supply Effect `Crypto` to `PersistenceLive`, along with `PasskeyConfig` when usi
 passkeys. Use the original D1 database binding for authoritative reads; a
 [D1 read-replica session](https://developers.cloudflare.com/d1/best-practices/read-replication/)
 is not an auth database replacement. Mutations use guarded atomic batches.
-The generated mapping checks application subject columns at session commits so
+The generated mapping checks application subject columns at session and password commits so
 policy changes between planning and committing cannot authorize stale evidence.
 
 D1 composition supports password sign-in, registration and management, email address
@@ -255,9 +255,9 @@ const MigrationsLive = AuthPersistence.migrationsLayer({
 
 Each key is the generated migration directory name and each value is its SQL text,
 including Drizzle's statement breakpoints. Supply `D1Client` and Effect `Crypto` to
-this Layer. It uses Drizzle's journal and migration selection, applying pending SQL
-and journal entries in one D1 batch. Bundle the files through your build tool; the
-Worker needs no filesystem. Run one migration owner at a time. Existing table names
+this Layer. Pending SQL, upgrades of older Drizzle journals, and new journal entries
+commit in one D1 batch. Bundle the files through your build tool; the Worker needs
+no filesystem. Run one migration owner at a time. Existing table names
 and data stay under application control; changing a prefix does not migrate credentials.
 
 ## Connect password storage
