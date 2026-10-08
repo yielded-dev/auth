@@ -217,3 +217,11 @@ bypassing checks. Bring main into a branch only to resolve a real conflict.
 Keep package READMEs to purpose, ownership, and non-obvious constraints. Code, schemas,
 configuration, and command help own implementation details; investigations belong in issues or
 pull requests. Do not patch owned dependencies in this consumer; fix and release their owners.
+
+## Worktree startup
+
+Create worktrees from cached refs; fetch explicitly when a newer base is needed.
+Run `vp install` when dependencies or `node_modules/effect/AGENTS.md` are needed.
+Installation uses Bun's shared store and keeps project-specific packages local.
+Start only the development services needed for the task, explicitly. Worktree
+creation itself should not install dependencies or start servers.

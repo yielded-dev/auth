@@ -159,7 +159,6 @@ Install Bun and Vite+, then run:
 
 ```sh
 vp install
-vp run patch:tsgo
 vp run ready
 ```
 

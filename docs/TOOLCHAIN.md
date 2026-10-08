@@ -7,7 +7,7 @@ uses the same checks as local development.
 
 ## Development
 
-Run `vp install`, then `vp run patch:tsgo`. The prepare hook installs `.vite-hooks`;
+Run `vp install`. The prepare hook patches the compiler and installs `.vite-hooks`;
 the pre-commit hook runs Vite+ checks on staged TypeScript and JavaScript.
 `vp run ready` is the handoff gate: static checks, tests, package builds, and docs.
 Use `vp help` and command help for task options. Include `vp env doctor` output
