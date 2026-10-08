@@ -24,8 +24,9 @@ decimal string such as `"60.5"`; whitespace, numeric-prefix junk, exponent synta
 A returned receipt has not established grant success or an authenticated identity.
 For OIDC, require an ID token on initial exchange and call `verifier.verify` with
 the captured `verificationStartedAt`, nonce, access token and authorization code.
-It verifies the signature before claims, checks present `at_hash`/`c_hash`, and
-returns redacted verified claims for application-owned identity/profile mapping.
+It verifies the signature before claims, checks present `at_hash`/`c_hash`
+against the verified signing algorithm, and returns redacted verified claims
+for application-owned identity/profile mapping.
 On refresh, verify any returned ID token with `previous` subject/authentication
 time; an omitted refresh ID token is an application-owned continuation.
 

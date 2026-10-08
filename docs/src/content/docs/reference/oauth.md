@@ -665,8 +665,10 @@ S256 PKCE and response issuer validation are required by default. Set
 PKCE. Set `responseIssuerMode: "unsupported"` only for providers without issuer
 responses. OIDC presets pass `profileSchema` so each provider keeps its own
 typed claims. Set `userInfo: "merge"` to fetch UserInfo after ID-token
-verification; `sub` must match, and ID-token claims win on overlap. Sign-in
-`prompt` and `loginHint` are per request. Public clients use
+verification; `sub` must match, and ID-token claims win on overlap. Connected
+refresh verifies a returned ID token and keeps the stored identity; it does not
+fetch UserInfo again. Sign-in `prompt` and `loginHint` are per request. Public
+clients use
 `authentication: { method: "none", publicClient: true }`. Load secrets with
 `Config.Redacted`. Invalid settings fail Layer construction with
 `OpenIdConnectConfigurationError`.

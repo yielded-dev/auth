@@ -104,11 +104,22 @@ const IdClaims = Schema.Struct({
   nbf: Schema.optionalKey(V.NumericDate),
   auth_time: Schema.optionalKey(V.NumericDate),
   nonce: Schema.optionalKey(V.text(256)),
-  // SHA-256 half digest is 128 bits (22 base64url characters) for RS256, PS256,
-  // ES256 and EdDSA.
-  at_hash: Schema.optionalKey(Schema.String.check(Schema.isPattern(/^[A-Za-z0-9_-]{22}$/u))),
-  c_hash: Schema.optionalKey(Schema.String.check(Schema.isPattern(/^[A-Za-z0-9_-]{22}$/u))),
+  // Leftmost half of the signing-algorithm hash, unpadded base64url: 22
+  // characters for SHA-256 (RS256, PS256, ES256) and 43 for SHA-512 (Ed25519).
+  at_hash: Schema.optionalKey(
+    Schema.String.check(Schema.isPattern(/^[A-Za-z0-9_-]{22}(?:[A-Za-z0-9_-]{21})?$/u)),
+  ),
+  c_hash: Schema.optionalKey(
+    Schema.String.check(Schema.isPattern(/^[A-Za-z0-9_-]{22}(?:[A-Za-z0-9_-]{21})?$/u)),
+  ),
 });
+
+const tokenHash = (algorithm: string) =>
+  algorithm === "EdDSA"
+    ? { digest: "SHA-512" as const, octets: 32 }
+    : algorithm === "RS256" || algorithm === "PS256" || algorithm === "ES256"
+      ? { digest: "SHA-256" as const, octets: 16 }
+      : undefined;
 
 /** OIDC discovery uses the trusted issuer identifier, retaining its exact
  * spelling for claim comparison even if its network URL normalizes. */
@@ -243,6 +254,10 @@ export const makeVerifier = Effect.fnUntraced(function* (
       (claims.auth_time !== undefined && claims.auth_time !== policy.previous.authTime)
     )
       return yield* claimFailure();
+    const hashProfile = tokenHash(verified.protectedHeader.alg);
+
+    if (hashProfile === undefined) return yield* claimFailure();
+
     for (const [hash, secret] of [
       [claims.at_hash, accessToken],
       [claims.c_hash, code],
@@ -252,11 +267,12 @@ export const makeVerifier = Effect.fnUntraced(function* (
       const crypto = yield* Crypto.Crypto;
 
       const digest = yield* crypto
-        .digest("SHA-256", new TextEncoder().encode(secret))
+        .digest(hashProfile.digest, new TextEncoder().encode(secret))
         .pipe(Effect.mapError(() => Unavailable.make({})));
 
-      if (digest.length !== 32) return yield* Unavailable.make({});
-      if (hash !== Base64Url.encode(digest.subarray(0, 16))) return yield* claimFailure();
+      if (digest.length !== hashProfile.octets * 2) return yield* Unavailable.make({});
+      if (hash !== Base64Url.encode(digest.subarray(0, hashProfile.octets)))
+        return yield* claimFailure();
     }
     // Re-read time after optional digest I/O so expired tokens cannot escape.
     const finished = (yield* Clock.currentTimeMillis) / 1000;

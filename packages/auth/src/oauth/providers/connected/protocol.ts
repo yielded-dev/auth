@@ -279,10 +279,15 @@ export const makeConnectedProtocolWithCompatibility = Effect.fn(
 
     if (provider.protocol !== "oidc") return yield* unavailable();
 
-    const profile = yield* decodeOidcProfile(
-      claims ?? Redacted.value(verified.claims),
-      provider.profileSchema,
-    ).pipe(Effect.mapError(unavailable));
+    // Refresh keeps the stored identity. UserInfo-only required claims belong
+    // to the initial exchange, not the refresh ID token.
+    const profile =
+      previous === undefined
+        ? yield* decodeOidcProfile(
+            claims ?? Redacted.value(verified.claims),
+            provider.profileSchema,
+          ).pipe(Effect.mapError(unavailable))
+        : undefined;
 
     return {
       identity: { provider: provider.provider, issuer: provider.issuer, subject: verified.subject },
