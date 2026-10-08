@@ -14,13 +14,14 @@ import {
   requiredPasskeyPersistenceConstraints,
 } from "./models/passkey-model";
 import type { NativeSqlTables } from "./native-sql-table";
-import { makeNativePasskeyServices } from "./passkey-native";
+import { makeBatchPasskeyServices, makeNativePasskeyServices } from "./passkey-native";
 import type { PasskeyNativeMapping, PasskeyNativeRead } from "./passkey-native-state";
 import {
   makePasskeyNativeManagement,
   type NativePasskeyManagementMapping,
 } from "./passkey-native-write";
 import { anySqlCondition } from "./sql-change";
+import { SqlBatchCommit } from "./sql-commit";
 import { storageTables, type StorageRole } from "./storage-tables";
 
 export interface ComposedPasskeyInput {
@@ -255,6 +256,8 @@ const mappings = Effect.fnUntraced(function* (
 /** Managed and mapped tables feed the same native passkey statements. */
 export const makeManagedPasskeys = Effect.fnUntraced(
   function* (input: ComposedPasskeyInput, tables: NativeSqlTables) {
+    const batch = yield* SqlBatchCommit;
+
     const policies = yield* Effect.forEach(input.features, (feature) =>
       Effect.map(feature.policy, (policy) => ({ feature, policy })),
     );
@@ -275,7 +278,10 @@ export const makeManagedPasskeys = Effect.fnUntraced(
 
     for (const feature of input.features) {
       const selected = feature.management ? mapping.management(feature) : mapping.base(feature);
-      const base = yield* makeNativePasskeyServices(tables, selected);
+
+      const base = yield* batch === undefined
+        ? makeNativePasskeyServices(tables, selected)
+        : makeBatchPasskeyServices(tables, selected);
 
       services.set(feature.moduleId, base);
       if (feature.management)

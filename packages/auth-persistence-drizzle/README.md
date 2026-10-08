@@ -22,6 +22,12 @@ Drizzle Kit generates migrations from managed or application-declared tables.
 Provide `AuthPersistence.migrationsLayer({ migrationsFolder })` explicitly to
 apply those files before starting auth.
 
+D1 also supports managed tables through `AuthPersistence.make(auth).managed(...)`.
+Supply the primary D1 binding through `D1Client.layer` and apply generated SQL
+with your D1 migration runner; D1 has no file-based migration Layer. Its composed
+services use atomic batches. Callback-based password provisioning requires the
+explicit D1 registration adapter.
+
 SQLite/D1 and PostgreSQL driver modules also expose `OAuthProxyPersistence` for
 [callback proxy storage](../../docs/src/content/docs/reference/oauth.md#callback-server).
 

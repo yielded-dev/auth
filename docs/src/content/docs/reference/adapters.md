@@ -206,6 +206,45 @@ application writes through an explicit coordinator. Its receipt releases credent
 and events only after the outer owner commits; an unknown outcome does not authorize
 another credential issuance or delivery.
 
+### Managed D1
+
+The D1 driver exposes the same `AuthPersistence.make(AppAuth)`, `managed`, `map`,
+`Config`, and `layer` API:
+
+```ts
+import * as D1Client from "@effect/sql-d1/D1Client";
+import { AuthPersistence } from "@yielded/auth-persistence-drizzle/D1";
+import { Layer } from "effect";
+
+export const Persistence = AuthPersistence.make(AppAuth);
+// Configure subjects and a stable prefix with Persistence.managed as above.
+const DatabaseLive = D1Client.layer({ db: env.DB });
+const PersistenceLive = Persistence.layer.pipe(
+  Layer.provide(Persistence.Config.layer(storage)),
+  Layer.provide(DatabaseLive),
+);
+```
+
+Supply Effect `Crypto` to `PersistenceLive`, along with `PasskeyConfig` when using
+passkeys. Use the original D1 database binding for authoritative reads; a
+[D1 read-replica session](https://developers.cloudflare.com/d1/best-practices/read-replication/)
+is not an auth database replacement. Mutations use guarded atomic batches.
+The generated mapping checks application subject columns at session commits so
+policy changes between planning and committing cannot authorize stale evidence.
+
+D1 composition supports password sign-in, email address verification and changes,
+phone sign-in, passkey sign-in and management, and stateful sessions. Password
+management with callback-based subject provisioning is rejected during storage
+configuration: that callback requires an interactive transaction. Use the explicit
+D1 password registration adapter to allocate IDs and stage subject creation in the
+same batch. Other strategies use the explicit adapters below.
+
+Export the managed tables for Drizzle Kit and apply the generated SQL through your
+D1 migration runner before serving auth. D1 does not expose the file-based
+`AuthPersistence.migrationsLayer`; the Worker does not read migration files or
+create tables on first use. Existing table names and data stay under application
+control; changing a prefix does not migrate existing credentials.
+
 ## Connect password storage
 
 For SQLite on Bun, supply the driver database Layer and your table mapping:

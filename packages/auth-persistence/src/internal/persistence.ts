@@ -65,6 +65,8 @@ export interface Backend<T extends object, R, Database extends object = object> 
   readonly describe: (table: T) => StorageTable;
   readonly acquire: Effect.Effect<Database, PersistenceConfigurationError, R | SqlClient.SqlClient>;
   readonly nativeTables: (database: Database) => NativeSqlTables;
+  /** Fixed atomic batches replace interactive transactions on backends such as D1. */
+  readonly batch?: (database: Database) => NonNullable<SqlBatchCommit["Service"]>;
 }
 
 const configError = (reason: string) => PersistenceConfigurationError.make({ reason });
@@ -141,6 +143,8 @@ export const createPersistence = <T extends object, R, Database extends object =
       },
       managed: boolean,
     ): StorageLayout<T, Roles<C, Id, A>> => {
+      if (backend.batch !== undefined && management)
+        throw configError("Use explicit D1 services for callback-based password registration");
       const subject = options.subjects;
 
       if (passkeys.length > 0 && options.timestamps !== undefined)
@@ -233,194 +237,207 @@ export const createPersistence = <T extends object, R, Database extends object =
     };
 
     const services = Layer.effectContext(
-      Effect.gen(function* () {
-        const storage = yield* ConfigKey;
-        const client = yield* SqlClient.SqlClient;
-        const database = yield* backend.acquire;
+      Effect.flatMap(backend.acquire, (database) =>
+        Effect.gen(function* () {
+          const storage = yield* ConfigKey;
+          const client = yield* SqlClient.SqlClient;
 
-        const dialect = client.onDialectOrElse({
-          pg: () => "pg" as const,
-          sqlite: () => "sqlite" as const,
-          orElse: () => undefined,
-        });
+          if (backend.batch !== undefined && management)
+            return yield* configError(
+              "Use explicit D1 services for callback-based password registration",
+            );
 
-        if (dialect === undefined)
-          return yield* configError("Use an explicit adapter for this SQL dialect");
-        if (auth.sessionMode !== "stateful")
-          return yield* configError("The composed layer currently requires stateful sessions");
-        if (
-          features.some(
-            (feature) =>
-              feature === undefined ||
-              ("lifecycle" in feature && feature.lifecycle) ||
-              (feature.kind === "email" && !feature.addresses),
+          const dialect = client.onDialectOrElse({
+            pg: () => "pg" as const,
+            sqlite: () => "sqlite" as const,
+            orElse: () => undefined,
+          });
+
+          if (dialect === undefined)
+            return yield* configError("Use an explicit adapter for this SQL dialect");
+          if (auth.sessionMode !== "stateful")
+            return yield* configError("The composed layer currently requires stateful sessions");
+          if (
+            features.some(
+              (feature) =>
+                feature === undefined ||
+                ("lifecycle" in feature && feature.lifecycle) ||
+                (feature.kind === "email" && !feature.addresses),
+            )
           )
-        )
-          return yield* configError(
-            "Use explicit services for strategies without composed persistence support",
-          );
-        if (storage.namespace !== auth.namespace)
-          return yield* configError(
-            "Persistence configuration belongs to a different Auth definition",
-          );
-        const validations: StorageValidation[] = [];
+            return yield* configError(
+              "Use explicit services for strategies without composed persistence support",
+            );
+          if (storage.namespace !== auth.namespace)
+            return yield* configError(
+              "Persistence configuration belongs to a different Auth definition",
+            );
+          const validations: StorageValidation[] = [];
 
-        for (const role of roles) {
-          const table = (storage.schema as Partial<Record<StorageRole, T>>)[role];
+          for (const role of roles) {
+            const table = (storage.schema as Partial<Record<StorageRole, T>>)[role];
 
-          if (table === undefined) return yield* configError(`Missing ${role} table`);
-          const description = backend.describe(table);
-          const columns = description.columns;
+            if (table === undefined) return yield* configError(`Missing ${role} table`);
+            const description = backend.describe(table);
+            const columns = description.columns;
 
-          for (const name of Object.keys(storageTables[role].columns)) {
-            if (columns[name] === undefined)
-              return yield* configError(`Missing ${role}.${name} column`);
+            for (const name of Object.keys(storageTables[role].columns)) {
+              if (columns[name] === undefined)
+                return yield* configError(`Missing ${role}.${name} column`);
+            }
+            validations.push({ table: description, required: storageTables[role].unique });
           }
-          validations.push({ table: description, required: storageTables[role].unique });
-        }
-        validations.push({
-          table: backend.describe(storage.subjects.table as T),
-          required: [[storage.subjects.id]],
-        });
-        yield* validateStorageBatch(dialect, validations);
-        const mappings = yield* makeMappings(storage);
+          validations.push({
+            table: backend.describe(storage.subjects.table as T),
+            required: [[storage.subjects.id]],
+          });
+          yield* validateStorageBatch(dialect, validations);
+          const nativeTables = backend.nativeTables(database);
+          const mappings = yield* makeMappings(storage, nativeTables);
+          const sessionMapping = mappings.sessions(auth.claims, auth.sessions.moduleId);
+          const pendingMapping = mappings.pending(auth.claims, auth.sessions.moduleId);
 
-        const nativeTables = backend.nativeTables(database);
-        const sessionMapping = mappings.sessions(auth.claims, auth.sessions.moduleId);
-        const pendingMapping = mappings.pending(auth.claims, auth.sessions.moduleId);
-
-        const sessionServices = yield* makeNativeStatefulSessionServices(
-          nativeTables,
-          sessionMapping,
-        );
-
-        const { authenticationAuthority } = yield* makeNativeAuthenticationAuthorityServices(
-          nativeTables,
-          sessionMapping,
-        );
-
-        const { pendingAuthentication } = yield* makeNativePendingAuthenticationServices(
-          nativeTables,
-          pendingMapping,
-        );
-
-        const { sessionStepUpPersistence } = yield* makeNativeSessionStepUpServices(nativeTables, {
-          ...pendingMapping,
-          source: {
-            kind: "Stateful",
-            session: sessionMapping.session,
-            sessionId: sessionMapping.sessionId,
-            constraints: { sessionDigest: "unique(session.digest)" },
-          },
-        });
-
-        const { sessionCleanup } = yield* makeNativeSessionCleanupServices(
-          nativeTables,
-          pendingMapping,
-        );
-
-        let context: Context.Context<never> = Context.make(
-          AuthenticationAuthority,
-          authenticationAuthority,
-        ).pipe(
-          Context.add(
-            auth.sessions.StatefulSessionPersistence,
-            sessionServices.statefulSessionPersistence,
-          ),
-          Context.add(auth.sessions.SessionRepository, sessionServices.sessionRepository),
-          Context.add(auth.sessions.PendingAuthentication, pendingAuthentication),
-          Context.add(auth.sessions.SessionStepUpPersistence, sessionStepUpPersistence),
-          Context.add(auth.sessions.SessionCleanup, sessionCleanup),
-        );
-
-        const proofMapping = proofs ? mappings.proofs() : undefined;
-
-        if (proofMapping !== undefined) {
-          const services = yield* makeNativeProofServices(
-            backend.nativeTables(database),
-            proofMapping,
+          const sessionServices = yield* makeNativeStatefulSessionServices(
+            nativeTables,
+            sessionMapping,
           );
 
-          context = Context.add(context, ProofPersistence, services.proofPersistence);
-        }
-
-        if (password) {
-          const mapping = mappings.passwords();
-
-          const services = yield* makeNativePasswordServices(
-            backend.nativeTables(database),
-            mapping,
-            proofMapping,
+          const { authenticationAuthority } = yield* makeNativeAuthenticationAuthorityServices(
+            nativeTables,
+            sessionMapping,
           );
 
-          context = Context.add(context, PasswordPersistence, services.passwordPersistence);
-        }
-        for (const [name, strategy] of Object.entries(auth.strategies)) {
-          if (strategy.persistence?.kind !== "password" || !strategy.persistence.management)
-            continue;
-          const key = strategy.RegistrationAuthority;
-
-          if (key === undefined)
-            return yield* configError(`Missing subject provisioning for ${name}`);
-
-          const registration = yield* makeRegistrationAuthority(
-            backend.nativeTables(database),
-            mappings.passwords(),
-            ProvisioningKey,
-            name,
+          const { pendingAuthentication } = yield* makeNativePendingAuthenticationServices(
+            nativeTables,
+            pendingMapping,
           );
 
-          context = Context.add(context, key, registration);
-        }
-        if (email)
-          context = Context.add(
-            context,
-            EmailAddressPersistence,
-            (yield* makeNativeEmailAddressServices(
-              backend.nativeTables(database),
-              mappings.emails(),
-              proofMapping,
-            )).emailAddressPersistence,
-          );
-
-        if (phone)
-          context = Context.add(
-            context,
-            PhoneSignInTargets,
-            yield* makeComposedPhoneTargets(
-              backend.nativeTables(database),
-              storage,
-              mappings.proofs(),
-              features.flatMap((feature) => (feature?.kind === "phone" ? [feature.moduleId] : [])),
-            ),
-          );
-
-        if (passkeys.length > 0) {
-          // Auth capability metadata determines whether PasskeyConfig is required.
-          const services = makeManagedPasskeys(
+          const { sessionStepUpPersistence } = yield* makeNativeSessionStepUpServices(
+            nativeTables,
             {
-              storage,
-              namespace: auth.namespace,
-              dialect,
-              features: passkeys,
-              passwordModules: features.flatMap((feature) =>
-                feature?.kind === "password" ? [feature.moduleId] : [],
-              ),
+              ...pendingMapping,
+              source: {
+                kind: "Stateful",
+                session: sessionMapping.session,
+                sessionId: sessionMapping.sessionId,
+                constraints: { sessionDigest: "unique(session.digest)" },
+              },
             },
-            backend.nativeTables(database),
-          ) as Effect.Effect<
-            Context.Context<never>,
-            PersistenceConfigurationError,
-            PasskeyRequirement<A> | Crypto.Crypto | LifecycleHooks | SqlClient.SqlClient
-          >;
+          );
 
-          context = Context.merge(context, yield* services);
-        }
+          const { sessionCleanup } = yield* makeNativeSessionCleanupServices(
+            nativeTables,
+            pendingMapping,
+          );
 
-        // The checked capability metadata above determines exactly these service keys.
-        return context as Context.Context<Ports<C, Id, A>>;
-      }).pipe(
-        Effect.provideService(SqlBatchCommit, undefined),
+          let context: Context.Context<never> = Context.make(
+            AuthenticationAuthority,
+            authenticationAuthority,
+          ).pipe(
+            Context.add(
+              auth.sessions.StatefulSessionPersistence,
+              sessionServices.statefulSessionPersistence,
+            ),
+            Context.add(auth.sessions.SessionRepository, sessionServices.sessionRepository),
+            Context.add(auth.sessions.PendingAuthentication, pendingAuthentication),
+            Context.add(auth.sessions.SessionStepUpPersistence, sessionStepUpPersistence),
+            Context.add(auth.sessions.SessionCleanup, sessionCleanup),
+          );
+
+          const proofMapping = proofs ? mappings.proofs() : undefined;
+
+          if (proofMapping !== undefined) {
+            const services = yield* makeNativeProofServices(
+              backend.nativeTables(database),
+              proofMapping,
+            );
+
+            context = Context.add(context, ProofPersistence, services.proofPersistence);
+          }
+
+          if (password) {
+            const mapping = mappings.passwords();
+
+            const services = yield* makeNativePasswordServices(
+              backend.nativeTables(database),
+              mapping,
+              proofMapping,
+            );
+
+            context = Context.add(context, PasswordPersistence, services.passwordPersistence);
+          }
+          for (const [name, strategy] of Object.entries(auth.strategies)) {
+            if (strategy.persistence?.kind !== "password" || !strategy.persistence.management)
+              continue;
+            const key = strategy.RegistrationAuthority;
+
+            if (key === undefined)
+              return yield* configError(`Missing subject provisioning for ${name}`);
+
+            const registration = yield* makeRegistrationAuthority(
+              backend.nativeTables(database),
+              mappings.passwords(),
+              ProvisioningKey,
+              name,
+            );
+
+            context = Context.add(context, key, registration);
+          }
+          if (email)
+            context = Context.add(
+              context,
+              EmailAddressPersistence,
+              (yield* makeNativeEmailAddressServices(
+                backend.nativeTables(database),
+                mappings.emails(),
+                proofMapping,
+              )).emailAddressPersistence,
+            );
+
+          if (phone)
+            context = Context.add(
+              context,
+              PhoneSignInTargets,
+              yield* makeComposedPhoneTargets(
+                backend.nativeTables(database),
+                storage,
+                mappings.proofs(),
+                features.flatMap((feature) =>
+                  feature?.kind === "phone" ? [feature.moduleId] : [],
+                ),
+              ),
+            );
+
+          if (passkeys.length > 0) {
+            // Auth capability metadata determines whether PasskeyConfig is required.
+            const services = makeManagedPasskeys(
+              {
+                storage,
+                namespace: auth.namespace,
+                dialect,
+                features: passkeys,
+                passwordModules: features.flatMap((feature) =>
+                  feature?.kind === "password" ? [feature.moduleId] : [],
+                ),
+              },
+              backend.nativeTables(database),
+            ) as Effect.Effect<
+              Context.Context<never>,
+              PersistenceConfigurationError,
+              | PasskeyRequirement<A>
+              | Crypto.Crypto
+              | LifecycleHooks
+              | SqlClient.SqlClient
+              | SqlBatchCommit
+            >;
+
+            context = Context.merge(context, yield* services);
+          }
+
+          // The checked capability metadata above determines exactly these service keys.
+          return context as Context.Context<Ports<C, Id, A>>;
+        }).pipe(Effect.provideService(SqlBatchCommit, backend.batch?.(database))),
+      ).pipe(
         withStorageValidation,
         Effect.mapError((error) =>
           Schema.is(PersistenceConfigurationError)(error)

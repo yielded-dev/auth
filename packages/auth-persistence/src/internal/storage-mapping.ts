@@ -16,6 +16,7 @@ import {
   type StatefulSessionRecord,
 } from "@yielded/auth/Sessions";
 import { Crypto, DateTime, Effect, Redacted, Schema, Struct } from "effect";
+import { SqlClient } from "effect/sql";
 
 import type { MappingInput } from "./configuration";
 import { randomId } from "./crypto";
@@ -27,6 +28,8 @@ import {
 } from "./models/password-model";
 import { requiredProofConstraints, type AnyProofPersistenceMapping } from "./models/proof-model";
 import type { StatefulSessionMapping, PendingAuthenticationMapping } from "./models/session-model";
+import type { NativeSqlTables } from "./native-sql-table";
+import { exactSqlText } from "./sql-change";
 import { makeStorageClock } from "./storage-clock";
 import { storageTables, type StorageRole } from "./storage-tables";
 import type { TableModel, SqlExpression } from "./table-model";
@@ -40,12 +43,16 @@ const string = (value: unknown) => Schema.decodeUnknownSync(Schema.String)(value
 
 /** Derive shared row mappings from a managed or custom storage layout.
  * Acquire Effect Crypto once; the returned allocators retain that implementation.
- * Each factory requires its role tables to exist. Adapter authors supply typed
- * table handles and dialect-specific clocks/commit predicates, and may refine
- * authority policy for explicit services. This does not alter composed defaults.
+ * Each factory requires its role tables to exist. Supplying native tables derives
+ * batch commit predicates and subject policy columns. Adapter authors may refine
+ * clocks and authority policy for explicit services.
  */
-export const makeMappings = Effect.fnUntraced(function* (input: MappingInput) {
+export const makeMappings = Effect.fnUntraced(function* (
+  input: MappingInput,
+  tables?: NativeSqlTables,
+) {
   const crypto = yield* Crypto.Crypto;
+  const sql = (yield* SqlClient.SqlClient).withoutTransforms();
 
   const allocate = randomId.pipe(
     Effect.provideService(Crypto.Crypto, crypto),
@@ -67,12 +74,27 @@ export const makeMappings = Effect.fnUntraced(function* (input: MappingInput) {
 
   const { subjects: s, encodeInstant: instant, decodeInstant: readInstant } = input;
   const subjectId = { toNative: s.toNative, toSubject: s.toSubject, equals: Object.is };
+  const identifierTable = tables?.(table("identifiers"));
+
+  const activeIdentifier =
+    identifierTable === undefined
+      ? undefined
+      : sql`${identifierTable.column("active")} = ${identifierTable.value("active", true)}`;
 
   const subject = {
     table: s.table,
     id: s.id,
     status: s.status,
     securityRevision: s.securityRevision,
+    // Policy callbacks may read any application column. Identity, status and
+    // security revision have their own final checks and can be intentionally revised.
+    ...(tables === undefined
+      ? {}
+      : {
+          requirementColumns: tables(s.table).keys.filter(
+            (key) => key !== s.id && key !== s.status && key !== s.securityRevision,
+          ),
+        }),
     isActiveStatus: (value: unknown) => Object.is(value, s.activeValue),
     d1ActiveStatusValue: s.activeValue,
     activeStatusValue: s.activeValue,
@@ -88,6 +110,7 @@ export const makeMappings = Effect.fnUntraced(function* (input: MappingInput) {
     revision: "revision",
     status: "active",
     activeStatusValue: true,
+    d1ActiveStatusValue: true,
     isActiveStatus: (value: unknown) => value === true,
     encodeInsert: (row: object) => ({ ...row, active: true }),
     encodeRevision: (revision: SecurityRevision) => ({ revision }),
@@ -142,6 +165,11 @@ export const makeMappings = Effect.fnUntraced(function* (input: MappingInput) {
         verifiedAt: "verifiedAt",
         bindingRevision: "revision",
         isCurrent: (row) => row.active === true,
+        ...(activeIdentifier === undefined
+          ? {}
+          : {
+              d1CurrentCondition: () => activeIdentifier,
+            }),
         encodeInitialInsert: (identifier, subjectId, revision) => ({
           ...identifier,
           subjectId,
@@ -230,6 +258,14 @@ export const makeMappings = Effect.fnUntraced(function* (input: MappingInput) {
       bindingRevision: "revision",
       isCurrent: (row) => row.active === true && row.verifiedAt !== null,
       isMutableTarget: (row) => row.active === true && row.verifiedAt === null,
+      ...(identifierTable === undefined || activeIdentifier === undefined
+        ? {}
+        : {
+            d1CurrentCondition: ({ bindingRevision }) =>
+              sql`${activeIdentifier} and ${identifierTable.column("verifiedAt")} is not null and ${exactSqlText(sql, identifierTable.column("revision"), identifierTable.value("revision", bindingRevision))}`,
+            d1MutableTargetCondition: () =>
+              sql`${activeIdentifier} and ${identifierTable.column("verifiedAt")} is null`,
+          }),
       encodeVerifiedInsert: ({ identifier, subjectId, verifiedAtMillis, bindingRevision }) => ({
         ...identifier,
         subjectId,

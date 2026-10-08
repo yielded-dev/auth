@@ -12,7 +12,7 @@ import {
   uniqueIndex,
   type SQLiteTable,
 } from "drizzle-orm/sqlite-core";
-import type { Effect } from "effect";
+import { Effect } from "effect";
 import type { SqlClient } from "effect/sql/SqlClient";
 
 import { nativeDatabase, type NativeDatabaseHandle } from "../drizzle/native-database";
@@ -71,10 +71,22 @@ const describe = (table: SQLiteTable): StorageTable => {
   };
 };
 
-export const sqlitePersistence = <R>(acquire: Effect.Effect<object, never, R | SqlClient>) =>
+export const sqlitePersistence = <R>(
+  acquire: Effect.Effect<object, never, R | SqlClient>,
+  options?: { readonly batch: true },
+) =>
   createPersistence<SQLiteTable, R, NativeDatabaseHandle>({
     nativeTables: (database) => makeDrizzleSqlTables(database.$client, database),
     makeTable,
     describe,
     acquire: nativeDatabase(acquire),
+    ...(options?.batch === true
+      ? {
+          batch: (database: NativeDatabaseHandle) => ({
+            client: database.$client,
+            execute: (statements: Parameters<typeof database.$client.batch>[0]) =>
+              database.$client.batch(statements).pipe(Effect.asVoid),
+          }),
+        }
+      : {}),
   });
