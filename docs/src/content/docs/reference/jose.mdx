@@ -104,12 +104,18 @@ redacted JSON claims. It performs no signature or claim-policy checks.
 | ------ | ----------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
 | `Jwk`  | `importPublic`, `importPrivate`, `importSecret` | Validate a JWK and bind it to an explicitly chosen algorithm; private/symmetric inputs are `Redacted` |
 | `Jwk`  | `exportPublic`, `exportPrivate`                 | Export imported JWKs; private/symmetric output stays `Redacted`                                       |
+| `Jwk`  | `generateKeyPair`                               | Generate typed public and redacted private JWKs through the selected crypto backend                   |
 | `Jws`  | `sign`, `verify`, `verifyWithKeySet`            | Compact JWS over redacted bytes, with an explicit verification algorithm list                         |
 | `Jwt`  | `sign`, `verify`, `verifyWithKeySet`            | Compact signed JWT with a claims Schema                                                               |
 | `Jwe`  | `encrypt`, `decrypt`                            | Compact `dir` / `A256GCM`; redacted plaintext and tokens                                              |
 
 Private keys require complete RSA CRT parameters, P-256 coordinates and scalar,
 or Ed25519 public and private bytes. Native key parsing validates the components.
+`Jwk.generateKeyPair({ algorithm: "RS256", kid: "v1" })` returns `publicKey` and
+redacted `privateKey` JWK values ready for application-owned persistence or import.
+Generation supports the asymmetric algorithms above; RSA accepts `modulusLength`
+2048 (default), 3072 or 4096. Generated JWKs carry the selected `alg`, `use: "sig"`
+and optional `kid`. Temporary private component bytes are cleared after encoding.
 Public imports and JWKS reject private keys. Imports and key sets capture their
 own properties once and ignore inherited key material and metadata;
 `alg`, `use`, and `key_ops` restrict operations. Key sets and each `key_ops` array
