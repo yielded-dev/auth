@@ -31,6 +31,7 @@
     "@types/react-dom": "catalog:",
     "drizzle-kit": "catalog:",
     "typescript": "catalog:",
+    "vite": "catalog:",
     "vite-plus": "catalog:"
   }
 }

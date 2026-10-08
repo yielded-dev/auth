@@ -34,5 +34,9 @@ export default defineConfig({
     ],
     sourcemap: true,
   },
-  test: { cache: false, silent: "passed-only", include: ["test/**/*.test.ts"] },
+  test: {
+    cache: false,
+    silent: "passed-only",
+    include: ["test/**/*.test.ts"],
+  },
 });
