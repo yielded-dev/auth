@@ -129,7 +129,9 @@ export const makeNativePendingAuthenticationServices = Effect.fnUntraced(functio
 
           const record: PendingAuthenticationRecord<Claims> = { ...input, version };
           const snapshot = yield* mapping.login.encode(record);
-          const condition = sql`${state.authorityCondition(current.revision, current.native)} and ${state.policyCondition(current.row, current.native)} and ${now} >= ${current.now} and ${now} < ${expires}`;
+
+          yield* state.guardPolicy(current);
+          const condition = sql`${state.authorityCondition(current.revision, current.native)} and ${now} >= ${current.now} and ${now} < ${expires}`;
 
           if (batch !== undefined)
             yield* appendSqlBatchStatement(sqlBatchAssertion(sql, condition));

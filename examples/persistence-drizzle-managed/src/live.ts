@@ -1,4 +1,4 @@
-import { Passkey, Password, Schema as AuthSchema, Sessions } from "@yielded/auth";
+import { Passkey, Password, Sessions } from "@yielded/auth";
 import { layer as layerSimpleWebAuthnPasskeyProtocol } from "@yielded/auth-simplewebauthn/Server";
 import { and, eq, getTableColumns } from "drizzle-orm";
 import * as Drizzle from "drizzle-orm/effect-sqlite-bun";
@@ -20,27 +20,25 @@ export const DatabaseReady = MigrationsLive.pipe(
 const ProvisioningLive = Layer.effect(
   Persistence.Provisioning,
   Effect.gen(function* () {
-    const database = yield* Drizzle.makeWithDefaults({});
     const crypto = yield* Crypto.Crypto;
 
     return {
-      password: Effect.fn("Customers.create")(
-        function* ({ registration }) {
-          const id = yield* crypto.randomUUIDv4;
-          const revision = yield* crypto.randomUUIDv4;
+      password: {
+        values: Effect.fn("Customers.values")(
+          function* ({ registration }) {
+            const id = yield* crypto.randomUUIDv4;
+            const revision = yield* crypto.randomUUIDv4;
 
-          // Drizzle joins the Effect SQL transaction owned by AuthPersistence.
-          yield* database.insert(customers).values({
-            id,
-            enabled: true,
-            securityRevision: revision,
-            displayName: registration.displayName,
-          });
-
-          return yield* Schema.decodeEffect(AuthSchema.SubjectId)(id);
-        },
-        Effect.mapError(() => Password.PasswordUnavailable.make({})),
-      ),
+            return {
+              id,
+              enabled: true,
+              securityRevision: revision,
+              displayName: registration.displayName,
+            };
+          },
+          Effect.mapError(() => Password.PasswordUnavailable.make({})),
+        ),
+      },
     };
   }),
 );

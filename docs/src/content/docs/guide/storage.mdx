@@ -81,6 +81,12 @@ startup; it never pushes schema changes. You decide when migrations run.
 
 To give a single table your own layout, pass it in `tables`. The rest stay managed.
 
+For Cloudflare D1, import `AuthPersistence` from
+`@yielded/auth-persistence-drizzle/D1`. The same `managed` API generates SQLite
+tables; provide `D1Client.layer({ db: env.DB })` and apply migrations with your D1
+migration runner. See [D1 composition](../reference/adapters.md#managed-d1) for
+supported workflows and batch constraints.
+
 ## Your schema
 
 Declare every table yourself, with your own names and columns:

@@ -261,7 +261,9 @@ export const makeNativeStatefulSessionServices = Effect.fnUntraced(function* <Cl
             };
 
             const deadline = Math.min(expires, assessment.validUntil, pendingExpiry);
-            const condition = sql`${state.authorityCondition(current.revision, current.native)} and ${state.policyCondition(current.row, current.native)} and ${now} >= ${current.now} and ${now} < ${deadline}`;
+
+            yield* state.guardPolicy(current);
+            const condition = sql`${state.authorityCondition(current.revision, current.native)} and ${now} >= ${current.now} and ${now} < ${deadline}`;
 
             const values = {
               ...s.encodeInsert(record, { subjectId: current.native, sessionId: nativeSession }),

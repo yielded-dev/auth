@@ -6,13 +6,13 @@ import type { SubjectId } from "@yielded/auth/Schema";
 import { SecurityRevision, type AuthenticationRequirement } from "@yielded/auth/Sessions";
 import { DateTime, Effect, Option, Redacted, Schema, Crypto } from "effect";
 import { SqlClient } from "effect/sql/SqlClient";
-import type { Fragment } from "effect/sql/Statement";
+import { fragment, parameter, type Fragment } from "effect/sql/Statement";
 
 import { sqlBatchAssertion } from "./d1-planning";
 import { PersistenceMappingError } from "./mapping-error";
 import type { AnyPasswordPersistenceMapping } from "./models/password-model";
 import type { AnyProofPersistenceMapping } from "./models/proof-model";
-import type { NativeSqlTables, SqlTable } from "./native-sql-table";
+import { nativeSqlAlias, type NativeSqlTables, type SqlTable } from "./native-sql-table";
 import { makePasswordCredentials, samePasswordCredentialSnapshot } from "./password-credentials";
 import {
   allocatePasswordNextSecurityRevision,
@@ -33,6 +33,7 @@ import {
   registerSqlPostcondition,
   SqlBatchCommit,
 } from "./sql-commit";
+import { guardSqlitePolicy } from "./sqlite-policy-guard";
 import { requireStandalone } from "./standalone";
 
 const unavailable = () => P.PasswordUnavailable.make({});
@@ -69,6 +70,12 @@ export const makeNativePasswordServices = Effect.fnUntraced(function* (
   const rawSubject = tables(s.table),
     rawPassword = tables(c.table),
     rawAuthority = tables(a.table);
+
+  // Action policy may inspect any application column. Authority columns have
+  // separate checks and securityRevision intentionally changes in this mutation.
+  const policyColumns = rawSubject.keys.filter(
+    (key) => key !== s.id && key !== s.status && key !== s.securityRevision,
+  );
 
   const now = tables.expression(mapping.clock.engineNowMillis);
   const lock = sql.onDialectOrElse({ sqlite: () => sql``, orElse: () => sql`for update` });
@@ -193,6 +200,17 @@ export const makeNativePasswordServices = Effect.fnUntraced(function* (
     return {
       nativeId,
       subjectRow,
+      policyValues:
+        batch === undefined
+          ? []
+          : policyColumns.map((key) => ({
+              column: rawSubject.selectedColumn(key),
+              value: fragment([
+                parameter(
+                  rows[0][nativeSqlAlias("password_subject_", rawSubject.keys.indexOf(key))],
+                ),
+              ]),
+            })),
       identifierRow,
       passwordRow,
       revision,
@@ -343,6 +361,14 @@ export const makeNativePasswordServices = Effect.fnUntraced(function* (
             (time) => !passwordEvidenceSatisfiedAt(input.authorization.evidence, requirement, time),
           );
         };
+
+        if (batch !== undefined)
+          yield* guardSqlitePolicy({
+            name: "password-subject-policy",
+            table: rawSubject.name,
+            owner: subjectKey(rawSubject, s.id, nativeId),
+            values: state.policyValues,
+          });
 
         const requestedDeadline = freshUntil(input.authorization.requirement),
           currentDeadline = freshUntil(requirement);

@@ -47,7 +47,7 @@ export const makeNativeSessionPendingReader = Effect.fnUntraced(function* (
       const authority = yield* state.decode(
         record.subjectId,
         owner,
-        st.decode(rows[0], "s_"),
+        rows[0],
         rows.map((row) => ct.decode(row, "c_")),
         rows[0].engine_now,
       );
