@@ -84,8 +84,8 @@ const randomSecret = Schema.RedactedFromValue(
 export const OAuthTransactionSecrets = Schema.Struct({
   namespace: Schema.Literal("effect-auth/oauth-transaction-secrets/v1"),
   state: randomSecret,
-  pkceVerifier: Schema.RedactedFromValue(
-    Schema.String.check(Schema.isPattern(/^[A-Za-z0-9._~-]{43,128}$/)),
+  pkceVerifier: Schema.optionalKey(
+    Schema.RedactedFromValue(Schema.String.check(Schema.isPattern(/^[A-Za-z0-9._~-]{43,128}$/))),
   ),
   oidcNonce: Schema.optionalKey(randomSecret),
 });
@@ -263,11 +263,22 @@ export const OAuthCallbackResponse = Schema.Union([
   }),
 ]);
 
+export const OAuthAuthorizationPrompt = Schema.Literals([
+  "none",
+  "login",
+  "consent",
+  "select_account",
+]);
+
+export const OAuthLoginHint = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(1024));
+
 /** Public sign-in request. The server generates its flow identity. */
 export const OAuthSignInInput = Schema.Struct({
   provider: OAuthProviderKey,
   callbackId: Schema.optionalKey(OAuthCallbackId),
   returnTarget: Schema.String.check(Schema.isMaxLength(2048)),
+  prompt: Schema.optionalKey(OAuthAuthorizationPrompt),
+  loginHint: Schema.optionalKey(OAuthLoginHint),
 });
 
 export const OAuthSignInBegin = Schema.Struct({

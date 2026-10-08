@@ -77,6 +77,8 @@ const make = Effect.fnUntraced(function* (
           profile,
           callbackId: input.callbackId ?? OAuthCallbackId.make(input.provider),
           flowId: input.flowId,
+          ...(input.prompt === undefined ? {} : { prompt: input.prompt }),
+          ...(input.loginHint === undefined ? {} : { loginHint: input.loginHint }),
         })
         .pipe(
           Effect.mapError((error) =>

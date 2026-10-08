@@ -1,11 +1,8 @@
 import { it } from "@effect/vitest";
-import { OAuthIssuer } from "@yielded/auth/OAuth";
 import { Effect } from "effect";
 import { describe, expect } from "vite-plus/test";
 
-import { decodeOidcProfile } from "../../src/oauth/providers/profile";
-
-const googleIssuer = OAuthIssuer.make("https://accounts.google.com");
+import { decodeOidcProfile, OidcUserProfile } from "../../src/oauth/providers/profile";
 
 describe("OIDC profile claims", () => {
   it.effect("keeps Google's hosted domain from the verified ID token", () =>
@@ -16,7 +13,7 @@ describe("OIDC profile claims", () => {
           email_verified: true,
           hd: "example.com",
         },
-        googleIssuer,
+        OidcUserProfile,
       );
 
       expect(profile?.providerData).toMatchObject({ hd: "example.com" });
@@ -27,7 +24,7 @@ describe("OIDC profile claims", () => {
     Effect.gen(function* () {
       const profile = yield* decodeOidcProfile(
         { email: "ada@gmail.com", email_verified: true },
-        googleIssuer,
+        OidcUserProfile,
       );
 
       expect(profile?.providerData).not.toHaveProperty("hd");

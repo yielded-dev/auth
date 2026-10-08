@@ -6,6 +6,7 @@ import { provider as oidcProvider } from "./providers/layer";
 import { OpenIdConnectConfigurationError } from "./providers/models";
 import type { Requirements } from "./providers/oidc";
 import { resolveOptions } from "./providers/options";
+import { SlackUserProfile } from "./providers/profile";
 import type { OAuthUnavailable } from "./signInErrors";
 
 const Registration = Schema.Struct({
@@ -25,11 +26,12 @@ export type ProviderOptions = {
 } & (ProviderRegistration | { readonly registrations: ReadonlyArray<ProviderRegistration> });
 
 /** Sign in with Slack through the shared OIDC implementation. Defaults to the
- * openid scope, client_secret_basic, S256 PKCE and RS256. Slack does not advertise
- * response iss; the HTTP host must give it a distinct callback. team is only a
- * consent-screen hint: enforce workspace policy against verified profile claims.
- * No UserInfo request or retained API access is installed. Credentials are captured
- * when the host builds its Layer; supply HttpClient and crypto in that Scope. */
+ * openid scope, client_secret_basic, S256 PKCE and advertised RS256. SlackUserProfile
+ * is carried through ID-token projection. Slack does not advertise response iss;
+ * the HTTP host must give it a distinct callback. team is only a consent-screen
+ * hint: enforce workspace policy against verified profile claims. No UserInfo
+ * request or retained API access is installed. Credentials are captured when the
+ * host builds its Layer; supply HttpClient and crypto in that Scope. */
 export const provider = (
   options: ProviderOptions,
 ): ProviderDefinition<OpenIdConnectConfigurationError | OAuthUnavailable, Requirements> => ({
@@ -46,6 +48,7 @@ export const provider = (
             protocol: "oidc" as const,
             issuer: "https://slack.com",
             responseIssuerMode: "unsupported" as const,
+            profileSchema: SlackUserProfile,
             [discoveryProfile]: "slack" as const,
             ...(team === undefined ? {} : { authorizationParameters: { team } }),
           })),

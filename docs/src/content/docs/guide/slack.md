@@ -56,7 +56,8 @@ Keep `sub` unchanged; neither the email address nor workspace name identifies a
 local account. Never link accounts merely because profile emails match, even when
 `email_verified` is true.
 
-Declare `profiles` on the strategy to get typed `providerData` in
+The preset carries `SlackUserProfile` through ID-token projection. Declare the
+same schema on the strategy to get typed `providerData` in
 `SessionClaims.resolve`:
 
 ```ts
@@ -104,15 +105,15 @@ not needed.
 The preset uses Slack's [discovery document](https://slack.com/.well-known/openid-configuration)
 with these constraints:
 
-| Concern                  | Behavior                                                                                 |
-| ------------------------ | ---------------------------------------------------------------------------------------- |
-| Issuer                   | Exact `https://slack.com`                                                                |
-| Authorization / callback | `/openid/connect/authorize`, authorization code, query response                          |
-| Token exchange           | `/api/openid.connect.token`, `client_secret_basic`                                       |
-| Signature                | RS256, keys at `/openid/connect/keys`; issuer, audience, expiry and nonce verified       |
-| PKCE                     | S256 challenge and captured verifier on every exchange                                   |
-| Response issuer          | Slack does not advertise RFC 9207 `iss`; use a distinct callback URL                     |
-| Access                   | Sign-in only; no retained access, refresh, revocation or UserInfo support in this preset |
+| Concern                  | Behavior                                                                                      |
+| ------------------------ | --------------------------------------------------------------------------------------------- |
+| Issuer                   | Exact `https://slack.com`                                                                     |
+| Authorization / callback | `/openid/connect/authorize`, authorization code, query response                               |
+| Token exchange           | `/api/openid.connect.token`, `client_secret_basic`                                            |
+| Signature                | Advertised RS256, keys at `/openid/connect/keys`; issuer, audience, expiry and nonce verified |
+| PKCE                     | S256 challenge and captured verifier on every exchange                                        |
+| Response issuer          | Slack does not advertise RFC 9207 `iss`; use a distinct callback URL                          |
+| Access                   | Sign-in only; no retained access, refresh, revocation or UserInfo support in this preset      |
 
 Slack's discovery currently omits PKCE metadata, while its
 [token endpoint documents `code_verifier`](https://docs.slack.dev/reference/methods/openid.connect.token/).

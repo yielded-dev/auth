@@ -12,7 +12,11 @@ import { freezeOAuth } from "../signInSnapshot";
 import { TokenCompatibility, tokenCompatibility } from "./compatibility";
 import { DiscoveryProfile, discoveryProfile } from "./discovery";
 import {
+  advertisedIdTokenAlgorithms,
+  IdTokenSignedResponseAlg,
+  OidcUserInfoMode,
   OpenIdConnectConfigurationError,
+  type OidcProfileSchema,
   type OpenIdConnectOAuthProvider,
   type OpenIdConnectOAuthProtocolOptions,
   type OpenIdConnectOidcProvider,
@@ -62,7 +66,15 @@ const optionsSchema = <R>() =>
             ...common,
             protocol: Schema.Literal("oidc"),
             [discoveryProfile]: Schema.optionalKey(DiscoveryProfile),
-            idTokenSignedResponseAlg: Schema.Literal("RS256"),
+            idTokenSignedResponseAlg: Schema.Array(IdTokenSignedResponseAlg).check(
+              Schema.isMinLength(1),
+              Schema.isMaxLength(4),
+            ),
+            pkceS256: Schema.Boolean,
+            userInfo: OidcUserInfoMode,
+            profileSchema: Schema.declare<OidcProfileSchema>((input): input is OidcProfileSchema =>
+              Schema.isSchema(input),
+            ),
             maxAgeSeconds: Schema.optionalKey(
               Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 86400 })),
             ),
@@ -73,7 +85,7 @@ const optionsSchema = <R>() =>
             [tokenCompatibility]: Schema.optionalKey(TokenCompatibility),
             authorizationEndpoint: boundedString(2048),
             tokenEndpoint: boundedString(2048),
-            pkceS256: Schema.Literal(true),
+            pkceS256: Schema.Boolean,
             identitySource: Schema.Struct({
               url: boundedString(2048),
               headers: Schema.optionalKey(fields),
@@ -202,6 +214,7 @@ const metadataSchema = Schema.Struct({
   authorization_endpoint: boundedString(2048),
   token_endpoint: boundedString(2048),
   jwks_uri: Schema.optionalKey(boundedString(2048)),
+  userinfo_endpoint: Schema.optionalKey(boundedString(2048)),
   code_challenge_methods_supported: Schema.optionalKey(Schema.Array(boundedString(64))),
   response_types_supported: Schema.optionalKey(Schema.Array(boundedString(64))),
   id_token_signing_alg_values_supported: Schema.optionalKey(Schema.Array(boundedString(64))),
@@ -277,6 +290,11 @@ export const prepareConfigurations = Effect.fn("OpenIdConnect.prepareConfigurati
       return yield* configError("parameters");
     if ((provider.protocol === "oidc") !== provider.scopes.includes("openid"))
       return yield* configError("parameters");
+    if (
+      provider.protocol === "oidc" &&
+      new Set(provider.idTokenSignedResponseAlg).size !== provider.idTokenSignedResponseAlg.length
+    )
+      return yield* configError("parameters");
     yield* checkParameters(provider.authorizationParameters);
     yield* checkParameters(provider.tokenParameters);
     const callbacks = new Set<string>();
@@ -350,14 +368,21 @@ export const installProvider = Effect.fn("OpenIdConnect.installProvider")(functi
     return yield* configError("authentication");
 
   if (provider.protocol === "oidc") {
+    const algorithms = advertisedIdTokenAlgorithms(
+      metadata.id_token_signing_alg_values_supported,
+      provider.idTokenSignedResponseAlg,
+    );
+
     if (
-      !metadata.code_challenge_methods_supported?.includes("S256") ||
+      algorithms === undefined ||
       !metadata.response_types_supported?.includes("code") ||
-      !metadata.id_token_signing_alg_values_supported?.includes("RS256") ||
-      metadata.jwks_uri === undefined
+      metadata.jwks_uri === undefined ||
+      (provider.pkceS256 && !metadata.code_challenge_methods_supported?.includes("S256")) ||
+      (provider.userInfo === "merge" && metadata.userinfo_endpoint === undefined)
     )
       return yield* configError("metadata");
     yield* endpoint(metadata.jwks_uri);
+    if (metadata.userinfo_endpoint !== undefined) yield* endpoint(metadata.userinfo_endpoint);
   } else {
     yield* endpoint(provider.identitySource.url);
   }
@@ -368,7 +393,11 @@ export const installProvider = Effect.fn("OpenIdConnect.installProvider")(functi
     clientId: provider.clientId,
     authentication: provider.authentication,
     timeoutMs: timeoutSeconds * 1000,
-    ...(provider.protocol === "oauth" ? { profile: provider.identitySource } : {}),
+    ...(provider.protocol === "oauth"
+      ? { profile: provider.identitySource }
+      : provider.userInfo === "merge" && metadata.userinfo_endpoint !== undefined
+        ? { profile: { url: metadata.userinfo_endpoint } }
+        : {}),
   });
 
   const placeholder = Redacted.make("a".repeat(43));
@@ -379,7 +408,7 @@ export const installProvider = Effect.fn("OpenIdConnect.installProvider")(functi
         redirectUri: callback.redirectUri,
         scopes: provider.scopes,
         state: placeholder,
-        codeChallenge: Redacted.value(placeholder),
+        ...(provider.pkceS256 ? { codeChallenge: Redacted.value(placeholder) } : {}),
         ...(provider.authorizationParameters === undefined
           ? {}
           : { parameters: provider.authorizationParameters }),

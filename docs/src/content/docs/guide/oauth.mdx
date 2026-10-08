@@ -361,6 +361,12 @@ client configuration, network requirements, and the token lifecycle.
 For Sign in with Slack, use the [Slack preset and runnable example](./slack).
 
 `OpenIdConnect.provider` supports OIDC discovery and plain OAuth endpoints.
+Pass `profileSchema` on an OIDC registration so that preset owns its typed
+claims end to end. Discovery accepts advertised RS256, PS256, ES256, and EdDSA
+ID tokens. S256 PKCE stays required unless you set `pkceS256: false`. Set
+`userInfo: "merge"` to fill ID-token claims from UserInfo. `auth.signIn` accepts
+per-request `prompt` and `loginHint`.
+
 Its optional `access` settings declare permission profiles and the provider's
 refresh/resource/revocation contract. A custom `ProviderDefinition.configure`
 returns the sign-in protocol and optionally a `connected` protocol. Configuration,

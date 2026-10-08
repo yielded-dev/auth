@@ -1,7 +1,7 @@
 import { Effect, Schema } from "effect";
 
 import { OAuthProtocolRejected } from "../signInErrors";
-import { type OAuthDisplayProfile, type OAuthIssuer } from "../signInModels";
+import { type OAuthDisplayProfile } from "../signInModels";
 
 const text = Schema.String.check(Schema.isMaxLength(256));
 const url = Schema.String.check(Schema.isMaxLength(2048));
@@ -39,14 +39,21 @@ const standardOidcUserProfile = Schema.Struct({
   ),
 });
 
+/** Standard OpenID Connect user claims projected from verified ID tokens.
+ * Protocol claims and credentials are excluded; provider assertions never
+ * authorize local account linking by themselves. */
+export const OidcStandardUserProfile = standardOidcUserProfile;
+export type OidcStandardUserProfile = typeof OidcStandardUserProfile.Type;
+
 /** Standard OpenID Connect user claims, plus Google's optional hosted domain.
- * The adapter projects these from verified ID tokens without requesting additional
- * scopes or fetching UserInfo. Protocol claims and credentials are excluded;
- * provider assertions never authorize local account linking by themselves. */
+ * Generic OIDC uses this schema unless a preset supplies its own. The adapter
+ * projects these from verified ID tokens, optionally merged with UserInfo.
+ * Protocol claims and credentials are excluded; provider assertions never
+ * authorize local account linking by themselves. */
 export const OidcUserProfile = Schema.Struct({
   ...standardOidcUserProfile.fields,
-  /** Hosted domain for a Google Workspace or Cloud organization. The adapter
-   * reads it from verified Google ID tokens; other issuers' `hd` claims are ignored. */
+  /** Hosted domain for a Google Workspace or Cloud organization. Present when
+   * the verified claims include `hd`. */
   hd: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(253))),
 });
 
@@ -64,27 +71,27 @@ export type SlackUserProfile = typeof SlackUserProfile.Type;
 
 export const decodeOidcProfile = Effect.fn("OpenIdConnect.decodeProfile")(function* (
   claims: unknown,
-  issuer: typeof OAuthIssuer.Type,
+  schema: Schema.Codec<Schema.JsonObject>,
 ): Effect.fn.Return<OAuthDisplayProfile | undefined, OAuthProtocolRejected> {
   // oxlint-disable-next-line no-restricted-properties -- Project claims from an ID token already verified against this issuer.
-  const profile = yield* Schema.decodeUnknownEffect(
-    issuer === "https://accounts.google.com"
-      ? OidcUserProfile
-      : issuer === "https://slack.com"
-        ? SlackUserProfile
-        : standardOidcUserProfile,
-  )(claims).pipe(Effect.mapError(() => OAuthProtocolRejected.make({})));
+  const profile = yield* Schema.decodeUnknownEffect(schema)(claims).pipe(
+    Effect.mapError(() => OAuthProtocolRejected.make({})),
+  );
+
+  const display = yield* Schema.decodeUnknownEffect(standardOidcUserProfile)(claims).pipe(
+    Effect.mapError(() => OAuthProtocolRejected.make({})),
+  );
 
   if (Object.keys(profile).length === 0) return undefined;
-  const displayName = profile.name?.trim() || profile.preferred_username;
+  const displayName = display.name?.trim() || display.preferred_username;
 
   return {
     ...(displayName === undefined ? {} : { displayName }),
-    ...(profile.preferred_username === undefined ? {} : { handle: profile.preferred_username }),
-    ...(profile.picture === undefined ? {} : { avatarUrl: profile.picture }),
-    ...(profile.profile === undefined ? {} : { profileUrl: profile.profile }),
-    ...(profile.email === undefined ? {} : { email: profile.email }),
-    ...(profile.email_verified === undefined ? {} : { emailVerified: profile.email_verified }),
+    ...(display.preferred_username === undefined ? {} : { handle: display.preferred_username }),
+    ...(display.picture === undefined ? {} : { avatarUrl: display.picture }),
+    ...(display.profile === undefined ? {} : { profileUrl: display.profile }),
+    ...(display.email === undefined ? {} : { email: display.email }),
+    ...(display.email_verified === undefined ? {} : { emailVerified: display.email_verified }),
     providerData: profile,
   };
 });

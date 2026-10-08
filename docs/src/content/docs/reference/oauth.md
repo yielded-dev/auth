@@ -649,19 +649,28 @@ Connected profiles use their declared resources and reject these parameter overr
 
 ### OpenIdConnect defaults
 
-| Setting                                | Default               |
-| -------------------------------------- | --------------------- |
-| `callbackId`                           | Provider key          |
-| `configurationGeneration` / `issuance` | `1` / `active`        |
-| `timeoutSeconds`                       | `10` (range: 1–30)    |
-| `tokenEndpointAuthMethod`              | `client_secret_basic` |
-| OIDC scopes / signing algorithm        | `["openid"]` / RS256  |
-| Plain OAuth scopes                     | `[]`                  |
+| Setting                                | Default                                                |
+| -------------------------------------- | ------------------------------------------------------ |
+| `callbackId`                           | Provider key                                           |
+| `configurationGeneration` / `issuance` | `1` / `active`                                         |
+| `timeoutSeconds`                       | `10` (range: 1–30)                                     |
+| `tokenEndpointAuthMethod`              | `client_secret_basic`                                  |
+| OIDC scopes / ID-token algorithms      | `["openid"]` / advertised RS256, PS256, ES256, EdDSA   |
+| OIDC profile schema                    | `OidcUserProfile` (standard claims plus optional `hd`) |
+| OIDC UserInfo                          | `id-token`                                             |
+| Plain OAuth scopes                     | `[]`                                                   |
 
 S256 PKCE and response issuer validation are required by default. Set
-`responseIssuerMode: "unsupported"` only for providers without issuer responses.
-Public clients use `authentication: { method: "none", publicClient: true }`.
-Load secrets with `Config.Redacted`. Invalid settings fail Layer construction with
+`pkceS256: false` only for issuers that cannot complete authorization-code +
+PKCE. Set `responseIssuerMode: "unsupported"` only for providers without issuer
+responses. OIDC presets pass `profileSchema` so each provider keeps its own
+typed claims. Set `userInfo: "merge"` to fetch UserInfo after ID-token
+verification; `sub` must match, and ID-token claims win on overlap. Connected
+refresh verifies a returned ID token and keeps the stored identity; it does not
+fetch UserInfo again. Sign-in `prompt` and `loginHint` are per request. Public
+clients use
+`authentication: { method: "none", publicClient: true }`. Load secrets with
+`Config.Redacted`. Invalid settings fail Layer construction with
 `OpenIdConnectConfigurationError`.
 
 ### Configuration rotation
@@ -718,14 +727,16 @@ providers use the same map with their own JSON-object schemas requiring no servi
 Schemas validate the adapter's projection; they do not add claims, scopes, or requests.
 
 Missing fields remain absent; GitHub nullable values remain null. GitHub's `/user`
-email is not asserted verified. Adapters do not fetch additional email or UserInfo
-endpoints or retain unknown fields. Connected-grant refresh need not update profiles.
+email is not asserted verified. Adapters retain only fields in the provider's
+profile schema. Connected-grant refresh need not update profiles.
 
-The OIDC adapter also includes Google's `hd` hosted-domain claim in `providerData`
-for verified Google ID tokens. Applications can use it to restrict access to a
-Google Workspace or Cloud organization. Other issuers' private `hd` claims remain ignored.
-Verified Slack ID tokens preserve `https://slack.com/team_id` and
-`https://slack.com/user_id`; see [Slack workspace policy](../guide/slack#identity-and-workspace-policy).
+Each OIDC preset carries its `profileSchema` through ID-token projection.
+Generic OIDC defaults to `OidcUserProfile`, which includes optional `hd`.
+`Slack.provider` uses `SlackUserProfile` so `https://slack.com/team_id` and
+`https://slack.com/user_id` survive into `providerData`. See
+[Slack workspace policy](../guide/slack#identity-and-workspace-policy).
+Set `userInfo: "merge"` when the ID token omits profile claims the application
+needs; the adapter then fetches UserInfo and fills missing fields.
 
 Detailed signatures and invariants live beside the
 [OAuth source](https://github.com/yielded-dev/auth/tree/main/packages/auth/src/oauth).

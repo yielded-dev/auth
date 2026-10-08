@@ -217,7 +217,12 @@ export const layer = <E, R>(options: Options<E, R>) => {
         if (entry === undefined) return yield* Rejected.make({});
 
         const prepared = yield* entry.protocol
-          .prepareAuthorization({ provider: input.provider, flowId: input.flowId })
+          .prepareAuthorization({
+            provider: input.provider,
+            flowId: input.flowId,
+            ...(input.prompt === undefined ? {} : { prompt: input.prompt }),
+            ...(input.loginHint === undefined ? {} : { loginHint: input.loginHint }),
+          })
           .pipe(
             Effect.flatMap((value) => snapshotOAuth(OAuthProtocolPreparation, value)),
             Effect.mapError(() => Unavailable.make({})),

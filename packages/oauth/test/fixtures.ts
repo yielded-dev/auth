@@ -33,11 +33,11 @@ export const options: OAuth.ClientOptions = {
   profile: { url: "https://api.example/user", headers: { "X-Api-Version": "2026" } },
 };
 
-export const codeInput: OAuth.CodeGrantInput = {
+export const codeInput = {
   code: Redacted.make("single-use-code"),
   redirectUri: "https://app.example/callback",
   pkceVerifier: Redacted.make("dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"),
-};
+} satisfies OAuth.CodeGrantInput;
 
 export const tokenBody = {
   access_token: "private-access",

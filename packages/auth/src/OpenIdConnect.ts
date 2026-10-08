@@ -8,6 +8,9 @@ export {
 } from "./oauth/providers/layer";
 
 export {
+  type IdTokenSignedResponseAlg,
+  type OidcProfileSchema,
+  type OidcUserInfoMode,
   type OpenIdConnectAuthentication,
   OpenIdConnectConfigurationError,
   type OpenIdConnectOAuthProtocolOptions,
@@ -16,7 +19,7 @@ export {
   type PlainOAuthIdentity,
 } from "./oauth/providers/models";
 
-export { OidcUserProfile } from "./oauth/providers/profile";
+export { OidcStandardUserProfile, OidcUserProfile } from "./oauth/providers/profile";
 
 export {
   layer as layerConnected,

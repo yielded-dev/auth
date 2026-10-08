@@ -9,11 +9,13 @@ import * as M from "../../connectedModels";
 import { OAuthConnectedProtocol } from "../../OAuthConnectedProtocol";
 import { OAuthProtocolRejected, OAuthUnavailable } from "../../signInErrors";
 import {
+  OAuthAuthorizationPrompt,
   OAuthCallbackId,
   OAuthCodeResponse,
   OAuthDisplayProfile,
   OAuthExternalIdentity,
   OAuthInstant,
+  OAuthLoginHint,
   OAuthProtocolPreparation,
   OAuthTransactionSecrets,
 } from "../../signInModels";
@@ -50,6 +52,12 @@ const prepareInput = Schema.Struct({
   profile: M.OAuthConnectedProfile,
   callbackId: OAuthCallbackId,
   flowId: RequestBindingFlowId,
+  prompt: Schema.optionalKey(OAuthAuthorizationPrompt),
+  loginHint: Schema.optionalKey(OAuthLoginHint),
+});
+
+const userInfoSubject = Schema.Struct({
+  sub: Schema.NonEmptyString.check(Schema.isMaxLength(1024)),
 });
 
 const prepareOutput = Schema.Struct({
@@ -265,14 +273,21 @@ export const makeConnectedProtocolWithCompatibility = Effect.fn(
         { readonly _tag: "Oidc" }
       >;
     },
+    claims?: unknown,
   ) {
     const provider = entry.provider;
 
     if (provider.protocol !== "oidc") return yield* unavailable();
 
-    const profile = yield* decodeOidcProfile(Redacted.value(verified.claims), provider.issuer).pipe(
-      Effect.mapError(unavailable),
-    );
+    // Refresh keeps the stored identity. UserInfo-only required claims belong
+    // to the initial exchange, not the refresh ID token.
+    const profile =
+      previous === undefined
+        ? yield* decodeOidcProfile(
+            claims ?? Redacted.value(verified.claims),
+            provider.profileSchema,
+          ).pipe(Effect.mapError(unavailable))
+        : undefined;
 
     return {
       identity: { provider: provider.provider, issuer: provider.issuer, subject: verified.subject },
@@ -352,10 +367,12 @@ export const makeConnectedProtocolWithCompatibility = Effect.fn(
       Effect.mapError(unavailable),
     );
 
-    const pkce = yield* Pkce.make().pipe(
-      Effect.provideService(Crypto.Crypto, crypto),
-      Effect.mapError(unavailable),
-    );
+    const pkce = entry.provider.pkceS256
+      ? yield* Pkce.make().pipe(
+          Effect.provideService(Crypto.Crypto, crypto),
+          Effect.mapError(unavailable),
+        )
+      : undefined;
 
     const nonce =
       entry.provider.protocol === "oidc"
@@ -374,7 +391,7 @@ export const makeConnectedProtocolWithCompatibility = Effect.fn(
             request.profile.retention === "access-and-refresh",
           ) ?? request.profile.scopes,
         state,
-        codeChallenge: pkce.challenge,
+        ...(pkce === undefined ? {} : { codeChallenge: pkce.challenge }),
         ...(nonce === undefined ? {} : { nonce }),
         ...(entry.provider.authorizationParameters === undefined
           ? {}
@@ -383,6 +400,8 @@ export const makeConnectedProtocolWithCompatibility = Effect.fn(
         ...(entry.provider.protocol === "oidc" && entry.provider.maxAgeSeconds !== undefined
           ? { maxAgeSeconds: entry.provider.maxAgeSeconds }
           : {}),
+        ...(request.prompt === undefined ? {} : { prompt: request.prompt }),
+        ...(request.loginHint === undefined ? {} : { loginHint: request.loginHint }),
       })
       .pipe(Effect.mapError(unavailable));
 
@@ -401,7 +420,7 @@ export const makeConnectedProtocolWithCompatibility = Effect.fn(
       secrets: {
         namespace: "effect-auth/oauth-transaction-secrets/v1" as const,
         state,
-        pkceVerifier: pkce.verifier,
+        ...(pkce === undefined ? {} : { pkceVerifier: pkce.verifier }),
         ...(nonce === undefined ? {} : { oidcNonce: nonce }),
       },
     };
@@ -420,6 +439,7 @@ export const makeConnectedProtocolWithCompatibility = Effect.fn(
 
     if (
       (provider.protocol === "oidc") !== (request.secrets.oidcNonce !== undefined) ||
+      provider.pkceS256 !== (request.secrets.pkceVerifier !== undefined) ||
       Redacted.value(request.response.state) !== Redacted.value(request.secrets.state) ||
       (provider.responseIssuerMode === "required"
         ? request.response.issuer !== provider.issuer
@@ -432,7 +452,9 @@ export const makeConnectedProtocolWithCompatibility = Effect.fn(
       .codeGrant({
         code: request.response.code,
         redirectUri: saved.redirectUri,
-        pkceVerifier: request.secrets.pkceVerifier,
+        ...(request.secrets.pkceVerifier === undefined
+          ? {}
+          : { pkceVerifier: request.secrets.pkceVerifier }),
         ...(provider.tokenParameters === undefined ? {} : { parameters: provider.tokenParameters }),
         resources: saved.profile.resources,
       })
@@ -463,7 +485,30 @@ export const makeConnectedProtocolWithCompatibility = Effect.fn(
             })
             .pipe(Effect.mapError(unavailable));
 
-          return yield* oidcIdentity(entry, verified, request.secrets.oidcNonce!);
+          const claims =
+            provider.userInfo === "merge"
+              ? yield* Effect.gen(function* () {
+                  const userInfo = yield* entry.client
+                    .fetchProfile(grant.accessToken)
+                    .pipe(Effect.mapError(unavailable));
+
+                  const subject = yield* Schema.decodeUnknownEffect(userInfoSubject)(userInfo).pipe(
+                    Effect.mapError(unavailable),
+                  );
+
+                  if (subject.sub !== verified.subject) return yield* unavailable();
+
+                  return { ...userInfo, ...Redacted.value(verified.claims) };
+                })
+              : undefined;
+
+          return yield* oidcIdentity(
+            entry,
+            verified,
+            request.secrets.oidcNonce!,
+            undefined,
+            claims,
+          );
         })
       : entry.client.fetchProfile(grant.accessToken).pipe(
           Effect.mapError(unavailable),

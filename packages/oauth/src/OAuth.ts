@@ -91,15 +91,17 @@ export interface AuthorizationInput extends Parameters {
   readonly redirectUri: string;
   readonly scopes: ReadonlyArray<string>;
   readonly state: Redacted.Redacted<string>;
-  readonly codeChallenge: string;
+  readonly codeChallenge?: string;
   readonly nonce?: Redacted.Redacted<string>;
   readonly maxAgeSeconds?: number;
+  readonly prompt?: "none" | "login" | "consent" | "select_account";
+  readonly loginHint?: string;
 }
 
 export interface CodeGrantInput extends Parameters {
   readonly code: Redacted.Redacted<string>;
   readonly redirectUri: string;
-  readonly pkceVerifier: Redacted.Redacted<string>;
+  readonly pkceVerifier?: Redacted.Redacted<string>;
 }
 
 export interface RefreshGrantInput extends Parameters {
@@ -152,16 +154,18 @@ const Authorization = Schema.Struct({
   redirectUri: V.Callback,
   scopes: V.Scopes,
   state: V.secret(256),
-  codeChallenge: V.Challenge,
+  codeChallenge: Schema.optionalKey(V.Challenge),
   nonce: Schema.optionalKey(V.secret(256)),
   maxAgeSeconds: Schema.optionalKey(V.integer(0, 86400)),
+  prompt: Schema.optionalKey(Schema.Literals(["none", "login", "consent", "select_account"])),
+  loginHint: Schema.optionalKey(V.text(1024)),
 });
 
 const CodeGrant = Schema.Struct({
   ...additional,
   code: V.secret(16384),
   redirectUri: V.Callback,
-  pkceVerifier: V.Verifier,
+  pkceVerifier: Schema.optionalKey(V.Verifier),
 });
 
 const RefreshGrant = Schema.Struct({
@@ -371,10 +375,14 @@ export const make = Effect.fnUntraced(function* (
     body.set("response_mode", "query");
     body.set("scope", value.scopes.join(" "));
     body.set("state", yield* V.reveal(value.state));
-    body.set("code_challenge", value.codeChallenge);
-    body.set("code_challenge_method", "S256");
+    if (value.codeChallenge !== undefined) {
+      body.set("code_challenge", value.codeChallenge);
+      body.set("code_challenge_method", "S256");
+    }
     if (value.nonce !== undefined) body.set("nonce", yield* V.reveal(value.nonce));
     if (value.maxAgeSeconds !== undefined) body.set("max_age", String(value.maxAgeSeconds));
+    if (value.prompt !== undefined) body.set("prompt", value.prompt);
+    if (value.loginHint !== undefined) body.set("login_hint", value.loginHint);
     for (const [key, item] of body) url.searchParams.append(key, item);
     if (url.href.length > 16384) return yield* ConfigurationError.make({ reason: "parameters" });
 
@@ -388,7 +396,8 @@ export const make = Effect.fnUntraced(function* (
 
     body.set("grant_type", "authorization_code");
     body.set("code", yield* V.reveal(value.code));
-    body.set("code_verifier", yield* V.reveal(value.pkceVerifier));
+    if (value.pkceVerifier !== undefined)
+      body.set("code_verifier", yield* V.reveal(value.pkceVerifier));
     body.set("redirect_uri", value.redirectUri);
 
     return yield* send(body);
