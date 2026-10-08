@@ -358,7 +358,14 @@ client configuration, network requirements, and the token lifecycle.
 
 ## Other providers
 
-For Sign in with Slack, use the [Slack preset and runnable example](./slack).
+First-party OpenID presets wrap shared discovery and ID-token verification:
+
+- [Google](./google), with typed `hd`, account picker prompt, and offline access
+- [GitLab](./gitlab), including a self-hosted issuer
+- [Hugging Face](./huggingface)
+- [Slack](./slack)
+- [Vercel](./vercel)
+- [Zoom](./zoom)
 
 `OpenIdConnect.provider` supports OIDC discovery and plain OAuth endpoints.
 Pass `profileSchema` on an OIDC registration so that preset owns its typed
@@ -379,5 +386,6 @@ authorizes linking accounts by matching email addresses.
 
 Declare a `profiles` schema map on the OAuth strategy to get typed `providerData`
 in `SessionClaims.resolve`. The map uses your provider keys and works with the
-GitHub, OIDC, Slack, and Strava schemas, or a custom provider's schema.
+GitHub, GitLab, Google, Hugging Face, OIDC, Slack, Strava, Vercel, and Zoom
+schemas, or a custom provider's schema.
 See [provider profiles](../reference/oauth#provider-profiles) for mixed-provider narrowing.

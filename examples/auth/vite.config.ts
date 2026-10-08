@@ -17,6 +17,31 @@ export default defineConfig({
         cache: false,
         dependsOn: ["build"],
       },
+      "example:google": {
+        command: "bun src/google-app.ts",
+        cache: false,
+        dependsOn: ["build"],
+      },
+      "example:gitlab": {
+        command: "bun src/gitlab-app.ts",
+        cache: false,
+        dependsOn: ["build"],
+      },
+      "example:vercel": {
+        command: "bun src/vercel-app.ts",
+        cache: false,
+        dependsOn: ["build"],
+      },
+      "example:huggingface": {
+        command: "bun src/huggingface-app.ts",
+        cache: false,
+        dependsOn: ["build"],
+      },
+      "example:zoom": {
+        command: "bun src/zoom-app.ts",
+        cache: false,
+        dependsOn: ["build"],
+      },
       "example:github": {
         command: "bun src/github-app.ts",
         cache: false,

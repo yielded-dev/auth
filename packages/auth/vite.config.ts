@@ -24,7 +24,13 @@ export default defineConfig({
       "src/OAuthProxy.ts",
       "src/OpenIdConnect.ts",
       "src/GitHub.ts",
+      "src/GitLab.ts",
+      "src/Google.ts",
+      "src/HuggingFace.ts",
       "src/Slack.ts",
+      "src/Vercel.ts",
+      "src/Zoom.ts",
+
       "src/OAuthServer.ts",
       "src/Strava.ts",
       "src/Operations.ts",

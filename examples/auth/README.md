@@ -47,6 +47,12 @@ verified workspace claim before issuing a session. See the
 [Slack guide](../../docs/src/content/docs/guide/slack.md) for app configuration,
 credentials, HTTPS forwarding, and the isolated development-state reset.
 
+`example:google`, `example:gitlab`, `example:huggingface`, `example:vercel`, and
+`example:zoom` follow the same sign-in pattern. Google optionally checks a verified
+`hd` claim when `GOOGLE_HOSTED_DOMAIN` is set. GitLab reads `GITLAB_ISSUER` for a
+self-hosted instance. See each provider guide for credentials and the isolated
+development-state reset.
+
 The examples allow sign-in and current-owner grant metadata/use. Management requires
 an application-owned exact-action verifier and is denied until one is installed.
 Run provider revocation jobs through an application-owned scheduler if enabling

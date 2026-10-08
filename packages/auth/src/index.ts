@@ -34,4 +34,9 @@ export * as BrowserLoginContract from "./BrowserLoginContract.ts";
 
 export * as OpenIdConnect from "./OpenIdConnect.ts";
 export * as GitHub from "./GitHub.ts";
+export * as GitLab from "./GitLab.ts";
+export * as Google from "./Google.ts";
+export * as HuggingFace from "./HuggingFace.ts";
 export * as Slack from "./Slack.ts";
+export * as Vercel from "./Vercel.ts";
+export * as Zoom from "./Zoom.ts";

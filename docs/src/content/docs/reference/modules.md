@@ -58,7 +58,7 @@ Import application services and authentication methods from the root:
 | `Totp`, `Passkey`                            | Additional factors and passkey workflows.                                |
 | `OAuth`                                      | Provider sign-in, registration, linked accounts, and connected grants.   |
 | `OAuthProxy`                                 | Stable callbacks for local and preview sign-in and registration.         |
-| `OpenIdConnect`, `GitHub`, `Slack`, `Strava` | Native provider configuration and protocol Layers.                       |
+| `OpenIdConnect`, `GitHub`, `GitLab`, `Google`, `HuggingFace`, `Slack`, `Strava`, `Vercel`, `Zoom` | Native provider configuration and protocol Layers. |
 
 ## Browser and transport boundaries
 
