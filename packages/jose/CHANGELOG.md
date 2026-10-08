@@ -1,5 +1,18 @@
 # @yielded/jose
 
+## 0.1.0-beta.30
+
+### Minor Changes
+
+- [#170](https://github.com/yielded-dev/auth/pull/170) [`dd0a495`](https://github.com/yielded-dev/auth/commit/dd0a4951597c230e6e7ef11725c626ce8b80318b) Thanks [@danieljvdm](https://github.com/danieljvdm)! - Add Effect-native signing key generation with typed components and redacted private JWKs.
+
+  BEHAVIOR CHANGE: custom `Signature` services must implement `generateKeyPair`.
+
+### Patch Changes
+
+- Updated dependencies [[`dd0a495`](https://github.com/yielded-dev/auth/commit/dd0a4951597c230e6e7ef11725c626ce8b80318b)]:
+  - @yielded/crypto@0.1.0-beta.30
+
 ## 0.1.0-beta.29
 
 ### Patch Changes

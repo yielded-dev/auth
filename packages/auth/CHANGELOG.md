@@ -1,5 +1,22 @@
 # @yielded/auth
 
+## 0.1.0-beta.30
+
+### Minor Changes
+
+- [#161](https://github.com/yielded-dev/auth/pull/161) [`989f88c`](https://github.com/yielded-dev/auth/commit/989f88ca1a7f46ec73702330827c555b776d8206) Thanks [@danieljvdm](https://github.com/danieljvdm)! - Expose paginated linked OAuth login identities through Auth, HTTP clients, and Effect Atom queries. Add `metadataAccess` to SQL/Drizzle account mappings and `list` to replacement account persistence services.
+
+- [#167](https://github.com/yielded-dev/auth/pull/167) [`8e5b5d1`](https://github.com/yielded-dev/auth/commit/8e5b5d173f82c98ad1fcd644b9d18d91c59d9a43) Thanks [@danieljvdm](https://github.com/danieljvdm)! - Add a static-client OpenID authorization-code profile with signed identity tokens, UserInfo, current-session authorization and replaceable consent rendering.
+
+  Allow applications to supply prior OpenID consent for exact clients and scopes while preserving explicit consent and account selection.
+
+### Patch Changes
+
+- Updated dependencies [[`dd0a495`](https://github.com/yielded-dev/auth/commit/dd0a4951597c230e6e7ef11725c626ce8b80318b)]:
+  - @yielded/crypto@0.1.0-beta.30
+  - @yielded/jose@0.1.0-beta.30
+  - @yielded/oauth@0.1.0-beta.30
+
 ## 0.1.0-beta.29
 
 ### Minor Changes

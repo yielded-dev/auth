@@ -1,5 +1,17 @@
 # @yielded/auth-persistence-drizzle
 
+## 0.1.0-beta.30
+
+### Minor Changes
+
+- [#161](https://github.com/yielded-dev/auth/pull/161) [`989f88c`](https://github.com/yielded-dev/auth/commit/989f88ca1a7f46ec73702330827c555b776d8206) Thanks [@danieljvdm](https://github.com/danieljvdm)! - Expose paginated linked OAuth login identities through Auth, HTTP clients, and Effect Atom queries. Add `metadataAccess` to SQL/Drizzle account mappings and `list` to replacement account persistence services.
+
+### Patch Changes
+
+- Updated dependencies [[`989f88c`](https://github.com/yielded-dev/auth/commit/989f88ca1a7f46ec73702330827c555b776d8206), [`8e5b5d1`](https://github.com/yielded-dev/auth/commit/8e5b5d173f82c98ad1fcd644b9d18d91c59d9a43), [`193317e`](https://github.com/yielded-dev/auth/commit/193317e9a3e7f6645424ff6da8f9ce7d3d40657e)]:
+  - @yielded/auth@0.1.0-beta.30
+  - @yielded/auth-persistence@0.1.0-beta.30
+
 ## 0.1.0-beta.29
 
 ### Patch Changes

@@ -1,5 +1,18 @@
 # @yielded/auth-persistence
 
+## 0.1.0-beta.30
+
+### Minor Changes
+
+- [#161](https://github.com/yielded-dev/auth/pull/161) [`989f88c`](https://github.com/yielded-dev/auth/commit/989f88ca1a7f46ec73702330827c555b776d8206) Thanks [@danieljvdm](https://github.com/danieljvdm)! - Expose paginated linked OAuth login identities through Auth, HTTP clients, and Effect Atom queries. Add `metadataAccess` to SQL/Drizzle account mappings and `list` to replacement account persistence services.
+
+### Patch Changes
+
+- [#162](https://github.com/yielded-dev/auth/pull/162) [`193317e`](https://github.com/yielded-dev/auth/commit/193317e9a3e7f6645424ff6da8f9ce7d3d40657e) Thanks [@danieljvdm](https://github.com/danieljvdm)! - Add a portable in-memory `Testing` Layer for seeded password sign-in and stateful session tests. Bundle portable crypto and password hashing with optional seeded entropy through `Testing.services()`.
+- Updated dependencies [[`989f88c`](https://github.com/yielded-dev/auth/commit/989f88ca1a7f46ec73702330827c555b776d8206), [`8e5b5d1`](https://github.com/yielded-dev/auth/commit/8e5b5d173f82c98ad1fcd644b9d18d91c59d9a43), [`dd0a495`](https://github.com/yielded-dev/auth/commit/dd0a4951597c230e6e7ef11725c626ce8b80318b)]:
+  - @yielded/auth@0.1.0-beta.30
+  - @yielded/crypto@0.1.0-beta.30
+
 ## 0.1.0-beta.29
 
 ### Patch Changes
