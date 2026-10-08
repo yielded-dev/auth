@@ -48,8 +48,12 @@ export default defineConfig({
           items: [
             { label: "OAuth setup", slug: "guide/oauth" },
             { label: "GitHub", slug: "guide/github" },
+            { label: "GitLab", slug: "guide/gitlab" },
             { label: "Google", slug: "guide/google" },
+            { label: "Hugging Face", slug: "guide/huggingface" },
             { label: "Slack", slug: "guide/slack" },
+            { label: "Vercel", slug: "guide/vercel" },
+            { label: "Zoom", slug: "guide/zoom" },
             { label: "Other OAuth / OIDC", link: "/guide/oauth/#other-providers" },
             { label: "MCP authorization", link: "/guide/oauth/#authorize-mcp-clients" },
           ],

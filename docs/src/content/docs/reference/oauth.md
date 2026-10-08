@@ -623,10 +623,15 @@ ingress rate limits.
 | Integration             | Configure                                                                                                         |
 | ----------------------- | ----------------------------------------------------------------------------------------------------------------- |
 | GitHub sign-in          | [`GitHub.provider`](../guide/github)                                                                              |
+| GitLab sign-in          | [`GitLab.provider`](../guide/gitlab) with optional self-hosted `issuer`                                           |
+| Google sign-in          | [`Google.provider`](../guide/google) with typed `hd`, `prompt=select_account`, and `access_type=offline`          |
+| Hugging Face sign-in    | [`HuggingFace.provider`](../guide/huggingface)                                                                    |
 | Slack sign-in           | [`Slack.provider`](../guide/slack) with client credentials; no retained API access                                |
+| Vercel sign-in          | [`Vercel.provider`](../guide/vercel)                                                                              |
+| Zoom sign-in            | [`Zoom.provider`](../guide/zoom)                                                                                  |
 | GitHub with API access  | `GitHub.accessProfile({ clientId, scopes })` and `GitHub.provider({ clientId, clientSecret, access: [profile] })` |
 | Strava sign-in / access | `Strava.provider({ clientId, clientSecret, access: profile })`; omit `access` for sign-in only                    |
-| OIDC                    | [`OpenIdConnect.provider`](../guide/google) with issuer and credentials                                           |
+| OIDC                    | [`OpenIdConnect.provider`](../guide/oauth) with issuer and credentials                                            |
 | Plain OAuth             | `OpenIdConnect.provider` with endpoints and an identity decoder                                                   |
 
 `GitHub.accessProfile` defaults to `read:user`, rotating refresh tokens, provider
@@ -706,9 +711,13 @@ Keys match the provider keys in `Http.make` or your protocol Layer:
 const social = OAuth.make({
   profiles: {
     github: GitHub.GitHubUserProfile,
-    google: OpenIdConnect.OidcUserProfile,
+    gitlab: GitLab.GitLabUserProfile,
+    google: Google.GoogleUserProfile,
+    huggingface: HuggingFace.HuggingFaceUserProfile,
     slack: Slack.SlackUserProfile,
     strava: Strava.Athlete,
+    vercel: Vercel.VercelUserProfile,
+    zoom: Zoom.ZoomUserProfile,
   },
 });
 ```
@@ -732,6 +741,9 @@ profile schema. Connected-grant refresh need not update profiles.
 
 Each OIDC preset carries its `profileSchema` through ID-token projection.
 Generic OIDC defaults to `OidcUserProfile`, which includes optional `hd`.
+`Google.provider` uses `GoogleUserProfile` so verified `hd` survives into
+`providerData`. See [Google Workspace policy](../guide/google#identity-and-workspace-policy).
+`GitLab.provider` uses `GitLabUserProfile` for optional `groups` claims.
 `Slack.provider` uses `SlackUserProfile` so `https://slack.com/team_id` and
 `https://slack.com/user_id` survive into `providerData`. See
 [Slack workspace policy](../guide/slack#identity-and-workspace-policy).

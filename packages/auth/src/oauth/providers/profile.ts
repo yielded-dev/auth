@@ -59,6 +59,22 @@ export const OidcUserProfile = Schema.Struct({
 
 export type OidcUserProfile = typeof OidcUserProfile.Type;
 
+/** Google ID-token claims, including optional Workspace hosted domain. The preset
+ * passes `hd` as a consent hint; applications enforce workspace policy against
+ * this verified claim. */
+export const GoogleUserProfile = OidcUserProfile;
+export type GoogleUserProfile = OidcUserProfile;
+
+/** GitLab ID-token claims, including optional group membership. Group lists are
+ * application policy, not local identity. */
+export const GitLabUserProfile = Schema.Struct({
+  ...standardOidcUserProfile.fields,
+  groups: Schema.optionalKey(Schema.Array(url).check(Schema.isMaxLength(1024))),
+  groups_direct: Schema.optionalKey(Schema.Array(url).check(Schema.isMaxLength(1024))),
+});
+
+export type GitLabUserProfile = typeof GitLabUserProfile.Type;
+
 /** Standard profile and workspace identifiers projected only from verified Slack
  * ID tokens. Workspace membership is application policy, not local identity. */
 export const SlackUserProfile = Schema.Struct({

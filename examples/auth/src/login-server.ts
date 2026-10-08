@@ -1,6 +1,5 @@
-import { Auth, Email, Http, OAuth, Sessions } from "@yielded/auth";
+import { Auth, Email, Google, Http, OAuth, Sessions } from "@yielded/auth";
 import * as GitHub from "@yielded/auth/GitHub";
-import * as OpenIdConnect from "@yielded/auth/OpenIdConnect";
 import { Effect, Layer, Schema } from "effect";
 import { FetchHttpClient, HttpRouter, HttpServerResponse } from "effect/http";
 
@@ -19,7 +18,7 @@ export const makeAppAuth = (email: Email.EmailCodeOptions) =>
       }),
       social: OAuth.makeRegistration({
         namespace: "example/social-login",
-        profiles: { github: GitHub.GitHubUserProfile, google: OpenIdConnect.OidcUserProfile },
+        profiles: { github: GitHub.GitHubUserProfile, google: Google.GoogleUserProfile },
         registration: Registration,
         policy: {
           generation: 1,
@@ -62,10 +61,7 @@ export const makeServer = (config: {
         ...(config.google === undefined
           ? {}
           : {
-              google: OpenIdConnect.provider({
-                protocol: "oidc",
-                issuer: "https://accounts.google.com",
-                tokenEndpointAuthMethod: "client_secret_post",
+              google: Google.provider({
                 ...config.google,
               }),
             }),
