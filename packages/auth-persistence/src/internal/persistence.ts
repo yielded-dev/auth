@@ -143,8 +143,6 @@ export const createPersistence = <T extends object, R, Database extends object =
       },
       managed: boolean,
     ): StorageLayout<T, Roles<C, Id, A>> => {
-      if (backend.batch !== undefined && management)
-        throw configError("Use explicit D1 services for callback-based password registration");
       const subject = options.subjects;
 
       if (passkeys.length > 0 && options.timestamps !== undefined)
@@ -241,11 +239,6 @@ export const createPersistence = <T extends object, R, Database extends object =
         Effect.gen(function* () {
           const storage = yield* ConfigKey;
           const client = yield* SqlClient.SqlClient;
-
-          if (backend.batch !== undefined && management)
-            return yield* configError(
-              "Use explicit D1 services for callback-based password registration",
-            );
 
           const dialect = client.onDialectOrElse({
             pg: () => "pg" as const,

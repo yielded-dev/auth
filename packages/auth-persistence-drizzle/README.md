@@ -24,9 +24,10 @@ apply those files before starting auth.
 
 D1 also supports managed tables through `AuthPersistence.make(auth).managed(...)`.
 Supply the primary D1 binding through `D1Client.layer` and apply generated SQL
-with your D1 migration runner; D1 has no file-based migration Layer. Its composed
-services use atomic batches. Callback-based password provisioning requires the
-explicit D1 registration adapter.
+with `AuthPersistence.migrationsLayer({ migrations })` using bundled SQL,
+or with your existing D1 migration runner. Its composed services use atomic batches.
+Password provisioning returns subject values through `Persistence.Provisioning`;
+the library commits the account and credentials together.
 
 SQLite/D1 and PostgreSQL driver modules also expose `OAuthProxyPersistence` for
 [callback proxy storage](../../docs/src/content/docs/reference/oauth.md#callback-server).

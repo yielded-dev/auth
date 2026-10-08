@@ -97,6 +97,27 @@ export interface ProvisioningId<Id extends string> {
   readonly service: "PersistenceProvisioning";
 }
 
+export interface SubjectProvisioningInput<Registration> {
+  readonly requestId: string;
+  readonly identifier: LoginIdentifier;
+  readonly registration: Registration;
+}
+
+/** Return application subject values for insertion by the auth commit owner.
+ * Include the allocated native ID, active status, and initial security revision.
+ * Preparing values may allocate IDs, but must not write to the database or perform
+ * external side effects. Interactive drivers also accept an existing insert callback.
+ */
+export type SubjectProvisioning<Registration> =
+  | {
+      readonly values: (
+        input: SubjectProvisioningInput<Registration>,
+      ) => Effect.Effect<Readonly<Record<string, unknown>>, PasswordUnavailable>;
+    }
+  | ((
+      input: SubjectProvisioningInput<Registration>,
+    ) => Effect.Effect<SubjectId, PasswordUnavailable>);
+
 export type Provisioning<A extends { readonly strategies: Readonly<Record<string, Strategy>> }> = {
   readonly [
     K in keyof A["strategies"] as A["strategies"][K] extends {
@@ -104,11 +125,7 @@ export type Provisioning<A extends { readonly strategies: Readonly<Record<string
     }
       ? K
       : never
-  ]: (input: {
-    readonly requestId: string;
-    readonly identifier: LoginIdentifier;
-    readonly registration: Registration<A["strategies"][K]>;
-  }) => Effect.Effect<SubjectId, PasswordUnavailable>;
+  ]: SubjectProvisioning<Registration<A["strategies"][K]>>;
 };
 
 export type ProvisioningRequirement<
@@ -217,9 +234,10 @@ export interface BoundPersistence<
       value: StorageLayout<T, Roles<C, Id, A>>,
     ) => Layer.Layer<ConfigId<A["namespace"]>>;
   };
-  /** Create only the application subject. Runs inside the owning auth SQL transaction;
-   * use that SqlClient (including Drizzle over it), and return the new subject ID.
-   * Do not perform external side effects or open an independent transaction here.
+  /** Supply subject values through `{ values }` on every driver, including D1.
+   * Interactive drivers also accept callbacks that insert through the owning
+   * SqlClient and return the new subject ID. Never open an independent transaction
+   * or perform external side effects while preparing a subject.
    */
   readonly Provisioning: Context.Service<ProvisioningRequirement<A>, Provisioning<A>>;
   /** Capture dependencies at acquisition; validate SQL metadata and configure storage

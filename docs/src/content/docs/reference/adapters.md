@@ -155,7 +155,7 @@ and anonymous session reads perform no persistence initialization. Initializatio
 shared within that Layer's scope; failures remain the operation's typed availability
 error. Rebuild the Layer after migrations or an initialization failure.
 File-based drivers load the migration folder only when the migration Layer starts;
-SQLite WASM accepts Drizzle's `migrations` map instead of a folder. Direct Effect SQL
+SQLite WASM and D1 accept a `migrations` map instead of a folder. Direct Effect SQL
 applications supply their own migrations, as shown in the raw SQL example.
 
 The composed API supports password sign-in and management, email address verification
@@ -183,18 +183,24 @@ With password registration enabled, also supply `Persistence.Provisioning`:
 
 ```ts
 const ProvisioningLive = Layer.succeed(Persistence.Provisioning, {
-  password: createCustomer, // ({ requestId, registration, identifier }) => Effect<SubjectId, PasswordUnavailable>
+  password: {
+    values: customerValues, // ({ requestId, registration, identifier }) => Effect<customer insert values, PasswordUnavailable>
+  },
 });
 const PersistenceLive = Persistence.layer.pipe(Layer.provide(ProvisioningLive));
 ```
 
-`createCustomer` inserts only the application subject, allocating its ID and initial
-security revision. It runs inside the library's SQL transaction: use the same Effect
-SQL client, including Drizzle over it. Identifier and password writes commit with
-that insert. The stable `requestId` identifies the application operation.
-Do not send email or open a separate transaction in this callback.
+`customerValues` returns the new application's subject row, including its allocated
+ID, active status, and initial security revision. The library inserts it together
+with the identifier and password in one transaction or D1 batch. Use the logical
+column names from your subject table. The stable `requestId` identifies the
+application operation. Preparing values must not write to the database, send email,
+or perform other external side effects.
 An occupied identifier suppresses creation; retrying never overwrites or recovers
 another request's password. There is no registration-receipt table.
+Interactive drivers also accept `password: createCustomer`, where the callback
+inserts through the owning Effect SQL client and returns its subject ID. D1 uses
+the `{ values }` form so account and credential writes can commit atomically.
 See the [managed example's wiring](https://github.com/yielded-dev/auth/blob/main/examples/persistence-drizzle-managed/src/live.ts).
 `subjects.actionRequirements` can supply a distinct recovery or credential-change
 policy; it defaults to `subjects.requirements`.
@@ -209,7 +215,7 @@ another credential issuance or delivery.
 ### Managed D1
 
 The D1 driver exposes the same `AuthPersistence.make(AppAuth)`, `managed`, `map`,
-`Config`, and `layer` API:
+`Config`, `Provisioning`, `layer`, and `migrationsLayer` API:
 
 ```ts
 import * as D1Client from "@effect/sql-d1/D1Client";
@@ -232,18 +238,27 @@ is not an auth database replacement. Mutations use guarded atomic batches.
 The generated mapping checks application subject columns at session commits so
 policy changes between planning and committing cannot authorize stale evidence.
 
-D1 composition supports password sign-in, email address verification and changes,
-phone sign-in, passkey sign-in and management, and stateful sessions. Password
-management with callback-based subject provisioning is rejected during storage
-configuration: that callback requires an interactive transaction. Use the explicit
-D1 password registration adapter to allocate IDs and stage subject creation in the
-same batch. Other strategies use the explicit adapters below.
+D1 composition supports password sign-in, registration and management, email address
+verification and changes, phone sign-in, passkey sign-in and management, and stateful
+sessions. Supply subject values through `Persistence.Provisioning` as above; the
+library inserts the subject, identifier, password, and credential authority in one
+batch. Other strategies use the explicit adapters below.
 
-Export the managed tables for Drizzle Kit and apply the generated SQL through your
-D1 migration runner before serving auth. D1 does not expose the file-based
-`AuthPersistence.migrationsLayer`; the Worker does not read migration files or
-create tables on first use. Existing table names and data stay under application
-control; changing a prefix does not migrate existing credentials.
+Export the managed tables for Drizzle Kit. Bundle the generated SQL and apply it
+before serving auth, or keep using your existing D1 migration runner:
+
+```ts
+const MigrationsLive = AuthPersistence.migrationsLayer({
+  migrations: { "20261008120000_initial": initialSql },
+});
+```
+
+Each key is the generated migration directory name and each value is its SQL text,
+including Drizzle's statement breakpoints. Supply `D1Client` and Effect `Crypto` to
+this Layer. It uses Drizzle's journal and migration selection, applying pending SQL
+and journal entries in one D1 batch. Bundle the files through your build tool; the
+Worker needs no filesystem. Run one migration owner at a time. Existing table names
+and data stay under application control; changing a prefix does not migrate credentials.
 
 ## Connect password storage
 

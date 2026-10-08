@@ -74,14 +74,17 @@ export const makeIdentityServices = <
 
 import { Layer } from "effect";
 
+import { d1MigrationsLayer } from "./internal/drizzle-d1-migrations";
 import { sqlitePersistence } from "./internal/drizzle-sqlite";
 
 /** Managed or mapped auth tables committed through D1's atomic batches.
  * Supply D1Client.layer({ db: env.DB }) with the primary database binding.
- * Apply generated migrations through the application's D1 migration runner.
- * Callback-based password registration requires an explicit D1 adapter.
+ * Registration supplies subject values; the account and credentials commit together.
  */
-export const AuthPersistence = sqlitePersistence(makeWithDefaults({}), { batch: true });
+export const AuthPersistence = {
+  ...sqlitePersistence(makeWithDefaults({}), { batch: true }),
+  migrationsLayer: d1MigrationsLayer,
+};
 
 import type { D1BatchStatements } from "./drizzle/D1BatchStatements";
 import { makeOAuthTarget } from "./drizzle/oauth-drivers";
