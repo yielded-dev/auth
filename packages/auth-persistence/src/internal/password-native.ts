@@ -6,13 +6,13 @@ import type { SubjectId } from "@yielded/auth/Schema";
 import { SecurityRevision, type AuthenticationRequirement } from "@yielded/auth/Sessions";
 import { DateTime, Effect, Option, Redacted, Schema, Crypto } from "effect";
 import { SqlClient } from "effect/sql/SqlClient";
-import type { Fragment } from "effect/sql/Statement";
+import { fragment, parameter, type Fragment } from "effect/sql/Statement";
 
 import { sqlBatchAssertion } from "./d1-planning";
 import { PersistenceMappingError } from "./mapping-error";
 import type { AnyPasswordPersistenceMapping } from "./models/password-model";
 import type { AnyProofPersistenceMapping } from "./models/proof-model";
-import type { NativeSqlTables, SqlTable } from "./native-sql-table";
+import { nativeSqlAlias, type NativeSqlTables, type SqlTable } from "./native-sql-table";
 import { makePasswordCredentials, samePasswordCredentialSnapshot } from "./password-credentials";
 import {
   allocatePasswordNextSecurityRevision,
@@ -33,7 +33,7 @@ import {
   registerSqlPostcondition,
   SqlBatchCommit,
 } from "./sql-commit";
-import { sqlitePolicySnapshot } from "./sqlite-policy-snapshot";
+import { guardSqlitePolicy } from "./sqlite-policy-guard";
 import { requireStandalone } from "./standalone";
 
 const unavailable = () => P.PasswordUnavailable.make({});
@@ -77,9 +77,6 @@ export const makeNativePasswordServices = Effect.fnUntraced(function* (
     (key) => key !== s.id && key !== s.status && key !== s.securityRevision,
   );
 
-  const policySnapshot = (table: SqlTable) =>
-    batch === undefined ? sql`null` : sqlitePolicySnapshot(sql, table, policyColumns);
-
   const now = tables.expression(mapping.clock.engineNowMillis);
   const lock = sql.onDialectOrElse({ sqlite: () => sql``, orElse: () => sql`for update` });
 
@@ -109,7 +106,7 @@ export const makeNativePasswordServices = Effect.fnUntraced(function* (
     const joined = wanted !== undefined;
 
     const rows =
-      yield* sql`select ${subject.fields("password_subject_")}, ${identifier.fields("password_identifier_")}, ${credential.fields("password_credential_")}${joined ? sql`, ${authority.fields("password_authority_")}` : sql``}, ${now} as engine_now, ${policySnapshot(subject)} as policy_snapshot
+      yield* sql`select ${subject.fields("password_subject_")}, ${identifier.fields("password_identifier_")}, ${credential.fields("password_credential_")}${joined ? sql`, ${authority.fields("password_authority_")}` : sql``}, ${now} as engine_now
       from ${subject.name}
       left join ${identifier.name} on ${subjectKey(identifier, i.subjectId, nativeId)} ${wanted === undefined ? sql`` : sql`and ${exact(identifier, i.namespace, wanted.namespace)} and ${exact(identifier, i.value, wanted.value)}`}
       left join ${credential.name} on ${subjectKey(credential, c.subjectId, nativeId)} and ${exact(credential, c.moduleId, moduleId)}
@@ -203,10 +200,17 @@ export const makeNativePasswordServices = Effect.fnUntraced(function* (
     return {
       nativeId,
       subjectRow,
-      policySnapshot:
+      policyValues:
         batch === undefined
-          ? undefined
-          : yield* Schema.decodeUnknownEffect(Schema.String)(rows[0].policy_snapshot),
+          ? []
+          : policyColumns.map((key) => ({
+              column: rawSubject.selectedColumn(key),
+              value: fragment([
+                parameter(
+                  rows[0][nativeSqlAlias("password_subject_", rawSubject.keys.indexOf(key))],
+                ),
+              ]),
+            })),
       identifierRow,
       passwordRow,
       revision,
@@ -253,13 +257,6 @@ export const makeNativePasswordServices = Effect.fnUntraced(function* (
         );
 
         if (state === undefined) return yield* prepare("rejected" as const, project);
-        if (batch !== undefined) ensure(state.policySnapshot !== undefined);
-
-        const policyCondition =
-          batch === undefined
-            ? sql`1 = 1`
-            : sql`exists(select 1 from ${rawSubject.name} where ${subjectKey(rawSubject, s.id, nativeId)} and cast(${policySnapshot(rawSubject)} as blob) = cast(${state.policySnapshot} as blob))`;
-
         const requirement = yield* s.decodeActionRequirement(state.subjectRow, action);
 
         const valid = yield* validatePasswordMutation(
@@ -365,6 +362,14 @@ export const makeNativePasswordServices = Effect.fnUntraced(function* (
           );
         };
 
+        if (batch !== undefined)
+          yield* guardSqlitePolicy({
+            name: "password-subject-policy",
+            table: rawSubject.name,
+            owner: subjectKey(rawSubject, s.id, nativeId),
+            values: state.policyValues,
+          });
+
         const requestedDeadline = freshUntil(input.authorization.requirement),
           currentDeadline = freshUntil(requirement);
 
@@ -398,7 +403,6 @@ export const makeNativePasswordServices = Effect.fnUntraced(function* (
               : sql`${rawAuthority.column(a.status)} = ${rawAuthority.value(a.status, a.d1ActiveStatusValue)}`;
 
           const condition = sql.and([
-            policyCondition,
             sql`exists(select 1 from ${rawSubject.name} where ${subjectKey(rawSubject, s.id, nativeId)} and ${exact(rawSubject, s.securityRevision, input.expectedRevision.securityRevision)} and ${rawSubject.column(s.status)} = ${rawSubject.value(s.status, s.d1ActiveStatusValue)})`,
             sql`(select count(*) from ${rawAuthority.name} where ${subjectKey(rawAuthority, a.subjectId, nativeId)} and ${active}) = ${factors.length}`,
             ...factors,
@@ -456,7 +460,6 @@ export const makeNativePasswordServices = Effect.fnUntraced(function* (
 
           const conditions: Array<Fragment> = [
             finalPassword,
-            policyCondition,
             freshness,
             sql`(select count(*) from ${rawAuthority.name} where ${subjectKey(rawAuthority, a.subjectId, nativeId)} and ${active}) = ${expectedFactors.length}`,
             ...expectedFactors.map(

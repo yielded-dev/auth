@@ -14,13 +14,13 @@ import {
 } from "@yielded/auth/Sessions";
 import { Cause, Effect, Schema, DateTime } from "effect";
 import { SqlClient } from "effect/sql/SqlClient";
-import type { Fragment } from "effect/sql/Statement";
+import { fragment, parameter, type Fragment } from "effect/sql/Statement";
 
 import { PersistenceMappingError } from "./mapping-error";
 import type { SessionAuthorityTables, SessionExecution } from "./models/session-model";
-import type { NativeSqlTables, SqlTable } from "./native-sql-table";
+import { nativeSqlAlias, type NativeSqlTables, type SqlTable } from "./native-sql-table";
 import { anySqlCondition, exactSqlText } from "./sql-change";
-import { sqlitePolicySnapshot } from "./sqlite-policy-snapshot";
+import { guardSqlitePolicy, type SqlitePolicyValue } from "./sqlite-policy-guard";
 import type { AnyTableModel } from "./table-model";
 
 export const sessionUnavailable = () => SessionUnavailable.make({});
@@ -73,7 +73,7 @@ export type NativeSessionAuthorityMapping = SessionAuthorityTables<
 export interface NativeSessionAuthority {
   readonly native: unknown;
   readonly row: Record<string, unknown>;
-  readonly policySnapshot: string | undefined;
+  readonly policyValues: ReadonlyArray<SqlitePolicyValue>;
   readonly revision: AuthenticationRevision;
   readonly requirement: AuthenticationRequirement;
   readonly now: number;
@@ -132,24 +132,18 @@ export const makeNativeSessionAuthorityState = Effect.fnUntraced(function* (
   const requested = (table: SqlTable, ids: ReadonlyArray<string>) =>
     anySqlCondition(ids.map((value) => exact(table, c.credentialId, value)));
 
-  const policySnapshot = (table: SqlTable): Fragment => {
-    if (!batch) return sql`null`;
-    sessionInvariant(s.requirementColumns !== undefined);
-
-    return sqlitePolicySnapshot(sql, table, s.requirementColumns);
-  };
-
   const decode = Effect.fnUntraced(function* (
     subjectId: SubjectId,
     native: unknown,
-    row: Record<string, unknown>,
+    projected: Record<string, unknown>,
     factors: ReadonlyArray<Record<string, unknown>>,
     instant: unknown,
-    snapshot: unknown,
   ): Effect.fn.Return<
     NativeSessionAuthority | undefined,
     PersistenceMappingError | Schema.SchemaError
   > {
+    const row = subject.decode(projected, "s_");
+
     sessionInvariant((yield* mapping.subjectId.toSubject(row[s.id])) === subjectId);
     if (!s.isActiveStatus(row[s.status])) return undefined;
     const credentials: { credentialId: string; revision: string }[] = [];
@@ -171,9 +165,16 @@ export const makeNativeSessionAuthorityState = Effect.fnUntraced(function* (
     return {
       native,
       row,
-      policySnapshot: batch
-        ? yield* Schema.decodeUnknownEffect(Schema.String)(snapshot)
-        : undefined,
+      // Compare the selected SQL representation, without round-tripping through
+      // application codecs (for example, JSON whitespace or date precision).
+      policyValues: batch
+        ? (s.requirementColumns ?? []).map((key) => ({
+            column: subject.selectedColumn(key),
+            value: fragment([
+              parameter(projected[nativeSqlAlias("s_", subject.keys.indexOf(key))]),
+            ]),
+          }))
+        : [],
       revision: yield* Schema.decodeUnknownEffect(AuthenticationRevision)({
         subjectId,
         securityRevision: row[s.securityRevision],
@@ -190,7 +191,7 @@ export const makeNativeSessionAuthorityState = Effect.fnUntraced(function* (
     sessionInvariant((yield* mapping.subjectId.toSubject(native)) === subjectId);
     if (locking && nativeLocks) {
       const owners =
-        yield* sql`select ${subject.fields("s_")}, ${now} as engine_now, ${policySnapshot(subject)} as policy_snapshot from ${subject.name} where ${id(subject, s.id, native)} and ${activeSubject(subject)} limit 2 ${lock}`;
+        yield* sql`select ${subject.fields("s_")}, ${now} as engine_now from ${subject.name} where ${id(subject, s.id, native)} and ${activeSubject(subject)} limit 2 ${lock}`;
 
       sessionInvariant(owners.length <= 1);
       if (owners[0] === undefined) return undefined;
@@ -201,34 +202,37 @@ export const makeNativeSessionAuthorityState = Effect.fnUntraced(function* (
       return yield* decode(
         subjectId,
         native,
-        subject.decode(owners[0], "s_"),
+        owners[0],
         factors.map((row) => credential.decode(row, "c_")),
         owners[0].engine_now,
-        owners[0].policy_snapshot,
       );
     }
 
     const rows =
-      yield* sql`select ${joinedSubject.fields("s_")}, ${joinedCredential.fields("c_")}, ${now} as engine_now, ${policySnapshot(joinedSubject)} as policy_snapshot from ${joinedSubject.name} left join ${joinedCredential.name} on ${id(joinedCredential, c.subjectId, native)} and ${activeCredential(joinedCredential)} where ${id(joinedSubject, s.id, native)} and ${activeSubject(joinedSubject)} limit 65`;
+      yield* sql`select ${joinedSubject.fields("s_")}, ${joinedCredential.fields("c_")}, ${now} as engine_now from ${joinedSubject.name} left join ${joinedCredential.name} on ${id(joinedCredential, c.subjectId, native)} and ${activeCredential(joinedCredential)} where ${id(joinedSubject, s.id, native)} and ${activeSubject(joinedSubject)} limit 65`;
 
     if (rows[0] === undefined) return undefined;
 
     return yield* decode(
       subjectId,
       native,
-      joinedSubject.decode(rows[0], "s_"),
+      rows[0],
       rows.map((row) => joinedCredential.decode(row, "c_")),
       rows[0].engine_now,
-      rows[0].policy_snapshot,
     );
   });
 
-  const policyCondition = (current: NativeSessionAuthority): Fragment => {
-    if (!batch) return sql`1 = 1`;
-    sessionInvariant(current.policySnapshot !== undefined);
+  const guardPolicy = Effect.fnUntraced(function* (current: NativeSessionAuthority) {
+    if (!batch) return;
+    sessionInvariant(s.requirementColumns !== undefined);
 
-    return sql`exists(select 1 from ${subject.name} where ${id(subject, s.id, current.native)} and cast((${policySnapshot(subject)}) as blob) = cast(${current.policySnapshot} as blob))`;
-  };
+    yield* guardSqlitePolicy({
+      name: "session-subject-policy",
+      table: subject.name,
+      owner: id(subject, s.id, current.native),
+      values: current.policyValues,
+    });
+  });
 
   const authorityCondition = (revision: AuthenticationRevision, native: unknown): Fragment =>
     sql.and([
@@ -257,8 +261,7 @@ export const makeNativeSessionAuthorityState = Effect.fnUntraced(function* (
     decode,
     read,
     authorityCondition,
-    policyCondition,
-    policySnapshot,
+    guardPolicy,
   };
 });
 
