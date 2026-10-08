@@ -8,7 +8,14 @@ export default defineConfig({
     target: "node24",
     outDir: "dist",
     dts: false,
-    deps: { alwaysBundle: [/^(?!electron$)/], neverBundle: ["electron"] },
+    deps: {
+      // tsdown <0.23 compatibility: resolve external dependency subpaths.
+      // Remove to preserve subpath imports as written (the new default).
+      // https://tsdown.dev/options/dependencies#deps-resolvedepsubpath
+      resolveDepSubpath: true,
+      alwaysBundle: [/^(?!electron$)/],
+      neverBundle: ["electron"],
+    },
   },
   base: "./",
   build: { outDir: "dist/renderer", target: "chrome152" },

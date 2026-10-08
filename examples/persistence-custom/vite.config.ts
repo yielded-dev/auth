@@ -1,7 +1,16 @@
 import { defineConfig } from "vite-plus";
 
 export default defineConfig({
-  test: { cache: false, silent: "passed-only", include: ["test/**/*.test.ts"] },
+  test: {
+    // Vitest v4 compatibility: preserve mock call history.
+    // Remove after tests no longer rely on calls from setup or earlier tests.
+    // https://viteplus.dev/guide/vitest-v5#remove-unneeded-compatibility-settings
+    // https://vitest.dev/guide/migration/#clearmocks-is-enabled-by-default
+    clearMocks: false,
+    cache: false,
+    silent: "passed-only",
+    include: ["test/**/*.test.ts"],
+  },
   run: {
     tasks: {
       start: { command: "vp build && bun src/server.ts", cache: false },
