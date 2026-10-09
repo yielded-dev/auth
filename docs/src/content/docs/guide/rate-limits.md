@@ -45,13 +45,18 @@ other configurations. It replaces token-bucket accounting with Cloudflare's
 approximate policy; it is not a general-purpose Effect limiter.
 
 ```ts title="apps/server/rate-limits.ts"
-import type * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "alchemy/Cloudflare";
 import { RuntimeContext } from "alchemy/RuntimeContext";
 import { Crypto, Duration, Effect, Layer } from "effect";
 import { Base64Url } from "effect/encoding";
 import { RateLimiter } from "effect/persistence";
 
-export const authRateLimitConfig = { limit: 10, period: 60 } as const;
+const authRateLimitConfig = { limit: 10, period: 60 } as const;
+
+export const AuthRateLimit = Cloudflare.RateLimit("AUTH_RATE_LIMITS", {
+  namespaceId: 1001,
+  simple: authRateLimitConfig,
+});
 
 const unavailable = (cause: unknown) =>
   RateLimiter.RateLimiterError.make({
@@ -61,56 +66,55 @@ const unavailable = (cause: unknown) =>
     }),
   });
 
-export const authRateLimits = (native: Cloudflare.RateLimitClient) =>
-  Layer.effect(
-    RateLimiter.RateLimiter,
-    Effect.gen(function* () {
-      const runtime = yield* RuntimeContext;
-      const crypto = yield* Crypto.Crypto;
-      const window = Duration.seconds(authRateLimitConfig.period);
-      const unsupported = Effect.fail(
-        unavailable("Expected one token, ten attempts per minute, and fail on excess"),
-      );
+export const AuthRateLimitsLive = Layer.effect(
+  RateLimiter.RateLimiter,
+  Effect.gen(function* () {
+    const native = yield* AuthRateLimit;
+    const runtime = yield* RuntimeContext;
+    const crypto = yield* Crypto.Crypto;
+    const window = Duration.seconds(authRateLimitConfig.period);
+    const unsupported = Effect.fail(
+      unavailable("Expected one token, ten attempts per minute, and fail on excess"),
+    );
 
-      return RateLimiter.RateLimiter.of({
-        [RateLimiter.TypeId]: RateLimiter.TypeId,
-        adaptiveConsume: () => unsupported,
-        adaptiveFeedback: () => unsupported,
-        consume: Effect.fn("AuthRateLimits.consume")(function* (request) {
-          if (
-            request.algorithm !== "token-bucket" ||
-            (request.tokens ?? 1) !== 1 ||
-            (request.onExceeded ?? "fail") !== "fail" ||
-            request.limit !== authRateLimitConfig.limit ||
-            Duration.toMillis(Duration.fromInputUnsafe(request.window)) !== Duration.toMillis(window)
-          ) {
-            return yield* unsupported;
-          }
+    return RateLimiter.RateLimiter.of({
+      [RateLimiter.TypeId]: RateLimiter.TypeId,
+      adaptiveConsume: () => unsupported,
+      adaptiveFeedback: () => unsupported,
+      consume: Effect.fn("AuthRateLimits.consume")(function* (request) {
+        if (
+          request.algorithm !== "token-bucket" ||
+          (request.tokens ?? 1) !== 1 ||
+          (request.onExceeded ?? "fail") !== "fail" ||
+          request.limit !== authRateLimitConfig.limit ||
+          Duration.toMillis(Duration.fromInputUnsafe(request.window)) !== Duration.toMillis(window)
+        ) {
+          return yield* unsupported;
+        }
 
-          const digest = yield* crypto
-            .digest("SHA-256", new TextEncoder().encode(request.key))
-            .pipe(Effect.mapError(unavailable));
-          const { success } = yield* native.limit({ key: Base64Url.encode(digest) }).pipe(
-            Effect.provideService(RuntimeContext, runtime),
-            Effect.mapError(unavailable),
-          );
+        const digest = yield* crypto
+          .digest("SHA-256", new TextEncoder().encode(request.key))
+          .pipe(Effect.mapError(unavailable));
+        const { success } = yield* native
+          .limit({ key: Base64Url.encode(digest) })
+          .pipe(Effect.provideService(RuntimeContext, runtime), Effect.mapError(unavailable));
 
-          if (!success) {
-            return yield* RateLimiter.RateLimiterError.make({
-              reason: RateLimiter.RateLimitExceeded.make({
-                key: request.key,
-                retryAfter: window,
-                limit: request.limit,
-                remaining: 0,
-              }),
-            });
-          }
+        if (!success) {
+          return yield* RateLimiter.RateLimiterError.make({
+            reason: RateLimiter.RateLimitExceeded.make({
+              key: request.key,
+              retryAfter: window,
+              limit: request.limit,
+              remaining: 0,
+            }),
+          });
+        }
 
-          return { delay: Duration.zero, limit: request.limit, remaining: 0, resetAfter: window };
-        }),
-      });
-    }),
-  );
+        return { delay: Duration.zero, limit: request.limit, remaining: 0, resetAfter: window };
+      }),
+    });
+  }),
+);
 ```
 
 Hash the complete Auth key to retain its module, action, and identity separation
@@ -125,8 +129,10 @@ placeholders. Do not use it for quota displays, rate-limit headers, or delayed r
 
 ### Bind and provide it per request
 
-Declare the binding in your Alchemy Worker's construction Effect, then build Auth
-inside `fetch` so the adapter captures the current request's `RuntimeContext`.
+Declare the binding on your Alchemy Worker's `env`, then build Auth inside `fetch`
+so the adapter acquires the client and captures the current request's `RuntimeContext`.
+`AuthRateLimitsLive` requires Alchemy's `RateLimit` service; provide its implementation
+at the Worker boundary.
 
 ```ts title="apps/server/worker.ts"
 import * as Cloudflare from "alchemy/Cloudflare";
@@ -135,40 +141,42 @@ import { Etag, HttpPlatform, HttpRouter } from "effect/http";
 
 import { http } from "./auth";
 import { AuthDependencies } from "./auth-dependencies";
-import { authRateLimitConfig, authRateLimits } from "./rate-limits";
+import { AuthRateLimit, AuthRateLimitsLive } from "./rate-limits";
 
-export const Worker = Cloudflare.Worker(
+const Routes = http
+  .routes()
+  .pipe(
+    Layer.provide(http.layer),
+    Layer.provide(AuthRateLimitsLive),
+    Layer.provide(Cloudflare.Workers.RateLimitBinding),
+    Layer.provide(AuthDependencies),
+    Layer.provide(HttpPlatform.layer),
+    Layer.provide(Etag.layerWeak),
+  );
+
+export default Cloudflare.Worker(
   "AuthWorker",
-  { main: import.meta.url, compatibility: { flags: ["nodejs_compat"] } },
-  Effect.gen(function* () {
-    const native = yield* Cloudflare.RateLimit("AUTH_RATE_LIMITS", {
-      namespaceId: 1001,
-      simple: authRateLimitConfig,
-    });
+  {
+    main: import.meta.url,
+    compatibility: { flags: ["nodejs_compat"] },
+    env: { AUTH_RATE_LIMITS: AuthRateLimit },
+  },
+  Effect.succeed({
+    fetch: Effect.gen(function* () {
+      const handle = yield* HttpRouter.toHttpEffect(Routes).pipe(Effect.orDie);
 
-    const Routes = http.routes().pipe(
-      Layer.provide(http.layer),
-      Layer.provide(authRateLimits(native)),
-      Layer.provide(AuthDependencies),
-      Layer.provide(HttpPlatform.layer),
-      Layer.provide(Etag.layerWeak),
-    );
-
-    return {
-      fetch: Effect.gen(function* () {
-        const handle = yield* HttpRouter.toHttpEffect(Routes).pipe(Effect.orDie);
-        return yield* handle;
-      }).pipe(Effect.scoped),
-    };
-  }).pipe(Effect.provide(Cloudflare.Workers.RateLimitBinding)),
+      return yield* handle;
+    }).pipe(Effect.scoped),
+  }),
 );
 ```
 
 The relative imports are your application's existing Auth definition and services.
 `AuthDependencies` includes password hashing, persistence, claims, session services,
 and `Crypto.Crypto`; see [service composition](../reference/adapters#compose-the-application-layer).
-Build the exported Worker from your Alchemy stack. `RateLimitBinding` attaches the
-binding and supplies the Effect client; no Promise wrapper is needed.
+Build the default-exported Worker from your Alchemy stack. The `env` declaration
+attaches the binding, and `RateLimitBinding` supplies its Effect implementation.
+Keep the default export: Alchemy's runtime entrypoint imports it from `main`.
 
 Choose a stable namespace ID for this application and environment. Bindings with
 the same ID share counters for a key, including across Workers in the same account.
