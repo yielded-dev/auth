@@ -23,7 +23,10 @@ import {
 } from "./protocol";
 
 /** GitHub.com OAuth App credentials and one or more exact callback destinations. */
-export type Registration = Pick<GitHubOAuthAppGeneration, "clientId" | "clientSecret"> &
+export type Registration = Pick<
+  GitHubOAuthAppGeneration,
+  "clientId" | "clientSecret" | "verifiedPrimaryEmail"
+> &
   RegistrationOptions;
 
 type Transport = {
@@ -44,7 +47,10 @@ const registration = Effect.fnUntraced(function* (input: Registration) {
   return { ...input, ...(yield* resolveRegistration(input, "github")) };
 });
 
-export type ProviderRegistration = Pick<GitHubOAuthAppGeneration, "clientId" | "clientSecret"> &
+export type ProviderRegistration = Pick<
+  GitHubOAuthAppGeneration,
+  "clientId" | "clientSecret" | "verifiedPrimaryEmail"
+> &
   Pick<RegistrationOptions, "configurationGeneration" | "issuance">;
 
 export type ProviderOptions = Transport & {

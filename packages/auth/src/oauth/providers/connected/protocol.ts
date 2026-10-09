@@ -304,6 +304,7 @@ export const makeConnectedProtocolWithCompatibility = Effect.fn(
   const decodeIdentity = Effect.fn("OpenIdConnectConnected.decodeIdentity")(function* (
     entry: InstalledConnectedProvider<R>,
     body: unknown,
+    accessToken?: Redacted.Redacted<string>,
   ) {
     if (entry.provider.protocol !== "oauth") return yield* unavailable();
     const decoder = entry.provider.identitySource.decodeIdentity;
@@ -326,7 +327,12 @@ export const makeConnectedProtocolWithCompatibility = Effect.fn(
       }),
     );
 
-    const value = yield* Schema.decodeEffect(identitySchema)(result).pipe(
+    const enriched =
+      accessToken === undefined || entry.enrichIdentity === undefined
+        ? result
+        : yield* entry.enrichIdentity(result, accessToken).pipe(Effect.mapError(unavailable));
+
+    const value = yield* Schema.decodeEffect(identitySchema)(enriched).pipe(
       Effect.mapError(unavailable),
     );
 
@@ -512,7 +518,7 @@ export const makeConnectedProtocolWithCompatibility = Effect.fn(
         })
       : entry.client.fetchProfile(grant.accessToken).pipe(
           Effect.mapError(unavailable),
-          Effect.flatMap((body) => decodeIdentity(entry, body)),
+          Effect.flatMap((body) => decodeIdentity(entry, body, grant.accessToken)),
         );
 
     const refreshToken =

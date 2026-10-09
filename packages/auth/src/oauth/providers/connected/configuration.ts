@@ -5,7 +5,11 @@ import { OAuthConnectedProfile } from "../../permissionProfile";
 import { OAuthProviderKey, OAuthGeneration } from "../../schema";
 import { OAuthCallbackId, OAuthIssuer, OAuthRedirectUri } from "../../signInModels";
 import { freezeOAuth } from "../../signInSnapshot";
-import type { ConnectedOptions, ProviderConnectedOAuth } from "../compatibility";
+import {
+  githubVerifiedPrimaryEmail,
+  type ConnectedOptions,
+  type ProviderConnectedOAuth,
+} from "../compatibility";
 import { callbackEndpoint, endpoint } from "../configuration";
 import {
   advertisedIdTokenAlgorithms,
@@ -110,6 +114,7 @@ const optionsSchema = <R>(providerCohort: boolean) =>
                 ])
               : common.revocation,
             protocol: Schema.Literal("oauth"),
+            [githubVerifiedPrimaryEmail]: Schema.optionalKey(Schema.Boolean),
             authorizationEndpoint: text(2048),
             tokenEndpoint: text(2048),
             pkceS256: Schema.Boolean,
@@ -500,20 +505,23 @@ export const installConnectedProvider = Effect.fn("OpenIdConnect.installConnecte
         if (reserved.has(key.toLowerCase())) return yield* configurationError("parameters");
     }
 
-    const native = yield* install({
-      metadata,
-      clientId: provider.clientId,
-      authentication: provider.authentication,
-      timeoutMs: timeoutSeconds * 1000,
-      ...(provider.protocol === "oauth"
-        ? { profile: provider.identitySource }
-        : provider.userInfo === "merge" && metadata.userinfo_endpoint !== undefined
-          ? { profile: { url: metadata.userinfo_endpoint } }
+    const native = yield* install(
+      {
+        metadata,
+        clientId: provider.clientId,
+        authentication: provider.authentication,
+        timeoutMs: timeoutSeconds * 1000,
+        ...(provider.protocol === "oauth"
+          ? { profile: provider.identitySource }
+          : provider.userInfo === "merge" && metadata.userinfo_endpoint !== undefined
+            ? { profile: { url: metadata.userinfo_endpoint } }
+            : {}),
+        ...(provider.revocation.mode === "rfc7009"
+          ? { revocationAuthentication: provider.revocation.authentication }
           : {}),
-      ...(provider.revocation.mode === "rfc7009"
-        ? { revocationAuthentication: provider.revocation.authentication }
-        : {}),
-    });
+      },
+      provider.protocol === "oauth" && provider[githubVerifiedPrimaryEmail] === true,
+    );
 
     return { provider, metadata, ...native };
   },

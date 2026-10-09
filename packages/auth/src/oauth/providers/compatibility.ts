@@ -26,6 +26,9 @@ export interface TokenCompatibility {
  * private so generic provider options do not expose grant-bearing hooks. */
 export const tokenCompatibility = Symbol("effect-auth/OpenIdConnect/tokenCompatibility");
 
+/** Private first-party capability; it never exposes a grant to an application decoder. */
+export const githubVerifiedPrimaryEmail = Symbol("effect-auth/GitHub/verifiedPrimaryEmail");
+
 export const TokenCompatibility = Schema.declare<TokenCompatibility>(
   (input): input is TokenCompatibility =>
     Predicate.isObject(input) &&

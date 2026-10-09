@@ -3,7 +3,11 @@ import { Base64 } from "effect/encoding";
 import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
 
 import { OAuthConnectedProfile } from "../permissionProfile";
-import { tokenCompatibility, type ConnectedCompatibility } from "../providers/compatibility";
+import {
+  tokenCompatibility,
+  githubVerifiedPrimaryEmail,
+  type ConnectedCompatibility,
+} from "../providers/compatibility";
 import { installOAuthConfigurations } from "../providers/configuration";
 import { installOAuthConnectedConfigurations } from "../providers/connected/configuration";
 import { makeConnectedProtocolWithCompatibility } from "../providers/connected/protocol";
@@ -18,6 +22,7 @@ import { OAuthGeneration } from "../schema";
 import { OAuthProtocolRejected, OAuthUnavailable } from "../signInErrors";
 import { OAuthCallbackId, OAuthIssuer, OAuthRedirectUri } from "../signInModels";
 import { freezeOAuth } from "../signInSnapshot";
+import { githubApiHeaders } from "./email";
 import { decodeGitHubIdentity, gitHubOAuthAppProviderKey } from "./identity";
 import type {
   GitHubOAuthAppConnectedProtocolOptions,
@@ -30,17 +35,12 @@ const invalid = () => OpenIdConnectConfigurationError.make({ reason: "provider" 
 // GitHub's OAuth authorization server issuer, including its RFC 9207 callback value.
 const issuer = OAuthIssuer.make("https://github.com/login/oauth");
 
-const headers = Object.freeze({
-  Accept: "application/vnd.github+json",
-  "User-Agent": "effect-auth-github-oauth-app",
-  "X-GitHub-Api-Version": "2026-03-10",
-});
-
 const generation = Schema.Struct({
   configurationGeneration: OAuthGeneration,
   issuance: Schema.Literals(["active", "retired"]),
   clientId: Schema.String.check(Schema.isPattern(/^[A-Za-z0-9._-]{1,256}$/)),
   clientSecret: Schema.RedactedFromValue(Schema.NonEmptyString.check(Schema.isMaxLength(4096))),
+  verifiedPrimaryEmail: Schema.optionalKey(Schema.Boolean),
   callbacks: Schema.Array(
     Schema.Struct({ callbackId: OAuthCallbackId, redirectUri: OAuthRedirectUri }),
   ).check(Schema.isMinLength(1), Schema.isMaxLength(16)),
@@ -112,9 +112,10 @@ const provider = (
   authorizationEndpoint: "https://github.com/login/oauth/authorize",
   tokenEndpoint: "https://github.com/login/oauth/access_token",
   pkceS256: true,
+  [githubVerifiedPrimaryEmail]: registration.verifiedPrimaryEmail === true,
   identitySource: {
     url: "https://api.github.com/user",
-    headers,
+    headers: githubApiHeaders,
     decodeIdentity: decodeGitHubIdentity,
   },
 });
@@ -249,7 +250,7 @@ const revocationLayer = (options: Pick<GitHubOAuthAppConnectedProtocolOptions, "
 
           const request = HttpClientRequest.delete(url).pipe(
             HttpClientRequest.setHeaders({
-              ...headers,
+              ...githubApiHeaders,
               Authorization: `Basic ${Base64.encode(`${input.clientId}:${Redacted.value(input.authentication.secret)}`)}`,
             }),
             HttpClientRequest.bodyText(body, "application/json"),
@@ -291,7 +292,8 @@ const revocationLayer = (options: Pick<GitHubOAuthAppConnectedProtocolOptions, "
   );
 
 /** A GitHub.com OAuth App generation for the same provider list as generic OIDC.
- * Retains GitHub receipt/error rules and requests read:user, with no repository access.
+ * Retains GitHub receipt/error rules. Requests read:user, plus user:email only
+ * when verifiedPrimaryEmail is enabled; no repository access is requested.
  * Construction performs no I/O; invalid configuration throws the typed configuration error. */
 export const gitHubOAuthAppProvider = (
   registration: GitHubOAuthAppGeneration,
@@ -305,7 +307,7 @@ export const gitHubOAuthAppProvider = (
 
 const signInProvider = (registration: GitHubOAuthAppGeneration): OpenIdConnectOAuthProvider => ({
   ...provider(registration),
-  scopes: ["read:user"],
+  scopes: registration.verifiedPrimaryEmail === true ? ["read:user", "user:email"] : ["read:user"],
   [tokenCompatibility]: compatibility,
 });
 
@@ -343,6 +345,7 @@ export const makeGitHubOAuthAppConnectedProtocol = Effect.fn("makeGitHubOAuthApp
           profile.provider !== gitHubOAuthAppProviderKey ||
           profile.clientRegistrationId !== registration.clientId ||
           profile.resources.length !== 0 ||
+          (registration.verifiedPrimaryEmail === true && !profile.scopes.includes("user:email")) ||
           profile.scopes.some((scope) => scope === "offline_access" || !isCell(scope)) ||
           (profile.retention === "access-only"
             ? profile.refresh !== "unsupported" ||
