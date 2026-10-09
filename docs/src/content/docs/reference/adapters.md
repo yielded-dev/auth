@@ -102,11 +102,17 @@ or failed initialization. Cookie-cached and anonymous session reads do not trigg
 initialization.
 
 Composition supports password sign-in, registration and management, email address
-verification and changes, phone sign-in, passkey sign-in and management, and
-stateful sessions on PostgreSQL and SQLite. Use explicit storage Layers for an
-Auth definition containing other strategies or session modes. Email storage permits one verified address per subject
-and email module. Composed tables use canonical logical column names and text auth
-IDs; subject ID codecs and order-preserving timestamp codecs remain application-owned.
+verification and changes, phone sign-in, passkey sign-in and management, OAuth
+sign-in and connected grants, and stateful sessions on PostgreSQL and SQLite.
+OAuth-only definitions also support `Sessions.stateless()`: flows, grants, and
+issuance authority remain durable; session verification uses signed credentials.
+Stateless sessions retain their configured lifetime after authority changes.
+State-assisted sessions and other stateless strategy combinations use explicit
+storage Layers.
+
+Email storage permits one verified address per subject and email module.
+Composed tables use canonical logical column names and text auth IDs; subject ID
+codecs and order-preserving timestamp codecs remain application-owned.
 
 For password registration, supply `Persistence.Provisioning` under the strategy's
 name:
@@ -253,6 +259,9 @@ delivery, and secret keys remain application responsibilities.
 | Cloudflare D1         | `@yielded/auth-persistence-drizzle/D1`         |
 | Durable Object SQLite | `@yielded/auth-persistence-drizzle/SqliteDo`   |
 
+`AuthPersistence` is available on PostgreSQL, PGlite, libSQL, SQLite Bun/Node/WASM,
+and D1. MySQL and Durable Object SQLite expose explicit persistence services.
+
 Install the driver's declared Effect SQL and Drizzle peers and import it directly.
 Bun consumers also need the [Drizzle Effect patch](https://github.com/yielded-dev/auth/tree/main/packages/drizzle-effect-v4-patch);
 follow its installation instructions and commit the generated patch and lockfile.
@@ -349,9 +358,26 @@ appear immediately. Notifications run after commit; durable delivery needs an ou
 
 ## OAuth
 
-`OAuthPersistence` from `@yielded/auth-persistence` supplies explicit upstream
-provider-account storage. It is separate from composed `AuthPersistence` and from
-downstream `OAuthServerPersistence`.
+`OAuth.make()` participates in `AuthPersistence.make(auth).managed(...)` and
+`.map(...)` on the composed PostgreSQL and SQLite drivers, including Drizzle D1.
+`OAuth.make({ access: profile })` and `OAuth.makeConnected({ policy })` also install
+connected-grant and revocation storage. Applications supply existing login links,
+provider configuration, encryption keys, claims, and action/use authorization.
+
+OAuth adds these roles; each physical table is named `${prefix}_${role}`:
+
+- **`oauthIdentities`**: provider identity ownership shared by login and retained grants.
+- **`oauthCredentials`**: login credentials tied to the shared `credentials` authority.
+- **`oauthSignInFlows`**: single-use sign-in flows, enabled by `OAuth.make`.
+- **`oauthConnectedFlows`**: connect and reconnect flows, enabled by retained access or `makeConnected`.
+- **`oauthConnectedGrants`**: encrypted grants and refresh state, enabled with connected flows.
+- **`oauthConnectedRevocations`**: durable provider-revocation work, enabled with connected flows.
+
+`OAuth.makeRegistration` and `OAuth.makeAccounts` use explicit storage Layers for
+application provisioning, login linking, and unlinking policy. The
+`OAuthPersistence` module from `@yielded/auth-persistence` supplies their factories
+and custom upstream provider-account mappings. Downstream authorization uses
+`OAuthServerPersistence`.
 
 - **`makeOAuthSignInServices`**: Single-use sign-in flows and existing login credentials
 - **`makeOAuthRegistrationIntentServices`**: Verified identity to registration intent
@@ -486,17 +512,22 @@ hook defaults. Both Layers use your `CryptoLive`. Configure `ProofLimiter` and
 
 ## Connected OAuth grants
 
-`OAuthPersistence.makeOAuthConnectedServices` and
-`OAuthPersistence.makeOAuthConnectedRevocationServices` supply retained grants,
-refresh, and optional provider revocation. Map `otherReferences` to an indexed
-predicate covering login, grant, and job references that share identity ownership;
-unlink and disconnect cannot release ownership while those references remain.
-`policy.condition` supplies additional application policy.
+Managed composition checks configured profiles and current subject/credential
+authority. Strategies sharing an OAuth namespace use the same connected policy.
+Return the subject's `securityRevision` as `policyRevision` from
+`OAuthConnectedUseAuthority`; advance it whenever connected-access policy changes.
+Provider-revocation jobs start with thirty days of retention and require an
+application-scheduled maintenance worker.
 
-For `OAuth.make({ access: profile })`, provide connected services alongside
-`makeOAuthSignInServices` and map `credential` to the shared login table. See the
-[OAuth storage example](https://github.com/yielded-dev/auth/blob/main/examples/shared/oauth/storage.ts).
-An expired refresh claim does not authorize repeating an uncertain provider
+For independent SQL policy or custom storage, use
+`OAuthPersistence.makeOAuthConnectedServices` and
+`OAuthPersistence.makeOAuthConnectedRevocationServices`. Map `otherReferences` to
+an indexed predicate covering login, grant, and job references sharing identity
+ownership. `policy.condition` supplies additional application policy. Retained
+sign-in also maps `credential` to the shared login table; see the
+[explicit storage example](https://github.com/yielded-dev/auth/blob/main/examples/shared/oauth/storage.ts).
+
+An expired refresh claim requires fresh provider authorization after an uncertain
 exchange. Cleanup takes `CleanupLimit` and returns `{ removed, hasMore }`, where
 `hasMore` means the batch limit was reached.
 

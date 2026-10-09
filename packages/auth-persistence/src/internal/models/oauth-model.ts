@@ -47,7 +47,11 @@ export interface OAuthSubjectReadTable<
   readonly securityRevision: Column<S>;
   readonly isActiveStatus: (value: unknown) => boolean;
   readonly activeCondition: Expression;
-  readonly decodeAuthenticationRequirement: (row: S["select"]) => AuthenticationRequirement;
+  readonly decodeAuthenticationRequirement: (
+    row: S["select"],
+  ) =>
+    | AuthenticationRequirement
+    | Effect.Effect<AuthenticationRequirement, PersistenceMappingError>;
 }
 
 export interface OAuthSubjectTable<

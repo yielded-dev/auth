@@ -1,0 +1,349 @@
+import { it } from "@effect/vitest";
+import { Auth, OAuth, type Operations, Sessions } from "@yielded/auth";
+import type { CommitJournal, PreparedCommit } from "@yielded/auth/Hooks";
+import * as KdfAdmission from "@yielded/crypto/KdfAdmission";
+import * as Portable from "@yielded/crypto/Portable";
+import { getTableName } from "drizzle-orm";
+import { Context, DateTime, Effect, Layer, Redacted, Schema } from "effect";
+import { SqlClient } from "effect/sql";
+import { expect } from "vite-plus/test";
+
+import {
+  configuration,
+  Fitness,
+  identity,
+  profile,
+  requiredService,
+  requirement,
+  setup,
+  StatelessFitness,
+} from "./fixtures/oauth-managed";
+
+// Human-requested composed OAuth regression: managed schema and public driver exports,
+// rather than explicit OAuth factories. D1 substitutes only the transport with real SQLite.
+const backends = ["sqlite", "d1", "pglite"] as const;
+const moduleId = OAuth.OAuthModuleId.make("strava/oauth");
+
+function prepare<A>(value: A, journal: CommitJournal): PreparedCommit<A> {
+  return journal.prepare(value);
+}
+
+it.live.each([
+  ...backends.map((backend) => ({ backend, sessionMode: "stateful" as const })),
+  { backend: "d1", sessionMode: "stateless" } as const,
+])(
+  "$backend $sessionMode managed fitness OAuth signs in an existing athlete and verifies its session",
+  ({ backend, sessionMode }) =>
+    Effect.gen(function* () {
+      const fixture = yield* setup(backend, false, sessionMode);
+      const app = sessionMode === "stateless" ? StatelessFitness : Fitness;
+      const sql = Context.get(fixture.context, SqlClient.SqlClient);
+      const flowTable = getTableName(fixture.table("oauthSignInFlows"));
+      const delivered = new Map<Operations.CredentialSlot, Redacted.Redacted<string>>();
+      let exchanges = 0;
+
+      const keyring = {
+        activeKeyId: "test",
+        keys: [{ id: "test", material: Redacted.make("A".repeat(43)) }],
+      };
+
+      const dependencies = Layer.mergeAll(
+        Layer.succeed(app.strategies.strava.SessionClaims, {
+          resolve: () => Effect.succeed({ displayName: "Ada Athlete" }),
+        }),
+        Layer.succeed(OAuth.OAuthProtocol, {
+          prepareAuthorization: () =>
+            Effect.succeed({
+              configuration,
+              authorizationUrl: Redacted.make("https://www.strava.com/oauth/authorize"),
+              secrets: {
+                namespace: "effect-auth/oauth-transaction-secrets/v1",
+                state: Redacted.make("A".repeat(43)),
+              },
+            }),
+          exchangeVerifiedIdentity: () =>
+            Effect.sync(() => {
+              exchanges++;
+
+              return { identity };
+            }),
+        }),
+        Layer.succeed(Sessions.SessionSigningKeys, keyring),
+        OAuth.OAuthReturnTargets.exactRoutes(["/activities"]),
+        OAuth.OAuthTransactionProtector.layer(keyring),
+        Auth.RequestBindingConfig.layer({ generation: 1, lifetimeMillis: 300_000, keyring }),
+      ).pipe(
+        Layer.provideMerge(
+          Portable.layer(globalThis.crypto.subtle).pipe(Layer.provide(KdfAdmission.layer())),
+        ),
+        Layer.provideMerge(Layer.succeedContext(fixture.context)),
+      );
+
+      const services = yield* Layer.build(dependencies);
+      const auth = yield* app.make.pipe(Effect.provide(services));
+
+      const request = {
+        credentials: {},
+        credentialCommandSink: (commands: readonly Operations.AuthCredentialCommand[]) =>
+          Effect.sync(() => {
+            for (const command of commands) {
+              if (command._tag === "Issue") delivered.set(command.slot, command.credential);
+            }
+          }),
+      };
+
+      const begun = yield* auth
+        .signIn({ provider: "strava", returnTarget: "/activities" })
+        .pipe(Effect.provideService(Auth.AuthRequest, request));
+
+      const binding = delivered.get("request-binding");
+
+      if (sessionMode === "stateless") {
+        expect(yield* sql`select count(*) as count from ${sql(flowTable)}`).toEqual([{ count: 1 }]);
+      }
+      expect(binding).toBeDefined();
+      if (binding === undefined) throw new Error("Missing private OAuth request binding");
+
+      const callback = {
+        flowId: begun.flowId,
+        provider: "strava",
+        callbackId: "strava",
+        requestBinding: Redacted.value(binding),
+        response: { _tag: "Code" as const, code: "provider-code", state: "A".repeat(43) },
+      };
+
+      const completed = yield* auth
+        .completeSignIn(callback)
+        .pipe(Effect.provideService(Auth.AuthRequest, request));
+
+      expect(completed).toMatchObject({
+        returnTarget: "/activities",
+        completion: {
+          _tag: "Authenticated",
+          session: { subjectId: "athlete", claims: { displayName: "Ada Athlete" } },
+        },
+      });
+      expect(completed).not.toHaveProperty("credentialCommands");
+      const session = delivered.get("session");
+
+      expect(session).toBeDefined();
+      if (session === undefined) throw new Error("Missing private session credential");
+      expect((yield* auth.verifySession(session)).subjectId).toBe("athlete");
+      if (sessionMode === "stateless") {
+        expect(
+          yield* sql`select name from sqlite_master where type = 'table' and name = 'auth_sessions'`,
+        ).toEqual([]);
+        expect(yield* sql`select count(*) as count from ${sql(flowTable)}`).toEqual([{ count: 0 }]);
+      }
+
+      const replay = yield* auth
+        .completeSignIn(callback)
+        .pipe(Effect.provideService(Auth.AuthRequest, request), Effect.result);
+
+      expect(replay).toMatchObject({ _tag: "Failure", failure: { _tag: "OAuthRejected" } });
+      expect(exchanges).toBe(1);
+      expect(yield* fixture.signIn.resolve({ moduleId, identity })).toMatchObject({
+        credentialId: "strava-login",
+        revision: { subjectId: "athlete", securityRevision: "subject-v1" },
+      });
+      expect(
+        yield* fixture.signIn.resolve({
+          moduleId,
+          identity: { ...identity, subject: "unknown-athlete" },
+        }),
+      ).toBeUndefined();
+      fixture.assertBatchExecution();
+    }),
+  { timeout: 30_000 },
+);
+
+it.live.each(backends)(
+  "%s managed retained OAuth persists connected flows, grants and revocation custody",
+  (backend) =>
+    Effect.gen(function* () {
+      const fixture = yield* setup(backend, true);
+      const connected = requiredService(fixture.context, OAuth.OAuthConnectedPersistence);
+      const revocations = requiredService(fixture.context, OAuth.OAuthConnectedRevocations);
+      const credential = yield* fixture.signIn.resolve({ moduleId, identity });
+
+      expect(credential).toBeDefined();
+      if (credential === undefined) throw new Error("Missing existing OAuth credential");
+      const now = DateTime.toEpochMillis(yield* DateTime.now);
+
+      const flow = yield* Schema.decodeEffect(OAuth.OAuthSignInFlow)({
+        context: {
+          ...configuration,
+          namespace: "effect-auth/oauth-sign-in-context/v1",
+          moduleId,
+          generation: 1,
+          flowId: "retained-sign-in",
+          access: profile,
+          returnTarget: "/activities",
+          stateDigest: "A".repeat(43),
+          requestBindingVerifier: "B".repeat(43),
+          requestBindingExpiresAtMillis: now + 300_000,
+          issuedAtMillis: now,
+          expiresAtMillis: now + 300_000,
+          exchangeTimeoutMillis: 30_000,
+        },
+        sealed: {
+          format: "oauth-xchacha20poly1305-v1",
+          keyId: "test",
+          nonce: "A".repeat(32),
+          ciphertext: "A".repeat(22),
+        },
+      });
+
+      const authorization = yield* Schema.decodeEffect(OAuth.OAuthConnectedActionAuthorization)({
+        challenge: {
+          moduleId,
+          action: "connected-begin",
+          flowId: "connect-activity",
+          revision: credential.revision,
+          intentDigest: "A".repeat(43),
+          bindingDigest: "A".repeat(43),
+        },
+        source: { _tag: "Proof" },
+        validUntilMillis: now + 300_000,
+        evidence: {
+          revision: credential.revision,
+          flowId: "connect-activity",
+          bindingDigest: "A".repeat(43),
+          proofs: [
+            {
+              method: "oauth",
+              credentialId: "strava-login",
+              factors: ["possession"],
+              userVerified: false,
+              phishingResistant: false,
+              verifiedAt: now,
+            },
+          ],
+        },
+        requirement,
+      });
+
+      const connectedFlow = OAuth.OAuthConnectedFlow.make({
+        context: {
+          ...flow.context,
+          namespace: "effect-auth/oauth-connected-context/v1",
+          flowId: authorization.challenge.flowId,
+          revision: credential.revision,
+          profile,
+          grantId: OAuth.OAuthGrantId.make("activity-grant"),
+          maximumEvidenceAgeMillis: 300_000,
+          authorization,
+        },
+        sealed: flow.sealed,
+      });
+
+      expect((yield* (yield* connected.issue(connectedFlow, prepare)).read)._tag).toBe("Issued");
+
+      const access = {
+        ...connectedFlow.context,
+        subjectId: credential.revision.subjectId,
+      };
+
+      expect((yield* (yield* connected.consume(access, prepare)).read)._tag).toBe("Consumed");
+      expect((yield* (yield* connected.consume(access, prepare)).read)._tag).toBe("Rejected");
+
+      const grant = yield* Schema.decodeEffect(OAuth.OAuthConnectedStoredGrant)({
+        context: {
+          namespace: "effect-auth/oauth-connected-token-context/v1",
+          moduleId,
+          subjectId: credential.revision.subjectId,
+          identity,
+          configuration: { ...configuration, profile },
+          grantId: "activity-grant",
+          grantVersion: "grant-v1",
+          tokenVersion: "token-v1",
+          metadata: {
+            scopes: ["activity:read"],
+            resources: [],
+            accessExpiresAtMillis: now + 3_600_000,
+            refreshExpiresAtMillis: now + 86_400_000,
+            useUntilMillis: now + 3_600_000,
+            refreshUseUntilMillis: now + 86_400_000,
+            obtainedAtMillis: now,
+          },
+        },
+        sealed: {
+          format: "oauth-connected-xchacha20poly1305-v1",
+          keyId: "test",
+          nonce: "B".repeat(32),
+          ciphertext: "B".repeat(22),
+        },
+      });
+
+      const settled = yield* connected.settle({ _tag: "SignIn", flow, credential, grant }, prepare);
+
+      expect((yield* settled.read)._tag).toBe("Connected");
+
+      const key = {
+        moduleId,
+        subjectId: credential.revision.subjectId,
+        grantId: grant.context.grantId,
+      };
+
+      const read = { ...key, selector: { _tag: "Grant" as const, grantId: key.grantId } };
+      const stored = yield* connected.read(read);
+
+      expect(stored?.grant?.context).toEqual(grant.context);
+      expect(Redacted.value(stored!.grant!.sealed.ciphertext)).toBe("B".repeat(22));
+
+      const disconnected = yield* connected.disconnect(
+        {
+          key,
+          grantVersion: grant.context.grantVersion,
+          authorization: {
+            ...authorization,
+            challenge: { ...authorization.challenge, action: "connected-disconnect" },
+          },
+        },
+        prepare,
+      );
+
+      expect(yield* disconnected.read).toEqual({
+        _tag: "Disconnected",
+        grantId: key.grantId,
+        remoteRevocation: "Pending",
+      });
+      expect((yield* connected.read(read))?.grant).toBeUndefined();
+
+      const claimed = yield* (yield* revocations.claim(
+        {
+          moduleId,
+          claimId: OAuth.OAuthClaimId.make("C".repeat(43)),
+          lifetimeMillis: 30_000,
+        },
+        prepare,
+      )).read;
+
+      expect(claimed._tag).toBe("Claimed");
+      if (claimed._tag !== "Claimed") throw new Error("Missing durable revocation job");
+      expect(claimed.claim.job.grant.context).toEqual(grant.context);
+      expect(Redacted.value(claimed.claim.job.grant.sealed.ciphertext)).toBe("B".repeat(22));
+      expect(
+        yield* (yield* revocations.settle(
+          {
+            claim: claimed.claim,
+            outcome: "Confirmed",
+          },
+          prepare,
+        )).read,
+      ).toEqual({ settled: true });
+      expect(
+        (yield* (yield* revocations.claim(
+          {
+            moduleId,
+            claimId: OAuth.OAuthClaimId.make("D".repeat(43)),
+            lifetimeMillis: 30_000,
+          },
+          prepare,
+        )).read)._tag,
+      ).toBe("Empty");
+      expect(yield* fixture.signIn.resolve({ moduleId, identity })).toBeDefined();
+      fixture.assertBatchExecution();
+    }),
+  { timeout: 30_000 },
+);

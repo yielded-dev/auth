@@ -98,9 +98,10 @@ runs on SQLite and PostgreSQL. Keep mapped subject IDs canonical and allow the
 adapter to validate the database's columns and unique keys; see
 [mapping requirements](../reference/adapters#sql-session-verification).
 
-For OAuth, use the explicit [`OAuthPersistence` factories](../reference/adapters#oauth).
-They can map Kysely-owned tables, but coordinated auth and application writes must
-use the same Effect SQL transaction owner.
+OAuth sign-in and retained provider access use the same managed or mapped composition.
+Applications with custom registration, login linking, or SQL authorization predicates
+can use the explicit [`OAuthPersistence` factories](../reference/adapters#oauth).
+Coordinated auth and application writes share the same Effect SQL transaction owner.
 
 ## Your services
 
