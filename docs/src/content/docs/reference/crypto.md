@@ -62,7 +62,7 @@ through `@yielded/crypto/platform-bun`.
 For Cloudflare Workers, use `WorkerdCrypto.layer(globalThis.crypto.subtle)` from
 `@yielded/crypto/platform-workerd`. It uses a bundled Wasm module for Argon2id
 and native `node:crypto.scrypt`. Wrangler includes the Wasm module in the Worker
-deployment; consumers need no compiler or runtime download. Native scrypt
+deployment; consumers need no compiler or runtime download. This backend
 requires Node.js compatibility. Argon2id parameters and stored hashes stay the
 same when switching from Portable.
 

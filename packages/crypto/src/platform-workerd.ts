@@ -6,7 +6,7 @@ import { xchacha } from "./internal/xchacha";
 import type { Limits } from "./Kdf";
 
 /** Workers WebCrypto, Wasm Argon2id and native scrypt.
- * Bundle with Wrangler; scrypt requires Node.js compatibility.
+ * Bundle with Wrangler and enable Node.js compatibility.
  */
 export const layer = (subtle: SubtleCrypto, limits: Partial<Limits> = {}) =>
   makeLayer(subtle, limits, { argon2: makeArgon2(module), scrypt, xchacha });

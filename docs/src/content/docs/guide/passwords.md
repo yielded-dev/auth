@@ -257,14 +257,14 @@ const PasswordHashingLive = Password.PasswordHashing.layer().pipe(
 );
 ```
 
-Wrangler includes the package's precompiled Wasm in the Worker deployment.
+Enable Workers Node.js compatibility for this backend. Wrangler includes the
+package's precompiled Wasm in the Worker deployment.
 Consumers need no compiler or separate asset hosting.
 
 To choose native scrypt, pass `Password.defaultScryptPasswordHashingConfig` to
 `PasswordHashing.layer()`. This uses `node:crypto.scrypt` with `N=16384`, `r=8`, `p=5`: the
 [OWASP 16 MiB profile](https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html#scrypt).
-Node and Bun backends support the same configuration. Native scrypt requires
-Workers Node.js compatibility.
+Node and Bun backends support the same configuration.
 
 New hashes store their parameters as `$scrypt$ln=14,r=8,p=5$<salt>$<hash>`.
 Existing Argon2id and supported PBKDF2 hashes are rehashed through the existing
