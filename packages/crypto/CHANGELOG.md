@@ -1,5 +1,11 @@
 # @yielded/crypto
 
+## 0.1.0-beta.31
+
+### Minor Changes
+
+- [#187](https://github.com/yielded-dev/auth/pull/187) [`b5388b6`](https://github.com/yielded-dev/auth/commit/b5388b6e4bc0ebadf10e97367c09638ba17724e0) Thanks [@danieljvdm](https://github.com/danieljvdm)! - Accelerate Argon2id on Workers with bundled Wasm and add native scrypt on Node, Bun, and Workers. Select `defaultScryptPasswordHashingConfig` to migrate passwords to scrypt on successful sign-in; **BEHAVIOR CHANGE:** custom `Kdf` services must provide `scrypt`.
+
 ## 0.1.0-beta.30
 
 ### Minor Changes

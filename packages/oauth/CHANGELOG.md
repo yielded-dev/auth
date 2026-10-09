@@ -1,5 +1,13 @@
 # @yielded/oauth
 
+## 0.1.0-beta.31
+
+### Patch Changes
+
+- [#171](https://github.com/yielded-dev/auth/pull/171) [`a1c5555`](https://github.com/yielded-dev/auth/commit/a1c555586cdf5415530ea71e08b25da3063772a3) Thanks [@danieljvdm](https://github.com/danieljvdm)! - Let OAuth and OpenID presets carry their own profile schema, accept advertised ES256, PS256 and EdDSA ID tokens, and opt out of PKCE. Sign-in begin accepts prompt and loginHint, and OIDC can merge UserInfo into ID-token claims. EdDSA hash claims use SHA-512. Connected refresh keeps the stored identity and does not re-decode UserInfo-only profile fields.
+- Updated dependencies []:
+  - @yielded/jose@0.1.0-beta.31
+
 ## 0.1.0-beta.30
 
 ### Patch Changes

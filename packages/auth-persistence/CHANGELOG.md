@@ -1,5 +1,14 @@
 # @yielded/auth-persistence
 
+## 0.1.0-beta.31
+
+### Patch Changes
+
+- [#173](https://github.com/yielded-dev/auth/pull/173) [`c1ee305`](https://github.com/yielded-dev/auth/commit/c1ee305ecee0c19b20a0543eced9a39bb962161c) Thanks [@danieljvdm](https://github.com/danieljvdm)! - Add managed and mapped D1 storage through `AuthPersistence` from `@yielded/auth-persistence-drizzle/D1`, with atomic batches and a migration Layer. Support password registration and management with subject-value provisioning across managed drivers.
+- Updated dependencies [[`759c6e7`](https://github.com/yielded-dev/auth/commit/759c6e73612d90a11d092f3c30cf8ddc3a1c0cdc), [`b5388b6`](https://github.com/yielded-dev/auth/commit/b5388b6e4bc0ebadf10e97367c09638ba17724e0), [`a1c5555`](https://github.com/yielded-dev/auth/commit/a1c555586cdf5415530ea71e08b25da3063772a3), [`dcf1691`](https://github.com/yielded-dev/auth/commit/dcf16913160299793e4ef460a41d390950661a7a)]:
+  - @yielded/auth@0.1.0-beta.31
+  - @yielded/crypto@0.1.0-beta.31
+
 ## 0.1.0-beta.30
 
 ### Minor Changes
