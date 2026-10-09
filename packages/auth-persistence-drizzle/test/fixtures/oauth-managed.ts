@@ -48,7 +48,7 @@ export const StatelessFitness = Auth.make("test/fitness", {
   defaultStrategy: "strava",
 });
 
-const RetainedFitness = Auth.make("test/fitness", {
+export const RetainedFitness = Auth.make("test/fitness", {
   claims: Schema.Struct({ displayName: Schema.String }),
   sessions: Sessions.stateful({ maxAge: "30 days" }),
   strategies: { strava: OAuth.make({ namespace: "strava/oauth", access: profile }) },

@@ -470,10 +470,7 @@ export const createPersistence = <T extends object, R, Database extends object =
           }
 
           if (oauth.length > 0)
-            context = Context.merge(
-              context,
-              yield* makeManagedOAuth(storage, nativeTables, oauth, backend.batch?.(database)),
-            );
+            context = Context.merge(context, yield* makeManagedOAuth(storage, nativeTables, oauth));
 
           // The checked capability metadata above determines exactly these service keys.
           return context as Context.Context<Ports<C, Id, A>>;

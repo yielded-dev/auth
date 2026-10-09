@@ -1,5 +1,5 @@
 import { it } from "@effect/vitest";
-import { Auth, OAuth, type Operations, Sessions } from "@yielded/auth";
+import { Auth, OAuth, Operations, Sessions } from "@yielded/auth";
 import type { CommitJournal, PreparedCommit } from "@yielded/auth/Hooks";
 import * as KdfAdmission from "@yielded/crypto/KdfAdmission";
 import * as Portable from "@yielded/crypto/Portable";
@@ -15,6 +15,7 @@ import {
   profile,
   requiredService,
   requirement,
+  RetainedFitness,
   setup,
   StatelessFitness,
 } from "./fixtures/oauth-managed";
@@ -247,32 +248,50 @@ it.live.each(backends)(
       expect((yield* (yield* connected.consume(access, prepare)).read)._tag).toBe("Consumed");
       expect((yield* (yield* connected.consume(access, prepare)).read)._tag).toBe("Rejected");
 
-      const grant = yield* Schema.decodeEffect(OAuth.OAuthConnectedStoredGrant)({
-        context: {
-          namespace: "effect-auth/oauth-connected-token-context/v1",
-          moduleId,
-          subjectId: credential.revision.subjectId,
-          identity,
-          configuration: { ...configuration, profile },
-          grantId: "activity-grant",
-          grantVersion: "grant-v1",
-          tokenVersion: "token-v1",
-          metadata: {
-            scopes: ["activity:read"],
-            resources: [],
-            accessExpiresAtMillis: now + 3_600_000,
-            refreshExpiresAtMillis: now + 86_400_000,
-            useUntilMillis: now + 3_600_000,
-            refreshUseUntilMillis: now + 86_400_000,
-            obtainedAtMillis: now,
-          },
+      const context = yield* Schema.decodeEffect(OAuth.OAuthConnectedTokenContext)({
+        namespace: "effect-auth/oauth-connected-token-context/v1",
+        moduleId,
+        subjectId: credential.revision.subjectId,
+        identity,
+        configuration: { ...configuration, profile },
+        grantId: "activity-grant",
+        grantVersion: "grant-v1",
+        tokenVersion: "token-v1",
+        metadata: {
+          scopes: ["activity:read"],
+          resources: [],
+          accessExpiresAtMillis: now + 3_600_000,
+          refreshExpiresAtMillis: now + 86_400_000,
+          useUntilMillis: now + 3_600_000,
+          refreshUseUntilMillis: now + 86_400_000,
+          obtainedAtMillis: now,
         },
-        sealed: {
-          format: "oauth-connected-xchacha20poly1305-v1",
-          keyId: "test",
-          nonce: "B".repeat(32),
-          ciphertext: "B".repeat(22),
-        },
+      });
+
+      const tokenServices = yield* Layer.build(
+        OAuth.OAuthConnectedTokenProtector.layer({
+          activeKeyId: "test",
+          keys: [{ id: "test", material: Redacted.make("B".repeat(42) + "A") }],
+        }).pipe(
+          Layer.provideMerge(
+            Portable.layer(globalThis.crypto.subtle).pipe(Layer.provide(KdfAdmission.layer())),
+          ),
+          Layer.provide(Layer.succeedContext(fixture.context)),
+        ),
+      );
+
+      const protector = Context.get(tokenServices, OAuth.OAuthConnectedTokenProtector);
+
+      const material = yield* Schema.decodeEffect(OAuth.OAuthConnectedTokenMaterial)({
+        namespace: "effect-auth/oauth-connected-token-material/v1",
+        accessToken: "retained-access-token",
+        refreshToken: "retained-refresh-token",
+        continuation: { _tag: "OAuth" },
+      });
+
+      const grant = OAuth.OAuthConnectedStoredGrant.make({
+        context,
+        sealed: yield* protector.seal({ context, material }),
       });
 
       const settled = yield* connected.settle({ _tag: "SignIn", flow, credential, grant }, prepare);
@@ -289,7 +308,76 @@ it.live.each(backends)(
       const stored = yield* connected.read(read);
 
       expect(stored?.grant?.context).toEqual(grant.context);
-      expect(Redacted.value(stored!.grant!.sealed.ciphertext)).toBe("B".repeat(22));
+      expect(Redacted.value(stored!.grant!.sealed.ciphertext)).toBe(
+        Redacted.value(grant.sealed.ciphertext),
+      );
+
+      // Regression in ddd5363: fresh-token access skipped the managed policy revision binding.
+      let policyRevision = credential.revision.securityRevision;
+      const unexpectedProviderCall = Effect.die("Fresh-token use must not contact the provider");
+      const accessModule = RetainedFitness.strategies.strava.access;
+
+      const accessServices = yield* Layer.build(
+        accessModule.accessLayer.pipe(
+          Layer.provide(
+            Layer.succeed(OAuth.OAuthConnectedUseAuthority, {
+              authorize: (input) =>
+                input.purpose === "use"
+                  ? Effect.succeed(
+                      OAuth.OAuthConnectedUseAuthorization.make({
+                        moduleId: input.moduleId,
+                        revision: input.captured.revision,
+                        policyRevision,
+                        expiresAtMillis: OAuth.OAuthInstant.make(now + 300_000),
+                        purpose: "use",
+                        grantId: input.grantId,
+                        profileKey: input.profileKey,
+                      }),
+                    )
+                  : Effect.fail(OAuth.OAuthUnavailable.make({})),
+            }),
+          ),
+          Layer.provide(
+            Layer.succeed(OAuth.OAuthConnectedProtocol, {
+              prepareAuthorization: () => unexpectedProviderCall,
+              exchangeGrant: () => unexpectedProviderCall,
+              refreshGrant: () => unexpectedProviderCall,
+              revokeGrant: () => unexpectedProviderCall,
+            }),
+          ),
+          Layer.provide(Layer.succeedContext(Context.merge(fixture.context, tokenServices))),
+        ),
+      );
+
+      const tokenAccess = Context.get(accessServices, accessModule.ConnectedAccess);
+      let tokenUses = 0;
+
+      const useToken = tokenAccess.withAccessToken(
+        {
+          _tag: "Authenticated",
+          subjectId: key.subjectId,
+          assurance: Operations.AuthenticationAssurance.make({
+            method: "oauth",
+            factors: ["possession"],
+            authenticatedAt: DateTime.makeUnsafe(now),
+          }),
+        },
+        { grantId: key.grantId, profileKey: profile.key },
+        (token) =>
+          Effect.sync(() => {
+            tokenUses++;
+
+            return Redacted.value(token);
+          }),
+      );
+
+      expect(yield* useToken).toBe("retained-access-token");
+      policyRevision = Sessions.SecurityRevision.make("independent-policy");
+      expect(yield* Effect.result(useToken)).toMatchObject({
+        _tag: "Failure",
+        failure: { _tag: "OAuthRejected" },
+      });
+      expect(tokenUses).toBe(1);
 
       const disconnected = yield* connected.disconnect(
         {
@@ -322,7 +410,9 @@ it.live.each(backends)(
       expect(claimed._tag).toBe("Claimed");
       if (claimed._tag !== "Claimed") throw new Error("Missing durable revocation job");
       expect(claimed.claim.job.grant.context).toEqual(grant.context);
-      expect(Redacted.value(claimed.claim.job.grant.sealed.ciphertext)).toBe("B".repeat(22));
+      expect(Redacted.value(claimed.claim.job.grant.sealed.ciphertext)).toBe(
+        Redacted.value(grant.sealed.ciphertext),
+      );
       expect(
         yield* (yield* revocations.settle(
           {

@@ -24,7 +24,7 @@ import { makeNativeOAuthSignInServices } from "./oauth/native-sign-in";
 import type { OAuthNativeReadMapping } from "./oauth/native-state";
 import { sameRevision, satisfies } from "./oauth/state";
 import { exactSqlText } from "./sql-change";
-import type { SqlBatchCommit } from "./sql-commit";
+import { SqlBatchCommit } from "./sql-commit";
 import { makeStorageClock } from "./storage-clock";
 import { storageTables, type StorageRole } from "./storage-tables";
 
@@ -40,13 +40,13 @@ export const makeManagedOAuth = Effect.fnUntraced(function* (
   storage: MappingInput,
   tables: NativeSqlTables,
   features: ReadonlyArray<OAuthFeature>,
-  batch: SqlBatchCommit["Service"],
 ): Effect.fn.Return<
   Context.Context<never>,
   PersistenceConfigurationError,
-  Crypto.Crypto | LifecycleHooks | SqlClient.SqlClient
+  Crypto.Crypto | LifecycleHooks | SqlClient.SqlClient | SqlBatchCommit
 > {
   const sql = (yield* SqlClient.SqlClient).withoutTransforms();
+  const batch = yield* SqlBatchCommit;
 
   const clock = yield* makeStorageClock(storage).pipe(
     Effect.mapError(() => configurationError("Cannot configure the OAuth storage clock")),
@@ -256,7 +256,19 @@ export const makeManagedOAuth = Effect.fnUntraced(function* (
     );
 
     context = context.pipe(
-      Context.add(M.OAuthConnectedPersistence, connected.oauthConnectedPersistence),
+      Context.add(M.OAuthConnectedPersistence, {
+        ...connected.oauthConnectedPersistence,
+        read: (input) =>
+          connected.oauthConnectedPersistence
+            .read(input)
+            .pipe(
+              Effect.map((snapshot) =>
+                snapshot === undefined
+                  ? undefined
+                  : { ...snapshot, policyRevision: snapshot.revision.securityRevision },
+              ),
+            ),
+      }),
       Context.add(M.OAuthConnectedRevocations, revocations.oauthConnectedRevocations),
     );
   }
