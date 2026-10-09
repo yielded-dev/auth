@@ -81,7 +81,8 @@ const withProofRequestContext = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
  * server-side and retain Origin/CSRF admission on mutations. */
 export interface AuthHttpOptions<E = never, R = never, ResponseR = never> {
   readonly origin: string;
-  /** Additional exact HTTPS origins admitted alongside origin, within cookie.domain if set. */
+  /** Additional exact HTTPS origins, within cookie.domain if set. Host-only HTTP
+   * loopback deployments with secure: false also admit HTTP loopback origins. */
   readonly trustedOrigins?: ReadonlyArray<string>;
   readonly maximumBodyBytes?: number;
   readonly maximumUrlBytes?: number;
@@ -246,7 +247,12 @@ export const make = <
         Effect.mapError(() => OperationHttpConfigurationError.make({ reason: "origin" })),
       );
 
-      const additional = yield* Schema.decodeEffect(Schema.Array(httpsOrigin))(
+      const additionalOrigin =
+        domain === undefined && !secure && options.origin.startsWith("http:")
+          ? Schema.Union([httpsOrigin, origin.check(Schema.isPattern(/^http:/))])
+          : httpsOrigin;
+
+      const additional = yield* Schema.decodeEffect(Schema.Array(additionalOrigin))(
         options.trustedOrigins ?? [],
       ).pipe(Effect.mapError(() => OperationHttpConfigurationError.make({ reason: "origin" })));
 
