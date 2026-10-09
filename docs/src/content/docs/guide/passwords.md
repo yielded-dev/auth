@@ -84,15 +84,16 @@ const auth = yield* AppAuth;
 const result = yield* auth.changePassword({ commandId, currentPassword, newPassword });
 ```
 
-This call requires an authenticated `Auth.AuthRequest`. Applications requiring
-another factor supply `actionProof` or accept recent session step-up through
-`PasswordActionEvidence`. A passkey step-up can authorize the change without
-`currentPassword`; check authentication age and the actual fresh private passkey
-proof obtained through `sessions.inspectInvocation`. Public `invocation.assurance`
-describes the session but cannot supply credential IDs or replace that proof.
-Current authority is checked again at commit.
-The result reports the session invalidation behavior of your selected strategy.
-After passkey authentication, the application can call:
+This call requires an authenticated `Auth.AuthRequest` and approval from your
+`PasswordActionEvidence` service. Your policy can require `actionProof` or accept
+recent passkey authentication instead of `currentPassword`. Use
+`sessions.inspectInvocation` to check the private factor evidence and its age;
+public session assurance alone is not authorization. The
+[example policy](https://github.com/yielded-dev/auth/blob/main/examples/shared/account/password-authorization.ts)
+shows that check.
+
+The result reports session invalidation. When your policy accepts recent passkey
+authentication, omit `currentPassword`:
 
 ```ts
 const result = yield* auth.changePassword({ commandId, newPassword });
@@ -139,100 +140,45 @@ can provide persistence and registration. `AuthDependencies` supplies the shared
 For sign-in-only `Password.make()`, supply hashing, password persistence, and claims
 alongside those shared services. Keep normalization stable for stored credentials.
 
-[`CryptoLive`](../reference/crypto#use-with-auth) is the shared application crypto
-Layer. Install `@yielded/crypto` alongside Auth when importing its backend. See
-[crypto backends](../reference/crypto#compose-a-backend) for native alternatives.
-Share one `KdfAdmission.layer()` from `@yielded/crypto/KdfAdmission` across hashers
-and backends in each runtime. `Layer.provideMerge(Admission)` exposes that service. The outer password operation and nested derivations use
-that same instance; comparison and secret cleanup retain the permit. Nested work
-in the same fiber reuses it, while child fibers acquire independently.
-By default it runs one KDF callback and accepts up to 16 waiting calls, each with a
-5000ms acquisition deadline. A full queue or expired wait fails with
-`PasswordKdfBusy`; interrupted waiters leave the queue. Once admitted to run, work
-retains its permit through completion and cleanup, even if its caller is interrupted.
-The deadline does not limit running KDF work.
+[`CryptoLive`](../reference/crypto#use-with-auth) selects your crypto backend.
+Share one `KdfAdmission.layer()` from `@yielded/crypto/KdfAdmission` across backends
+and password hashers in each runtime. Size it for the host's memory and CPU budget;
+queue exhaustion or an expired wait returns `PasswordKdfBusy`. See
+[KDF resource limits](../reference/crypto#backends-and-resource-limits) for options.
 
-Configure `concurrency`, `maxQueued`, and `maxWaitMilliseconds` on the Layer;
-`maxQueued: 0` enables fail-fast admission. Size concurrency for your host's KDF
-memory and CPU budget. These are process-local limits, without a strict FIFO
-ordering guarantee; applications still need ingress rate limits.
-
-Password verification also consumes action, identifier, and known-subject budgets
-through `Password.PasswordAttemptLimiter`. These token buckets allow an initial
-burst and refill at `limit / windowMillis`. Consumption happens before verification
-and is never refunded, even if verification is interrupted or fails.
-A store failure denies the request.
-
-The default store is process-local and resets on restart. Its fixed capacity is
-10,000 keys, shared by action, identifier, and subject buckets across every module
-using that store. Raising action limits or lengthening identifier/subject windows
-does not increase capacity. A full store returns `PasswordUnavailable` for requests
-needing a new key, including valid accounts; existing buckets keep their limits.
-High traffic or many distinct identifiers can exhaust this capacity.
-
-When full, the store reclaims buckets idle for a complete refill window, including
-time since their last rejected check. Active buckets are never evicted and no
-background cleanup fiber runs. Before increasing budgets, provide a store sized
-for the resulting active keys. The password attempt policy controls bucket sizes;
-KDF concurrency remains a separate service.
+`Password.PasswordAttemptLimiter` separately limits sign-in attempts. Store
+failures deny the request, and rejected attempts still count. Compromised-password
+screening also fails closed: its default ten-second timeout returns
+`PasswordCheckUnavailable` without registering or changing a password.
 
 ### Share rate limits
 
-The default only protects a long-lived process. Each instance keeps its own counts,
-and a runtime built per request, such as a Worker that creates Auth on each fetch,
-keeps none: the limits never trigger. Supply one shared Effect `RateLimiterStore`
-and every auth limiter uses it: passwords, codes, phone, passkeys, and host ingress. Action, global message, and passkey module budgets always stay
-per instance; shared, one key would take every request's write and let any client
-exhaust everyone's allowance.
+Default limiters are process-local and reset on restart. Their stores are bounded
+to 10,000 keys; reaching capacity can reject requests for valid accounts too.
+Multiple replicas, or a runtime rebuilt per request, need a shared Effect
+`RateLimiterStore` for identifier, subject, and network limits. Action, global
+message, and passkey module budgets remain per instance.
 
-`keyValueRateLimiterStore` keeps buckets in any Effect `KeyValueStore`, keyed by a
-SHA-256 digest, so entries fit KV's key limits and store no identifiers. It uses
-the Auth runtime's `Crypto` service. With Workers KV:
+To use an Effect `KeyValueStore`, supply it with your crypto Layer:
 
-```ts
-import { Effect, Layer } from "effect";
-import { KeyValueStore } from "effect/persistence";
-import { keyValueRateLimiterStore } from "@yielded/auth/Persistence";
+```ts title="apps/server/rate-limits.ts"
+import { Layer } from "effect";
+import { Persistence } from "@yielded/auth";
 
-const workersKv = (kv: KVNamespace) => {
-  const call = <A>(method: string, run: () => Promise<A>) =>
-    Effect.tryPromise({
-      try: run,
-      catch: (cause) =>
-        new KeyValueStore.KeyValueStoreError({ method, message: "Workers KV failed", cause }),
-    });
+import { CryptoLive } from "./crypto-live";
+import { KeyValueStoreLive } from "./rate-limit-store";
 
-  return KeyValueStore.makeStringOnly({
-    get: (key) => call("get", async () => (await kv.get(key)) ?? undefined),
-    // At least the longest limit window; idle buckets refill when next read.
-    set: (key, value) => call("set", () => kv.put(key, value, { expirationTtl: 3600 })),
-    remove: (key) => call("remove", () => kv.delete(key)),
-    clear: call("clear", () => Promise.reject(new Error("unsupported"))),
-    size: call("size", () => Promise.reject(new Error("unsupported"))),
-  });
-};
-
-export const RateLimitsLive = (kv: KVNamespace) =>
-  keyValueRateLimiterStore.pipe(
-    Layer.provide(Layer.succeed(KeyValueStore.KeyValueStore, workersKv(kv))),
-  );
+export const RateLimitsLive = Persistence.keyValueRateLimiterStore.pipe(
+  Layer.provide(KeyValueStoreLive),
+  Layer.provide(CryptoLive),
+);
 ```
 
-Provide `RateLimitsLive(env.RATE_LIMITS)` to your Auth Layer. Each check reads and
-writes one entry without atomicity, so concurrent requests and KV replication can
-admit a few extra attempts; a read or write failure denies the request. For exact
-limits, supply an atomic store such as `RateLimiter.layerStoreRedis()`.
-
-Sign-in reads the credential and captures authority before hashing, then checks
-current account status, credential revisions, and factor policy again when issuing
-a session. No password attempt row or direct sign-in flow row is stored. Rehashing
-writes only when hash parameters change, with a comparison that cannot overwrite a
-newer password. Pending second factors retain their own single-use state; password
-changes use the original authority and credential revisions without a command receipt.
-
-Compromised-password screening fails closed. `PasswordPolicy.screeningTimeoutMillis`
-defaults to 10,000 ms (allowed range: 1–30,000); a timed-out check returns
-`PasswordCheckUnavailable`, so no password is registered or changed.
+`KeyValueStoreLive` is your application's storage Layer. Provide `RateLimitsLive`
+to Auth, and keep stored entries for at least the longest limit window.
+Checks are non-atomic: concurrent requests and replication lag can exceed the
+configured limit. Read or write failures deny requests. For atomic limits, supply
+an Effect store such as `RateLimiter.layerStoreRedis()` instead.
 
 ## Recover a password
 
@@ -240,8 +186,8 @@ Recovery uses `requestReset` → `completeReset` and requires an
 independently verified email address. Users who have a passkey sign in with it,
 complete step-up if required, then change their password. The definition above selects reset links.
 Auth builds the link and renders the email; your `EmailDelivery` service only
-sends the finished message. See [email delivery](./email-delivery) for REST API
-and Alchemy examples.
+sends the finished message. See [email delivery](./email-delivery) for transport
+setup and runtime ownership.
 
 The link destination must be a fixed HTTPS URL without credentials, query, or
 fragment. Auth validates it when building the Layer, before issuing any proof.
@@ -301,27 +247,18 @@ const result = yield* auth.completeReset({
 });
 ```
 
-Generate `commandId` once per submission. Hashing and independent action policy run
-before storage locks. The mutation owner rechecks current authority, redeems the
-proof, and replaces the password atomically; a protected-write failure rolls back
-redemption. Completion changes the password; sign in separately for a session.
-Never return secrets in ordinary operation results or logs.
+Generate `commandId` once per submission. Reset consumes the proof and replaces
+the password atomically, subject to your current action policy. It does not bypass
+required factors or issue a session; sign in separately after completion.
 
 ### Delivery and retry boundaries
 
-Auth's built-in worker admits delivery after the proof commits, so public requests
-do not wait for provider acceptance. No scheduler setup is needed; build Auth in an
-application scope that outlives requests, as shown in [email delivery](./email-delivery#compose-auth).
-Work may start before the response is sent. Application hooks and persistence can
-still vary in latency.
-
-Provider acceptance does not prove inbox delivery. Each confirmed issuance submits
-one private delivery task and invokes the transport at most once in that process.
-There is no dispatch retry or durable outbox; queue rejection, interruption, or a
-crash can leave a code unsent. Unknown commit outcomes never schedule delivery.
-Request again explicitly after the cooldown with the original binding. The request
-ID is correlation only. A consumed proof or unknown mutation outcome does not
-authorize repeating a password change.
+Build Auth in a scope that outlives requests so queued email can finish; see
+[email delivery](./email-delivery#compose-auth). Delivery has no automatic retry or
+durable outbox. If a message is lost, explicitly request a new proof after cooldown
+with the original flow binding. The request ID is correlation only, not a delivery
+recovery key. A consumed proof or unknown mutation outcome does not authorize
+repeating a password change.
 
 See the [complete password composition](https://github.com/yielded-dev/auth/blob/main/examples/auth/src/password-methods.ts)
 for a reset-link journey using a private local email collector.

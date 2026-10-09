@@ -141,7 +141,8 @@ to one browser travels as a cookie, like the session.
 
 ## When a response is lost
 
-Commands that change an account, such as registration or a password reset, take
-a request ID. A retry with the same ID returns the stored receipt instead of
-running the command again. If a commit's outcome is unknown, look the receipt up
-through your storage adapter rather than issuing credentials again.
+Keep the original `requestId` and input when retrying password registration. Proof
+issuance IDs are correlation only: they do not recover delivery. If a consumed proof cannot
+complete sign-in, start a new flow. For password changes and resets, an unknown
+commit outcome is not permission to repeat the mutation; see
+[recovery limits](./passwords#delivery-and-retry-boundaries).

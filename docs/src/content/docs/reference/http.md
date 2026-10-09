@@ -9,11 +9,9 @@ and the [Effect Atom client](../guide/client) to call it. Both use the same
 
 ## Route defaults
 
-| Actions                             | HTTP method | Default path                                          |
-| ----------------------------------- | ----------- | ----------------------------------------------------- |
-| `requireSession`                    | GET         | `/auth/requireSession`                                |
-| `getSession`                        | POST        | `/auth/getSession`                                    |
-| `signIn`, `signOut`, `renewSession` | POST        | `/auth/signIn`, `/auth/signOut`, `/auth/renewSession` |
+- **`requireSession`**: GET `/auth/requireSession`
+- **`getSession`**: POST `/auth/getSession`
+- **`signIn`, `signOut`, `renewSession`**: POST `/auth/signIn`, `/auth/signOut`, `/auth/renewSession`
 
 No-input queries use GET. Queries with payloads use POST so their inputs stay out
 of URLs. Change the shared prefix with `basePath` on `AuthContract.make`; server
@@ -92,23 +90,16 @@ ordinary application mutation policy.
 Enable caching with [`Sessions.stateful({ cacheFor })`](../guide/sessions#cache-ordinary-session-reads).
 Both cookies follow the configured auth cookie policy:
 
-| Cookie                                 | Content and lifetime                                                                                                       |
-| -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| `session-cache`                        | Signed public snapshot bound to the credential and browser generation; expires within `cacheFor` and the session lifetime. |
-| `${sessionCacheCookieName}-generation` | HttpOnly mutation generation; lasts `maximumIssuedAge`.                                                                    |
+- **`session-cache`**: Signed public snapshot bound to the credential and browser generation; expires within `cacheFor` and the session lifetime.
+- **`${sessionCacheCookieName}-generation`**: HttpOnly mutation generation; lasts `maximumIssuedAge`.
 
-Browser caching requires a response command sink and a valid incoming generation.
-After a successful authoritative read, a missing, malformed, or duplicate generation
-is replaced without issuing a snapshot. The next read populates the snapshot;
-subsequent reads can use it. Existing logins therefore start caching without signing
-in again. Anonymous reads do not initialize a binding; no cache cookies are sent when
-caching is off.
+Caching starts through authoritative session reads without requiring another
+sign-in. The HTTP response must be able to set cookies; anonymous reads do not
+initialize caching, and disabling it sends no cache cookies.
 
-Admitted mutations clear the snapshot and rotate the generation. Reads preserve
-valid generations and never issue a snapshot alongside a new generation, so delayed
-reads cannot restore a usable snapshot after a mutation response.
-Other clients, replayed cookie pairs, and lost responses retain the
-fixed `cacheFor` exposure window. Credential changes also clear the snapshot.
+Admitted mutations clear the snapshot. Other clients and lost responses retain
+the bounded `cacheFor` revocation delay. Do not use cached public claims as private
+authentication evidence.
 
 Snapshot values are capped at `min(maximumTokenBytes, 3072)` bytes; the complete
 serialized cookie, including name and attributes, must fit 4,096 bytes. Oversize,
@@ -174,8 +165,9 @@ accepts explicit payload, success, and error schemas.
 Each action selects a server `method` and, when needed, a `strategy`. The method
 defaults to the action's name. You can expose two strategies under different names
 without making the client choose a strategy string. Configure only actions your
-application intends to serve. Passkey and TOTP have dedicated pure contract modules;
-the email, phone, and OAuth flows currently require explicit action schemas.
+application intends to serve. Password and OAuth have shared action helpers;
+passkey and TOTP have dedicated pure contract modules. Email and phone flows
+require explicit action schemas.
 
 Map private method inputs through `requestFields` when declaring an action:
 

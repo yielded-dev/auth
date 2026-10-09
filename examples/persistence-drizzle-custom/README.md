@@ -25,8 +25,6 @@ table, generate a migration, then review and commit it:
 vp -C examples/persistence-drizzle-custom run db:generate --name=describe_change
 ```
 
-Generation compacts JSON snapshots to one line; Git marks them as generated.
-
 [MigrationsLive](src/migrations.ts) applies the generated files with Drizzle and records
 them in `__drizzle_migrations`. Run `vp -C examples/persistence-drizzle-custom run db:migrate`
 to apply them separately. [live.ts](src/live.ts) also runs them before providing persistence;
@@ -41,10 +39,6 @@ IDs, policy, claims, delivery, and custom hashing. Email confirmation and passke
 enrollment preserve the existing session. Enrollment requires authentication from
 the last five minutes; sign in again when prompted. Use `localhost:4182` consistently
 for passkeys.
-
-The current schema replaces the old proof tables with one current-code table.
-Reset this example's development database before running it against older data;
-this also resets its accounts, sessions, and credentials.
 
 `AUTH_DATA_DIR` selects another data directory. Removing this example's `.data`
 resets only its accounts, sessions, credentials, and keys.

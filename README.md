@@ -36,7 +36,7 @@ or compare [database and backend choices](docs/src/content/docs/guide/storage.md
 The [four account apps](docs/src/content/docs/guide/examples.md#run-an-account-app)
 show managed Drizzle, custom Drizzle, Effect SQL, and non-SQL persistence.
 
-Install the beta release with Effect:
+Install Auth with Effect:
 
 ```sh
 bun add @yielded/auth@beta effect

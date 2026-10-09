@@ -7,32 +7,26 @@ OAuth, passwords, passkeys, email and phone proofs, and TOTP.
 bun add @yielded/auth@beta effect
 ```
 
-The package owns authentication workflows and native OAuth/OIDC verification.
-Applications own identity, persistence, keys, policy, private delivery, and crypto backend selection.
-Resources live in the caller’s Scope; credentials stay outside public results
-and telemetry. Runtime dependencies are Effect and the first-party
-`@yielded/crypto` and `@yielded/oauth` packages.
+The package owns authentication workflows and OAuth/OIDC verification.
+Applications own identity, persistence, keys, policy, private delivery, and crypto
+backend selection. Resources live in the caller's Scope; credentials stay outside
+public results and telemetry. Runtime dependencies are Effect and the first-party
+`@yielded/crypto`, `@yielded/jose`, and `@yielded/oauth` packages.
 
-Supply `Password.PasswordHashing.layer()`, `Totp.TotpCryptography.layer`, and the
-OAuth protector services’ `.layer(keyring)` defaults with owned crypto services
-and Effect `Crypto`. Keys remain application-owned. Password hashing requires
-`Kdf` and `KdfAdmission` from `@yielded/crypto`; share one `KdfAdmission.layer()`
-instance between the crypto backend and all hashers. Its permit
-covers parsing, derivation, comparison, and cleanup. If increasing password work
-limits, configure the supplied KDF backend to permit those same limits.
+Supply crypto Layers and application-owned keys. Share one `KdfAdmission.layer()`
+instance between the crypto backend and password hashers, sized for the host's
+memory and CPU budget. See [crypto setup](https://yielded.dev/auth/reference/crypto/#use-with-auth).
 
-`OpenIdConnect.provider` and `GitHub.provider` configure native providers for the
-HTTP host; their `layer` and `layerConnected` constructors supply the protocol
-services directly. Construction requires an explicit nonretrying, nonredirecting
-Effect `HttpClient` and Effect `Crypto`; OpenID Connect also requires `Signature`.
-Provider clients and JOSE caches belong to the construction Scope. Keep that Scope
-open throughout use, and retain retired credential generations while issued flows
-or connected grants still reference them. Unknown exchange outcomes never authorize
-repeating an exchange.
+OAuth providers require an explicit nonretrying, nonredirecting Effect `HttpClient`.
+Keep their construction Scope open throughout use, and retain retired credential
+generations while flows or connected grants reference them. An unknown exchange
+outcome does not authorize repeating the exchange. See
+[OAuth setup](https://yielded.dev/auth/guide/oauth/).
 
-SQL adapters live in `@yielded/auth-persistence`. Optional WebAuthn SDK integration
-lives in `@yielded/auth-simplewebauthn`. Email delivery uses the application’s
-`EmailDelivery` service; Auth renders the private message before handing it off.
+SQL adapters live in `@yielded/auth-persistence` and
+`@yielded/auth-persistence-drizzle`. Optional WebAuthn SDK integration lives in
+`@yielded/auth-simplewebauthn`. Auth renders private email messages; your
+`EmailDelivery` service sends them.
 
 Start with the [setup guide](https://yielded.dev/auth/guide/getting-started/),
 or read [how authentication fits together](https://yielded.dev/auth/guide/authentication/).

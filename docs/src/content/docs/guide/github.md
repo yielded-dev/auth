@@ -5,9 +5,6 @@ description: Set up GitHub sign-in with Yielded Auth.
 
 Sign in with a GitHub OAuth App. Start with [OAuth setup](./oauth).
 
-To retain GitHub API access during sign-in, configure [OAuth with an access profile](./oauth#sign-in-and-retain-provider-access).
-The provider setup below supplies ordinary sign-in for your shared Auth service.
-
 ## Get your credentials
 
 Create an OAuth App in [GitHub developer settings](https://github.com/settings/developers).
@@ -36,11 +33,10 @@ export const AuthRoutes = Http.layer(AppAuth, {
 });
 ```
 
-[Supply your services](../reference/oauth#supply-the-services).
-`AuthRoutes` serves the callback URL derived from `origin`.
-[Customize callbacks →](../reference/oauth#customize-callbacks)
-
-GitHub sign-in requests `read:user`; no email address or repository access is required.
+[Supply your services](../reference/oauth#supply-the-services) and keep the Layer
+alive for the server's lifetime. `AuthRoutes` derives the callback URL from `origin`.
+GitHub sign-in requests `read:user`. Its numeric user ID identifies the account;
+profile email can be absent and needs application verification when required.
 
 ## Sign in
 
@@ -52,9 +48,10 @@ const started = yield* auth.signIn({
 });
 ```
 
-Redirect to `Redacted.value(started.authorizationUrl)`.
-The callback completes sign-in and redirects to `returnTarget`.
-See the [browser example](https://github.com/yielded-dev/auth/blob/main/examples/auth/src/login-client.ts)
-for the client and Atom workflow.
+Redirect to `Redacted.value(started.authorizationUrl)`. The callback signs in an
+existing account and returns to `returnTarget`. Use the
+[registration flow](./oauth#register-new-users) for new accounts.
 
-For GitHub API access, see [connected accounts](./oauth#use-the-session-and-provider-access).
+The [browser example](https://github.com/yielded-dev/auth/blob/main/examples/auth/src/login-client.ts)
+shows the client and Atom workflow. To retain provider tokens, configure
+[OAuth with an access profile](./oauth#sign-in-and-retain-provider-access).

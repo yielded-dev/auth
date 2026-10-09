@@ -3,125 +3,71 @@ title: Adapters and persistence
 description: Choose managed storage, your own SQL schema, or custom Effect services.
 ---
 
-`@yielded/auth` owns workflows and service contracts. Its only third-party runtime
-dependency is Effect; first-party crypto and OAuth packages supply the primitives.
-`@yielded/auth-persistence` supplies direct Effect SQL persistence and shared storage
-contracts. `@yielded/auth-persistence-drizzle` adds Drizzle bindings, managed tables,
-and migration helpers. Applications choose their adapter and own customer
-provisioning, policy, claims, delivery, and database connections.
-
-Install the Drizzle companion, `drizzle-orm`, and an explicit Effect SQL driver when
-using Drizzle. Direct SQL applications need only the default persistence package and
-their driver.
+`@yielded/auth` owns workflows and service contracts. `@yielded/auth-persistence`
+supplies direct Effect SQL persistence; `@yielded/auth-persistence-drizzle` adds
+Drizzle bindings, managed tables, and migration helpers. Applications own subjects,
+provisioning, policy, claims, delivery, database connections, and migrations.
 
 ## Runnable examples
 
-[Database and backend choices](../guide/storage) explains the storage options. The [four account apps](../guide/examples#run-an-account-app)
-show managed Drizzle tables, an application-owned Drizzle schema, direct Effect
-SQL, and custom services. Start there to compare ownership and composition, or
-[run an example](../guide/examples#run-an-account-app) for the complete setup.
-This reference covers the persistence APIs and their transaction requirements.
+[Database and backend choices](../guide/storage) explains the ownership model.
+The [four account apps](../guide/examples#run-an-account-app) show complete setup
+with managed Drizzle, an application-owned Drizzle schema, direct Effect SQL, and
+custom services.
 
 ## In-memory testing
 
 `Testing.layer(auth, options)` from `@yielded/auth-persistence/Testing` replaces
-password and session persistence in tests. Start with the
+password and session persistence in tests. See the
 [setup guide](../guide/storage#in-memory-tests) or [consumer test](https://github.com/yielded-dev/auth/blob/main/examples/auth/test/in-memory.test.ts).
 
-| Configuration     | Behavior                                                                                                                                                                          |
-| ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `auth`            | One sign-in-only `Password.make()` strategy and `Sessions.stateful()`. Other configurations fail acquisition with `PersistenceConfigurationError`.                                |
-| `subjects`        | Each seed has `subjectId`, `email`, a redacted `password`, and optional `active` (default `true`). Duplicate IDs or normalized emails fail acquisition. Emails remain unverified. |
-| `requirement`     | Required application `AuthenticationRequirement`; no test default.                                                                                                                |
-| `PasswordHashing` | Required Layer dependency. Hashes seed passwords without text normalization. `Testing.services()` supplies this and Effect `Crypto`; claims remain application-owned.             |
-| Clock             | Captured at acquisition. Effect's `TestClock` controls expiry directly.                                                                                                           |
+- **`auth`**: One sign-in-only `Password.make()` strategy and `Sessions.stateful()`. Other configurations fail acquisition with `PersistenceConfigurationError`.
+- **`subjects`**: Each seed has `subjectId`, `email`, a redacted `password`, and optional `active` (default `true`). Duplicate IDs or normalized emails fail acquisition. Emails remain unverified.
+- **`requirement`**: Required application `AuthenticationRequirement`; no test default.
+- **`PasswordHashing`**: Required Layer dependency. Hashes seed passwords without text normalization. `Testing.services()` supplies this and Effect `Crypto`; claims remain application-owned.
+- **Clock**: Uses the caller's clock. Effect's `TestClock` controls expiry.
 
 Supported session operations are issuance, verification, renewal, listing,
 revocation, and sign-out. Renewal invalidates the previous credential; retrying
-with it fails. Sign-in creates a new session on each successful call.
+with it fails. Each successful sign-in creates a new session.
 Password management, pending authentication, handoff, signed-session approval,
-and ambient transaction composition are unsupported and fail explicitly.
+and ambient transaction composition are unsupported.
 
 Separate acquisitions have independent state; reusing a Layer within one build
 shares it. State is process-local, non-durable, and discarded on scope close.
-In a Worker, acquire and use it within the request or test scope. Use the actual
+In a Worker, acquire and use it within the request or test scope. Use your
 production adapter to verify database concurrency or recovery.
 
 ### Test services
 
 `Testing.services(options?)` supplies Effect `Crypto` and `PasswordHashing` with
-portable Argon2id at the default password cost. Provide it to the composition of
-Auth and `Testing.layer` so both use the same services.
+portable Argon2id at the default password cost. Provide it to both Auth and
+`Testing.layer`.
 
-| Option or requirement | Behavior                                                                                                                                                                                                                     |
-| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `seed`                | Optional string or number. Restarts a private random sequence per acquisition. Equal seeds and operation order reproduce credentials; use distinct seeds for independent simulated clients. Omit for secure host randomness. |
-| Runtime               | Requires global WebCrypto. Missing WebCrypto fails acquisition with `PersistenceConfigurationError`.                                                                                                                         |
-| Clock                 | Inherits the caller's clock. It does not install a test clock or replace Effect's `Random` service.                                                                                                                          |
+| Option or requirement | Behavior                                                                                                                                                                 |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `seed`                | Optional string or number. Equal seeds and operation order reproduce credentials; use distinct seeds for independent simulated clients. Omit for secure host randomness. |
+| Runtime               | Requires global WebCrypto. Missing WebCrypto fails acquisition with `PersistenceConfigurationError`.                                                                     |
+| Clock                 | Inherits the caller's clock. It does not install a test clock or replace Effect's `Random` service.                                                                      |
 
-For custom crypto or hashing, supply your own Layers to `Testing.layer` and Auth
-instead. Promise-based test runners can use `ManagedRuntime.make(TestAuth)` and
-dispose the runtime after each test.
+You can supply your own crypto and hashing Layers instead. Promise-based test
+runners can use `ManagedRuntime.make(TestAuth)` and dispose it after each test.
 
 ## Compose persistence once
 
-Choose a named facade for your backend:
+Use the named `AuthPersistence` facade from your [driver](#choose-a-driver), or
+from `@yielded/auth-persistence` for direct Effect SQL. Bind it with
+`AuthPersistence.make(AppAuth)`; the [storage guide](../guide/storage#managed-tables)
+shows the subject mapping.
 
-```ts
-import { AuthPersistence } from "@yielded/auth-persistence-drizzle/SqliteBun";
-// Direct Effect SQL: import { AuthPersistence } from "@yielded/auth-persistence";
-```
+`Persistence.managed({ subjects, prefix, tables? })` creates tables for enabled
+capabilities, with optional overrides in `tables`. Keep `prefix` explicit and
+stable: changing it selects different tables, not the existing credentials.
+Use `Persistence.map({ subjects, tables })` when you declare every table yourself.
+Export enabled tables from `storage.schema` as named exports for Drizzle Kit;
+see the [managed schema](https://github.com/yielded-dev/auth/blob/main/examples/persistence-drizzle-managed/src/schema.ts).
 
-Bind it to the Auth definition and map the existing customer table:
-
-```ts title="apps/server/schema.ts"
-import { AuthPersistence } from "@yielded/auth-persistence-drizzle/SqliteBun";
-import { Schema as AuthSchema } from "@yielded/auth";
-import { Effect } from "effect";
-import { AppAuth, requirement } from "./auth";
-import { customers } from "./customers";
-
-export const Persistence = AuthPersistence.make(AppAuth);
-export const storage = Persistence.managed({
-  prefix: "app_auth",
-  subjects: {
-    table: customers,
-    id: "id",
-    status: "enabled",
-    activeValue: true,
-    securityRevision: "securityRevision",
-    idCodec: AuthSchema.SubjectId,
-    requirements: () => Effect.succeed(requirement),
-  },
-});
-export const authSchema = storage.schema;
-```
-
-`authSchema` contains ordinary Drizzle tables before any Layer starts. Only enabled
-capabilities allocate storage; shared proof storage is configured once. Use
-`Persistence.map({ subjects, tables })` when your application declares all tables.
-`managed` also accepts table overrides. Keep `prefix` explicit and stable; it is a
-physical table identifier, not a per-process random value. Both direct Effect SQL
-and Drizzle `managed` require it. For an existing database that used a generated prefix,
-pass that exact prefix from its deployed table names; a different prefix selects
-different tables and does not migrate credentials. Export each enabled table from
-`authSchema` as a named export so Drizzle Kit discovers it; the
-[managed schema](https://github.com/yielded-dev/auth/blob/main/examples/persistence-drizzle-managed/src/schema.ts)
-shows the complete exports. Both Drizzle examples use Drizzle Kit:
-
-```ts title="apps/server/drizzle.config.ts"
-import { defineConfig } from "drizzle-kit";
-
-export default defineConfig({
-  dialect: "sqlite",
-  schema: ["./customers.ts", "./schema.ts"],
-  out: "./drizzle",
-});
-```
-
-Generate SQL after changing the schema, review it, and commit the SQL and snapshot.
-The examples expose `vp run db:generate --name=describe_change` and `vp run db:migrate`
-from their directories. The latter uses the same migration Layer as startup:
+Provide the configuration and database before using persistence:
 
 ```ts title="apps/server/auth-live.ts"
 import * as SqliteClient from "@effect/sql-sqlite-bun/SqliteClient";
@@ -145,107 +91,62 @@ export const AuthLive = AppAuth.layer.pipe(
 );
 ```
 
-Drizzle owns the migration journal and applies pending files transactionally.
-The generated migrations include the customer table and whichever auth tables the
-schema exports. Schema changes, including removal of a capability's tables, require
-a reviewed migration; startup only applies committed files. A failed migration stops
-auth startup. The composed persistence Layer initializes on its first storage operation,
-checking physical columns and unique keys before that operation runs. Cookie-cached
-and anonymous session reads perform no persistence initialization. Initialization is
-shared within that Layer's scope; failures remain the operation's typed availability
-error. Rebuild the Layer after migrations or an initialization failure.
-File-based drivers load the migration folder only when the migration Layer starts;
-SQLite WASM and D1 accept a `migrations` map instead of a folder. Direct Effect SQL
-applications supply their own migrations, as shown in the raw SQL example.
+Generate, review, and commit migrations before startup. `migrationsLayer` applies
+committed files and stops startup on failure; it does not generate or push schema
+changes. SQLite WASM and D1 take a `migrations` map instead of a folder. Direct
+Effect SQL applications supply their own migration runner.
 
-The composed API supports password sign-in and management, email address verification
-and changes, phone sign-in, and stateful sessions. Email storage permits one verified
-address per subject and email module; changing it retires the source address.
-It uses canonical logical column names and text auth IDs;
-subject ID codecs and order-preserving timestamp codecs remain application-owned.
-Other workflows and specialized layouts use the explicit adapters below or the
-core service contracts. Those contracts do not require Effect SQL or particular
-physical tables. The default schema is one implementation of the storage roles.
+The composed Layer validates mapped columns and unique keys on its first storage
+operation. Retain it at the composition root and rebuild it after schema changes
+or failed initialization. Cookie-cached and anonymous session reads do not trigger
+initialization.
 
-Direct SQL and Drizzle composition support passkey sign-in and management on PostgreSQL
-and SQLite.
-Enabling these strategies adds their storage and a `PasskeyConfig` requirement; the
-application still supplies action authorization, claims, and the protocol verifier.
-Composed passkey tables use integer milliseconds. Custom passkey timestamps use
-the explicit adapters or core service ports.
-Each challenge retains its selected relying-party profile until expiry, so rolling
-configuration changes do not invalidate ceremonies already in progress.
-Removal preserves a remaining password or user-verified passkey that independently
-meets current sign-in requirements. More involved factor combinations use an explicit
-`write.policy.remainingSignIn` predicate, returned in Effect from the captured subject row.
+Composition supports password sign-in, registration and management, email address
+verification and changes, phone sign-in, passkey sign-in and management, and
+stateful sessions on PostgreSQL and SQLite. Use explicit storage Layers for an
+Auth definition containing other strategies or session modes. Email storage permits one verified address per subject
+and email module. Composed tables use canonical logical column names and text auth
+IDs; subject ID codecs and order-preserving timestamp codecs remain application-owned.
 
-With password registration enabled, also supply `Persistence.Provisioning`:
+For password registration, supply `Persistence.Provisioning` under the strategy's
+name:
 
 ```ts
 const ProvisioningLive = Layer.succeed(Persistence.Provisioning, {
-  password: {
-    values: customerValues, // ({ requestId, registration, identifier }) => Effect<customer insert values, PasswordUnavailable>
-  },
+  password: { values: customerValues },
 });
 const PersistenceLive = Persistence.layer.pipe(Layer.provide(ProvisioningLive));
 ```
 
-`customerValues` returns the new application's subject row, including its allocated
-ID, active status, and initial security revision. The library inserts it together
-with the identifier and password in one transaction or D1 batch. Use the logical
-column names from your subject table. The stable `requestId` identifies the
-application operation. Preparing values must not write to the database, send email,
-or perform other external side effects.
-An occupied identifier suppresses creation; retrying never overwrites or recovers
-another request's password. There is no registration-receipt table.
-Interactive drivers also accept `password: createCustomer`, where the callback
-inserts through the owning Effect SQL client and returns its subject ID. D1 uses
-the `{ values }` form so account and credential writes can commit atomically.
-See the [managed example's wiring](https://github.com/yielded-dev/auth/blob/main/examples/persistence-drizzle-managed/src/live.ts).
-`subjects.actionRequirements` can supply a distinct recovery or credential-change
-policy; it defaults to `subjects.requirements`.
+`customerValues({ requestId, registration, identifier })` returns subject insert
+values, including the allocated ID, active status, and initial security revision.
+Use logical column names. Preparing values must not write to the database or perform
+external side effects. The library commits the subject and credentials together;
+an occupied identifier never overwrites a password. `requestId` is stable for the
+application operation.
 
-Reads use ordinary SQL without a commit journal or read-only transaction. Standalone
-mutations use the shared commit owner and reject unrelated ambient transactions;
-drivers without a reliable transaction marker fail closed. Combine protected
-application writes through an explicit coordinator. Its receipt releases credentials
-and events only after the outer owner commits; an unknown outcome does not authorize
-another credential issuance or delivery.
+Interactive drivers also accept `password: createCustomer`, which inserts through
+the owning Effect SQL client and returns the subject ID. D1 requires `{ values }`.
+See the [managed wiring](https://github.com/yielded-dev/auth/blob/main/examples/persistence-drizzle-managed/src/live.ts).
+`subjects.actionRequirements` defaults to `subjects.requirements`; override it for
+a distinct recovery or credential-change policy.
+
+Standalone mutations reject ambient transactions. Use an explicit coordinator to
+combine auth and application writes under one owner. Credentials and lifecycle
+events are released only after that owner commits. An unknown outcome does not
+authorize repeating credential issuance or delivery.
 
 ### Managed D1
 
-The D1 driver exposes the same `AuthPersistence.make(AppAuth)`, `managed`, `map`,
-`Config`, `Provisioning`, `layer`, and `migrationsLayer` API:
+Import `AuthPersistence` from `@yielded/auth-persistence-drizzle/D1` and supply
+`D1Client.layer({ db: env.DB })`, Effect `Crypto`, and `PasskeyConfig` when using
+passkeys. Use the original D1 database binding, not a
+[D1 read-replica session](https://developers.cloudflare.com/d1/best-practices/read-replication/).
+The same composed API uses atomic batches rather than interactive transactions;
+password provisioning must return subject values as described above.
 
-```ts
-import * as D1Client from "@effect/sql-d1/D1Client";
-import { AuthPersistence } from "@yielded/auth-persistence-drizzle/D1";
-import { Layer } from "effect";
-
-export const Persistence = AuthPersistence.make(AppAuth);
-// Configure subjects and a stable prefix with Persistence.managed as above.
-const DatabaseLive = D1Client.layer({ db: env.DB });
-const PersistenceLive = Persistence.layer.pipe(
-  Layer.provide(Persistence.Config.layer(storage)),
-  Layer.provide(DatabaseLive),
-);
-```
-
-Supply Effect `Crypto` to `PersistenceLive`, along with `PasskeyConfig` when using
-passkeys. Use the original D1 database binding for authoritative reads; a
-[D1 read-replica session](https://developers.cloudflare.com/d1/best-practices/read-replication/)
-is not an auth database replacement. Mutations use guarded atomic batches.
-The generated mapping checks application subject columns at session and password commits so
-policy changes between planning and committing cannot authorize stale evidence.
-
-D1 composition supports password sign-in, registration and management, email address
-verification and changes, phone sign-in, passkey sign-in and management, and stateful
-sessions. Supply subject values through `Persistence.Provisioning` as above; the
-library inserts the subject, identifier, password, and credential authority in one
-batch. Other strategies use the explicit adapters below.
-
-Export the managed tables for Drizzle Kit. Bundle the generated SQL and apply it
-before serving auth, or keep using your existing D1 migration runner:
+Export the managed tables for Drizzle Kit. Bundle generated SQL and apply it before
+serving auth, or use your D1 migration runner:
 
 ```ts
 const MigrationsLive = AuthPersistence.migrationsLayer({
@@ -253,16 +154,13 @@ const MigrationsLive = AuthPersistence.migrationsLayer({
 });
 ```
 
-Each key is the generated migration directory name and each value is its SQL text,
-including Drizzle's statement breakpoints. Supply `D1Client` and Effect `Crypto` to
-this Layer. Pending SQL, upgrades of older Drizzle journals, and new journal entries
-commit in one D1 batch. Bundle the files through your build tool; the Worker needs
-no filesystem. Run one migration owner at a time. Existing table names
-and data stay under application control; changing a prefix does not migrate credentials.
+Each key is the generated migration directory name; each value is SQL text including
+Drizzle's statement breakpoints. Supply `D1Client` and Effect `Crypto` to this Layer.
+It needs no filesystem. Run one migration owner at a time.
 
 ## Connect password storage
 
-For SQLite on Bun, supply the driver database Layer and your table mapping:
+For explicit SQLite-on-Bun mappings, supply the driver database Layer:
 
 ```ts title="apps/server/auth-persistence.ts"
 import * as SqliteClient from "@effect/sql-sqlite-bun/SqliteClient";
@@ -287,62 +185,17 @@ export const PasswordPersistenceLive = Layer.effect(
 );
 ```
 
-`passwordMapping` maps your account, identifier, credential, and authority revision
-tables. It is a `PasswordPersistenceMapping` from `@yielded/auth-persistence-drizzle`.
-Supply `LifecycleHooks` and your other account/session Layers at the composition root.
-Driver factories and transaction coordinators declare `Database` and Effect
-`Crypto` requirements at acquisition. Provide your platform's Crypto Layer to
-the persistence Layer itself and to Auth at your composition root. SHA digests and
-entropy use Effect Crypto and may suspend.
+`passwordMapping` is a `PasswordPersistenceMapping` from
+`@yielded/auth-persistence-drizzle`. Supply `LifecycleHooks`, Effect `Crypto`, and
+your account/session Layers at the composition root. Driver factories and
+coordinators need `Database` and `Crypto` at acquisition; provide crypto to both
+persistence and Auth.
 
-Password lookup and rehash use the same native Effect SQL implementation for direct
-SQL and interactive Drizzle drivers. Drizzle supplies table representations,
-codecs, defaults, and update hooks; its captured SQL client owns execution.
-Identifier lookup and candidate snapshot use separate statements so each mapped
-ID column can retain its own physical encoding.
-
-A replacement `PasswordPersistence` supplies `findCredential`, returning an optional
-coherent credential snapshot without writes or a transaction held across hashing.
-`rehashIfCurrent` conditionally updates only the verifier and its version when hash
-parameters change; a lost comparison is a no-op. Rate limits belong to
-`PasswordAttemptLimiter`, so no password attempt table or cleanup operation is needed.
-
-Explicit session mappings declare every independently mutable subject input to
-`decodeRequirement` in `subject.requirementColumns`. D1 requires this declaration;
-use `[]` only for a constant decoder. Native coordinated owners re-evaluate the
-decoder after application writes, while D1 guards the declared inputs in its batch.
-
-`AuthenticationAuthority.capture` returns `{ revision, requirement }` from the same
-subject read, including the full active factor vector. Requested credential IDs are
-required anchors; `capture(subjectId, [])` still returns all active factors. Only
-actual method verification produces proofs. Method credential snapshots also carry
-that current requirement;
-explicit email and passkey mappings derive it with `subject.decodeRequirement` from
-the joined subject row rather than storing policy on the credential. Password sign-in reuses that requirement to choose a session or a
-pending second factor. The committing session or password-mutation authority must
-still check current status, policy, and the original revisions. Credential replacement
-updates both the password and authority credential revisions; identifier removal,
-rebinding, or eligibility changes must atomically bump the subject security revision.
-
-Session issuance has no flow-deduplication table. Each method consumes its own proof
-before issuance; an unknown issuance outcome requires a new authentication ceremony.
-D1 checks the original authority through its fixed guarded batch.
-
-Use `databaseLayer` to acquire `Database` from the platform SQL client. Most drivers
-also accept a native database through `Layer.succeed(Database, db)`. Durable Object
-SQLite instead exposes `DatabaseValue`: `databaseLayer` builds this projection,
-or `makeDatabase(existingDrizzle)` adapts an existing database while preserving
-its query configuration. Its SQL client must be configured with Durable Object
-`storage`. Transactions belong to Effect SQL and support asynchronous Effects.
-
-Explicit Drizzle factories and transaction coordinators check mapped unique keys
-against the captured database's catalog during acquisition. Apply migrations before
-building these Layers; a Drizzle declaration does not install a constraint. Permit
-catalog reads on PostgreSQL, MySQL, and SQLite, and reacquire services after schema
-changes. These checks cover usable, unconditional unique keys; application predicates
-and column codecs remain application contracts. Retain the acquired persistence Layer
-at the application composition root so requests reuse its schema validation and
-configuration. Operations still check current authority inside their transactions.
+A replacement `PasswordPersistence.findCredential` returns an optional coherent
+credential snapshot without writes or a transaction held across hashing.
+`rehashIfCurrent` conditionally updates the verifier when hash parameters change;
+a lost comparison is a no-op. Rate limits belong to `PasswordAttemptLimiter`, not
+the persistence mapping.
 
 ## Compose the application Layer
 
@@ -364,54 +217,27 @@ export const AuthDependencies = Layer.mergeAll(
 ).pipe(Layer.provideMerge(CryptoLive));
 ```
 
-[`CryptoLive`](./crypto#use-with-auth) is the shared application crypto Layer.
-`proofKeys` is your secret-managed numeric-code keyring. Retain old key IDs until
-their proofs expire.
+[`CryptoLive`](./crypto#use-with-auth) is your shared crypto Layer. `proofKeys` is
+your secret-managed code keyring; retain old key IDs until their proofs expire.
 
-`AccountsLive` supplies `Sessions.AuthenticationAuthority`: it checks the current
-account and credential revisions and decides which factors are required.
-`SessionPersistenceLive` supplies the bound `AppAuth.sessions.StatefulSessionPersistence`
-and `AppAuth.sessions.SessionRepository`. Both Layers use your account model;
-neither has an automatic default.
+`AccountsLive` supplies `Sessions.AuthenticationAuthority`.
+`SessionPersistenceLive` supplies `AppAuth.sessions.StatefulSessionPersistence`
+and `AppAuth.sessions.SessionRepository`. Method and session mappings must share
+subject identity, active status, security revision, policy, and the complete active
+credential authority. Credential changes must maintain that authority atomically.
+Neither account authority nor session persistence has an automatic default.
 
-Stateful session verification reads the session and subject in one SQL snapshot
-when their mapped IDs have compatible SQL types and encodings. Application claims
-may require their own query; join the required account fields in that query.
-Explicit session reads always check current storage.
-
-Add the method's Layers, such as `PasswordLive` from the [password guide](../guide/passwords#supply-the-services):
-
-```ts title="apps/server/auth-routes.ts"
-import { Layer } from "effect";
-import { Http } from "@yielded/auth";
-
-import { AppAuth } from "./auth";
-import { AuthDependencies } from "./auth-dependencies";
-import { PasswordLive } from "./password-live";
-
-export const AuthRoutes = Http.layer(AppAuth, { origin: "https://app.example.com" }).pipe(
-  Layer.provide(PasswordLive),
-  Layer.provide(AuthDependencies),
-);
-```
-
-The relative imports are your application modules. Use `AppAuth.layer` in place
-of `Http.layer(...)` for local service composition. TypeScript reports any remaining
-requirements. `Sessions.stateful(...)` on `Auth.make` configures sessions;
-supply a separate session/completion Layer only when using custom session setup
-such as [pending authentication](../guide/totp). Keep `Auth.AuthRequest` out of this shared Layer; supply it
-for each request or use [the HTTP adapter](../guide/http-and-client).
+Provide these dependencies and the method Layers to `AppAuth.layer` or
+`Http.layer(AppAuth, options)`. Keep `Auth.AuthRequest` request-scoped; the
+[HTTP adapter](../guide/http-and-client) supplies it for HTTP calls.
 
 ### Defaults and required configuration
 
-`Auth.make` wires the selected methods, session implementation, and empty lifecycle
-hooks. Supply the application's [crypto Layer](./crypto#use-with-auth) and
-`PasswordHashing` explicitly, for example with the bounded
+`Auth.make` wires selected methods, sessions, and empty lifecycle hooks.
+Supply crypto and `PasswordHashing` explicitly, for example with
 [`Password.PasswordHashing.layer()`](../guide/passwords#supply-the-services).
-Adapter factories expose their crypto and hook requirements; supply them as above.
-Layer helpers may supply empty hooks, while crypto remains an application choice.
-You supply storage mappings, account authority, claims, delivery, and secret keys.
-Adapters provide implementations; they are not installed automatically.
+Layer helpers may default to empty hooks; storage, account authority, claims,
+delivery, and secret keys remain application responsibilities.
 
 ## Choose a driver
 
@@ -427,189 +253,122 @@ Adapters provide implementations; they are not installed automatically.
 | Cloudflare D1         | `@yielded/auth-persistence-drizzle/D1`         |
 | Durable Object SQLite | `@yielded/auth-persistence-drizzle/SqliteDo`   |
 
-Install the selected driver's Effect SQL and Drizzle peers. Import it directly to
-avoid loading unrelated adapters. Shared mapping types live in `@yielded/auth-persistence-drizzle`.
+Install the driver's declared Effect SQL and Drizzle peers and import it directly.
+Bun consumers also need the [Drizzle Effect patch](https://github.com/yielded-dev/auth/tree/main/packages/drizzle-effect-v4-patch);
+follow its installation instructions and commit the generated patch and lockfile.
+Shared mapping types live in `@yielded/auth-persistence-drizzle`.
 
-Adapter authors can supply mapped table contracts or implement `NativeSqlTables`;
-both feed the shared strategy implementation and commit owner. Reuse the canonical
-row codecs when composing explicit services:
-
-```ts
-import { makeStorageMappings } from "@yielded/auth-persistence/Adapter";
-import { Effect } from "effect";
-
-const proofMapping = Effect.gen(function* () {
-  const mappings = yield* makeStorageMappings(storage);
-  return mappings.proofs();
-});
-```
-
-Mapping construction requires Effect `Crypto`; provide it at the calling Layer.
-The layout must include each requested mapping's role tables. Drivers supply typed
-table handles, column codecs, SQL expressions, and the transaction or fixed-batch
-boundary. D1 builds its named assertions from the shared statements. Refine authority
-policy only for the intended proof purpose; the composed Layer's defaults remain unchanged.
-
-Use the Effect SQL peer ranges declared by the adapter package and keep the driver
-aligned with `effect`. The native PostgreSQL driver accepts one
-statement per query, decodes `int8` as `bigint`, timestamps as `Date`, and `bytea`
-as `Uint8Array`. Match application-owned column codecs to these values; use
-`sql.json` for JSON parameters. Set `prepare: false` for poolers that cannot retain
-prepared statements between queries.
-
-Drizzle RC4's Effect integration still uses APIs removed from the current stable
-Effect release. Until Drizzle ships a compatible release, apply this temporary
-patch to use it with Yielded Auth. In a Bun app, install your dependencies and run
-this from the workspace that depends on Drizzle:
-
-```sh
-bun add drizzle-orm@1.0.0-rc.4
-bunx @yielded/drizzle-effect-v4-patch@beta patch
-```
-
-The CLI updates Drizzle's declarations, error classes, and schema helper, then runs `bun install`.
-Commit the generated patch, root manifest, and lockfile. It accepts only the
-released Drizzle RC4 version, which the adapter supports. See the
-[patch package](https://github.com/yielded-dev/auth/tree/main/packages/drizzle-effect-v4-patch)
-for the exact supported build. Run the same command with `unpatch` before upgrading
-to a compatible upstream release. No lifecycle hook is required.
+Use `databaseLayer` to acquire `Database` from the platform SQL client. Most drivers
+also accept `Layer.succeed(Database, db)`. Durable Object SQLite uses
+`SqliteDo.databaseLayer` or `SqliteDo.makeDatabase(existingDrizzle)` with an Effect
+SQL client configured with Durable Object `storage`. Its asynchronous transaction
+owner supports suspending Effects; raw Drizzle outer transactions are unsupported.
 
 Standalone libSQL operations reject any ambient libSQL transaction, including one
-belonging to another client. Use the explicit transaction coordinators when
-application writes and auth changes must share a commit.
+belonging to another client. Use the adapter's coordinator for shared commits.
+
+The native PostgreSQL driver accepts one statement per query and decodes `int8`
+as `bigint`, timestamps as `Date`, and `bytea` as `Uint8Array`. Match your column
+codecs to those values, use `sql.json` for JSON parameters, and set `prepare: false`
+for poolers that cannot retain prepared statements.
+
+Adapter authors can supply typed mappings or implement `NativeSqlTables` through
+`@yielded/auth-persistence/Adapter`. `yield* makeStorageMappings(storage)` from that
+module supplies shared row codecs for explicit mappings and requires Effect `Crypto`.
+Include every role table the requested mappings use.
 
 ## SQL session verification
 
-Interactive SQL adapters read a stateful session and its subject in one statement
-when both owner columns use compatible physical text types and collations without
-codecs. Service construction checks that compatibility with one catalog read.
-Custom codecs, incompatible columns, and converters without this metadata use two
-reads: discover the owner, then read both rows together and validate their ownership.
-Rebuild persistence Layers after schema migrations.
+Explicit SQL session reads check current authority and expiry; committed revocations
+invalidate sessions immediately. Application claims remain application-owned.
 
-SQL state-assisted validity reads the subject's current security revision and its
-owner-scoped revocation tombstone in one statement. Each ID uses its own column
-codec. Both modes check current authority and fresh expiry times on every read;
-committed revocations retain immediate invalidation.
+Keep mapped subject IDs canonical through every column codec. Permit database
+catalog reads: explicit factories validate required unique keys at acquisition,
+while composed storage validates on its first operation. Schema declarations do not
+install constraints. Apply migrations before use and reacquire persistence Layers
+after schema changes.
 
-Ordinary verification uses plain reads. A caller-owned transaction retains the
-database's normal query-failure behavior. Mutation transaction and receipt
-guarantees still apply.
+Explicit session mappings require `moduleId`, the engine clock, and native
+active-status values. Declare every mutable input of `decodeRequirement` in
+`subject.requirementColumns`; D1 requires this declaration. Use `[]` only for
+constant policy.
 
-Explicit session mappings require `moduleId`, the shared engine clock, and the
-native active-status values. Session rotation uses the captured record and old
-digest as its guard; there is no row-version column or session-flow table.
-`SessionPendingTables` maps one module-scoped table for `Login` and `StepUp`, with
-an exact digest key and kind on every read or write. The Login codec preserves
-application claims. `SessionCleanup` shares one total deletion limit across
-expired pending proofs and due revocation tombstones; see [session maintenance](./sessions#custom-composition).
+`SessionPendingTables` maps `Login` and `StepUp` storage; the Login codec must
+preserve application claims. `SessionCleanup` shares one deletion limit across
+expired pending proofs and due revocation tombstones. See
+[session maintenance](./sessions#custom-composition).
 
 ## Passwords
 
-Use `makePasswordPersistenceServices` for verification and mutation storage;
+`makePasswordPersistenceServices` supplies verification and mutation storage;
 `makePasswordRegistrationServices` supplies registration authority. Reset support
 also needs a proof mapping.
 
-Password verification consumes token-bucket budgets through `PasswordAttemptLimiter`
-before credential verification. Its default store is process-local, resets on
-restart, and has a fixed 10,000-key capacity. Multiple instances and per-request
-runtimes need a [shared store](../guide/passwords#share-rate-limits) for identifier
-and subject buckets; the action bucket stays per instance. Consumed tokens are never refunded.
+`PasswordAttemptLimiter` defaults to process-local token buckets with a 10,000-key
+capacity, reset on restart. Multiple replicas and per-request runtimes need a
+[shared store](../guide/passwords#share-rate-limits) for identifier and subject
+buckets; the action bucket stays per instance. Consumed tokens are not refunded.
 
-```text
-password mutation transaction
-  ├─ check account + credential revisions
-  ├─ update password and security revision
-  └─ commit receipt
-```
-
-Use the adapter's coordinator when combining authentication with application writes.
-Coordinated password mutations, including a reset's proof redemption, are checked again
-after your writes; changing their account, credential, or proof rows in the same commit
-rolls both back.
-Do not put standalone services inside an untracked raw Drizzle transaction.
+Use the adapter's coordinator when combining password mutations with application
+writes. Conflicting changes to the account, credential, or redeemed proof roll
+back the shared commit.
 
 ## Proof storage
 
-Map one proof row keyed by module, purpose, and canonical identifier/subject series.
-Issue uses the database clock and preserves a live code unless the complete binding
-matches. Redemption conditionally deletes the exact unexpired code or increments
-that code's bounded failure count. No request receipt, continuation, delivery claim,
-or SQL rate-limit tables remain.
+Map one current code per module, purpose, and canonical identifier or subject
+series. Protected password, email, and phone changes consume the proof in the same
+commit. Standalone sign-in consumes its proof before issuing a session.
 
-Subject-bound standalone redemption takes one subject lock without rereading
-factor or identifier authority. Protected password, email, and phone mutations
-redeem inside their native owner after its existing subject lock;
-standalone sign-in consumes first and issues a session independently. Cleanup uses
-`CleanupLimit` and returns `{ removed, hasMore }`; `hasMore` means the limit was
-reached. Retired phone identifiers are permanent and never part of cleanup.
-
-Reset development proof tables, removed command/registration-receipt tables, and
-the replaced phone identifier layout when adopting these pre-production schemas.
+Cleanup takes `CleanupLimit` and returns `{ removed, hasMore }`; `hasMore` means the
+limit was reached, not that another call must remove rows. Retired phone identifiers
+are permanent and are never removed by cleanup.
 
 ## Email
 
-`makeEmailSignInServices` performs lookup. `makeEmailRegistrationServices` and
-`makeEmailAddressServices` own account creation and address changes.
+`makeEmailSignInServices` supplies lookup. `makeEmailRegistrationServices` and
+`makeEmailAddressServices` supply account creation and address changes. For explicit
+mappings over an existing layout, use `.emails()` and `.proofs()` from
+`yield* makeStorageMappings(storage)`.
 
-For explicit composition over an existing storage layout, start from
-`yield* makeStorageMappings(storage)` and use its `.emails()` and `.proofs()` factories.
-Supply the raw registration mapping's synchronous provisioning and inspection policy.
+Registration provisions a fresh subject after mailbox proof. Application policy
+may reclaim an active, unverified address, never a verified one; scope that
+permission to registration. Reclamation advances the previous subject's security
+revision without moving credentials or application data or re-enabling a disabled
+subject. Storage-backed sessions can invalidate immediately; purely stateless
+sessions retain their configured lifetime.
 
-Email registration provisions a fresh subject after mailbox proof. Its application
-inspection and committing identifier policy may admit absent or active-unverified
-targets for reclamation. Scope that permission to email registration. The owner
-rechecks the old account, binding revision and unverified state before updating
-ownership atomically with proof redemption; D1 compiles the same commit guards.
+Provisioning, identifier ownership, and proof consumption share one transaction or
+D1 batch. Provisioning is synchronous and receives a stable `requestId` for
+application idempotence. See [mailbox registration](../guide/codes#register-a-mailbox-owner).
 
-Reclamation advances the previous subject's security revision without moving its
-credentials or application data. Identifier eligibility is separate from the prior
-subject's status: a disabled subject stays disabled. Sessions and pending authentication must consult
-that revision for immediate invalidation; purely stateless sessions retain their
-documented lifetime. Provisioning, reclamation and proof consumption share one
-transaction or D1 batch. Verified addresses cannot be reclaimed. Provisioning
-completes synchronously; the authority supplies a stable `requestId` for application
-idempotence. An application can own a
-queue when its account system requires asynchronous work. Compose this guest workflow explicitly as shown in
-[mailbox registration](../guide/codes#register-a-mailbox-owner).
-
-Address changes consume their proof and advance security revisions in the same transaction.
-Confirming an existing unverified address bound to the same subject preserves its
-security revision and sessions; the completion result omits `invalidation`. The
-adapter captures and rechecks the identifier's binding revision. Application policy
-may authorize this confirmation with a valid session; adding or replacing an address
-still requires recent authentication. Reload mutable application claims on session
-reads when the UI needs to reflect verification immediately.
-Notifications run after commit; durable delivery needs an outbox.
+Confirming an existing unverified address for the same subject preserves sessions
+and omits `invalidation`. Application policy may allow confirmation with a valid
+session; adding or replacing an address requires recent authentication and advances
+security revisions. Reload mutable claims on session reads when verification must
+appear immediately. Notifications run after commit; durable delivery needs an outbox.
 
 ## OAuth
 
-Import `OAuthPersistence` from `@yielded/auth-persistence` for upstream provider
-accounts through Effect SQL. It uses the same operation implementations as the
-Drizzle companion. These explicit factories are separate from the composed
-`AuthPersistence.make` Layer and from downstream `OAuthServerPersistence` storage.
+`OAuthPersistence` from `@yielded/auth-persistence` supplies explicit upstream
+provider-account storage. It is separate from composed `AuthPersistence` and from
+downstream `OAuthServerPersistence`.
 
-| Factory                                | Workflow                                                        |
-| -------------------------------------- | --------------------------------------------------------------- |
-| `makeOAuthSignInServices`              | Single-use sign-in flows and existing login credentials         |
-| `makeOAuthRegistrationIntentServices`  | Verified identity to registration intent                        |
-| `makeOAuthRegistrationServices`        | Application provisioning, login credential, and durable receipt |
-| `makeOAuthAccountsServices`            | Linked login inventory, linking, and safe unlinking             |
-| `makeOAuthConnectedServices`           | Retained grants, listing, use, refresh, and disconnect          |
-| `makeOAuthConnectedRevocationServices` | Durable provider-revocation work                                |
+- **`makeOAuthSignInServices`**: Single-use sign-in flows and existing login credentials
+- **`makeOAuthRegistrationIntentServices`**: Verified identity to registration intent
+- **`makeOAuthRegistrationServices`**: Application provisioning, login credential, and durable receipt
+- **`makeOAuthAccountsServices`**: Linked login inventory, linking, and safe unlinking
+- **`makeOAuthConnectedServices`**: Retained grants, listing, use, refresh, and disconnect
+- **`makeOAuthConnectedRevocationServices`**: Durable provider-revocation work
 
-Direct Effect SQL supports PostgreSQL and SQLite clients with interactive
-transactions. It does not supply a MySQL, D1 batch, or native Kysely adapter.
-Use the existing Drizzle entrypoints for their documented driver-specific behavior.
+Direct Effect SQL supports PostgreSQL and SQLite with interactive transactions,
+not MySQL or D1 batches. Drizzle applications use their driver entrypoints.
 The [Effect SQL consumer](https://github.com/yielded-dev/auth/tree/main/examples/persistence-sql)
 has no Drizzle dependency.
 
-Describe physical tables with `OAuthPersistence.table`, then map semantic columns,
-row codecs, subject IDs, authority predicates, and required unique keys. Tables
-remain application-owned; construction checks the required keys against the actual
-database. `OAuthPersistence.clock` supplies an integer-millisecond engine clock.
-Use `sql`, `eq`, and `and` from that namespace for mapping expressions. These are
-mapping expressions; application queries use the supplied Effect `SqlClient`.
+Describe tables with `OAuthPersistence.table` and map columns, row codecs, subject
+IDs, authority policy, and required unique keys. `OAuthPersistence.clock` supplies
+an integer-millisecond engine clock. Use its `sql`, `eq`, and `and` for mapping
+expressions; application queries use the supplied Effect `SqlClient`.
 
 ```ts
 import { OAuthPersistence } from "@yielded/auth-persistence";
@@ -623,95 +382,67 @@ export const OAuthStorageLive = OAuthPersistence.oauthSignInPersistenceLayer(
 ).pipe(Layer.provide([SqlLive, CryptoLive, Persistence.hooksLayer]));
 ```
 
-If session storage does not already supply `AuthenticationAuthority`, use
+Reuse the session `AuthenticationAuthority`. If it is not already supplied, use
 `makeAuthenticationAuthorityServices` with the same subject and shared credential
-mapping. Session issuance must check that authority alongside the OAuth credential.
+mapping, including all active credentials rather than only OAuth logins.
 
-Factories capture the client at construction. Standalone methods own their commit
-and reject ambient transactions. For atomic application work, use the matching
-`coordinateOAuth*({ mapping }, body)` function; registration additionally takes its
-`target` service. The body receives transaction-bound persistence, and queries
-through the same `SqlClient` participate in that transaction. Keep provider network
-exchanges outside it. Bound services cannot escape the coordinator. Registration compares its retained application binding before allocating IDs or
-provisioning. The registration Schema owns the canonical stored payload.
+For atomic application work, `coordinateOAuth*({ mapping }, body)` provides
+transaction-bound persistence to `body`; registration also takes its `target`
+service. Queries through the same `SqlClient` join that transaction. Keep provider
+network exchanges outside it and do not retain bound services after it ends.
+An unknown exchange or commit outcome requires a fresh ceremony, not a repeated
+provider exchange.
+
+Account mappings require a self-contained `metadataAccess` SQL predicate enforcing
+current permission for the verified invocation. False returns an empty page.
+`OAuthAccountsPersistence.list` exposes credential IDs and provider/issuer/subject
+tuples, not application profiles. Retained-grant listing belongs to
+`OAuthConnectedPersistence`.
 
 ### Kysely-owned schemas
 
-Keep Kysely as your migration and application-query tool, and map those physical
-tables for Effect SQL. Both clients may address the same database, but a Kysely
-transaction does not become an Effect SQL transaction. Provisioning and auth writes
-that must commit together must run through the adapter's coordinator and its exact
-Effect SQL client. Otherwise supply a replacement persistence service that owns
-both operations under your application's transaction authority. No native Kysely
-integration is implied by table mapping.
-
-An external provider exchange cannot be rolled back with your database. A single conditional callback consume precedes provider exchange. Unknown exchange
-or commit outcomes require a fresh ceremony. Refresh alone retains a durable
-external-work claim and never permits expired takeover. Linking preserves tuple
-uniqueness; unlinking rechecks remaining login methods and retained-grant references
-before releasing ownership. `OAuthAccountsPersistence.list` reads linked login identities;
-connected-grant listing belongs to `OAuthConnectedPersistence`.
-
-Account mappings require a self-contained `metadataAccess` SQL predicate for the
-verified invocation, module, and native subject ID. It runs with current active
-subject, login credential, authority, and identity ownership checks before metadata
-is released. False returns an empty page. The public result includes only the
-credential ID and provider/issuer/subject tuple; optional application profile columns
-are not exposed. The shared implementation bounds candidate reads and resolves each
-selected credential through its own mapped codecs, including custom ID encodings.
-Direct SQL and the existing Drizzle account adapters use this same implementation;
-no schema migration is needed. Supply `list` on replacement persistence services.
+Kysely can own migrations and application queries while Effect SQL maps the same
+tables. A Kysely transaction is not an Effect SQL transaction. Provisioning and auth
+writes that must commit together must use the adapter's coordinator and its exact
+SQL client, or a replacement persistence service that owns both operations.
 
 ## Passkeys
 
-`makePasskeyPersistenceServices` inserts challenges, reads their context, consumes
-verified challenges, and deletes expired rows in bounded batches.
-`PasskeyCredentials` supplies credential lookup and `listForSubject`, which returns
-the subject's current factor revisions, same-RP exclusions, and an optional existing
-user handle. Each credential retains its own handle.
+`makePasskeyPersistenceServices` supplies challenge storage; `PasskeyCredentials`
+supplies credential lookup and `listForSubject`. Provide `PasskeyConfig`, action
+authorization, claims, and a protocol verifier. Composed tables use integer
+milliseconds; custom timestamps require explicit mappings. Challenges retain their
+selected relying-party profile until expiry.
 
-After signature verification, one transaction conditionally deletes the unexpired
-challenge and updates the credential counter. A failed or uncertain consume never
-issues a session. Session issuance separately rechecks subject and credential
-authority; if it fails, begin a new ceremony.
+A failed or uncertain challenge consume or session issuance requires a new
+ceremony. Enrollment preserves existing sessions. Removal protects the last usable
+sign-in method and invalidates sessions; registration provisions synchronously.
+The composed removal policy counts only passwords or user-verified passkeys that
+independently satisfy sign-in requirements, not OAuth logins. Use an explicit
+adapter's `write.policy.remainingSignIn` for other methods or factor combinations.
 
-Enrollment stores the application's begin authorization with the challenge. Its
-completion locks the subject, re-assesses that authorization and the current
-credential cap, and atomically inserts the credential and shared factor. Enrollment
-preserves the subject security revision and existing sessions. Removal protects the
-last usable sign-in method, bumps the revision, and applies session invalidation
-under the same subject lock. Registration stores its original schema-encoded
-application payload on the challenge row and provisions synchronously on completion.
+Use `coordinatePasskeyManagement` or `coordinatePasskeyRegistration` for application
+writes in the same transaction. A failed auth operation aborts that transaction
+even if the application catches the error; retry in a fresh transaction.
 
-Use `coordinatePasskeyManagement` or `coordinatePasskeyRegistration` when application
-writes share the transaction. A failed auth operation poisons that transaction:
-the outer commit fails even when the application catches the error, so retry in a
-fresh transaction.
-
-Standalone reads open no transaction. Credential lookup uses one SELECT when mapped
-references share compatible SQL types and ID encodings; custom codecs that transform
-IDs outside SQL require additional mapped reads. Passkey budgets use Effect's
-`RateLimiter`, with a bounded process-local default. Supply a
+Passkey rate limits default to a bounded process-local store. Supply a
 [shared store](../guide/passwords#share-rate-limits) for subject and target limits
 across replicas; the global budget stays per instance.
 
 ## TOTP
 
-`TotpMapping.subject.requirementColumns` follows the same policy-input contract as
-session mappings: declare all mutable decoder inputs, or `[]` for constant policy.
-D1 rejects omission. Both native and batch owners retain the original authority
-vector and authorization deadline.
+`TotpMapping.subject.requirementColumns` follows the
+[session mapping contract](#sql-session-verification): declare every mutable policy
+input, or `[]` for constant policy. D1 rejects omission.
 
-Recovery reset maps the same Login pending table and codec as sessions. The owner
-matches its module, kind, original digest, binding and credential revisions; a
-step-up intent cannot authorize recovery reset. Recovery-code regeneration changes
-the factor version while preserving the subject revision and existing sessions.
+Recovery reset uses the same Login pending table and codec as sessions; a step-up
+intent cannot authorize it. Recovery-code regeneration preserves the subject
+revision and existing sessions.
 
 ## Phone
 
-For sign-in with managed or mapped storage, the composed Layer above supplies
-phone and proof services together. For number lifecycle operations or specialized
-row mappings, wrap the explicit adapter services:
+The composed Layer supplies phone sign-in and proof services. For number lifecycle
+operations or specialized mappings, use the explicit services:
 
 <!-- #region phone-layers -->
 
@@ -746,69 +477,28 @@ export const ProofPersistenceLive = Layer.effect(
 ).pipe(Layer.provide([DatabaseLive, CryptoLive]));
 ```
 
-The database connection above uses SQLite on Bun. The phone Layer supplies
-`PhonePersistence` and `PhoneSignInTargets`, with empty hook
-defaults. Both persistence Layers use the application's explicit `CryptoLive`.
-The proof Layer stores one current code per series, its failed-attempt count, and
-cooldown. Core `ProofLimiter` and `PhoneAdmission` own token-bucket limits; configure
-their Layers separately from table mappings. Sign-in uses lookup and admission; number-management operations
-also use `PhonePersistence`. You provide table mappings and
-migrations. See the [SQLite example](https://github.com/yielded-dev/auth/blob/main/examples/auth/src/phone-sqlite-bun.ts)
-for the table definitions and mappings.
+The phone Layer supplies `PhonePersistence` and `PhoneSignInTargets` with empty
+hook defaults. Both Layers use your `CryptoLive`. Configure `ProofLimiter` and
+`PhoneAdmission` separately from storage. You own mappings and migrations; see the
+[SQLite example](https://github.com/yielded-dev/auth/blob/main/examples/auth/src/phone-sqlite-bun.ts).
 
 <!-- #endregion phone-layers -->
 
 ## Connected OAuth grants
 
 `OAuthPersistence.makeOAuthConnectedServices` and
-`OAuthPersistence.makeOAuthConnectedRevocationServices` coordinate
-provider grants, refresh attempts, and optional revocation. Map `otherReferences`
-to an indexed SQL predicate for concrete login, grant, or job references sharing
-identity ownership. Unlink/disconnect release ownership only when those references
-are absent. Keep the durable grant identity and refresh version/claim predicates;
-no ordinary callback claim or token-use admission row is needed.
+`OAuthPersistence.makeOAuthConnectedRevocationServices` supply retained grants,
+refresh, and optional provider revocation. Map `otherReferences` to an indexed
+predicate covering login, grant, and job references that share identity ownership;
+unlink and disconnect cannot release ownership while those references remain.
+`policy.condition` supplies additional application policy.
 
-Core assesses action evidence once. The committing adapter checks the accepted
-authorization's exact subject, action, flow, target, revisions, and fixed deadline;
-it does not reassess factor evidence. Map independent application policy through
-the current `policy.condition` predicate.
+For `OAuth.make({ access: profile })`, provide connected services alongside
+`makeOAuthSignInServices` and map `credential` to the shared login table. See the
+[OAuth storage example](https://github.com/yielded-dev/auth/blob/main/examples/shared/oauth/storage.ts).
+An expired refresh claim does not authorize repeating an uncertain provider
+exchange. Cleanup takes `CleanupLimit` and returns `{ removed, hasMore }`, where
+`hasMore` means the batch limit was reached.
 
-For `OAuth.make({ access: profile })`, use the same connected services alongside
-`makeOAuthSignInServices` and map `credential` to the shared login table. Live flow
-rows contain their Schema snapshot and exact callback predicates. The
-[OAuth storage example](https://github.com/yielded-dev/auth/blob/main/examples/shared/oauth/storage.ts)
-shows the application-owned schema and authority. Cleanup accepts a shared
-`CleanupLimit` and returns `{ removed, hasMore }`; `hasMore` means the batch limit
-was reached, so another call can remove zero rows.
-
-<details>
-<summary>D1 and Durable Object transaction boundaries</summary>
-
-D1 uses a preplanned conditional batch, not an interactive transaction. Allocate
-registration IDs before the batch. Named final checks run after all staged application
-statements; native coordinated owners likewise check after the application callback.
-Declare every independently mutable requirement-decoder input in
-`subject.requirementColumns`; use `[]` only for constant policy. Do not replay a
-caller-owned mutation after an ambiguous response.
-
-Durable Object SQLite uses the captured Effect SQL client's asynchronous
-`storage.transaction` boundary. Use `SqliteDo.databaseLayer` or
-`SqliteDo.makeDatabase(existingDrizzle)` and the adapter's transaction coordinators;
-crypto Effects may suspend inside that owned transaction. An arbitrary raw Drizzle
-outer transaction, including its `transactionSync` callbacks, is unsupported.
-No synchronous crypto implementation or `Effect.runSync` bridge is required.
-
-Compatible scalar mappings, including application-owned tables and renamed columns,
-use grouped cleanup reads and writes, with atomic checks after application work and
-database triggers. Groups split at the driver's statement and bound-data limits.
-An arbitrary SQL-producing encoder or binary/array representation may require its
-original mapped statements because it cannot be encoded as a scalar rowset.
-Collation aliases and staged D1 writes can also require additional statements;
-a page size alone does not determine its cost.
-Budget every statement and transaction-control call as a database roundtrip.
-Direct Effect SQL uses SQLite limits that also fit Durable Objects.
-
-</details>
-
-See [integration references](../guide/examples#database-adapters) for concrete
-table definitions and mappings.
+See [integration references](../guide/examples#database-adapters) for complete
+mappings and driver setup.
