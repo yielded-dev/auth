@@ -126,6 +126,9 @@ export const parsePasswordHash = Effect.fn("parsePasswordHash")(function* (
         Effect.mapError(() => PasswordVerifierInvalid.make({ reason: "malformed" })),
       );
 
+    if (logCost >= 16 * blockSize)
+      return yield* PasswordVerifierInvalid.make({ reason: "malformed" });
+
     const cost = 2 ** logCost;
 
     if (

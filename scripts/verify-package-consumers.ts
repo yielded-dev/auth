@@ -704,7 +704,7 @@ assert.deepEqual(Object.keys(root).sort(), ${JSON.stringify(rootNamespaces)});
 for (const name of ${JSON.stringify(rootNamespaces)}) {
   assert.equal(root[name], await import(${JSON.stringify(packageName + "/")} + name));
 }
-for (const name of ${JSON.stringify(names)}) await import(name);`,
+for (const name of ${JSON.stringify(names.filter((name) => name !== "@yielded/crypto/platform-workerd"))}) await import(name);`,
           ],
           { cwd: stage, stdout: "pipe", stderr: "pipe" },
         );
@@ -723,7 +723,7 @@ for (const name of ${JSON.stringify(names)}) await import(name);`,
             message: `${probe} consumer exited ${code}: ${stdout}${stderr}`,
           });
         yield* Console.log(
-          `${probe}: ${names.length} published exports load and type-check with only Effect and first-party packages; browser imports exclude Node/Bun runtime entries.`,
+          `${probe}: ${names.length} published exports type-check with only Effect and first-party packages; Node loading excludes workerd and browser imports exclude platform entries.`,
         );
       }
       yield* checkReusableOperations(stage);

@@ -24,8 +24,9 @@ export const scrypt: Scrypt = Effect.fnUntraced(function* (input: ScryptParamete
             p: input.parallelism,
             maxmem: input.maximumMemoryBytes,
           },
+          // Bun supplies undefined on success; Node supplies null.
           (error, key) =>
-            resume(error === null ? Effect.succeed(key) : Effect.fail(CryptoUnavailable.make({}))),
+            resume(error ? Effect.fail(CryptoUnavailable.make({})) : Effect.succeed(key)),
         ),
       catch: () => CryptoUnavailable.make({}),
     });

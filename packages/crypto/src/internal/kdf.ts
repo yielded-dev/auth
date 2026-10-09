@@ -60,6 +60,7 @@ export const makeKdf = Effect.fnUntraced(function* (
 
           if (
             !Number.isInteger(Math.log2(value.cost)) ||
+            Math.log2(value.cost) >= 16 * value.blockSize ||
             value.blockSize * value.parallelism >= 2 ** 30 ||
             memoryBytes > limits.maximumMemoryKiB * 1024 ||
             (value.cost * value.blockSize * value.parallelism) / 8 > limits.maximumMemoryPasses

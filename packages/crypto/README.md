@@ -18,9 +18,9 @@ an implementation through a direct backend import:
 - `/Portable`: WebCrypto plus owned Argon2id and XChaCha20-Poly1305 implementations.
 - `/platform-node`, `/platform-bun`: shared Node-compatible WebCrypto and native
   Argon2id and scrypt, plus the owned XChaCha20-Poly1305 implementation.
-- `/platform-workerd`: supplied WebCrypto and native scrypt, plus portable
-  Argon2id for existing hashes and XChaCha20-Poly1305. Requires Workers Node.js
-  compatibility and ships ordinary JavaScript.
+- `/platform-workerd`: supplied WebCrypto, Wasm Argon2id, native scrypt and owned
+  XChaCha20-Poly1305. Wrangler bundles the included Wasm module; consumers need
+  no compiler. Native scrypt requires Workers Node.js compatibility.
 
 Full backend Layers require one shared `KdfAdmission` Layer. The focused
 `WebCrypto.layerHmac(subtle)` and global `layerWebCrypto` adapters need no KDF

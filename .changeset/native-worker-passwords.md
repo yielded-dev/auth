@@ -3,4 +3,4 @@
 "@yielded/auth": minor
 ---
 
-Use native scrypt on Node, Bun, and Workers, and select `defaultScryptPasswordHashingConfig` to migrate passwords on successful sign-in. **BEHAVIOR CHANGE:** Custom `Kdf` service implementations must provide `scrypt`.
+Accelerate Argon2id on Workers with bundled Wasm and add native scrypt on Node, Bun, and Workers. Select `defaultScryptPasswordHashingConfig` to migrate passwords to scrypt on successful sign-in; **BEHAVIOR CHANGE:** custom `Kdf` services must provide `scrypt`.

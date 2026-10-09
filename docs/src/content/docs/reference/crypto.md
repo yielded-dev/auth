@@ -60,9 +60,16 @@ takes those overrides as its first argument. Bun uses the same implementation
 through `@yielded/crypto/platform-bun`.
 
 For Cloudflare Workers, use `WorkerdCrypto.layer(globalThis.crypto.subtle)` from
-`@yielded/crypto/platform-workerd`. It uses native `node:crypto.scrypt` and requires
-Node.js compatibility. Portable Argon2id remains available to verify existing
-passwords. This backend needs no Wasm asset or special bundling configuration.
+`@yielded/crypto/platform-workerd`. It uses a bundled Wasm module for Argon2id
+and native `node:crypto.scrypt`. Wrangler includes the Wasm module in the Worker
+deployment; consumers need no compiler or runtime download. Native scrypt
+requires Node.js compatibility. Argon2id parameters and stored hashes stay the
+same when switching from Portable.
+
+PBKDF2 uses the supplied WebCrypto and remains subject to the host's iteration
+limit, which can be lower than the library's configured ceiling. Before moving
+retained PBKDF2 credentials to Workers, verify that the deployed host accepts
+their stored iteration counts; otherwise migrate them on a capable backend first.
 
 For sessions and proofs, `WebCrypto.layerWebCrypto` supplies Effect `Crypto` and
 `Hmac` from the runtime's global WebCrypto. Its components are `layerCryptoWeb`
@@ -157,12 +164,12 @@ raw-key operations. XChaCha continues to use raw-key operations.
 
 ## Backends and resource limits
 
-| Backend                         | Native operations                                     | Portable operations        | Unsupported operations                              |
-| ------------------------------- | ----------------------------------------------------- | -------------------------- | --------------------------------------------------- |
-| `WebCrypto`                     | AES-GCM, HMAC, PBKDF2, HKDF, signatures               | None                       | Argon2id, scrypt, XChaCha                           |
-| `Portable`                      | AES-GCM, HMAC, PBKDF2, HKDF, signatures               | Owned Argon2id and XChaCha | scrypt; host-specific native capability gaps        |
-| `platform-node`, `platform-bun` | Node-compatible WebCrypto, native Argon2id and scrypt | Owned XChaCha              | Native Argon2id when the host lacks `crypto.argon2` |
-| `platform-workerd`              | WebCrypto and native scrypt                           | Owned Argon2id and XChaCha | Host-specific native capability gaps                |
+| Backend                         | Native operations                                     | Portable operations             | Unsupported operations                              |
+| ------------------------------- | ----------------------------------------------------- | ------------------------------- | --------------------------------------------------- |
+| `WebCrypto`                     | AES-GCM, HMAC, PBKDF2, HKDF, signatures               | None                            | Argon2id, scrypt, XChaCha                           |
+| `Portable`                      | AES-GCM, HMAC, PBKDF2, HKDF, signatures               | Owned Argon2id and XChaCha      | scrypt; host-specific native capability gaps        |
+| `platform-node`, `platform-bun` | Node-compatible WebCrypto, native Argon2id and scrypt | Owned XChaCha                   | Native Argon2id when the host lacks `crypto.argon2` |
+| `platform-workerd`              | WebCrypto and native scrypt                           | Wasm Argon2id and owned XChaCha | Host-specific native capability gaps                |
 
 Backend selection is explicit. An unavailable native algorithm fails with
 `CryptoUnsupportedAlgorithm`; it does not silently select a different algorithm
@@ -178,7 +185,8 @@ PBKDF2 iterations must fit a positive signed 32-bit integer. KDF inputs are byte
 the library neither decodes nor normalizes passwords. Auth owns password
 validation, PHC parsing and rehash policy.
 
-Scrypt requires a power-of-two `cost` greater than one. Its allocation must fit
+Scrypt requires a power-of-two `cost` greater than one and below `2^(16*r)`.
+Its allocation must fit
 `maximumMemoryKiB`, including native scratch buffers; `N*r*p/8` must fit
 `maximumMemoryPasses`. `maximumParallelism` and `maximumPasses` apply to Argon2id.
 Custom `Kdf` services implement `scrypt` alongside the existing methods, returning
@@ -196,6 +204,11 @@ thread. `KdfAdmission.run` preserves the work's interruptibility;
 custom backends must protect any nonabortable native work until it finishes.
 Nested `run` calls reuse admission only in the same fiber and on the same service
 instance. A child fiber acquires independently.
+
+Worker Argon2id uses the same scheduling and admission with Wasm block
+compression. Each derivation owns its instance and linear memory, which is
+cleared before admission is released. The package includes the C source and
+precompiled Wasm; normal installation and deployment do not compile it.
 
 ## Failure and secret boundaries
 
