@@ -59,6 +59,14 @@ second argument containing KDF limit overrides; `NodeCrypto.layer(limits?)`
 takes those overrides as its first argument. Bun uses the same implementation
 through `@yielded/crypto/platform-bun`.
 
+For Cloudflare Workers, use `WorkerdCrypto.layer(globalThis.crypto.subtle, limits?)`
+from `@yielded/crypto/platform-workerd`. Wrangler imports its bundled Wasm module
+at deployment; this backend does not compile Wasm bytes at runtime. Its Argon2id
+block compression uses Wasm SIMD while retaining the portable backend's parameter
+limits, hash outputs, admission and interruptible scheduling. Each derivation owns
+and clears its Wasm memory. Changing backends requires no password migration or
+reduction in hashing cost. Node/Bun's native Argon2 is unavailable in Workers.
+
 For sessions and proofs, `WebCrypto.layerWebCrypto` supplies Effect `Crypto` and
 `Hmac` from the runtime's global WebCrypto. Its components are `layerCryptoWeb`
 (entropy and SHA digests) and `layerHmacWeb`. To supply HMAC from an explicit host

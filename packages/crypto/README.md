@@ -18,6 +18,8 @@ an implementation through a direct backend import:
 - `/Portable`: WebCrypto plus owned Argon2id and XChaCha20-Poly1305 implementations.
 - `/platform-node`, `/platform-bun`: shared Node-compatible WebCrypto and native
   Argon2id, plus the owned XChaCha20-Poly1305 implementation.
+- `/platform-workerd`: supplied WebCrypto with Wasm SIMD Argon2id, using Wrangler's
+  precompiled module imports, plus the owned XChaCha20-Poly1305 implementation.
 
 Full backend Layers require one shared `KdfAdmission` Layer. The focused
 `WebCrypto.layerHmac(subtle)` and global `layerWebCrypto` adapters need no KDF
@@ -27,6 +29,10 @@ including interruption. Portable Argon2id yields through Effect between time sli
 accepts interruption, and clears its work buffers before releasing admission. It
 still runs on the calling thread. JavaScript cannot guarantee zeroization or
 constant-time execution.
+
+The workerd backend shares the portable Argon2id algorithm and accelerates block
+compression. Each derivation owns its Wasm instance and clears its entire linear
+memory before releasing admission. It preserves existing Argon2id hashes and costs.
 
 Secret inputs, derived bytes and decrypted plaintext use `Redacted`. Backend
 errors contain classifications without native causes or secret payloads. Keep
