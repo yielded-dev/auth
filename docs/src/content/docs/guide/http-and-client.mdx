@@ -162,8 +162,42 @@ export const Routes = Layer.mergeAll(
 ).pipe(Layer.provide(AuthDependencies));
 ```
 
-The middleware reads request credentials and delivers cookies on the response.
-Handlers can call auth directly, including from JSON, form, and multipart routes.
+The middleware supplies `AppAuth` and a request-local `Auth.AuthRequest`, reads
+credentials, and delivers cookies on the response. Handlers can call auth directly,
+including from JSON, form, and multipart routes. `Http.layer` supplies these services
+to its own routes; sibling routes need their own service composition.
+
+### Verify credentials outside the HTTP middleware
+
+For RPC handlers, WebSocket handshakes, or background work, provide the long-lived
+Auth Layer and call `verifySession` with an explicit credential:
+
+```ts
+import { Effect, Redacted } from "effect";
+
+import { AppAuth } from "./auth";
+
+export const verifyCredential = Effect.fn("app.verifyCredential")(function* (
+  credential: Redacted.Redacted<string>,
+) {
+  const auth = yield* AppAuth;
+
+  return yield* auth.verifySession(credential);
+});
+```
+
+Run that Effect in your application's `AuthLive` runtime. Build `AuthLive` from
+`AppAuth.layer` and its dependencies, or from `http.layer` when `Http.make` configures
+the OAuth providers. Keep the runtime's Scope alive while handlers use its services.
+Verification uses the configured session strategy without `AuthRequest` and returns
+`SessionInvalid` for an invalid credential. Availability failures remain failures.
+Your host owns credential extraction, authorization, WebSocket Origin checks, and
+revalidation of long-lived connections.
+
+A raw `HttpRouter` handler that yields `AppAuth` during a request needs a request-level
+provider. Wrap those routes with `ApplicationRoutes.pipe(HttpRouter.provideRequest(AuthLive))`.
+Use `http.middleware` for handlers that call request-aware methods such as
+`getSession`, `requireSession`, or `signOut` and need cookie delivery.
 
 ### Join an existing HttpApi
 
@@ -303,6 +337,58 @@ export const http = Http.make(AppAuth, {
 The auth client sends the required CSRF header automatically. Keep custom cookie
 names and CSRF settings aligned with the server; [cookies and request policy](../reference/http#cookies-and-request-policy)
 lists the options.
+
+### Browser clients on another origin
+
+Configure both request admission and credentialed cross-origin resource sharing
+(CORS). For a local web client on port 3000 and an API on port 3003:
+
+```ts
+import { Http } from "@yielded/auth";
+import { Layer } from "effect";
+import { HttpRouter } from "effect/http";
+
+import { AppAuth } from "./auth";
+import { AuthDependencies } from "./auth-live";
+
+const apiOrigin = "http://localhost:3003";
+const webOrigin = "http://localhost:3000";
+
+const http = Http.make(AppAuth, {
+  origin: apiOrigin,
+  trustedOrigins: [webOrigin],
+  cookie: { secure: false },
+});
+
+export const Routes = Layer.mergeAll(
+  http.routes(),
+  HttpRouter.cors({
+    allowedOrigins: [apiOrigin, webOrigin],
+    allowedMethods: ["GET", "POST", "OPTIONS"],
+    allowedHeaders: ["content-type", "x-effect-auth-csrf"],
+    credentials: true,
+  }),
+).pipe(Layer.provide(http.layer), Layer.provide(AuthDependencies));
+```
+
+`HttpRouter.cors` runs globally, before route lookup, so it handles `OPTIONS`
+preflight requests for native auth routes and adds CORS headers to errors. Include
+it alongside the merged application routes when the same client calls those routes.
+The lower-level `OperationHttpServer.handle` handles preflights itself; native
+`HttpApi` mounting relies on this host-level middleware.
+
+Set `baseUrl: apiOrigin` on `Client.make`. The client already sends credentials;
+custom fetch calls need `credentials: "include"`. Keep the CORS allowlist and
+`trustedOrigins` aligned, and update `allowedHeaders` if you customize the CSRF
+header. Auth still validates Origin and CSRF before mutations. A network or CORS
+failure leaves a mutation's commit outcome uncertain; start recovery through the
+operation's documented flow.
+
+HTTP loopback origins are allowed together for host-only local HTTP setup with
+`cookie.secure: false`. Use HTTPS for production and shared-domain cookies. Cookies are scoped by host,
+so local apps on different ports share their host's cookies. `SameSite=Lax` or
+`Strict` still constrains cross-site cookie delivery; CORS alone does not change it.
+Absolute OAuth and email return targets retain their HTTPS policy.
 
 ### Sharing sessions across apps
 

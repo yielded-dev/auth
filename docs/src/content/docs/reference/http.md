@@ -53,10 +53,22 @@ OAuth callbacks need the request-binding cookie on a cross-site return. Keep
 `__Secure-` names; the default prefix becomes `__Secure-effect-auth-`.
 `__Host-` names fail startup with `OperationHttpConfigurationError`.
 
-`trustedOrigins` adds exact HTTPS origins alongside `origin` for request admission
-and default OAuth redirects. With a cookie domain, all origins must be inside it.
-Wildcards and URL paths are rejected; ports must match. Configure credentialed
-CORS separately for cross-origin fetches.
+`trustedOrigins` adds exact origins alongside `origin` for request admission.
+HTTPS origins are supported in every configuration. A host-only HTTP loopback
+`origin` with `cookie.secure: false` also admits additional HTTP loopback origins
+(`localhost`, `127.0.0.1`, or `[::1]`). An HTTPS primary origin and domain cookies require HTTPS throughout;
+with a cookie domain, all origins must be inside it. Wildcards and URL paths are
+rejected, and ports must match. Absolute OAuth and email return targets keep their
+separate HTTPS allowlist policy.
+
+Native `Http.layer`, `http.routes()`, and `http.handlers(Api)` mount the selected
+GET/POST actions. Configure global credentialed CORS for cross-origin clients so
+`OPTIONS` reaches middleware before route lookup and errors receive CORS headers.
+Allow the exact client origin, credentials, `content-type`, and the configured
+CSRF header (`x-effect-auth-csrf` by default). The
+[cross-origin example](../guide/http-and-client#browser-clients-on-another-origin)
+shows the `HttpRouter.cors` composition. The lower-level
+`OperationHttpServer.handle` has its own preflight handling.
 
 Use domain cookies only when you trust every subdomain to receive and set them.
 See [shared-session setup and security](../guide/http-and-client#sharing-sessions-across-apps).
