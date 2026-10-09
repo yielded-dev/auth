@@ -1,4 +1,5 @@
 /* oxlint-disable no-explicit-any -- physical mapping generics are erased only at this shared adapter boundary. */
+import { AuthenticationClock } from "@yielded/auth/Operations";
 import * as M from "@yielded/auth/Passkey";
 import { Effect, Schema } from "effect";
 import { SqlClient } from "effect/sql";
@@ -331,9 +332,10 @@ export const makePasskeyNativeState = Effect.fnUntraced(function* (
   mapping: PasskeyNativeMapping,
 ) {
   const state = yield* makePasskeyNativeReadState(tables, mapping.read, mapping.clock);
+  const clockPolicy = yield* AuthenticationClock;
   const ceremony = yield* makePasskeyNativeFlow(tables, mapping);
 
-  return { ...state, mapping, ceremony, flow: ceremony.flow, access: ceremony.access };
+  return { ...state, clockPolicy, mapping, ceremony, flow: ceremony.flow, access: ceremony.access };
 });
 
 export type PasskeyNativeReadState = Effect.Success<ReturnType<typeof makePasskeyNativeReadState>>;

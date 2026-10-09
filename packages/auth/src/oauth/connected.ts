@@ -4,6 +4,7 @@ import { Base64Url } from "effect/encoding";
 import { LifecycleHooks } from "../hooks/LifecycleHooks";
 import { HookDenied, LifecycleEventId, lifecycleEvent, lifecycleSnapshot } from "../hooks/models";
 import { IdentityConflict } from "../identity/models";
+import { AuthenticationClock } from "../operations/clock";
 import type { AuthInvocation } from "../operations/context";
 import type { AuthCredentialCommand, AuthOperationResult } from "../operations/credentials";
 import { AuthenticationRequired } from "../operations/errors";
@@ -128,6 +129,7 @@ export const makeOAuthConnected = <const Id extends string>(
     Connected,
     Effect.gen(function* () {
       const { id, policy } = yield* validateConnectedPolicy(moduleId, captured);
+      const clockPolicy = yield* AuthenticationClock;
       const { issue: issueBinding, verify: verifyBinding } = yield* binding.RequestBinding;
 
       const {
@@ -237,7 +239,10 @@ export const makeOAuthConnected = <const Id extends string>(
           expected,
           granted,
           Math.min(maximumAge, policy.maximumEvidenceAgeMillis),
-        ).pipe(Effect.mapError(() => M.OAuthConnectedActionRequired.make({})));
+        ).pipe(
+          Effect.provideService(AuthenticationClock, clockPolicy),
+          Effect.mapError(() => M.OAuthConnectedActionRequired.make({})),
+        );
 
         const authorization = yield* snapshotOAuth(M.OAuthConnectedActionAuthorization, {
           challenge: expected,

@@ -1,4 +1,5 @@
 import type { LifecycleHooks } from "@yielded/auth/Hooks";
+import { AuthenticationClock } from "@yielded/auth/Operations";
 import {
   SessionInvalid,
   StaleAuthentication,
@@ -46,6 +47,7 @@ export const makeNativeSignedSessionValidityServices = Effect.fnUntraced(functio
   SqlClient | LifecycleHooks | SqlBatchCommit
 > {
   const batch = yield* SqlBatchCommit;
+  const { futureToleranceMillis } = yield* AuthenticationClock;
 
   const sql = (yield* SqlClient).withoutTransforms(),
     executor = yield* makeSqlCommitExecutor(sessionUnavailable);
@@ -113,7 +115,7 @@ export const makeNativeSignedSessionValidityServices = Effect.fnUntraced(functio
               nativeSession = yield* mapping.sessionId.toNative(record.sessionId);
 
             const rows =
-              yield* sql`select ${subject.fields("subject_")} from ${subject.name} where ${id(subject, s.id, nativeSubject)} and ${id(subject, s.status, s.activeStatusValue)} and ${exact(subject, s.securityRevision, record.securityRevision)} and ${now} >= ${DateTime.toEpochMillis(record.issuedAt)} and ${now} < ${DateTime.toEpochMillis(record.expiresAt)} and ${DateTime.toEpochMillis(record.expiresAt)} <= ${DateTime.toEpochMillis(record.absoluteExpiresAt)} and not exists(select 1 from ${tombstone.name} where ${key(nativeSubject, nativeSession)}) limit 2`;
+              yield* sql`select ${subject.fields("subject_")} from ${subject.name} where ${id(subject, s.id, nativeSubject)} and ${id(subject, s.status, s.activeStatusValue)} and ${exact(subject, s.securityRevision, record.securityRevision)} and ${DateTime.toEpochMillis(record.issuedAt)} <= ${now} + ${futureToleranceMillis} and ${DateTime.toEpochMillis(record.issuedAt)} < ${DateTime.toEpochMillis(record.expiresAt)} and ${now} < ${DateTime.toEpochMillis(record.expiresAt)} and ${DateTime.toEpochMillis(record.expiresAt)} <= ${DateTime.toEpochMillis(record.absoluteExpiresAt)} and not exists(select 1 from ${tombstone.name} where ${key(nativeSubject, nativeSession)}) limit 2`;
 
             sessionInvariant(rows.length <= 1);
             if (rows[0] === undefined) return false;

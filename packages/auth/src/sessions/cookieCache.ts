@@ -2,6 +2,7 @@ import { Context, Crypto, DateTime, Effect, Redacted, Schema, type Types } from 
 import { Base64Url } from "effect/encoding";
 
 import { reportAuthFailure } from "../internal/diagnostics";
+import { AuthenticationClock } from "../operations/clock";
 import type { AuthCredentialCommand } from "../operations/credentials";
 import { makeSessionSigningCodec, SessionSigningKeys } from "./crypto";
 import { SessionInvalid, SessionUnavailable } from "./errors";
@@ -54,6 +55,7 @@ export const makeSessionCookieCache = Effect.fnUntraced(function* <
   S extends Schema.Codec<SessionMetadata, unknown, unknown, unknown>,
 >(moduleId: string, sessionSchema: S, policy: SessionPolicy) {
   const maximumAge = policy.positiveCacheMillis ?? 0;
+  const clockPolicy = yield* AuthenticationClock;
 
   const SessionCodec: Schema.Codec<
     S["Type"],
@@ -114,7 +116,7 @@ export const makeSessionCookieCache = Effect.fnUntraced(function* <
 
       if (
         maximumAge <= 0 ||
-        cachedAt > now ||
+        cachedAt - now > clockPolicy.futureToleranceMillis ||
         expiresAt <= now ||
         expiresAt <= cachedAt ||
         expiresAt - cachedAt > maximumAge ||
@@ -122,7 +124,9 @@ export const makeSessionCookieCache = Effect.fnUntraced(function* <
         envelope.requestGeneration !== Redacted.value(generation)
       )
         return yield* SessionInvalid.make({});
-      yield* validateSessionTimeline(envelope.session, policy);
+      yield* validateSessionTimeline(envelope.session, policy).pipe(
+        Effect.provideService(AuthenticationClock, clockPolicy),
+      );
 
       return envelope.session;
     }),

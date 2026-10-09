@@ -1,4 +1,5 @@
 import { CurrentCommitJournal } from "@yielded/auth/Hooks";
+import { AuthenticationClock } from "@yielded/auth/Operations";
 import * as M from "@yielded/auth/Passkey";
 import { Crypto, Effect, Option, Schema } from "effect";
 import { SqlError } from "effect/sql/SqlError";
@@ -66,9 +67,10 @@ const services = Effect.fnUntraced(function* (
     effect: Effect.Effect<A, E, R>,
     mode: "transaction" | "statement" = "transaction",
   ) =>
-    batch === undefined
+    (batch === undefined
       ? executor.run(provide(effect), mode)
-      : executor.batch(provide(effect)).pipe(Effect.provideService(SqlBatchCommit, batch));
+      : executor.batch(provide(effect)).pipe(Effect.provideService(SqlBatchCommit, batch))
+    ).pipe(Effect.provideService(AuthenticationClock, state.clockPolicy));
 
   const advisory = <A, E, R>(effect: Effect.Effect<A, E, R>) => executor.read(provide(effect));
 

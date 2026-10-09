@@ -14,7 +14,7 @@ import {
   type AuthenticationRequirement,
   type SecurityRevision,
 } from "@yielded/auth/Sessions";
-import { Effect } from "effect";
+import { DateTime, Effect } from "effect";
 
 import { PersistenceMappingError } from "./mapping-error";
 import type { AnyEmailAddressMapping } from "./models/email-model";
@@ -171,12 +171,21 @@ export const validateEmailMutation = Effect.fn("EmailAddressPersistence.validate
 
     const currentRequirement = yield* current.requirement;
 
+    // Address custody retains strict future-proof rejection.
+    if (
+      input.authorization.evidence.proofs.some(
+        (proof) => DateTime.toEpochMillis(proof.verifiedAt) > now,
+      )
+    )
+      return false;
+
     return (
-      passwordEvidenceSatisfiedAt(
+      (yield* passwordEvidenceSatisfiedAt(
         input.authorization.evidence,
         input.authorization.requirement,
         now,
-      ) && passwordEvidenceSatisfiedAt(input.authorization.evidence, currentRequirement, now)
+      )) &&
+      (yield* passwordEvidenceSatisfiedAt(input.authorization.evidence, currentRequirement, now))
     );
   },
 );

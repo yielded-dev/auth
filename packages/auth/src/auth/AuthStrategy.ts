@@ -1,5 +1,6 @@
 import { Context, Effect, Layer, Scope } from "effect";
 
+import { AuthenticationClock } from "../operations/clock";
 import type { AuthInvocation } from "../operations/context";
 import {
   AuthCredentialCommandCollector,
@@ -93,7 +94,7 @@ export const makeAuthStrategy = <
         Scope.Scope,
         AuthCredentialCommandCollector,
         AuthRevealCommandCollectorService,
-      )(built);
+      )(built).pipe(Context.add(AuthenticationClock, yield* AuthenticationClock));
 
       const bound = Object.fromEntries(
         entries.map(([name, invoke]) => [

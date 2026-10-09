@@ -1,7 +1,9 @@
+import { AuthenticationAssurance, AuthenticationClock } from "@yielded/auth/Operations";
 import {
   SessionStepUpInvalid,
   SessionUnavailable,
   AuthenticationEvidence,
+  AuthenticationProof,
   SessionMetadata,
   SessionStepUpIntent,
   SessionStepUpRequirement,
@@ -10,7 +12,7 @@ import {
 } from "@yielded/auth/Sessions";
 import { DateTime, Effect, Schema } from "effect";
 
-import { sameSessionRevision } from "./session-native-state";
+import { assessSessionAt, sameSessionRevision } from "./session-native-state";
 
 export const stepUpIntentCodec = Schema.fromJsonString(SessionStepUpIntent);
 const BoundedSnapshot = Schema.String.check(Schema.isMaxLength(131072));
@@ -27,11 +29,13 @@ export const decodeStepUpIntent = (snapshot: string) =>
     Effect.mapError(() => SessionUnavailable.make({})),
   );
 
-export const stepUpIntentLive = (
+export const stepUpIntentLive = Effect.fnUntraced(function* (
   intent: Omit<SessionStepUpIntent, "version">,
   kind: SessionStepUpIntent["sourceKind"],
   now: DateTime.Utc,
-) => {
+): Effect.fn.Return<boolean> {
+  const { futureToleranceMillis } = yield* AuthenticationClock;
+
   const n = DateTime.toEpochMillis(now),
     authenticated = DateTime.toEpochMillis(intent.sourceAuthenticatedAt),
     idle = DateTime.toEpochMillis(intent.sourceExpiresAt),
@@ -40,16 +44,22 @@ export const stepUpIntentLive = (
 
   return (
     intent.sourceKind === kind &&
-    authenticated <= n &&
+    authenticated - n <= futureToleranceMillis &&
+    authenticated < idle &&
     n < expires &&
     expires <= idle &&
     idle <= absolute
   );
-};
+});
 
 const evidenceEncoding = Schema.encodeSync(Schema.fromJsonString(AuthenticationEvidence));
 const requirementEncoding = Schema.encodeSync(Schema.fromJsonString(SessionStepUpRequirement));
 const metadataEncoding = Schema.encodeSync(Schema.fromJsonString(SessionMetadata));
+const proofEncoding = Schema.encodeSync(Schema.fromJsonString(Schema.Array(AuthenticationProof)));
+
+const assuranceEncoding = Schema.encodeSync(
+  Schema.fromJsonString(SessionMetadata.fields.assurance),
+);
 
 /** Validate core-owned plans before driver allocation/SQL expansion. No bearer or Claims decoding. */
 export const validateStepUpPlan = Effect.fn("DrizzleStepUp.validatePlan")(function* <Claims>(
@@ -57,7 +67,14 @@ export const validateStepUpPlan = Effect.fn("DrizzleStepUp.validatePlan")(functi
 ) {
   const { intent, source, replacement, evidence } = plan;
   const original = source.inspection;
+  const issuedAt = DateTime.toEpochMillis(replacement.inspection.session.issuedAt);
 
+  if (
+    issuedAt < DateTime.toEpochMillis(original.session.issuedAt) ||
+    evidence.proofs.some((proof) => DateTime.toEpochMillis(proof.verifiedAt) > issuedAt) ||
+    issuedAt >= DateTime.toEpochMillis(replacement.inspection.session.expiresAt)
+  )
+    return yield* SessionStepUpInvalid.make({});
   if (
     requirementEncoding(plan.profileRequirement) !== requirementEncoding(intent.requirement) ||
     replacement.inspection.session.subjectId !== evidence.revision.subjectId ||
@@ -89,7 +106,9 @@ export const validateStepUpPlan = Effect.fn("DrizzleStepUp.validatePlan")(functi
       DateTime.toEpochMillis(original.session.absoluteExpiresAt) ||
     DateTime.toEpochMillis(intent.sourceAbsoluteExpiresAt) !==
       DateTime.toEpochMillis(replacement.inspection.session.absoluteExpiresAt) ||
-    evidenceEncoding(replacement.inspection.provenance.evidence) !== evidenceEncoding(evidence)
+    evidenceEncoding(replacement.inspection.provenance.evidence) !== evidenceEncoding(evidence) ||
+    proofEncoding(evidence.proofs.slice(0, original.provenance.evidence.proofs.length)) !==
+      proofEncoding(original.provenance.evidence.proofs)
   )
     return yield* SessionStepUpInvalid.make({});
   if (
@@ -109,6 +128,24 @@ export const validateStepUpPlan = Effect.fn("DrizzleStepUp.validatePlan")(functi
   if (
     replacement._tag !== "Stateful" &&
     replacement.inspection.session.sessionId === intent.sourceSessionId
+  )
+    return yield* SessionStepUpInvalid.make({});
+
+  const at = DateTime.toEpochMillis(plan.now);
+  const base = yield* assessSessionAt(evidence, plan.baseRequirement, at);
+
+  const profile = yield* assessSessionAt(evidence, plan.profileRequirement, at);
+
+  // Freshness can change metadata at commit; validate the exact preparation snapshot here.
+  if (
+    !base.satisfied ||
+    !profile.satisfied ||
+    assuranceEncoding(
+      AuthenticationAssurance.make({
+        ...base.assurance,
+        authenticatedAt: profile.assurance.authenticatedAt,
+      }),
+    ) !== assuranceEncoding(replacement.inspection.session.assurance)
   )
     return yield* SessionStepUpInvalid.make({});
 });

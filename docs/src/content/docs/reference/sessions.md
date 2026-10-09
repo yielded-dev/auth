@@ -30,6 +30,26 @@ authentication feature; TOTP enables that policy by default. Invalidation result
 report `existingSessions: "cache-expiry"` and the configured `maximumExposureMillis`
 when ordinary reads may still use a snapshot. See [cookie limits](./http#session-cache-cookies).
 
+## Independent clocks
+
+Configure one shared future-clock tolerance when Auth and SQL use independent
+clocks. The default is `0`; `futureToleranceMillis` accepts integers from 0 to 60,000.
+
+```ts
+import { Layer } from "effect";
+import { Operations } from "@yielded/auth";
+
+const ClockPolicyLive = Operations.AuthenticationClock.layer({
+  futureToleranceMillis: 1_000,
+});
+const Live = AuthLive.pipe(Layer.provideMerge(ClockPolicyLive));
+```
+
+Compose Auth and persistence before providing this Layer. Independently acquired
+adapters and protected-action services need the same policy. The allowance applies
+to future timestamps; expiry and freshness limits stay strict. Keep clocks within
+your configured bound. See [adapter configuration](./adapters#sql-session-verification).
+
 ## Signing keys
 
 - **`Auth.AuthConfig`**: `AuthConfig.layer()` reads `AUTH_SECRET` through Effect Config. Provide `AuthConfig.layer({ secret })` with a `Redacted<string>` to use your own secret store.

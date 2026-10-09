@@ -1,4 +1,5 @@
 import type { LifecycleHooks } from "@yielded/auth/Hooks";
+import { AuthenticationClock } from "@yielded/auth/Operations";
 import {
   SessionConflict,
   SessionInvalid,
@@ -91,11 +92,12 @@ export const makeNativeStatefulSessionServices = Effect.fnUntraced(function* <Cl
     work: Effect.Effect<A, E, R>,
     mode: "transaction" | "statement" = "transaction",
   ) =>
-    batch === undefined
+    (batch === undefined
       ? executor.operation(normalizeSessionOperation(work), mode)
       : executor
           .operationBatch(normalizeSessionOperation(work))
-          .pipe(Effect.provideService(SqlBatchCommit, batch));
+          .pipe(Effect.provideService(SqlBatchCommit, batch))
+    ).pipe(Effect.provideService(AuthenticationClock, state.clockPolicy));
 
   const stage = Effect.fnUntraced(function* (statement: Fragment, expected?: number) {
     if (batch !== undefined) {
@@ -120,6 +122,7 @@ export const makeNativeStatefulSessionServices = Effect.fnUntraced(function* <Cl
 
           sessionInvariant(rows.length === 1);
         }).pipe(
+          Effect.provideService(AuthenticationClock, state.clockPolicy),
           Effect.mapError((cause) => PersistenceMappingError.make({ operation: "decode", cause })),
         ),
       });
@@ -219,10 +222,21 @@ export const makeNativeStatefulSessionServices = Effect.fnUntraced(function* <Cl
               current.now,
             );
 
-            const expires = DateTime.toEpochMillis(input.session.expiresAt),
+            const issued = Math.max(
+                current.now,
+                DateTime.toEpochMillis(input.now),
+                DateTime.toEpochMillis(input.session.issuedAt),
+                ...input.evidence.proofs.map((proof) => DateTime.toEpochMillis(proof.verifiedAt)),
+              ),
+              expires = DateTime.toEpochMillis(input.session.expiresAt),
               absolute = DateTime.toEpochMillis(input.session.absoluteExpiresAt);
 
-            if (current.now >= expires || expires > absolute)
+            if (
+              issued - current.now > state.clockPolicy.futureToleranceMillis ||
+              issued >= expires ||
+              current.now >= expires ||
+              expires > absolute
+            )
               return yield* StaleAuthentication.make({});
             let pendingExpiry = Infinity;
 
@@ -268,14 +282,10 @@ export const makeNativeStatefulSessionServices = Effect.fnUntraced(function* <Cl
               sessionId,
               subjectId: current.revision.subjectId,
               securityRevision: current.revision.securityRevision,
-              assurance:
-                input.handoffSourceSessionId === undefined
-                  ? assessment.assessed.assurance
-                  : input.session.assurance,
               provenance: yield* snapshotSessionAuthenticationProvenance({
                 evidence: input.evidence,
               }),
-              issuedAt: DateTime.makeUnsafe(current.now),
+              issuedAt: DateTime.makeUnsafe(issued),
             };
 
             const deadline = Math.min(expires, assessment.validUntil, pendingExpiry);
@@ -321,6 +331,7 @@ export const makeNativeStatefulSessionServices = Effect.fnUntraced(function* <Cl
                     authority.now,
                   );
                 }).pipe(
+                  Effect.provideService(AuthenticationClock, state.clockPolicy),
                   Effect.mapError((cause) =>
                     PersistenceMappingError.make({ operation: "decode", cause }),
                   ),
@@ -344,10 +355,15 @@ export const makeNativeStatefulSessionServices = Effect.fnUntraced(function* <Cl
         classify(
           Effect.gen(function* () {
             const absolute = DateTime.toEpochMillis(input.record.absoluteExpiresAt),
-              expires = DateTime.toEpochMillis(input.nextExpiresAt);
+              expires = DateTime.toEpochMillis(input.nextExpiresAt),
+              preparedAt = Math.max(
+                DateTime.toEpochMillis(input.now),
+                DateTime.toEpochMillis(input.record.issuedAt),
+              );
 
             if (
               expires > absolute ||
+              preparedAt >= expires ||
               input.nextDigest === input.record.digest ||
               input.nextCredentialVersion === input.record.credentialVersion
             )
@@ -368,17 +384,21 @@ export const makeNativeStatefulSessionServices = Effect.fnUntraced(function* <Cl
               digest: input.nextDigest,
               credentialVersion: input.nextCredentialVersion,
               expiresAt: input.nextExpiresAt,
-              issuedAt: DateTime.makeUnsafe(sampled),
+              issuedAt: DateTime.makeUnsafe(Math.max(sampled, preparedAt)),
             };
 
             const values = {
               ...s.encodeRotation(prepared),
               [s.digest]: prepared.digest,
-              [s.issuedAt]: tables.expression(mapping.clock.fromMillis(now)),
+              [s.issuedAt]: tables.expression(
+                mapping.clock.fromMillis(
+                  sql`case when ${now} >= ${preparedAt} then ${now} else ${preparedAt} end`,
+                ),
+              ),
               [s.expiresAt]: s.encodeInstant(prepared.expiresAt),
             };
 
-            const condition = sql`${yield* records.owner(input.record)} and ${live(table)} and ${now} < ${expires} and ${records.millis(table, s.absoluteExpiresAt)} = ${absolute}`;
+            const condition = sql`${yield* records.owner(input.record)} and ${live(table)} and ${preparedAt} <= ${now} + ${state.clockPolicy.futureToleranceMillis} and ${now} < ${expires} and ${records.millis(table, s.absoluteExpiresAt)} = ${absolute}`;
             const update = sql`${table.update(values)} where ${condition}`;
             let record = prepared;
 

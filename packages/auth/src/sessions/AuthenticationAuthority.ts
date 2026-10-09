@@ -42,6 +42,8 @@ export class AuthenticationAuthority extends Context.Service<
       input: {
         readonly evidence: AuthenticationEvidence;
         readonly now: DateTime.Utc;
+        /** Preserve this prepared instant; bound its future lead with AuthenticationClock. */
+        readonly issuedAt: DateTime.Utc;
         readonly expiresAt: DateTime.Utc;
         readonly absoluteExpiresAt: DateTime.Utc;
         readonly pending?: PendingConsumption;

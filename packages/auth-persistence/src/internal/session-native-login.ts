@@ -1,4 +1,5 @@
 import type { LifecycleHooks } from "@yielded/auth/Hooks";
+import { AuthenticationClock } from "@yielded/auth/Operations";
 import {
   PendingAuthenticationInvalid,
   StaleAuthentication,
@@ -68,11 +69,12 @@ export const makeNativePendingAuthenticationServices = Effect.fnUntraced(functio
     work: Effect.Effect<A, E, R>,
     mode: "transaction" | "statement" = "transaction",
   ) =>
-    batch === undefined
+    (batch === undefined
       ? executor.operation(normalizeSessionOperation(work), mode)
       : executor
           .operationBatch(normalizeSessionOperation(work))
-          .pipe(Effect.provideService(SqlBatchCommit, batch));
+          .pipe(Effect.provideService(SqlBatchCommit, batch))
+    ).pipe(Effect.provideService(AuthenticationClock, state.clockPolicy));
 
   const verifyPayload = Effect.fnUntraced(function* (
     stored: import("./session-native-pending").StoredSessionPending,

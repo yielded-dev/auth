@@ -334,7 +334,7 @@ export const makePasskeyNativeManagement = (
 
           const requirement = yield* mapping.write.policy.requirement(current.row, "enroll-begin");
 
-          const authority = assessPasskeyAction(
+          const authority = yield* assessPasskeyAction(
             {
               moduleId: mapping.moduleId,
               revision: current.revision,
@@ -487,7 +487,7 @@ export const makePasskeyNativeManagement = (
             return yield* preparePasskeyNative({ _tag: "Rejected" }, prepare);
           const requirement = yield* mapping.write.policy.requirement(current.row, "remove");
 
-          const authority = assessPasskeyAction(
+          const authority = yield* assessPasskeyAction(
             {
               moduleId: mapping.moduleId,
               revision: current.revision,
