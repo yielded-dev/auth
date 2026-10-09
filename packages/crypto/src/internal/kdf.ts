@@ -1,9 +1,10 @@
 import { Effect, Redacted, Schema } from "effect";
 
 import { InvalidInput, type OperationError, UnsupportedAlgorithm } from "../Errors";
-import { Argon2idInput, HkdfInput, Kdf, type Limits, Pbkdf2Input } from "../Kdf";
+import { Argon2idInput, HkdfInput, Kdf, type Limits, Pbkdf2Input, ScryptInput } from "../Kdf";
 import { KdfAdmission } from "../KdfAdmission";
 import { copy, decode, importError, nativeError, withSecret } from "./common";
+import { ScryptBackend } from "./scrypt-backend";
 
 export interface Argon2Parameters {
   readonly password: Uint8Array<ArrayBuffer>;
@@ -24,6 +25,7 @@ export const makeKdf = Effect.fnUntraced(function* (
   argon2?: Argon2,
 ) {
   const admission = yield* KdfAdmission;
+  const scrypt = yield* ScryptBackend;
   const boundedBytes = Schema.Uint8Array.check(Schema.isMaxLength(limits.maximumInputBytes));
 
   const output = Schema.Int.check(
@@ -34,6 +36,42 @@ export const makeKdf = Effect.fnUntraced(function* (
   const outputLength = (input: number) => decode(output, input, "parameters");
 
   return Kdf.of({
+    scrypt: (input) =>
+      admission.run(
+        Effect.gen(function* () {
+          const value = yield* decode(ScryptInput, input, "parameters");
+
+          yield* outputLength(value.length);
+          yield* inputBytes(Redacted.value(value.password));
+          yield* inputBytes(value.salt);
+
+          const memoryBytes = 128 * value.blockSize * (value.cost + value.parallelism + 2);
+
+          if (
+            !Number.isInteger(Math.log2(value.cost)) ||
+            Math.log2(value.cost) >= 16 * value.blockSize ||
+            value.blockSize * value.parallelism >= 2 ** 30 ||
+            memoryBytes > limits.maximumMemoryKiB * 1024 ||
+            (value.cost * value.blockSize * value.parallelism) / 8 > limits.maximumMemoryPasses
+          )
+            return yield* InvalidInput.make({ reason: "parameters" });
+          const salt = yield* copy(value.salt);
+
+          return yield* withSecret(value.password, (password) =>
+            scrypt
+              .derive({
+                password,
+                salt,
+                cost: value.cost,
+                blockSize: value.blockSize,
+                parallelism: value.parallelism,
+                length: value.length,
+                maximumMemoryBytes: limits.maximumMemoryKiB * 1024,
+              })
+              .pipe(Effect.map(Redacted.make)),
+          );
+        }),
+      ),
     pbkdf2: (input) =>
       admission.run(
         Effect.gen(function* () {

@@ -72,8 +72,14 @@ SDK adapters live in companion packages, and `sideEffects: []` requires import-t
 `@yielded/crypto` owns reusable cryptography services and explicit runtime Layers;
 it must not depend on or import Auth packages. Its root exposes `Aead`, `Errors`,
 `Hmac`, `Kdf`, `KdfAdmission`, and `Signature`; select backends through direct
-`/WebCrypto`, `/Portable`, `/platform-node`, or `/platform-bun` imports. Auth owns
+`/WebCrypto`, `/Portable`, `/platform-node`, `/platform-bun`, or `/platform-workerd` imports. Auth owns
 its credential formats and supplies service Layers over these capabilities.
+
+The workerd backend ships `src/internal/argon2.wasm` alongside its C source.
+When changing the compression routine, regenerate it with
+`vp run @yielded/crypto#build:wasm` using LLVM Clang with the wasm32 target and
+`wasm-ld` available. Ordinary package builds copy the checked-in artifact and
+do not require a C toolchain. Wrangler loads it as a precompiled module.
 
 `@yielded/jose` depends on Effect and `@yielded/crypto`. It owns JOSE formats,
 key metadata, JWT Schema boundaries, and scoped JWKS caching; it must not depend
@@ -97,7 +103,8 @@ default persistence export without Drizzle installed. A reusable crypto, JOSE, a
 and type-check their published exports with only Effect and first-party packages.
 The checks reject third-party runtime dependency declarations, imports and bundled
 installed code, then exercise packaged crypto, JOSE, OAuth, and Auth credential operations on Node and Bun.
-Browser resolution excludes native imports outside `/platform-node` or `/platform-bun`.
+Browser probes exclude `/platform-*` entries; Node loading excludes `/platform-workerd`.
+Exercise that backend through Wrangler's actual Wasm module loading.
 It stages the publisher's manifests and built files with the selected adapters' required dependencies,
 compares equivalent root/group/direct consumers through esbuild and Vite/Rolldown,
 checks their declarations, and runs native ESM and bundled consumers. It protects

@@ -42,9 +42,30 @@ const Legacy = Schema.TemplateLiteralParser([
   Base64Url,
 ]);
 
+const Scrypt = Schema.TemplateLiteralParser([
+  "$scrypt$ln=",
+  Decimal,
+  ",r=",
+  Decimal,
+  ",p=",
+  Decimal,
+  "$",
+  Base64,
+  "$",
+  Base64,
+]);
+
 const Bounded = Schema.String.check(Schema.isMaxLength(512));
 
 export type ParsedPasswordHash =
+  | {
+      readonly _tag: "Scrypt";
+      readonly cost: number;
+      readonly blockSize: number;
+      readonly parallelism: number;
+      readonly salt: Uint8Array;
+      readonly expected: Uint8Array;
+    }
   | {
       readonly _tag: "Argon2id";
       readonly memoryKiB: number;
@@ -98,6 +119,36 @@ export const parsePasswordHash = Effect.fn("parsePasswordHash")(function* (
   yield* Schema.decodeEffect(Bounded)(input).pipe(
     Effect.mapError(() => PasswordVerifierInvalid.make({ reason: "malformed" })),
   );
+  if (input.startsWith("$scrypt$")) {
+    const [, logCost, , blockSize, , parallelism, , salt, , expected] =
+      // eslint-disable-next-line no-restricted-properties -- Persisted verifier strings have not proved this encoding.
+      yield* Schema.decodeUnknownEffect(Scrypt)(input).pipe(
+        Effect.mapError(() => PasswordVerifierInvalid.make({ reason: "malformed" })),
+      );
+
+    if (logCost >= 16 * blockSize)
+      return yield* PasswordVerifierInvalid.make({ reason: "malformed" });
+
+    const cost = 2 ** logCost;
+
+    if (
+      logCost > 31 ||
+      blockSize * parallelism >= 2 ** 30 ||
+      128 * blockSize * (cost + parallelism + 2) > config.maximumMemoryKiB * 1024 ||
+      (cost * blockSize * parallelism) / 8 > config.maximumMemoryPasses
+    )
+      return yield* PasswordVerifierInvalid.make({ reason: "work-limit" });
+
+    return {
+      _tag: "Scrypt",
+      cost,
+      blockSize,
+      parallelism,
+      salt: yield* decodeBytes(salt, false, 8, 48),
+      expected: yield* decodeBytes(expected, false, 16, 64),
+    };
+  }
+
   if (input.startsWith("$argon2id$")) {
     const [, memoryKiB, , passes, , parallelism, , salt, , expected] =
       // eslint-disable-next-line no-restricted-properties -- Persisted verifier strings have not yet proved this template literal encoding.

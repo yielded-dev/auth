@@ -21,6 +21,9 @@ and [noble-ciphers](https://github.com/paulmillr/noble-ciphers).
   into `src/internal/argon2-core.ts`, `blake2b.ts`, and `word64.ts`. The port retains
   Argon2id v19 and its unkeyed BLAKE2b machinery, with per-derivation work buffers,
   explicit little-endian encoding, and an Effect driver in `src/internal/argon2.ts`.
+  `src/internal/argon2-block.c` expresses the same block compression with Wasm SIMD;
+  `src/internal/argon2.wasm` is its compiled artifact. The workerd backend shares
+  the portable initialization, indexing, finalization and Effect scheduling.
 - noble-ciphers 2.1.1, revision `785181b0772ba84afbe812025714163e4e48262f`:
   AEAD test behavior and independent vectors informed `test/primitives.test.ts`
   and `test/vectors.ts`. `src/chacha.ts`, `src/_poly1305.ts`, and the stream/nonce

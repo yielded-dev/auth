@@ -17,7 +17,10 @@ an implementation through a direct backend import:
   web adapters for Effect entropy/digests and HMAC.
 - `/Portable`: WebCrypto plus owned Argon2id and XChaCha20-Poly1305 implementations.
 - `/platform-node`, `/platform-bun`: shared Node-compatible WebCrypto and native
-  Argon2id, plus the owned XChaCha20-Poly1305 implementation.
+  Argon2id and scrypt, plus the owned XChaCha20-Poly1305 implementation.
+- `/platform-workerd`: supplied WebCrypto, Wasm Argon2id, native scrypt and owned
+  XChaCha20-Poly1305. Wrangler bundles the included Wasm module; consumers need
+  no compiler. This backend requires Workers Node.js compatibility.
 
 Full backend Layers require one shared `KdfAdmission` Layer to bound derivation
 concurrency and waiting. Interruption waits for admitted native work to finish;

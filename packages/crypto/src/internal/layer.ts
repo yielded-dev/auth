@@ -13,7 +13,10 @@ import { makeSignature } from "./signature";
 export const makeLayer = (
   subtle: SubtleCrypto,
   input: Partial<Limits>,
-  extensions: { readonly argon2?: Argon2; readonly xchacha?: XChaCha } = {},
+  extensions: {
+    readonly argon2?: Argon2;
+    readonly xchacha?: XChaCha;
+  } = {},
 ) => {
   const snapshot = { ...defaultLimits, ...input };
 

@@ -146,6 +146,27 @@ and password hashers in each runtime. Size it for the host's memory and CPU budg
 queue exhaustion or an expired wait returns `PasswordKdfBusy`. See
 [KDF resource limits](../reference/crypto#backends-and-resource-limits) for options.
 
+`PasswordHashing.layer()` defaults to Argon2id. On Workers, use
+`WorkerdCrypto.layer(globalThis.crypto.subtle)` from
+`@yielded/crypto/platform-workerd` in `CryptoLive`. Enable `nodejs_compat`;
+Wrangler includes the bundled Wasm without a compiler or separate asset hosting.
+
+To select native scrypt on Node, Bun, or Workers:
+
+```ts
+Password.PasswordHashing.layer(Password.defaultScryptPasswordHashingConfig).pipe(
+  Layer.provide(CryptoLive),
+);
+```
+
+The default scrypt configuration uses `N=16384`, `r=8`, `p=5`, the
+[OWASP 16 MiB profile](https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html#scrypt).
+Custom configurations support costs 8192, 16384, and 32768 with `r=8` and at least
+10, 5, and 3 parallelization steps respectively. Successful sign-in can rehash a
+credential to the selected policy, so keep a backend capable of verifying stored
+hashes. PBKDF2 verification requires the host to accept the stored iteration count;
+see [runtime limits](../reference/crypto#compose-a-backend).
+
 `Password.PasswordAttemptLimiter` separately limits sign-in attempts. Store
 failures deny the request, and rejected attempts still count. Compromised-password
 screening also fails closed: its default ten-second timeout returns

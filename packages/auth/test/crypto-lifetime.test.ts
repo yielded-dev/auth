@@ -228,6 +228,7 @@ for (const method of ["hash", "verify", "dummy"] as const) {
           Layer.provide(
             Layer.succeed(Kdf, {
               argon2id: derive,
+              scrypt: () => Effect.die("unused"),
               pbkdf2: () => Effect.die("unused"),
               hkdf: () => Effect.die("unused"),
             }),
