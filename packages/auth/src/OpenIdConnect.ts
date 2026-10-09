@@ -5,7 +5,7 @@ export {
   type Provider,
   type ProviderOptions,
   type ProviderRegistration,
-} from "./oauth/providers/layer";
+} from "./oauth/providers/shared/layer";
 
 export {
   type IdTokenSignedResponseAlg,
@@ -17,15 +17,15 @@ export {
   type OpenIdConnectOAuthProvider,
   type OpenIdConnectOidcProvider,
   type PlainOAuthIdentity,
-} from "./oauth/providers/models";
+} from "./oauth/providers/shared/models";
 
-export { OidcStandardUserProfile, OidcUserProfile } from "./oauth/providers/profile";
+export { OidcStandardUserProfile, OidcUserProfile } from "./oauth/providers/shared/profile";
 
 export {
   layer as layerConnected,
   type Options as ConnectedOptions,
   type Provider as ConnectedProvider,
-} from "./oauth/providers/connected/layer";
+} from "./oauth/providers/shared/connected/layer";
 
 export type {
   OpenIdConnectConnectedOAuthProvider,
@@ -33,6 +33,6 @@ export type {
   OpenIdConnectConnectedProtocolOptions,
   OpenIdConnectConnectedRefreshExpiry,
   OpenIdConnectConnectedRevocation,
-} from "./oauth/providers/connected/models";
+} from "./oauth/providers/shared/connected/models";
 
-export type { Requirements } from "./oauth/providers/oidc";
+export type { Requirements } from "./oauth/providers/shared/oidc";

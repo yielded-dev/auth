@@ -1,6 +1,7 @@
 export {
   provider,
-  HuggingFaceUserProfile,
   type ProviderOptions,
   type ProviderRegistration,
-} from "./oauth/huggingface";
+} from "./oauth/providers/huggingface/provider";
+
+export { HuggingFaceUserProfile } from "./oauth/providers/huggingface/profile";

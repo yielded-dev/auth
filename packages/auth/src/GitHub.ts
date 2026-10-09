@@ -2,24 +2,24 @@ export {
   layer,
   layerConnected,
   provider,
-  accessProfile,
   type Options,
   type ProviderOptions,
   type ProviderRegistration,
   type Registration,
   type ConnectedOptions,
   type ConnectedRegistration,
-} from "./oauth/github/options";
+} from "./oauth/providers/github/provider";
 
 export {
   type GitHubOAuthAppConnectedProtocolOptions,
   type GitHubOAuthAppGeneration,
   type GitHubOAuthAppProtocolOptions,
-} from "./oauth/github/models";
+} from "./oauth/providers/github/models";
 
-export { OpenIdConnectConfigurationError } from "./oauth/providers/models";
+export { OpenIdConnectConfigurationError } from "./oauth/providers/shared/models";
 
-export { gitHubOAuthAppProvider } from "./oauth/github/protocol";
+export { gitHubOAuthAppProvider } from "./oauth/providers/github/protocol";
 
-export { gitHubOAuthAppProviderKey } from "./oauth/github/identity";
-export { GitHubUserProfile } from "./oauth/github/profile";
+export { accessProfile } from "./oauth/providers/github/access";
+export { gitHubOAuthAppProviderKey } from "./oauth/providers/github/models";
+export { GitHubUserProfile } from "./oauth/providers/github/profile";
