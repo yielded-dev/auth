@@ -22,14 +22,10 @@ an implementation through a direct backend import:
   XChaCha20-Poly1305. Wrangler bundles the included Wasm module; consumers need
   no compiler. This backend requires Workers Node.js compatibility.
 
-Full backend Layers require one shared `KdfAdmission` Layer. The focused
-`WebCrypto.layerHmac(subtle)` and global `layerWebCrypto` adapters need no KDF
-admission. Waiting for derivation is bounded;
-once admitted, derivation retains its permit until actual work and cleanup finish,
-including interruption. Portable Argon2id yields through Effect between time slices,
-accepts interruption, and clears its work buffers before releasing admission. It
-still runs on the calling thread. JavaScript cannot guarantee zeroization or
-constant-time execution.
+Full backend Layers require one shared `KdfAdmission` Layer to bound derivation
+concurrency and waiting. Interruption waits for admitted native work to finish;
+portable Argon2id yields cooperatively but runs on the calling thread. The focused
+`WebCrypto.layerHmac(subtle)` and global `layerWebCrypto` adapters need no KDF admission.
 
 Secret inputs, derived bytes and decrypted plaintext use `Redacted`. Backend
 errors contain classifications without native causes or secret payloads. Keep

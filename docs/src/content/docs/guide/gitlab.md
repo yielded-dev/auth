@@ -56,35 +56,19 @@ const social = OAuth.make({ profiles: { gitlab: GitLab.GitLabUserProfile } });
 ```
 
 The resolver can read `identity.profile?.providerData?.groups` as
-`string[] | undefined`. GitLab does not advertise RFC 9207 `iss`; give this
-provider a distinct callback URL.
+`string[] | undefined`. Use a distinct callback URL for this provider.
 
 ## Run the example
 
 The [GitLab application](https://github.com/yielded-dev/auth/blob/main/examples/auth/src/gitlab-app.ts)
-provisions one configured GitLab user.
+accepts one configured GitLab `sub`. Set `APP_ORIGIN`, `GITLAB_CLIENT_ID`,
+`GITLAB_CLIENT_SECRET`, `GITLAB_USER_ID`, `SESSION_KEY`, and `OAUTH_TRANSACTION_KEY`.
+Optionally set `GITLAB_ISSUER` for a self-hosted instance.
 
-1. Forward an HTTPS development origin to `127.0.0.1:3000`. Set `APP_ORIGIN` to that
-   public origin and register `/auth/gitlab/callback`.
-2. Set `GITLAB_CLIENT_ID`, `GITLAB_CLIENT_SECRET`, and `GITLAB_USER_ID` (the GitLab
-   `sub`). Optionally set `GITLAB_ISSUER` for a self-hosted instance.
-3. Set `SESSION_KEY` and `OAUTH_TRANSACTION_KEY` to distinct base64url encodings of
-   32 random bytes. Preserve these keys across restarts.
-4. Run `vp run @yielded/example-auth#example:gitlab` from the repository root and open
-   `APP_ORIGIN/login`.
+```sh
+vp run @yielded/example-auth#example:gitlab
+```
 
-The example stores development state in `examples/auth/gitlab-auth.sqlite`. Stop
-the example and remove only that database and its SQLite sidecar files to start
-over.
-
-## Protocol profile
-
-| Concern                  | Behavior                                                          |
-| ------------------------ | ----------------------------------------------------------------- |
-| Issuer                   | `https://gitlab.com` or the configured self-hosted issuer         |
-| Authorization / callback | `/oauth/authorize`, authorization code, query response            |
-| Token exchange           | `/oauth/token`, `client_secret_basic`                             |
-| Signature                | Advertised RS256; issuer, audience, expiry and nonce verified     |
-| PKCE                     | S256                                                              |
-| Response issuer          | GitLab does not advertise RFC 9207 `iss`; use a distinct callback |
-| Access                   | Sign-in only; no retained API access                              |
+Open `APP_ORIGIN/login`. Use a reachable HTTPS origin with the registered callback;
+see the [example setup](https://github.com/yielded-dev/auth/tree/main/examples/auth)
+for key and storage ownership.

@@ -20,7 +20,7 @@ application Schema. Schema encoding/decoding failures and services remain in
 `E` and `R`; custom Schema diagnostics remain application-owned.
 `Jwt.decodeUnverified` only parses and never establishes trust.
 
-The initial profile is compact JWS/JWT with HS256, RS256, PS256, ES256 and EdDSA
+The supported profile is compact JWS/JWT with HS256, RS256, PS256, ES256 and EdDSA
 (Ed25519), and compact JWE with `dir` / `A256GCM`. Other algorithms, JSON
 serialization, unencoded/detached payloads, critical extensions and compression
 are unsupported. OAuth, discovery, sessions and account authority belong to

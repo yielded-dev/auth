@@ -112,35 +112,24 @@ export const proofPolicy: Proofs.ProofPolicy = {
 };
 ```
 
-Every issue request and candidate attempt spends action, identifier, and known-subject
-token buckets for schema-valid requests, including suppressed or repeated issuance,
-unknown targets, and malformed candidate secrets. Host ingress separately limits
-schema-invalid requests.
-Auth's default `ProofLimiter` retains at most 10,000 active buckets and fails closed
-at capacity. It is process-local, so it gives no protection across replicas or in
-per-request runtimes; [share rate limits](./passwords#share-rate-limits) for
-identifier and subject buckets. Action budgets stay per instance. Host ingress
-separately limits traffic before target lookup.
+Pass this policy to `Email.makeCode({ policy: proofPolicy })`. Keep
+`resendCooldownMillis` shorter than the proof lifetime. Rate limits apply to
+repeated requests and unknown addresses too. The default limiter is process-local;
+[share identifier and subject limits](./passwords#share-rate-limits) across
+replicas or per-request runtimes. Action budgets remain per instance.
 
-Request again with the original binding after `resendCooldownMillis` to issue a new
-code. `requestId` is correlation only and does not recover an earlier receipt.
-Each new code starts with zero failed attempts; an old code never spends its
-replacement's failure allowance. Successful redemption deletes the code, so only
-the limiter bounds subsequent issuance. Expired-code cleanup preserves the durable
-cooldown because cooldown must be shorter than the code lifetime.
-
-A live, unexpired proof can be replaced only with the same complete request
-binding. Knowing its public reference does not grant replacement authority.
-A different flow may need to wait for expiry; host ingress limits unsolicited
-requests but cannot guarantee availability against distributed traffic.
+To resend, keep the original flow and private request binding, then request a new
+code after the cooldown. A different binding cannot replace an unexpired proof,
+even with its public reference. `requestId` is correlation only; it does not
+recover an earlier receipt or delivery.
 
 </details>
 
 ## Supply the services
 
 Your application supplies lookup, claims, storage, delivery, and
-[crypto Layers](../reference/crypto#use-with-auth). Auth provides request rate
-limiting, a delivery worker, an exact-route allowlist helper, and empty lifecycle hooks:
+[crypto Layers](../reference/crypto#use-with-auth). The return-target allowlist
+restricts where sign-in can send the user:
 
 ```ts title="apps/server/email-live.ts"
 import { Layer } from "effect";
@@ -168,43 +157,38 @@ export const AuthLive = AppAuth.layer.pipe(
 
 For sibling apps, configure [cross-origin return targets](./http-and-client#sharing-sessions-across-apps).
 
-The relative imports are your application modules. `EmailLive` implements the
-email service. Auth's built-in worker keeps provider acceptance outside the request's
-wait for a response; build Auth in an application scope that outlives requests.
-See [email delivery](./email-delivery#compose-auth) for runtime ownership and overrides.
-`AuthDependencies` supplies the shared
+The relative imports are your application modules. `EmailLive` implements
+[email delivery](./email-delivery); build Auth in a scope that outlives requests
+so its delivery worker can finish. `AuthDependencies` supplies shared
 [session, account, and key configuration](../reference/adapters#compose-the-application-layer).
 For database-backed lookup, use [the email adapter](../reference/adapters#email).
 
-Email requests check the built-in rate limiter before target lookup,
-including repeated requests and unknown addresses. HTTP derives the caller from the
-socket peer automatically. See [HTTP admission](./http-and-client#proof-request-admission)
-for configuration and overrides.
+HTTP derives the network key for request admission from the socket peer. See
+[HTTP admission](./http-and-client#proof-request-admission) for proxy configuration
+and overrides.
 
 ## Register a mailbox owner
 
 Compose `Email.makeRegistration({ namespace, registration: Registration })` with
 `Email.makeCode({ namespace })` using the same namespace. A guest calls
-`beginRegistration` → `register` → `completeRegistration`.
-The [shared login contract](https://github.com/yielded-dev/auth/blob/main/examples/auth/src/login-contract.ts)
-exposes these existing operations with a private request-binding cookie; the [server composition](https://github.com/yielded-dev/auth/blob/main/examples/auth/src/login-server.ts)
-supplies both strategies.
+`beginRegistration` → `register` → `completeRegistration`. The
+[login contract](https://github.com/yielded-dev/auth/blob/main/examples/auth/src/login-contract.ts)
+and [server](https://github.com/yielded-dev/auth/blob/main/examples/auth/src/login-server.ts)
+show both strategies and their private request-binding cookie.
 
-Provide the registration strategy's `RegistrationAuthority` with
-`makeEmailRegistrationServices` from your Drizzle adapter, and provide
-`ProofPersistence` through `makeProofPersistenceServices` with the same proof mapping
-for issuance and redemption. Completed mailbox proof can replace another subject's active, unverified email reservation
-when the application's inspection and proof policies allow it. The new account
-receives the verified address. The earlier account keeps its data and credentials,
-and its security revision advances. Verified ownership is never replaced.
+Provide `RegistrationAuthority` with your Drizzle adapter's
+`makeEmailRegistrationServices`, plus `makeProofPersistenceServices` using the
+same proof mapping for issuance and redemption. `AuthPersistence.layer` does not
+install guest email-registration services automatically. Provisioning is
+synchronous and must be idempotent by the authority's stable `requestId`.
+
+When your policy allows it, mailbox proof can reclaim an unverified email
+reservation for a new account. It never transfers the earlier account's data or
+credentials, or replaces verified ownership. See
+[email persistence](../reference/adapters#email) for mapping and invalidation requirements.
 
 Registration does not issue a session. Start a fresh email sign-in afterward;
-an authenticated user can then call `addPassword` when password management is
-enabled. `AuthPersistence.layer` does not install guest email-registration services
-automatically. Provisioning completes synchronously using the authority's stable
-`requestId`, derived from the redeemed proof;
-applications whose accounts live elsewhere can own a queue before registration. See [email persistence](../reference/adapters#email) for mapping
-and session invalidation requirements.
+an authenticated user can then call `addPassword` when password management is enabled.
 
 Use `Email.makeAddresses` for authenticated address management. Confirming an
 address there does not create or link an account.

@@ -70,16 +70,12 @@ A valid cookie snapshot avoids a persistence read. It contains public claims and
 is signed, not encrypted. Revocation, password changes, disablement, and claim
 updates may remain unseen for up to `cacheFor`.
 
-Existing logins begin caching automatically: one read establishes the browser
-binding and the next fills the snapshot. Cache hits verify the cookie locally;
-they do not read Postgres or require a server-side cache.
-
 The limit is the shorter of five minutes and `renewAfter`. Features configured
 with `requireImmediateInvalidation: true` reject caching when they require server
-invalidation. Account linking and passkey enrollment do not invalidate sessions.
-Management, step-up, and mutations always read authoritative state. A mutation
-response invalidates the browser's snapshot; other clients and lost responses
-retain the bounded delay. See [cookie behavior](../reference/http#session-cache-cookies).
+invalidation. Management, step-up, and mutations use authoritative state, not
+cookie snapshots. Mutation responses clear the browser's snapshot; other clients
+and lost responses retain the bounded delay. See
+[cookie behavior](../reference/http#session-cache-cookies).
 
 ## Read the current session
 
@@ -151,18 +147,13 @@ Configure `completionLayer({ pendingLifetimeMillis, attemptLimit })` with
 `PendingAuthentication` persistence to support a second factor. A pending proof
 is not an authenticated session. [TOTP](./totp) shows the complete Layer setup.
 
-`SessionStrategy.inspect` returns `{ inspection, guard }`: private provenance and
-the storage guard needed for an authorized change.
-ordinary verification results omit it. An action policy can call
-`AppAuth.sessions.inspectInvocation(invocation, credential)` to use the verification
-that admitted that exact action, preserving its original proof times and factors.
-It checks expiry again and performs a fresh inspection outside that invocation.
-Explicit `inspect` and `auth.verifySession` calls always run the selected strategy again.
-Mutation persistence still checks its current authority before commit.
+For action-specific authorization, call
+`AppAuth.sessions.inspectInvocation(invocation, credential)` to obtain private
+evidence from the verification that admitted that action. Public session data
+and cached claims are not substitutes. The mutation's persistence owner still
+checks current authority before commit.
 
-Step-up binds its challenge to the source session and credential revision and
-rechecks both before replacing the session. The replacement's `authenticatedAt`
-reflects the newly satisfied step-up profile, so a recent passkey can authorize a
-password change or account link. Each retained factor keeps its actual verification
-time, and the original absolute expiry stays fixed. A fresh authentication time
-alone does not make an old factor fresh.
+Step-up can authorize a protected change, such as a password change or account
+link, under your policy. It refreshes `authenticatedAt` without extending the
+original absolute expiry. Each factor retains its own verification time: a recent
+step-up does not make every retained factor fresh.

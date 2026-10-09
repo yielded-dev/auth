@@ -4,7 +4,7 @@ description: Set up Sign in with Zoom using the shared OIDC flow.
 ---
 
 `Zoom.provider` adds Sign in with Zoom to an [OAuth strategy](./oauth).
-It verifies an ID token and establishes your application's session.
+The preset is for sign-in only; it does not retain provider API access.
 
 Create an OAuth app in [Zoom Marketplace](https://marketplace.zoom.us/) and
 register `https://app.example.com/auth/zoom/callback`.
@@ -37,16 +37,19 @@ export const AuthRoutes = Layer.unwrap(
 [Supply HTTP, crypto, persistence and application services](../reference/oauth#supply-the-services).
 The durable identity is `(provider key, "https://zoom.us", verified sub)`.
 Declare `profiles: { zoom: Zoom.ZoomUserProfile }` for typed `providerData`.
-Zoom advertises RFC 9207 `iss`.
 
-Run `vp run @yielded/example-auth#example:zoom` with `APP_ORIGIN`,
+## Run the example
+
+Run the [Zoom application](https://github.com/yielded-dev/auth/blob/main/examples/auth/src/zoom-app.ts)
+with `APP_ORIGIN`,
 `ZOOM_CLIENT_ID`, `ZOOM_CLIENT_SECRET`, `ZOOM_USER_ID`, `SESSION_KEY`, and
 `OAUTH_TRANSACTION_KEY`. Register `/auth/zoom/callback` on an HTTPS origin
-forwarded to `127.0.0.1:3000`. Development state is `examples/auth/zoom-auth.sqlite`.
+forwarded to `127.0.0.1:3000`.
 
-| Concern         | Behavior                                           |
-| --------------- | -------------------------------------------------- |
-| Issuer          | Exact `https://zoom.us`                            |
-| Token exchange  | `client_secret_basic`, S256 PKCE, advertised RS256 |
-| Response issuer | Zoom advertises RFC 9207 `iss`                     |
-| Access          | Sign-in only                                       |
+```sh
+vp run @yielded/example-auth#example:zoom
+```
+
+Open `APP_ORIGIN/login`. See the
+[example setup](https://github.com/yielded-dev/auth/tree/main/examples/auth)
+for key and storage ownership.
