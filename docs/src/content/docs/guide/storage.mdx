@@ -101,7 +101,8 @@ adapter to validate the database's columns and unique keys; see
 OAuth sign-in and retained provider access use the same managed or mapped composition.
 Applications with custom registration, login linking, or SQL authorization predicates
 can use the explicit [`OAuthPersistence` factories](../reference/adapters#oauth).
-Coordinated auth and application writes share the same Effect SQL transaction owner.
+Coordinated auth and application writes share the same Effect SQL transaction owner,
+including for Kysely-owned tables.
 
 ## Your services
 

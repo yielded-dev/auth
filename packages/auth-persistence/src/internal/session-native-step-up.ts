@@ -8,6 +8,7 @@ import {
   type SessionStepUpPersistence,
   type SessionStepUpIntent,
   type StatefulSessionRecord,
+  type SessionUnavailable,
 } from "@yielded/auth/Sessions";
 import { DateTime, Effect, Option, Schema } from "effect";
 import type { SqlClient } from "effect/sql/SqlClient";
@@ -65,7 +66,7 @@ export const makeNativeSessionStepUpServices = Effect.fnUntraced(function* <Clai
   mapping: NativeSessionStepUpMapping<Claims>,
 ): Effect.fn.Return<
   { readonly sessionStepUpPersistence: SessionStepUpPersistence<Claims> },
-  never,
+  SessionUnavailable,
   SqlClient | LifecycleHooks | SqlBatchCommit
 > {
   const batch = yield* SqlBatchCommit;

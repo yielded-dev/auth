@@ -109,12 +109,15 @@ export const createPersistence = <T extends object, R, Database extends object =
   const make = <C extends ClaimsCodec, const Id extends string, const A extends Definition<C, Id>>(
     auth: A & Definition<C, Id>,
   ) => {
-    const features = Object.values(auth.strategies).map((strategy) => strategy.persistence);
-    const phone = features.some((feature) => feature?.kind === "phone");
-    const password = features.some((feature) => feature?.kind === "password");
+    const features = Object.values(auth.strategies).flatMap((strategy) =>
+      strategy.persistence === undefined ? [] : [strategy.persistence],
+    );
+
+    const phone = features.some((feature) => feature.kind === "phone");
+    const password = features.some((feature) => feature.kind === "password");
 
     const passkeys = features.filter(
-      (feature): feature is PasskeyFeature => feature?.kind === "passkey",
+      (feature): feature is PasskeyFeature => feature.kind === "passkey",
     );
 
     const oauth = features.filter((feature): feature is OAuthFeature => feature?.kind === "oauth");
@@ -128,10 +131,10 @@ export const createPersistence = <T extends object, R, Database extends object =
       features.every((feature) => feature?.kind === "oauth");
 
     const management = features.some(
-      (feature) => feature?.kind === "password" && feature.management,
+      (feature) => feature.kind === "password" && feature.management,
     );
 
-    const email = features.some((feature) => feature?.kind === "email" && feature.addresses);
+    const email = features.some((feature) => feature.kind === "email" && feature.addresses);
     const proofs = phone || management || email;
 
     const roles: StorageRole[] = ["identifiers", "credentials"];
@@ -280,7 +283,6 @@ export const createPersistence = <T extends object, R, Database extends object =
           if (
             features.some(
               (feature) =>
-                feature === undefined ||
                 ("lifecycle" in feature && feature.lifecycle) ||
                 (feature.kind === "email" && !feature.addresses),
             )
@@ -437,9 +439,7 @@ export const createPersistence = <T extends object, R, Database extends object =
                 backend.nativeTables(database),
                 storage,
                 mappings.proofs(),
-                features.flatMap((feature) =>
-                  feature?.kind === "phone" ? [feature.moduleId] : [],
-                ),
+                features.flatMap((feature) => (feature.kind === "phone" ? [feature.moduleId] : [])),
               ),
             );
 
@@ -452,7 +452,7 @@ export const createPersistence = <T extends object, R, Database extends object =
                 dialect,
                 features: passkeys,
                 passwordModules: features.flatMap((feature) =>
-                  feature?.kind === "password" ? [feature.moduleId] : [],
+                  feature.kind === "password" ? [feature.moduleId] : [],
                 ),
               },
               backend.nativeTables(database),

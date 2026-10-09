@@ -49,6 +49,7 @@ import { validateSqlStorage } from "./internal/sql-storage-validation";
 import { Table } from "./internal/sql-table";
 import { requireStandalone } from "./internal/standalone";
 import type { StorageTable } from "./internal/storage-tables";
+import { withStorageValidation } from "./internal/storage-validation";
 export * from "./internal/sql-oauth-model";
 export * from "./internal/sql-oauth-connected-model";
 export * from "./internal/oauth/native-layers";
@@ -96,7 +97,7 @@ const using = <M, A, E, R>(
     yield* validateSqlStorage(mapping).pipe(Effect.mapError(() => OAuthUnavailable.make({})));
 
     return yield* make(target.tables, mapping);
-  });
+  }).pipe(withStorageValidation);
 
 const coordinate = <S, A, E, R, ES, RS>(
   make: Effect.Effect<S, ES, RS>,

@@ -2,11 +2,23 @@ import { Context, Effect, Schema } from "effect";
 import { SqlClient } from "effect/sql/SqlClient";
 
 import { PersistenceConfigurationError } from "./configuration";
+import type { PhysicalTextColumn } from "./native-sql-table";
 import type { StorageTable } from "./storage-tables";
 
 const Columns = Schema.Array(Schema.String);
 const Keys = Schema.Array(Columns);
-const Metadata = Schema.Struct({ relation: Schema.String, columns: Columns, keys: Keys });
+
+const TextColumns = Schema.Array(
+  Schema.Struct({ name: Schema.String, type: Schema.String, collation: Schema.String }),
+);
+
+const Metadata = Schema.Struct({
+  relation: Schema.String,
+  columns: Columns,
+  keys: Keys,
+  textColumns: TextColumns,
+});
+
 const PgMetadata = Schema.Array(Metadata);
 
 const SqliteMetadata = Schema.Array(
@@ -14,10 +26,18 @@ const SqliteMetadata = Schema.Array(
     relation: Schema.String,
     columns: Schema.fromJsonString(Columns),
     keys: Schema.fromJsonString(Keys),
+    textColumns: Schema.fromJsonString(TextColumns),
   }),
 );
 
-const MysqlColumns = Schema.Array(Schema.Struct({ relation: Schema.String, name: Schema.String }));
+const MysqlColumns = Schema.Array(
+  Schema.Struct({
+    relation: Schema.String,
+    name: Schema.String,
+    type: Schema.String,
+    collation: Schema.NullOr(Schema.String),
+  }),
+);
 
 const MysqlIndexes = Schema.Array(
   Schema.Struct({
@@ -101,28 +121,32 @@ export interface StorageValidation {
   readonly required: ReadonlyArray<ReadonlyArray<string>>;
 }
 
-/** Batch physical metadata reads, reusing only the current acquisition snapshot.
- * Every requirement is still checked; later acquisitions read fresh metadata. */
-export const validateStorageBatch = Effect.fnUntraced(
-  function* (dialect: "pg" | "mysql" | "sqlite", requirements: ReadonlyArray<StorageValidation>) {
-    if (requirements.length === 0) return;
+type Dialect = "pg" | "mysql" | "sqlite";
+
+/** Share physical type, collation and key observations only during acquisition. */
+const readStorageMetadata = Effect.fnUntraced(
+  function* (
+    dialect: Dialect,
+    physical: ReadonlyArray<Pick<PhysicalStorageTable, "name" | "schema">>,
+  ) {
     if (
       dialect === "sqlite" &&
-      requirements.some(({ table }) => table.schema !== undefined && table.schema !== "main")
+      physical.some((table) => table.schema !== undefined && table.schema !== "main")
     )
       return yield* PersistenceConfigurationError.make({
         reason: "SQLite storage must belong to the main database",
       });
-    const client = yield* SqlClient;
+    const captured = yield* SqlClient;
+    const client = captured.withoutTransforms();
     const cache = yield* CurrentMetadata;
 
     const byRelation = cache?.active
-      ? (cache.clients.get(client) ?? new Map<string, typeof Metadata.Type>())
+      ? (cache.clients.get(captured) ?? new Map<string, typeof Metadata.Type>())
       : new Map<string, typeof Metadata.Type>();
 
-    if (cache?.active) cache.clients.set(client, byRelation);
+    if (cache?.active) cache.clients.set(captured, byRelation);
 
-    const tables = new Map(requirements.map(({ table }) => [qualifiedTableName(table), table]));
+    const tables = new Map(physical.map((table) => [qualifiedTableName(table), table]));
 
     const missing = [...tables.entries()].filter(
       ([relation]) => !byRelation.has(`${dialect}:${relation}`),
@@ -151,7 +175,11 @@ export const validateStorageBatch = Effect.fnUntraced(
               from pragma_index_list(requested.name) i
               where i."unique" = 1 and i.partial = 0
                 and not exists(select 1 from pragma_index_info(i.name) where name is null)
-            ) storage_key where json_array_length(storage_key.columns) > 0) as keys
+            ) storage_key where json_array_length(storage_key.columns) > 0) as keys,
+            (select json_group_array(json_object('name', c.name, 'type', 'TEXT', 'collation', 'BINARY'))
+              from pragma_table_info(requested.name) c
+              join sqlite_schema s on s.name = requested.name and s.type = 'table'
+              where upper(c.type) = 'TEXT' and instr(lower(s.sql), 'collate') = 0) as "textColumns"
           from requested
         `.pipe(Effect.flatMap(Schema.decodeUnknownEffect(SqliteMetadata)));
           })
@@ -168,7 +196,8 @@ export const validateStorageBatch = Effect.fnUntraced(
               );
 
               const columns = yield* client`
-          select requested.relation, c.column_name as name
+          select requested.relation, c.column_name as name,
+            c.data_type as type, c.collation_name as collation
           from (${requested}) requested join information_schema.columns c
             on c.table_schema = coalesce(requested.schemaName, database()) and c.table_name = requested.tableName
         `.pipe(Effect.flatMap(Schema.decodeUnknownEffect(MysqlColumns)));
@@ -196,6 +225,13 @@ export const validateStorageBatch = Effect.fnUntraced(
                   columns: columns
                     .filter((column) => column.relation === relation)
                     .map((column) => column.name),
+                  textColumns: columns.flatMap((column) =>
+                    column.relation === relation &&
+                    column.collation !== null &&
+                    ["varchar", "text", "tinytext", "mediumtext", "longtext"].includes(column.type)
+                      ? [{ name: column.name, type: column.type, collation: column.collation }]
+                      : [],
+                  ),
                   keys: [...grouped.values()]
                     .filter((entries) =>
                       entries.every((entry) => entry.columnName !== null && entry.prefix === null),
@@ -229,7 +265,12 @@ export const validateStorageBatch = Effect.fnUntraced(
             and i.indpred is null and i.indexprs is null
             and k.ordinality <= i.indnkeyatts
           group by i.indexrelid
-        ) storage_key), '[]'::jsonb) as keys
+        ) storage_key), '[]'::jsonb) as keys,
+        coalesce((select jsonb_agg(jsonb_build_object(
+          'name', a.attname::text, 'type', a.atttypid::text, 'collation', a.attcollation::text))
+          from pg_attribute a where a.attrelid = to_regclass(requested.relation)
+            and a.attnum > 0 and not a.attisdropped
+            and a.atttypid in ('text'::regtype, 'varchar'::regtype)), '[]'::jsonb) as "textColumns"
       from (values ${requested}) requested(relation)
     `.pipe(Effect.flatMap(Schema.decodeUnknownEffect(PgMetadata)));
             });
@@ -237,18 +278,7 @@ export const validateStorageBatch = Effect.fnUntraced(
       for (const row of metadata) byRelation.set(`${dialect}:${row.relation}`, row);
     }
 
-    for (const { table, required } of requirements) {
-      const relation = qualifiedTableName(table);
-      const actual = byRelation.get(`${dialect}:${relation}`);
-
-      for (const column of Object.values(table.columns)) {
-        if (actual === undefined || !actual.columns.includes(column.name))
-          return yield* PersistenceConfigurationError.make({
-            reason: `Missing SQL column ${relation}.${column.name}`,
-          });
-      }
-      yield* validateKeys(table, required, actual?.keys ?? []);
-    }
+    return byRelation;
   },
   Effect.mapError((error) =>
     Schema.is(PersistenceConfigurationError)(error)
@@ -256,6 +286,76 @@ export const validateStorageBatch = Effect.fnUntraced(
       : PersistenceConfigurationError.make({ reason: "Cannot validate SQL storage metadata" }),
   ),
 );
+
+/** Batch physical metadata reads, reusing only the current acquisition snapshot.
+ * Every requirement is still checked; later acquisitions read fresh metadata. */
+export const validateStorageBatch = Effect.fnUntraced(function* (
+  dialect: Dialect,
+  requirements: ReadonlyArray<StorageValidation>,
+) {
+  if (requirements.length === 0) return;
+
+  const byRelation = yield* readStorageMetadata(
+    dialect,
+    requirements.map(({ table }) => table),
+  );
+
+  for (const { table, required } of requirements) {
+    const relation = qualifiedTableName(table);
+    const actual = byRelation.get(`${dialect}:${relation}`);
+
+    for (const column of Object.values(table.columns)) {
+      if (actual === undefined || !actual.columns.includes(column.name))
+        return yield* PersistenceConfigurationError.make({
+          reason: `Missing SQL column ${relation}.${column.name}`,
+        });
+    }
+    yield* validateKeys(table, required, actual?.keys ?? []);
+  }
+});
+
+/** Candidate declarations do not establish SQL equality compatibility. SQLite
+ * omits column collations, so only TEXT tables without COLLATE qualify. */
+export const canJoinTextColumns = Effect.fnUntraced(function* (
+  columns: ReadonlyArray<PhysicalTextColumn | undefined>,
+) {
+  const candidates = columns.filter((column) => column !== undefined);
+
+  if (candidates.length !== columns.length || candidates.length === 0) return false;
+  const client = yield* SqlClient;
+
+  const dialect = client.onDialectOrElse({
+    pg: () => "pg" as const,
+    mysql: () => "mysql" as const,
+    sqlite: () => "sqlite" as const,
+    orElse: () => undefined,
+  });
+
+  if (
+    dialect === undefined ||
+    (dialect === "sqlite" &&
+      candidates.some(({ table }) => table.schema !== undefined && table.schema !== "main"))
+  )
+    return false;
+
+  const metadata = yield* readStorageMetadata(
+    dialect,
+    candidates.map(({ table }) => table),
+  );
+
+  const physical = candidates.map(({ table, name }) =>
+    metadata
+      .get(`${dialect}:${qualifiedTableName(table)}`)
+      ?.textColumns.find((column) => column.name === name),
+  );
+
+  const first = physical[0];
+
+  return (
+    first !== undefined &&
+    physical.every((column) => column?.type === first.type && column.collation === first.collation)
+  );
+});
 
 /** Validate physical columns and unconditional uniqueness before operations run. */
 export const validateStorage = (

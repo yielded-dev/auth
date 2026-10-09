@@ -9,6 +9,7 @@ import { sqlMapping, type NativeSqlTables } from "./native-sql-table";
 import { makePasskeyNativeFlow } from "./passkey-native-flow";
 import { passkeyCredentialKey } from "./passkey-policy";
 import { exactSqlText } from "./sql-change";
+import { canJoinTextColumns } from "./storage-validation";
 import type { TableModel } from "./table-model";
 
 // Physical expression types are validated by NativeSqlTables at this boundary.
@@ -226,75 +227,79 @@ export const makePasskeyNativeReadState = Effect.fnUntraced(function* (
     return sql`(select * from ${table.name} where ${active(kind)}) as ${sql(alias)}`;
   };
 
+  const joinedIds = yield* canJoinTextColumns([
+    subject.unencodedTextColumn?.(read.subject.id),
+    credential.unencodedTextColumn?.(read.credential.subjectId),
+    factor.unencodedTextColumn?.(read.authority.subjectId),
+  ]).pipe(Effect.mapError(() => M.PasskeyUnavailable.make({})));
+
   const lookup = Effect.fnUntraced(function* (rpId: string, protocolCredentialId: string) {
     const key = yield* passkeyCredentialKey(rpId, protocolCredentialId);
+    let nativeId: unknown;
 
-    if (
-      subject.unencodedTextColumn?.(read.subject.id) !== undefined &&
-      credential.unencodedTextColumn?.(read.credential.subjectId) !== undefined &&
-      factor.unencodedTextColumn?.(read.authority.subjectId) !== undefined
-    ) {
-      const s = joinedSubject,
-        c = joinedCredential,
-        f = joinedFactor;
+    if (!joinedIds) {
+      const found =
+        yield* sql<PasskeyNativeRow>`select ${credential.fields("c_")} from ${credential.name} where ${exactSqlText(sql, credential.column(read.credential.credentialKey), credential.value(read.credential.credentialKey, key))} and ${active("credential")}`;
 
-      const rows =
-        yield* sql<PasskeyNativeRow>`select ${s.fields("s_")}, ${c.fields("c_")}, ${f.fields("f_")}
-        from ${selected("credential", "passkey_credential")}
-        join ${selected("subject", "passkey_subject")} on ${exactSqlText(sql, s.column(read.subject.id), c.column(read.credential.subjectId))}
-        left join ${selected("authority", "passkey_factor")} on ${exactSqlText(sql, f.column(read.authority.subjectId), c.column(read.credential.subjectId))}
-        where ${exactSqlText(sql, c.column(read.credential.credentialKey), c.value(read.credential.credentialKey, key))} limit 65`;
-
-      if (rows.length === 0 || rows.length > 64) return undefined;
-      const row = c.decode(rows[0]!, "c_");
-      const subjectRow = s.decode(rows[0]!, "s_");
-      const owner = read.credential.decodeSubjectId(row);
+      if (found.length !== 1) return undefined;
+      const row = credential.decode(found[0]!, "c_");
 
       invariant(
         row[read.credential.rpId] === rpId &&
           row[read.credential.protocolCredentialId] === protocolCredentialId,
       );
-      invariant(
-        rows.every((selected) => {
-          const other = c.decode(selected, "c_");
-          const subjectValue = s.decode(selected, "s_");
-
-          return (
-            sameId(owner, read.credential.decodeSubjectId(other)) &&
-            sameId(owner, read.subject.decodeId(subjectValue)) &&
-            other[read.credential.credentialId] === row[read.credential.credentialId] &&
-            other[read.credential.credentialRevision] === row[read.credential.credentialRevision] &&
-            subjectValue[read.subject.securityRevision] ===
-              subjectRow[read.subject.securityRevision]
-          );
-        }),
-      );
-
-      return yield* decodeCredential(
-        row,
-        revision(
-          subjectRow,
-          rows.map((row) => f.decode(row, "f_")),
-        ),
-        subjectRow,
-      );
+      nativeId = read.credential.decodeSubjectId(row);
     }
 
-    const rows =
-      yield* sql<PasskeyNativeRow>`select ${credential.fields("c_")} from ${credential.name} where ${credential.column(read.credential.credentialKey)} = ${credential.value(read.credential.credentialKey, key)} and ${active("credential")}`;
+    const s = joinedSubject,
+      c = joinedCredential,
+      f = joinedFactor;
 
-    if (rows.length !== 1) return undefined;
-    const row = credential.decode(rows[0]!, "c_");
+    const bindOwner = (table: typeof subject, key: string) =>
+      joinedIds
+        ? exactSqlText(sql, table.column(key), c.column(read.credential.subjectId))
+        : sql`${table.column(key)} = ${table.value(key, nativeId)}`;
+
+    const rows =
+      yield* sql<PasskeyNativeRow>`select ${s.fields("s_")}, ${c.fields("c_")}, ${f.fields("f_")}
+      from ${selected("credential", "passkey_credential")}
+      join ${selected("subject", "passkey_subject")} on ${bindOwner(s, read.subject.id)}
+      left join ${selected("authority", "passkey_factor")} on ${bindOwner(f, read.authority.subjectId)}
+      where ${exactSqlText(sql, c.column(read.credential.credentialKey), c.value(read.credential.credentialKey, key))}${joinedIds ? sql`` : sql` and ${bindOwner(c, read.credential.subjectId)}`} limit 65`;
+
+    if (rows.length === 0 || rows.length > 64) return undefined;
+    const row = c.decode(rows[0]!, "c_");
+    const subjectRow = s.decode(rows[0]!, "s_");
+    const owner = read.credential.decodeSubjectId(row);
 
     invariant(
-      row[read.credential.rpId] === rpId &&
+      (joinedIds || sameId(owner, nativeId)) &&
+        row[read.credential.rpId] === rpId &&
         row[read.credential.protocolCredentialId] === protocolCredentialId,
     );
-    const current = yield* readAuthority(read.credential.decodeSubjectId(row), false);
+    invariant(
+      rows.every((selected) => {
+        const other = c.decode(selected, "c_");
+        const subjectValue = s.decode(selected, "s_");
 
-    return current === undefined
-      ? undefined
-      : yield* decodeCredential(row, current.revision, current.row);
+        return (
+          sameId(owner, read.credential.decodeSubjectId(other)) &&
+          sameId(owner, read.subject.decodeId(subjectValue)) &&
+          other[read.credential.credentialId] === row[read.credential.credentialId] &&
+          other[read.credential.credentialRevision] === row[read.credential.credentialRevision] &&
+          subjectValue[read.subject.securityRevision] === subjectRow[read.subject.securityRevision]
+        );
+      }),
+    );
+
+    return yield* decodeCredential(
+      row,
+      revision(
+        subjectRow,
+        rows.map((row) => f.decode(row, "f_")),
+      ),
+      subjectRow,
+    );
   });
 
   return {
