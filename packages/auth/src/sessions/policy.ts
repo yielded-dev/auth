@@ -1,5 +1,6 @@
 import { DateTime, Effect, Schema } from "effect";
 
+import { reportAuthDiagnostic } from "../internal/diagnostics";
 import { AuthenticationClock } from "../operations/clock";
 import { SessionConfigurationError, SessionInvalid } from "./errors";
 import type { SessionCapabilities, SessionMetadata } from "./models";
@@ -72,17 +73,31 @@ export const validateSessionTimeline = Effect.fn("validateSessionTimeline")(func
 
       return verifiedAt > issuedAt;
     })
-  )
+  ) {
+    yield* reportAuthDiagnostic("session-timeline", "invalid-evidence");
+
     return yield* SessionInvalid.make({});
-  if (
-    authenticatedAt > issuedAt ||
-    issuedAt - now > futureToleranceMillis ||
-    now >= expiresAt ||
-    expiresAt > absoluteExpiresAt ||
-    expiresAt <= issuedAt ||
-    absoluteExpiresAt - authenticatedAt > policy.maximumIssuedAbsoluteLifetimeMillis
-  )
+  }
+  if (authenticatedAt > issuedAt || expiresAt > absoluteExpiresAt || expiresAt <= issuedAt) {
+    yield* reportAuthDiagnostic("session-timeline", "chronology");
+
     return yield* SessionInvalid.make({});
+  }
+  if (issuedAt - now > futureToleranceMillis) {
+    yield* reportAuthDiagnostic("session-timeline", "future-issued");
+
+    return yield* SessionInvalid.make({});
+  }
+  if (now >= expiresAt) {
+    yield* reportAuthDiagnostic("session-timeline", "expired");
+
+    return yield* SessionInvalid.make({});
+  }
+  if (absoluteExpiresAt - authenticatedAt > policy.maximumIssuedAbsoluteLifetimeMillis) {
+    yield* reportAuthDiagnostic("session-timeline", "lifetime");
+
+    return yield* SessionInvalid.make({});
+  }
 
   return session;
 });

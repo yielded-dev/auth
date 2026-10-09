@@ -186,6 +186,31 @@ delivery, and reveal declarations; the subject projection remains explicit.
 See the [passkey contract](../guide/passkeys#define-the-shared-actions) for a complete
 example and [TOTP](../guide/totp#expose-private-reveals-over-http) for private reveals.
 
+## Diagnostics
+
+Auth emits fixed `stage` and `reason` fields at Effect's `Debug` level for session,
+persistence, and OAuth failures. Unexpected failures retain sanitized `Error` logs;
+public errors stay redacted. Enable diagnostics in your server's request context:
+
+```ts
+import { Layer, Logger, References } from "effect";
+
+const DiagnosticsLive = Layer.mergeAll(
+  Logger.layer([Logger.consoleJson]),
+  Layer.succeed(References.MinimumLogLevel, "Debug"),
+);
+const ServerLive = Routes.pipe(Layer.provideMerge(DiagnosticsLive));
+```
+
+With `HttpRouter.toWebHandler`, expose logging and tracing configuration in the
+built Layer's output as above, or pass it in the handler's request `Context`.
+Auth logs and spans use that invocation context. Failed persistence initialization
+stays cached until its owning Layer is reacquired.
+
+Auth's diagnostic payloads exclude credentials and raw causes. Your application
+owns redaction of its annotations, span names, and logger output. Keep HTTP headers,
+bodies, OAuth URL queries, and SQL parameters out of logs and traces.
+
 ## Lower-level transports
 
 `http.withRequest` wraps a custom Effect returning `HttpServerResponse`.

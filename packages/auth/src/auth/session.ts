@@ -1,6 +1,7 @@
 import { Context, DateTime, Effect, Layer, Option, Redacted, Schema, Scope } from "effect";
 
 import type { HookDenied } from "../hooks/models";
+import { reportAuthDiagnostic, withoutObservability } from "../internal/diagnostics";
 import { AuthenticationClock } from "../operations/clock";
 import { guest } from "../operations/context";
 import {
@@ -79,6 +80,7 @@ export const makeSessionApi = <
     const services = (yield* Effect.context<
       Claims["DecodingServices"] | Claims["EncodingServices"]
     >()).pipe(
+      withoutObservability,
       Context.merge(handlers),
       Context.add(AuthenticationClock, clockPolicy),
       Context.omit(
@@ -99,6 +101,12 @@ export const makeSessionApi = <
       }).pipe(
         Effect.provide(services),
         Effect.catchTag("InvalidOperationInput", () => SessionInvalid.make({})),
+        Effect.tapError((error) =>
+          reportAuthDiagnostic(
+            "session-verification",
+            error._tag === "SessionInvalid" ? "rejected" : "unavailable",
+          ),
+        ),
       );
     });
 

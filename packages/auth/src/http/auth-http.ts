@@ -35,6 +35,7 @@ import {
 import { mutationSecurity, requestSecurity } from "../http-operation/security";
 import { make as makeOperationServer } from "../http-operation/server";
 import { rotationCookies, snapshotCookie } from "../http-operation/session-cache-cookie";
+import { withoutObservability } from "../internal/diagnostics";
 import { cookieDomain, httpsOrigin, origin, originWithinDomain } from "../internal/origin";
 import type { OAuthConnectedProtocol } from "../oauth/OAuthConnectedProtocol";
 import type { OAuthProtocol } from "../oauth/OAuthProtocol";
@@ -357,6 +358,7 @@ export const make = <
         const services = (yield* Effect.context<
           Exclude<Effect.Services<ReturnType<Api["requireSession"]>>, AuthRequest>
         >()).pipe(
+          withoutObservability,
           Context.omit(
             AuthRequest,
             Scope.Scope,

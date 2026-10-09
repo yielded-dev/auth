@@ -20,7 +20,11 @@ import { type PreparedCommit, hasCommitScope } from "../hooks/commit";
 import { LifecycleHooks } from "../hooks/LifecycleHooks";
 import type { HookDenied } from "../hooks/models";
 import { LifecycleEventId, lifecycleEvent, lifecycleSnapshot } from "../hooks/models";
-import { reportAuthFailure } from "../internal/diagnostics";
+import {
+  reportAuthDiagnostic,
+  reportAuthFailure,
+  withoutObservability,
+} from "../internal/diagnostics";
 import { AuthenticationClock } from "../operations/clock";
 import {
   AuthenticationAssurance,
@@ -108,6 +112,16 @@ export interface ModuleService<Id extends string, Kind extends string, Claims> {
   readonly kind: Kind;
   readonly claims: Types.Invariant<Claims>;
 }
+
+const reportAuthorityFailure = (error: SessionError) =>
+  reportAuthDiagnostic(
+    "session-authority",
+    error._tag === "StaleAuthentication"
+      ? "authority-rejected"
+      : error._tag === "SessionUnavailable"
+        ? "unavailable"
+        : "rejected",
+  );
 
 const reportSignOutFailure = <A, E extends { readonly _tag: string }, R>(
   effect: Effect.Effect<A, E, R>,
@@ -407,7 +421,10 @@ export const makeSessionModule = <
       return yield* SessionInvalid.make({});
 
     const authority = yield* AuthenticationAuthority;
-    const requirement = yield* authority.requirements(original);
+
+    const requirement = yield* authority
+      .requirements(original)
+      .pipe(Effect.tapError(reportAuthorityFailure));
 
     return {
       issuance: {
@@ -536,7 +553,10 @@ export const makeSessionModule = <
 
         const services = (yield* Effect.context<
           Claims["EncodingServices"] | Claims["DecodingServices"] | LifecycleHooks | Crypto.Crypto
-        >()).pipe(Context.omit(CurrentSessionInvocation, SessionVerificationCapture));
+        >()).pipe(
+          withoutObservability,
+          Context.omit(CurrentSessionInvocation, SessionVerificationCapture),
+        );
 
         const validate = (session: Session) =>
           projectSession(session).pipe(
@@ -599,21 +619,23 @@ export const makeSessionModule = <
           yield* validateSessionTimeline(base, policy);
           const commitNow = yield* DateTime.now;
 
-          return yield* store.establish(
-            {
-              session: base,
-              evidence: planned.evidence,
-              ...(source === undefined ? {} : { handoffSourceSessionId: source.sessionId }),
-              ...(input.pending === undefined ? {} : { pending: input.pending }),
-              now: commitNow,
-            },
-            (record, journal) => {
-              journal.stage(event);
-              journal.stage(creation);
+          return yield* store
+            .establish(
+              {
+                session: base,
+                evidence: planned.evidence,
+                ...(source === undefined ? {} : { handoffSourceSessionId: source.sessionId }),
+                ...(input.pending === undefined ? {} : { pending: input.pending }),
+                now: commitNow,
+              },
+              (record, journal) => {
+                journal.stage(event);
+                journal.stage(creation);
 
-              return journal.prepare(issue(record, credential));
-            },
-          );
+                return journal.prepare(issue(record, credential));
+              },
+            )
+            .pipe(Effect.tapError(reportAuthorityFailure));
         }, withClockPolicy);
 
         const strategy = SessionStrategy.of({
@@ -814,7 +836,10 @@ export const makeSessionModule = <
 
         const services = (yield* Effect.context<
           Claims["EncodingServices"] | Claims["DecodingServices"] | LifecycleHooks | Crypto.Crypto
-        >()).pipe(Context.omit(CurrentSessionInvocation, SessionVerificationCapture));
+        >()).pipe(
+          withoutObservability,
+          Context.omit(CurrentSessionInvocation, SessionVerificationCapture),
+        );
 
         const Envelope = Schema.Struct({
           version: Schema.Literal(2),
@@ -870,7 +895,9 @@ export const makeSessionModule = <
           const inspection = yield* inspectToken(credential);
 
           if (Option.isSome(validity))
-            yield* validity.value.verify(inspection.session, yield* DateTime.now);
+            yield* validity.value
+              .verify(inspection.session, yield* DateTime.now)
+              .pipe(Effect.tapError(reportAuthorityFailure));
           // Validity reads and codec work may outlast a live token's expiry.
           yield* validateSessionTimeline(inspection.session, policy);
 
@@ -920,22 +947,24 @@ export const makeSessionModule = <
 
           yield* validateSessionTimeline(session, policy);
 
-          return yield* authority.approve(
-            {
-              evidence: planned.evidence,
-              ...(input.pending === undefined ? {} : { pending: input.pending }),
-              now: yield* DateTime.now,
-              issuedAt: session.issuedAt,
-              expiresAt: session.expiresAt,
-              absoluteExpiresAt: session.absoluteExpiresAt,
-            },
-            (_, journal) => {
-              journal.stage(event);
-              journal.stage(creation);
+          return yield* authority
+            .approve(
+              {
+                evidence: planned.evidence,
+                ...(input.pending === undefined ? {} : { pending: input.pending }),
+                now: yield* DateTime.now,
+                issuedAt: session.issuedAt,
+                expiresAt: session.expiresAt,
+                absoluteExpiresAt: session.absoluteExpiresAt,
+              },
+              (_, journal) => {
+                journal.stage(event);
+                journal.stage(creation);
 
-              return journal.prepare(issue(session, credential));
-            },
-          );
+                return journal.prepare(issue(session, credential));
+              },
+            )
+            .pipe(Effect.tapError(reportAuthorityFailure));
         }, withClockPolicy);
 
         const strategy = SessionStrategy.of({
@@ -1209,7 +1238,10 @@ export const makeSessionModule = <
 
         const claimServices = (yield* Effect.context<
           Claims["DecodingServices"] | Claims["EncodingServices"]
-        >()).pipe(Context.omit(CurrentSessionInvocation, SessionVerificationCapture));
+        >()).pipe(
+          withoutObservability,
+          Context.omit(CurrentSessionInvocation, SessionVerificationCapture),
+        );
 
         const codec = Schema.toCodecIso(ClaimsCodec);
 
@@ -1718,8 +1750,8 @@ export const makeSessionModule = <
         const crypto = yield* Crypto.Crypto;
         const secrets = yield* makeSessionSecrets(moduleId);
 
-        const hooks = (yield* Effect.context<LifecycleHooks | Crypto.Crypto>()).pipe(
-          Context.omit(CurrentSessionInvocation, SessionVerificationCapture),
+        const hooks = Context.make(LifecycleHooks, yield* LifecycleHooks).pipe(
+          Context.add(Crypto.Crypto, crypto),
         );
 
         const registry = new Map<

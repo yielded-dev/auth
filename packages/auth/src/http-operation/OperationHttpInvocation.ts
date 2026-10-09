@@ -1,6 +1,7 @@
 import { Context, Effect, Layer } from "effect";
 
 import type { SessionApiError } from "../auth/session";
+import { withoutObservability } from "../internal/diagnostics";
 import type { AuthInvocation } from "../operations/context";
 import type { SessionCacheOwner } from "../sessions/cookieCache";
 import type { OperationHttpError } from "./errors";
@@ -30,7 +31,7 @@ export const invocationLayer = <R>(
   Layer.effect(
     OperationHttpInvocation,
     Effect.gen(function* () {
-      const services = yield* Effect.context<R>();
+      const services = (yield* Effect.context<R>()).pipe(withoutObservability);
 
       return {
         resolve: (request: Request, credentials: HttpCredentials) =>

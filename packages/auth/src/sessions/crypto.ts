@@ -4,7 +4,7 @@ import { Base64Url } from "effect/encoding";
 
 import { AuthConfig } from "../auth/AuthConfig";
 import { defaultLayer } from "../auth/defaults";
-import { reportAuthFailure } from "../internal/diagnostics";
+import { reportAuthFailure, withoutObservability } from "../internal/diagnostics";
 import { TokenDigest } from "../Schema";
 import { SessionConfigurationError, SessionInvalid, SessionUnavailable } from "./errors";
 
@@ -106,7 +106,11 @@ export const makeSessionSigningCodec = Effect.fn("makeSessionSigningCodec")(func
   );
 
   const hmac = yield* Hmac;
-  const services = yield* Effect.context<S["DecodingServices"] | S["EncodingServices"]>();
+
+  const services = (yield* Effect.context<S["DecodingServices"] | S["EncodingServices"]>()).pipe(
+    withoutObservability,
+  );
+
   const keys = new Map<string, Key>();
 
   const version = purpose === "session-cache" ? "eac1" : "eas1";

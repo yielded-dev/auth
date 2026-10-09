@@ -1,4 +1,64 @@
-import { Cause, Context, Effect } from "effect";
+import { Cause, Console, Context, Effect, References, Schema, Tracer } from "effect";
+
+export const AuthDiagnostic = Schema.Struct({
+  stage: Schema.Literals([
+    "session-verification",
+    "session-timeline",
+    "session-authority",
+    "persistence-initialization",
+    "persistence-validation",
+    "oauth-exchange",
+    "oauth-completion",
+    "oauth-registration",
+  ]),
+  reason: Schema.Literals([
+    "invalid-evidence",
+    "chronology",
+    "future-issued",
+    "expired",
+    "lifetime",
+    "configuration",
+    "mapping",
+    "authority-rejected",
+    "rejected",
+    "unavailable",
+    "timeout",
+  ]),
+});
+
+export type AuthDiagnostic = typeof AuthDiagnostic.Type;
+
+/** Only fixed fields enter diagnostics; logging defects cannot change authentication. */
+export const reportAuthDiagnostic = Effect.fnUntraced(
+  function* (stage: AuthDiagnostic["stage"], reason: AuthDiagnostic["reason"]) {
+    const diagnostic = yield* Schema.decodeEffect(AuthDiagnostic)({ stage, reason });
+
+    yield* Effect.logDebug("Auth diagnostic", diagnostic);
+  },
+  Effect.catch(() => Effect.void),
+  Effect.catchDefect(() => Effect.void),
+);
+
+/** Captured dependencies win; logging and tracing belong to the invoking fiber. */
+export const withoutObservability = <R>(context: Context.Context<R>): Context.Context<R> =>
+  Context.omit(
+    Tracer.ParentSpan,
+    Tracer.Tracer,
+    Tracer.CurrentTraceLevel,
+    Tracer.MinimumTraceLevel,
+    Console.Console,
+    References.CurrentLoggers,
+    References.CurrentLogLevel,
+    References.MinimumLogLevel,
+    References.LogToStderr,
+    References.CurrentLogAnnotations,
+    References.CurrentLogSpans,
+    References.CurrentStackFrame,
+    References.TracerEnabled,
+    References.TracerTimingEnabled,
+    References.TracerSpanAnnotations,
+    References.TracerSpanLinks,
+  )(context) as Context.Context<R>;
 
 type FailureStage =
   | "local"
@@ -51,7 +111,9 @@ export const reportAuthFailure = Effect.fn("AuthDiagnostics.reportFailure")(func
     }),
   );
 
-  yield* Effect.logError("Auth boundary failed", diagnostic);
+  yield* Effect.logError("Auth boundary failed", diagnostic).pipe(
+    Effect.catchDefect(() => Effect.void),
+  );
 });
 
 /** Report only terminal unexpected persistence reasons, preserving the original Cause. */

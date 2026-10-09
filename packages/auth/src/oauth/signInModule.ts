@@ -18,7 +18,7 @@ import { defaultLayer, hooksLayer } from "../auth/defaults";
 import { hasCommitScope, type PreparedCommit } from "../hooks/commit";
 import { HookDenied } from "../hooks/models";
 import { IdentityConflict } from "../identity/models";
-import { reportAuthFailure } from "../internal/diagnostics";
+import { reportAuthDiagnostic, reportAuthFailure } from "../internal/diagnostics";
 import type { AuthInvocation } from "../operations/context";
 import type { AuthOperationResult } from "../operations/credentials";
 import { InvalidOperationInput } from "../operations/errors";
@@ -257,6 +257,16 @@ export const makeOAuthMethod = <
           ],
         },
       }).pipe(
+        Effect.tapError((error) =>
+          reportAuthDiagnostic(
+            "oauth-completion",
+            error._tag === "SessionUnavailable"
+              ? "unavailable"
+              : error._tag === "StaleAuthentication"
+                ? "authority-rejected"
+                : "rejected",
+          ),
+        ),
         Effect.mapError((error) =>
           error._tag === "HookDenied"
             ? error
@@ -672,6 +682,16 @@ export const makeOAuthMethod = <
               }),
               context.exchangeTimeoutMillis,
             ).pipe(
+              Effect.tapError((error) =>
+                reportAuthDiagnostic(
+                  "oauth-exchange",
+                  error._tag === "TimeoutError"
+                    ? "timeout"
+                    : error._tag === "OAuthProtocolRejected" || error._tag === "OAuthRejected"
+                      ? "rejected"
+                      : "unavailable",
+                ),
+              ),
               Effect.catchTag("TimeoutError", () => Effect.fail(OAuthUnavailable.make({}))),
               Effect.catchTag("OAuthProtocolRejected", () => Effect.fail(OAuthRejected.make({}))),
             );
@@ -762,6 +782,12 @@ export const makeOAuthMethod = <
           },
           Effect.scoped,
           Effect.provideService(Crypto.Crypto, crypto),
+          Effect.tapError((error) =>
+            reportAuthDiagnostic(
+              "oauth-completion",
+              error._tag === "OAuthUnavailable" ? "unavailable" : "rejected",
+            ),
+          ),
           Effect.tapCause((cause) =>
             Cause.hasDies(cause) ? reportAuthFailure("oauth-sign-in", cause) : Effect.void,
           ),
@@ -822,6 +848,12 @@ export const makeOAuthMethod = <
 
           return { value: result.value, credentialCommands: result.credentialCommands };
         },
+        Effect.tapError((error) =>
+          reportAuthDiagnostic(
+            "oauth-registration",
+            error._tag === "OAuthUnavailable" ? "unavailable" : "rejected",
+          ),
+        ),
         Effect.tapCause((cause) =>
           Cause.hasDies(cause) ? reportAuthFailure("oauth-registration", cause) : Effect.void,
         ),

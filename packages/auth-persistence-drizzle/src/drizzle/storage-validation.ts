@@ -4,6 +4,7 @@ import {
   type StorageValidation,
   storageKeyPlans,
 } from "@yielded/auth-persistence/Adapter";
+import { reportAuthDiagnostic } from "@yielded/auth/Persistence";
 import { getTableColumns, getTableName, is, Table } from "drizzle-orm";
 import { getTableConfig as getMysqlTableConfig, MySqlTable } from "drizzle-orm/mysql-core";
 import { getTableConfig as getPgTableConfig, PgTable } from "drizzle-orm/pg-core";
@@ -83,4 +84,5 @@ export const validateDrizzleStorage = Effect.fnUntraced(
       }),
     ),
   ),
+  Effect.tapError(() => reportAuthDiagnostic("persistence-validation", "mapping")),
 );

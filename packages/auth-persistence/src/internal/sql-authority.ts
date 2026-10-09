@@ -1,4 +1,5 @@
 import type { LifecycleHooks } from "@yielded/auth/Hooks";
+import { reportAuthDiagnostic } from "@yielded/auth/Persistence";
 import { SessionUnavailable, type AuthenticationAuthority } from "@yielded/auth/Sessions";
 import { Effect } from "effect";
 import { SqlClient } from "effect/sql";
@@ -32,10 +33,13 @@ export const makeAuthenticationAuthorityServices = Effect.fnUntraced(function* <
 > {
   const sql = yield* SqlClient.SqlClient;
 
-  if (!sql.onDialectOrElse({ pg: () => true, sqlite: () => true, orElse: () => false }))
+  if (!sql.onDialectOrElse({ pg: () => true, sqlite: () => true, orElse: () => false })) {
+    yield* reportAuthDiagnostic("persistence-validation", "configuration");
+
     return yield* PersistenceConfigurationError.make({
       reason: "Authentication authority requires PostgreSQL or SQLite",
     });
+  }
   yield* validateSqlStorage(mapping).pipe(Effect.mapError(() => SessionUnavailable.make({})));
 
   // Erase mapped native ID callback variance, never decoded authentication data.
