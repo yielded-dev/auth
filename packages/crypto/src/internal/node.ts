@@ -7,6 +7,7 @@ import { CryptoUnavailable, UnsupportedAlgorithm } from "../Errors";
 import type { Limits } from "../Kdf";
 import type { Argon2, Argon2Parameters } from "./kdf";
 import { makeLayer } from "./layer";
+import { scrypt } from "./scrypt";
 import { xchacha } from "./xchacha";
 
 const argon2: Argon2 = Effect.fnUntraced(function* (input: Argon2Parameters) {
@@ -40,8 +41,8 @@ const argon2: Argon2 = Effect.fnUntraced(function* (input: Argon2Parameters) {
   }).pipe(Effect.uninterruptible);
 });
 
-/** Node-compatible WebCrypto/Argon2id with the portable XChaCha20-Poly1305 extension. */
+/** Node-compatible WebCrypto and native password KDFs with portable XChaCha20-Poly1305. */
 export const layer = (limits: Partial<Limits> = {}) =>
   // Node's declarations include additional key usages absent from lib.dom. The
   // standard operations used here share the WebCrypto ABI; no payload is cast.
-  makeLayer(crypto.webcrypto.subtle as SubtleCrypto, limits, { argon2, xchacha });
+  makeLayer(crypto.webcrypto.subtle as SubtleCrypto, limits, { argon2, scrypt, xchacha });

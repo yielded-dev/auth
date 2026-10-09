@@ -317,29 +317,16 @@ export interface State {
 }
 
 // Allocate before absorbing secrets. Kdf has already applied Schema/resource limits.
-export const allocate = (
-  input: Argon2Parameters,
-  backing?: { readonly buffer: ArrayBuffer; readonly byteOffset: number },
-): State => {
+export const allocate = (input: Argon2Parameters): State => {
   const blocks = 4 * input.parallelism * Math.floor(input.memoryKiB / (4 * input.parallelism));
   const laneLength = blocks / input.parallelism;
-  let offset = backing?.byteOffset ?? 0;
-
-  const words = (length: number) => {
-    if (backing === undefined) return new Uint32Array(length);
-    const view = new Uint32Array(backing.buffer, offset, length);
-
-    offset += view.byteLength;
-
-    return view;
-  };
 
   return {
-    memory: words(blocks * 256),
-    scratch: words(256),
-    address: words(3 * 256),
-    initial: words(18),
-    final: words(256),
+    memory: new Uint32Array(blocks * 256),
+    scratch: new Uint32Array(256),
+    address: new Uint32Array(3 * 256),
+    initial: new Uint32Array(18),
+    final: new Uint32Array(256),
     blocks,
     laneLength,
     segmentLength: laneLength / 4,
@@ -415,11 +402,7 @@ export const initialize = (state: State, input: Argon2Parameters): void => {
 };
 
 /** Yield block boundaries to the Effect driver; all scratch belongs to this derivation. */
-export function* fill(
-  state: State,
-  input: Argon2Parameters,
-  compress: typeof block = block,
-): Generator<void, void> {
+export function* fill(state: State, input: Argon2Parameters): Generator<void, void> {
   const { memory: B, scratch, address, laneLength: laneLen, segmentLength: segmentLen } = state;
   const p = input.parallelism;
 
@@ -441,8 +424,8 @@ export function* fill(
 
         if (start === 2 && dataIndependent) {
           address[256 + 12]++;
-          compress(scratch, address, 256, 512, 0, false);
-          compress(scratch, address, 0, 512, 0, false);
+          block(scratch, address, 256, 512, 0, false);
+          block(scratch, address, 0, 512, 0, false);
         }
         let offset = lane * laneLen + s * segmentLen + start;
 
@@ -456,8 +439,8 @@ export function* fill(
 
             if (addressIndex === 0) {
               address[256 + 12]++;
-              compress(scratch, address, 256, 512, 0, false);
-              compress(scratch, address, 0, 512, 0, false);
+              block(scratch, address, 256, 512, 0, false);
+              block(scratch, address, 0, 512, 0, false);
             }
             randL = address[2 * addressIndex];
             randH = address[2 * addressIndex + 1];
@@ -468,14 +451,7 @@ export function* fill(
           const refLane = r === 0 && s === 0 ? lane : randH % p;
           const refPos = indexAlpha(r, s, laneLen, segmentLen, index, randL, refLane === lane);
 
-          compress(
-            scratch,
-            B,
-            256 * prev,
-            256 * (laneLen * refLane + refPos),
-            offset * 256,
-            needXor,
-          );
+          block(scratch, B, 256 * prev, 256 * (laneLen * refLane + refPos), offset * 256, needXor);
           yield;
         }
       }

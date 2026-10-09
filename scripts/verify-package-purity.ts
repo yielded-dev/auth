@@ -219,7 +219,6 @@ const auditEntryPoint = Effect.fn("packagePurity.auditEntryPoint")(function* (
         logLevel: "silent",
         metafile: true,
         platform: "neutral",
-        loader: { ".wasm": "binary" },
         plugins: [
           {
             name: "externalize-non-workspace-packages",

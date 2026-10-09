@@ -234,6 +234,44 @@ Compromised-password screening fails closed. `PasswordPolicy.screeningTimeoutMil
 defaults to 10,000 ms (allowed range: 1–30,000); a timed-out check returns
 `PasswordCheckUnavailable`, so no password is registered or changed.
 
+### Native scrypt on Workers
+
+Choose the scrypt configuration and the Workers backend at the composition root:
+
+```ts
+import { Password } from "@yielded/auth";
+import * as KdfAdmission from "@yielded/crypto/KdfAdmission";
+import * as WorkerdCrypto from "@yielded/crypto/platform-workerd";
+import * as WebCrypto from "@yielded/crypto/WebCrypto";
+import { Layer } from "effect";
+
+const Admission = KdfAdmission.layer();
+const CryptoLive = Layer.merge(
+  WebCrypto.layerCryptoWeb,
+  WorkerdCrypto.layer(globalThis.crypto.subtle).pipe(Layer.provideMerge(Admission)),
+);
+const PasswordHashingLive = Password.PasswordHashing.layer(
+  Password.defaultScryptPasswordHashingConfig,
+).pipe(Layer.provide(CryptoLive));
+```
+
+This uses native `node:crypto.scrypt` with `N=16384`, `r=8`, `p=5`: the
+[OWASP 16 MiB profile](https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html#scrypt).
+Node and Bun backends support the same configuration. The package ships ordinary
+JavaScript; Workers must enable Node.js compatibility.
+
+New hashes store their parameters as `$scrypt$ln=14,r=8,p=5$<salt>$<hash>`.
+Existing Argon2id and PBKDF2 hashes remain verifiable and are rehashed through the
+existing conditional persistence update after successful sign-in. That first
+sign-in pays both verification and rehash costs. Stored password normalization
+does not change. Keep a backend that can verify both algorithms during migration.
+
+`PasswordHashing.layer()` still defaults to Argon2id. Supplying `scrypt` in
+`PasswordHashingConfig` selects scrypt for new hashes and dummy attempts. Its
+supported costs are 8192, 16384, and 32768, with `r=8` and at least 10, 5, and 3
+parallelization steps respectively. Verification also enforces the configured
+memory and work ceilings before deriving a key.
+
 ## Recover a password
 
 Recovery uses `requestReset` → `completeReset` and requires an

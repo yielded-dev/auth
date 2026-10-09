@@ -51,6 +51,7 @@ export { PasswordHashing } from "./password/PasswordHashing";
 export {
   PasswordHashingConfig,
   defaultPasswordHashingConfig,
+  defaultScryptPasswordHashingConfig,
   validatePasswordHashingConfig,
 } from "./password/configuration";
 

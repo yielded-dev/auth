@@ -25,7 +25,10 @@ const ownBytes = <E, R>(acquire: Effect.Effect<Uint8Array, E, R>) =>
   });
 
 export const make = (input: PasswordHashingConfig = defaultPasswordHashingConfig) => {
-  const snapshot = { ...input };
+  const snapshot = {
+    ...input,
+    ...(input.scrypt === undefined ? {} : { scrypt: { ...input.scrypt } }),
+  };
 
   return Effect.gen(function* () {
     const config = yield* validatePasswordHashingConfig(snapshot);
@@ -81,6 +84,30 @@ export const make = (input: PasswordHashingConfig = defaultPasswordHashingConfig
         })
         .pipe(Effect.map(Redacted.value), Effect.mapError(failure));
 
+    const deriveScrypt = (
+      password: Uint8Array,
+      salt: Uint8Array,
+      cost: number,
+      blockSize: number,
+      parallelism: number,
+      length: number,
+    ) =>
+      kdf
+        .scrypt({ password: Redacted.make(password), salt, cost, blockSize, parallelism, length })
+        .pipe(Effect.map(Redacted.value), Effect.mapError(failure));
+
+    const deriveCurrent = (password: Uint8Array, salt: Uint8Array) =>
+      config.scrypt === undefined
+        ? derive(password, salt, config.memoryKiB, config.passes, config.parallelism, 32)
+        : deriveScrypt(
+            password,
+            salt,
+            config.scrypt.cost,
+            config.scrypt.blockSize,
+            config.scrypt.parallelism,
+            32,
+          );
+
     const withPassword = <A, E, P, E2>(
       password: Redacted.Redacted<string>,
       prepare: Effect.Effect<P, E2, Scope.Scope>,
@@ -111,14 +138,15 @@ export const make = (input: PasswordHashingConfig = defaultPasswordHashingConfig
                 .pipe(Effect.mapError(() => PasswordHashingUnavailable.make({}))),
             );
 
-            const output = yield* ownBytes(
-              derive(bytes, salt, config.memoryKiB, config.passes, config.parallelism, 32),
-            );
+            const output = yield* ownBytes(deriveCurrent(bytes, salt));
+
+            const prefix =
+              config.scrypt === undefined
+                ? `$argon2id$v=19$m=${config.memoryKiB},t=${config.passes},p=${config.parallelism}`
+                : `$scrypt$ln=${Math.log2(config.scrypt.cost)},r=${config.scrypt.blockSize},p=${config.scrypt.parallelism}`;
 
             return Redacted.make(
-              EncodedPasswordHash.make(
-                `$argon2id$v=19$m=${config.memoryKiB},t=${config.passes},p=${config.parallelism}$${phcBase64(salt)}$${phcBase64(output)}`,
-              ),
+              EncodedPasswordHash.make(`${prefix}$${phcBase64(salt)}$${phcBase64(output)}`),
             );
           }),
         ),
@@ -143,42 +171,49 @@ export const make = (input: PasswordHashingConfig = defaultPasswordHashingConfig
                     parsed.parallelism,
                     parsed.expected.length,
                   )
-                : kdf
-                    .pbkdf2({
-                      password: Redacted.make(bytes),
-                      salt: parsed.salt,
-                      iterations: parsed.iterations,
-                      length: 32,
-                    })
-                    .pipe(Effect.map(Redacted.value), Effect.mapError(failure)),
+                : parsed._tag === "Scrypt"
+                  ? deriveScrypt(
+                      bytes,
+                      parsed.salt,
+                      parsed.cost,
+                      parsed.blockSize,
+                      parsed.parallelism,
+                      parsed.expected.length,
+                    )
+                  : kdf
+                      .pbkdf2({
+                        password: Redacted.make(bytes),
+                        salt: parsed.salt,
+                        iterations: parsed.iterations,
+                        length: 32,
+                      })
+                      .pipe(Effect.map(Redacted.value), Effect.mapError(failure)),
             );
 
             // Fixed-length byte comparison; JavaScript/JIT gives no hard timing guarantee.
             const matches = equalBytes(output, parsed.expected);
 
-            // Parallelism does not compensate for weak memory/passes.
             const upgrade =
               parsed._tag === "LegacyPbkdf2" ||
-              parsed.memoryKiB < config.memoryKiB ||
-              parsed.passes < config.passes ||
               parsed.salt.length < 16 ||
-              parsed.expected.length < 32;
+              parsed.expected.length < 32 ||
+              (parsed._tag === "Scrypt"
+                ? config.scrypt === undefined ||
+                  parsed.cost < config.scrypt.cost ||
+                  parsed.blockSize < config.scrypt.blockSize ||
+                  parsed.parallelism < config.scrypt.parallelism
+                : parsed._tag === "Argon2id" &&
+                  // Argon2 parallelism does not compensate for weak memory/passes.
+                  (config.scrypt !== undefined ||
+                    parsed.memoryKiB < config.memoryKiB ||
+                    parsed.passes < config.passes));
 
             return { matches, needsRehash: matches && upgrade };
           }),
         ),
       dummy: (password: Redacted.Redacted<string>) =>
         withPassword(password, Effect.void, (bytes) =>
-          ownBytes(
-            derive(
-              bytes,
-              new Uint8Array(16),
-              config.memoryKiB,
-              config.passes,
-              config.parallelism,
-              32,
-            ),
-          ).pipe(Effect.asVoid),
+          ownBytes(deriveCurrent(bytes, new Uint8Array(16))).pipe(Effect.asVoid),
         ),
     };
   });

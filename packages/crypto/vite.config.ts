@@ -19,8 +19,6 @@ export default defineConfig({
     ],
     dts: true,
     unbundle: true,
-    deps: { neverBundle: [/\.wasm$/] },
-    copy: [{ from: "src/internal/argon2.wasm", to: "dist/internal" }],
     plugins: [
       {
         // Match core: retain actual ESM namespaces and avoid synthetic helper exports.

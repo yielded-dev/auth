@@ -59,13 +59,10 @@ second argument containing KDF limit overrides; `NodeCrypto.layer(limits?)`
 takes those overrides as its first argument. Bun uses the same implementation
 through `@yielded/crypto/platform-bun`.
 
-For Cloudflare Workers, use `WorkerdCrypto.layer(globalThis.crypto.subtle, limits?)`
-from `@yielded/crypto/platform-workerd`. Wrangler imports its bundled Wasm module
-at deployment; this backend does not compile Wasm bytes at runtime. Its Argon2id
-block compression uses Wasm SIMD while retaining the portable backend's parameter
-limits, hash outputs, admission and interruptible scheduling. Each derivation owns
-and clears its Wasm memory. Changing backends requires no password migration or
-reduction in hashing cost. Node/Bun's native Argon2 is unavailable in Workers.
+For Cloudflare Workers, use `WorkerdCrypto.layer(globalThis.crypto.subtle)` from
+`@yielded/crypto/platform-workerd`. It uses native `node:crypto.scrypt` and requires
+Node.js compatibility. Portable Argon2id remains available to verify existing
+passwords. This backend needs no Wasm asset or special bundling configuration.
 
 For sessions and proofs, `WebCrypto.layerWebCrypto` supplies Effect `Crypto` and
 `Hmac` from the runtime's global WebCrypto. Its components are `layerCryptoWeb`
@@ -122,6 +119,7 @@ changing the backend does not change stored credential bytes or keyring policy.
 | `Hmac.Hmac`           | `SHA-1`, `SHA-256`, `SHA-384`, `SHA-512`     | Nonempty secret key; complete MAC, without truncation                             |
 | `Kdf.Kdf`             | `pbkdf2`, `hkdf`                             | SHA-256; lengths are bytes                                                        |
 | `Kdf.Kdf`             | `argon2id`                                   | Version 19; memory in KiB; optional secret and associated data                    |
+| `Kdf.Kdf`             | `scrypt`                                     | `cost` (N), `blockSize` (r), `parallelism` (p); output length in bytes            |
 | `Signature.Signature` | `ECDSA-P256-SHA256`                          | 64-byte IEEE P1363 signature (`r \|\| s`)                                         |
 | `Signature.Signature` | `RSASSA-PKCS1-v1_5-SHA256`, `RSA-PSS-SHA256` | RSA keys of at least 2048 bits; PSS uses SHA-256, MGF1-SHA-256 and a 32-byte salt |
 | `Signature.Signature` | `Ed25519`                                    | Pure Ed25519, 64-byte signature                                                   |
@@ -159,11 +157,12 @@ raw-key operations. XChaCha continues to use raw-key operations.
 
 ## Backends and resource limits
 
-| Backend                         | Native operations                                        | Portable operations        | Unsupported operations                              |
-| ------------------------------- | -------------------------------------------------------- | -------------------------- | --------------------------------------------------- |
-| `WebCrypto`                     | AES-GCM, HMAC, PBKDF2, HKDF, signatures                  | None                       | Argon2id, XChaCha                                   |
-| `Portable`                      | AES-GCM, HMAC, PBKDF2, HKDF, signatures                  | Owned Argon2id and XChaCha | Host-specific native capability gaps                |
-| `platform-node`, `platform-bun` | Node-compatible WebCrypto operations and native Argon2id | Owned XChaCha              | Native Argon2id when the host lacks `crypto.argon2` |
+| Backend                         | Native operations                                     | Portable operations        | Unsupported operations                              |
+| ------------------------------- | ----------------------------------------------------- | -------------------------- | --------------------------------------------------- |
+| `WebCrypto`                     | AES-GCM, HMAC, PBKDF2, HKDF, signatures               | None                       | Argon2id, scrypt, XChaCha                           |
+| `Portable`                      | AES-GCM, HMAC, PBKDF2, HKDF, signatures               | Owned Argon2id and XChaCha | scrypt; host-specific native capability gaps        |
+| `platform-node`, `platform-bun` | Node-compatible WebCrypto, native Argon2id and scrypt | Owned XChaCha              | Native Argon2id when the host lacks `crypto.argon2` |
+| `platform-workerd`              | WebCrypto and native scrypt                           | Owned Argon2id and XChaCha | Host-specific native capability gaps                |
 
 Backend selection is explicit. An unavailable native algorithm fails with
 `CryptoUnsupportedAlgorithm`; it does not silently select a different algorithm
@@ -178,6 +177,12 @@ domain. The HKDF profile limits `info` to 1024 bytes and output to 8160 bytes;
 PBKDF2 iterations must fit a positive signed 32-bit integer. KDF inputs are bytes:
 the library neither decodes nor normalizes passwords. Auth owns password
 validation, PHC parsing and rehash policy.
+
+Scrypt requires a power-of-two `cost` greater than one. Its allocation must fit
+`maximumMemoryKiB`, including native scratch buffers; `N*r*p/8` must fit
+`maximumMemoryPasses`. `maximumParallelism` and `maximumPasses` apply to Argon2id.
+Custom `Kdf` services implement `scrypt` alongside the existing methods, returning
+`CryptoUnsupportedAlgorithm` when unavailable.
 
 `KdfAdmission.layer()` defaults to one running derivation, sixteen queued requests
 and a five-second acquisition wait. Waiting can be interrupted. Once native work
