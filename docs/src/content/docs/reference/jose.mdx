@@ -90,8 +90,8 @@ when the application Schema omits them. `protectedHeader` contains the supported
 header fields.
 
 `Jwt.sign(schema, claims, privateKey, header)` encodes the Schema before signing.
-Verification captures its policy before key lookup, then checks the signature
-and registered claims before decoding the application Schema. Both operations preserve `SchemaError` and the Schema's distinct
+Verification checks the signature and registered claims before decoding the
+application Schema. Both operations preserve `SchemaError` and the Schema's
 encoding/decoding service requirements in `E` and `R`. Schema input reporting is
 disabled; caller-authored messages, annotations and paths remain caller-owned.
 
@@ -115,12 +115,11 @@ or Ed25519 public and private bytes. Native key parsing validates the components
 redacted `privateKey` JWK values ready for application-owned persistence or import.
 Generation supports the asymmetric algorithms above; RSA accepts `modulusLength`
 2048 (default), 3072 or 4096. Generated JWKs carry the selected `alg`, `use: "sig"`
-and optional `kid`. Temporary private component bytes are cleared after encoding.
-Public imports and JWKS reject private keys. Imports and key sets capture their
-own properties once and ignore inherited key material and metadata;
-`alg`, `use`, and `key_ops` restrict operations. Key sets and each `key_ops` array
-are limited to 256 entries before their slots are captured. JWKS select one public key by
-algorithm, optional `kid`, use and operations; missing or ambiguous selections fail.
+and optional `kid`.
+Public imports and JWKS reject private keys; `alg`, `use`, and `key_ops` restrict
+operations. Key sets and each `key_ops` array are limited to 256 entries. JWKS select
+one public key by algorithm, optional `kid`, use and operations; missing or ambiguous
+selections fail.
 
 `Jwe.encrypt(plaintext, key, { alg: "dir", enc: "A256GCM" })` requires `Aead` and
 Effect `Crypto`, which supplies a fresh 12-byte nonce. The compact protected header
@@ -193,5 +192,4 @@ requests, releases waiting callers and discards the cache. Cache lifetime is loc
 policy; server cache headers do not override it. There is no background polling.
 
 The [shipped notices](https://github.com/yielded-dev/auth/blob/main/packages/jose/THIRD_PARTY_NOTICES.md)
-credit the selected upstream contracts and pin their source revision. This package
-implements the profile above and does not claim full panva/jose parity.
+credit the selected upstream contracts and their source revisions.

@@ -14,10 +14,6 @@ database and keys under `.data/`; accounts from the Drizzle examples are separat
 Set the Cloudflare credentials in [.env.example](.env.example) to deliver email
 from `hello@effect-agent.com`.
 
-The current schema replaces the old proof tables with one current-code table.
-Reset this example's development database before running it against older data;
-this also resets its accounts, sessions, and credentials.
-
 ## Native browser sign-in
 
 `/login` also serves [the Electron example](../browser-login-electron) and iOS
@@ -74,17 +70,13 @@ AUTH_DATA_DIR=/tmp/yielded-oauth-github \
 ```
 
 Open <http://localhost:4185/oauth-settings> and sign in with the configured GitHub
-account. Choose **Link another account** and select a second GitHub account you
-control. Both appear in the public `listLinkedAccounts` query. Remove one, sign in
-with the remaining identity, then try removing the last one: the server refuses to
-lock you out. Cancel consent to leave the inventory unchanged. Linking an identity
-owned by another application account reports an ownership conflict with recovery
-steps; re-linking your current identity leaves its existing link intact.
+account. Choose **Link another account** to add a second GitHub identity you control.
+The page lists linked logins and lets you remove one while preserving a usable
+sign-in method. Linking cannot take an identity from another application account.
 
 The configured user ID provisions the first account once. Changing it later does
 not replace existing links. This example has no public registration or email-based
-account matching. Use a fresh data directory when switching from the earlier
-Strava demo; its persisted provider identities are not GitHub identities.
+account matching.
 
 `AUTH_PORT` defaults to `4185`. For an HTTPS reverse proxy, set `AUTH_ORIGIN` to
 the external origin and register its exact callback URL; cookies become Secure.
@@ -96,25 +88,19 @@ URL requires a matching callback registration.
 
 GitHub requests `read:user` for sign-in. This app retains no provider grants and
 keeps client secrets on the server. Tokens never enter session claims, browser
-results, persistent storage or logs. Consent and code exchange use GitHub's real
-endpoints; there is no simulated browser provider. See
+results, persistent storage or logs. See
 [GitHub OAuth setup](../../docs/src/content/docs/guide/github.md).
 
 ### Policy, storage and client ownership
 
 [The server](src/oauth-settings-server.ts) composes direct SQL mappings with
-state-assisted signed sessions. Every session read checks the active subject and
-security revision in the same database that owns account changes. Unlink removes
-the credential and advances that revision in one transaction, invalidating every
-session immediately. The eligibility mapping refuses to remove the last usable
-primary sign-in method. Linking preserves the security revision and session.
+state-assisted signed sessions. Linking preserves sessions; unlinking invalidates
+them immediately and protects the last usable sign-in method.
 
-[The application policy](src/oauth-settings-auth.ts) accepts an actual verified
-session from the last five minutes, retaining its private factor identities,
-revisions and original proof times. An older session must sign in again. The link
-callback uses the authorization captured at begin and asks for no second proof.
-This policy treats recent provider sign-in as sufficient confirmation; applications
-requiring a separate factor should supply their own `OAuthActionEvidence`.
+[The application policy](src/oauth-settings-auth.ts) requires verified authentication
+from the last five minutes. Sign in again when it expires. This policy treats
+recent provider sign-in as sufficient confirmation; applications requiring a
+separate factor supply their own `OAuthActionEvidence`.
 
 `AUTH_DATA_DIR` holds `auth.sqlite` and `oauth-settings-keys.json`, whose independent
 random signing, transaction-encryption and binding keys are created with mode
@@ -156,18 +142,13 @@ AUTH_DATA_DIR=/tmp/yielded-oauth-pg PERSISTENCE_DIALECT=pg \
   vp -C examples/persistence-sql run example:oauth-lifecycle
 ```
 
-The consumer signs in, retains an encrypted grant, links another login identity,
-lists grants, unlinks the login, rejects an absent-link retry, registers a new user,
-and signs that user in. It closes and reopens its SQL client, then lists and uses
-the original retained grant. Login links and provider API grants are separate:
-`listAccountConnections` lists grants; `listLinkedAccounts` reads login identities.
+The consumer shows retained API access, login linking, registration, and reuse
+of a persisted grant. `listAccountConnections` lists provider API grants;
+`listLinkedAccounts` reads login identities.
 
-The native Strava protocol uses simulated provider HTTP replies, so no provider
-account or secret is needed. The CLI privately receives demo action codes in place
-of an external delivery channel. SQL stores only their digests, binds them to an
-action, command, and subject revision, and consumes them once. Public demo keys
-are unsuitable for real credentials. This proves the library workflow and SQL
-boundary, not real provider consent, browser cookies, or production factor delivery.
+It uses simulated Strava replies and private local action codes, so no provider
+account or secret is needed. Its public demo keys and local delivery are unsuitable
+for real credentials; use the browser example above for real provider consent.
 
 [The entrypoint](src/oauth-lifecycle.ts) composes the same
 [application-owned mappings](../shared/oauth/storage.ts) as the live GitHub/Strava

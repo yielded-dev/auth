@@ -32,10 +32,8 @@ when ordinary reads may still use a snapshot. See [cookie limits](./http#session
 
 ## Signing keys
 
-| Service                       | Default and override                                                                                                                                           |
-| ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `Auth.AuthConfig`             | `AuthConfig.layer()` reads `AUTH_SECRET` through Effect Config. Provide `AuthConfig.layer({ secret })` with a `Redacted<string>` to use your own secret store. |
-| `Sessions.SessionSigningKeys` | Derived from `AuthConfig`; provide a keyring service for rotation. An explicit keyring bypasses the application-secret lookup.                                 |
+- **`Auth.AuthConfig`**: `AuthConfig.layer()` reads `AUTH_SECRET` through Effect Config. Provide `AuthConfig.layer({ secret })` with a `Redacted<string>` to use your own secret store.
+- **`Sessions.SessionSigningKeys`**: Derived from `AuthConfig`; provide a keyring service for rotation. An explicit keyring bypasses the application-secret lookup.
 
 Missing secrets or values shorter than 32 characters fail startup with
 `AuthConfigurationError`. There is no generated fallback. Keep the same secret
@@ -71,24 +69,18 @@ Signed Layers use the same default signing service. Configure cookie caching on
 `Auth.make` with `Sessions.stateful({ cacheFor })`.
 
 `completionLayer({ pendingLifetimeMillis, attemptLimit })` supports additional
-factors through `PendingAuthentication` persistence. `SessionStrategy.inspect`
-returns a `SessionSource` with private `inspection` and a strategy-specific
-`guard`; public verification omits both. Trusted completion requires the current
-`AuthenticationRequirement` captured with the credential's full authority vector.
-The committing owner checks authority again.
+factors through `PendingAuthentication` persistence. Your `AuthenticationAuthority`
+sets the required factors and approves current authority before session issuance.
+A pending proof is not a session; see [TOTP setup](../guide/totp#enable-the-authenticator).
 
-Login and step-up pending proofs share storage with mandatory module scope and a
-`Login` or `StepUp` kind. Each port accepts only its own kind. An inspected pending snapshot
-carries the current requirement into completion; it is never accepted from a
-public request.
+`SessionStrategy.inspect` returns a private `SessionSource` containing `inspection`
+and a strategy-specific `guard`. Use
+`sessions.inspectInvocation(invocation, credential)` in an action policy to obtain
+the source that admitted that action. Outside the invocation it inspects afresh.
+Public session results and cookie snapshots are not substitutes for this evidence.
 
 Provide the module's `SessionCleanup` service to use `sessions.cleanup({ limit })`.
-`limit` is 1–1,000 and applies across expired pending proofs and due assisted
-revocation tombstones. The result is `{ removed, hasMore }`; `hasMore` means the
-limit was reached, so the next call can remove zero rows. Missing maintenance
-support returns an unsupported-capability error.
-
-For pre-production upgrades, reset development session rows, pending proofs,
-step-up intents, revocation tombstones, and their cookies. Remove session-flow
-and separate step-up tables, remove session row versions, and map the shared
-pending role; the current examples include the complete initial schemas.
+`limit` is 1–1,000 across expired pending proofs and due assisted revocation
+tombstones. The result is `{ removed, hasMore }`; `hasMore` means the limit was
+reached, so the next call can remove zero rows. Without maintenance support,
+cleanup fails with `SessionCapabilityUnsupported`.

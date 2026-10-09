@@ -46,16 +46,11 @@ const PasswordMethodsLive = Layer.effect(
 [methods.ts](src/methods.ts) defines schema-backed operations with `Auth.makeStrategy`.
 `AccountMethods` and `AccountStore` are application services, not library exports.
 
-[store.ts](src/store.ts) serializes transactions into `.data/accounts.json` with an
-exclusive writer lock, schema validation, fsync, and atomic rename. Preparation
-failures discard the working copy and receipts. Expiry is checked again immediately
-before publication. An uncertain write disables that store instance until reload;
-atomic proof consumption prevents a committed candidate from being redeemed again.
-Delivery is process-local and is not recovered after an unknown commit.
-Only digests and password verifiers are persisted, never codes or session bearers.
-
-The current snapshot schema requires resetting older `.data/accounts.json` files.
-This resets the example accounts and their credentials.
+[store.ts](src/store.ts) keeps accounts in `.data/accounts.json` under an exclusive
+writer lock. An uncertain write disables that instance until reload; it does not
+authorize replaying credential issuance. Delivery is process-local and is not
+recovered after an unknown commit. The store persists digests and password
+verifiers, never codes or session bearers.
 
 This store supports one process on a local filesystem. After a crash, remove
 `.data/writer.lock` only after confirming the old process has stopped. Production

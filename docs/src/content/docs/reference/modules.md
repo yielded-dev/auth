@@ -94,20 +94,18 @@ See [HTTP integration](../guide/http-and-client) for contract sharing,
 SDK integrations live in companion packages. Import the platform entrypoint
 you use.
 
-| Package or import                         | Integration                                                                               |
-| ----------------------------------------- | ----------------------------------------------------------------------------------------- |
-| `@yielded/auth-simplewebauthn/Browser`    | Browser WebAuthn ceremonies through `make()` or `layer`.                                  |
-| `@yielded/auth-simplewebauthn/Server`     | Server verification through `make(options)` or `layer`.                                   |
-| `@yielded/auth-react-native`              | iOS passkey ceremonies through `make()` or `layer`; import only in the native entrypoint. |
-| `@yielded/auth-react-native/BrowserLogin` | iOS authentication browser and Keychain vault.                                            |
-| `@yielded/auth-electron/BrowserLogin`     | Main-process system browser and encrypted vault.                                          |
-| `@yielded/auth-persistence`               | Direct Effect SQL persistence; requires an application-provided SQL client.               |
-| `@yielded/auth-persistence-drizzle`       | Drizzle mappings and explicit driver modules such as `/Postgres` and `/SqliteBun`.        |
-| `@yielded/auth/adapters/Twilio`           | SMS delivery through Effect HTTP; requires `TwilioConfig`.                                |
+- **`@yielded/auth-simplewebauthn/Browser`**: Browser WebAuthn ceremonies through `make()` or `layer`.
+- **`@yielded/auth-simplewebauthn/Server`**: Server verification through `make(options)` or `layer`.
+- **`@yielded/auth-react-native`**: iOS passkey ceremonies through `make()` or `layer`; import only in the native entrypoint.
+- **`@yielded/auth-react-native/BrowserLogin`**: iOS authentication browser and Keychain vault.
+- **`@yielded/auth-electron/BrowserLogin`**: Main-process system browser and encrypted vault.
+- **`@yielded/auth-persistence`**: Direct Effect SQL persistence; requires an application-provided SQL client.
+- **`@yielded/auth-persistence-drizzle`**: Drizzle mappings and explicit driver modules such as `/Postgres` and `/SqliteBun`.
+- **`@yielded/auth/adapters/Twilio`**: SMS delivery through Effect HTTP; requires `TwilioConfig`.
 
 Auth owns schemas, workflows, and direct password, TOTP, and OAuth implementations.
-Its runtime dependencies are Effect and the first-party `@yielded/crypto` and
-`@yielded/oauth` packages; OpenID Connect uses first-party JOSE verification.
+Its runtime dependencies are Effect and the first-party `@yielded/crypto`,
+`@yielded/jose`, and `@yielded/oauth` packages.
 `OpenIdConnect` and `GitHub` configure native providers without a provider SDK.
 Optional SDK adapters depend on Auth's public contracts; Auth never imports or
 re-exports them. Applications supply storage, policy, delivery authority, and
@@ -122,10 +120,8 @@ Direct paths narrow module loading; they do not change installed package depende
 `@yielded/auth-persistence` exports the named `AuthPersistence` facade for direct
 Effect SQL and has no Drizzle dependency or declarations. The Drizzle companion's
 driver modules export the same facade; its root exposes the Drizzle mapping contracts.
-Adapter authors use `@yielded/auth-persistence/Adapter` at two levels: mapped table
-contracts or `NativeSqlTables`. Managed, Drizzle, and direct SQL tables feed the
-same strategy implementation; the driver supplies column codecs, SQL expressions,
-and its native transaction or D1 batch boundary.
+Adapter authors use mapped table contracts or `NativeSqlTables` from
+`@yielded/auth-persistence/Adapter`.
 The root also exports `OAuthProxyPersistence` for the
 [callback proxy's durable handoffs](./oauth#callback-proxy).
 Drizzle's SQLite/D1 and PostgreSQL driver modules expose the same facade with

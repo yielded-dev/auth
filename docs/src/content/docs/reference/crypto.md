@@ -92,9 +92,8 @@ Sessions and numeric proofs use `Hmac` for their imported keys. Auth owns keyrin
 validation, key IDs, and credential formats; crypto owns native key handling.
 Auth requires application-supplied crypto services and does not select a backend.
 Stateful sessions require Effect `Crypto`; signed sessions and numeric proofs also require `Hmac`.
-`@yielded/auth/WebCrypto` re-exports `layerCryptoWeb` and `layerWebCrypto` for
-existing compositions. Replace former `SubtleCrypto` overrides with an `Hmac`
-Layer, such as `WebCrypto.layerHmac(subtle)`. Direct callers of
+`@yielded/auth/WebCrypto` also exports `layerCryptoWeb` and `layerWebCrypto`.
+Direct callers of
 `Sessions.makeSessionSigningCodec` and numeric `Proofs.makeProofCrypto` must keep
 their construction Scope open while using the returned operations; Auth Layers
 own this scope automatically. Token-only proof construction needs Effect
@@ -107,16 +106,14 @@ changing the backend does not change stored credential bytes or keyring policy.
 
 ## Supported profiles
 
-| Service               | Profile                                      | Bytes and key formats                                                             |
-| --------------------- | -------------------------------------------- | --------------------------------------------------------------------------------- |
-| `Aead.Aead`           | `AES-256-GCM`                                | 32-byte key, 12-byte nonce, 16-byte appended authentication tag                   |
-| `Aead.Aead`           | `XChaCha20-Poly1305`                         | 32-byte key, 24-byte nonce, 16-byte appended authentication tag                   |
-| `Hmac.Hmac`           | `SHA-1`, `SHA-256`, `SHA-384`, `SHA-512`     | Nonempty secret key; complete MAC, without truncation                             |
-| `Kdf.Kdf`             | `pbkdf2`, `hkdf`                             | SHA-256; lengths are bytes                                                        |
-| `Kdf.Kdf`             | `argon2id`                                   | Version 19; memory in KiB; optional secret and associated data                    |
-| `Signature.Signature` | `ECDSA-P256-SHA256`                          | 64-byte IEEE P1363 signature (`r \|\| s`)                                         |
-| `Signature.Signature` | `RSASSA-PKCS1-v1_5-SHA256`, `RSA-PSS-SHA256` | RSA keys of at least 2048 bits; PSS uses SHA-256, MGF1-SHA-256 and a 32-byte salt |
-| `Signature.Signature` | `Ed25519`                                    | Pure Ed25519, 64-byte signature                                                   |
+- **`Aead.Aead`**: Profile: `AES-256-GCM`. Bytes and key formats: 32-byte key, 12-byte nonce, 16-byte appended authentication tag.
+- **`Aead.Aead`**: Profile: `XChaCha20-Poly1305`. Bytes and key formats: 32-byte key, 24-byte nonce, 16-byte appended authentication tag.
+- **`Hmac.Hmac`**: Profile: `SHA-1`, `SHA-256`, `SHA-384`, `SHA-512`. Bytes and key formats: Nonempty secret key; complete MAC, without truncation.
+- **`Kdf.Kdf`**: Profile: `pbkdf2`, `hkdf`. Bytes and key formats: SHA-256; lengths are bytes.
+- **`Kdf.Kdf`**: Profile: `argon2id`. Bytes and key formats: Version 19; memory in KiB; optional secret and associated data.
+- **`Signature.Signature`**: Profile: `ECDSA-P256-SHA256`. Bytes and key formats: 64-byte IEEE P1363 signature (`r || s`).
+- **`Signature.Signature`**: Profile: `RSASSA-PKCS1-v1_5-SHA256`, `RSA-PSS-SHA256`. Bytes and key formats: RSA keys of at least 2048 bits; PSS uses SHA-256, MGF1-SHA-256 and a 32-byte salt.
+- **`Signature.Signature`**: Profile: `Ed25519`. Bytes and key formats: Pure Ed25519, 64-byte signature.
 
 Signature signing takes a `Redacted` PKCS8 DER private key; verification takes an
 SPKI DER public key. `encodePublicKey` and `encodePrivateKey` convert raw
@@ -134,12 +131,10 @@ for existing protocols such as TOTP.
 Raw-key operations import keys on each call. For repeated use, import a key once
 in the Scope that owns the work:
 
-| Service     | Import                                         | Returned operations                                                                                 |
-| ----------- | ---------------------------------------------- | --------------------------------------------------------------------------------------------------- |
-| `Hmac`      | `importKey({ algorithm, key })`                | `sign(data)`, `verify(data, tag)`                                                                   |
-| `Aead`      | `importKey({ algorithm: "AES-256-GCM", key })` | `encrypt({ nonce, plaintext, additionalData? })`, `decrypt({ nonce, ciphertext, additionalData? })` |
-| `Signature` | `importPrivateKey({ algorithm, privateKey })`  | `sign(data)`                                                                                        |
-| `Signature` | `importPublicKey({ algorithm, publicKey })`    | `verify(data, signature)`                                                                           |
+- **`Hmac`**: Import: `importKey({ algorithm, key })`. Returned operations: `sign(data)`, `verify(data, tag)`.
+- **`Aead`**: Import: `importKey({ algorithm: "AES-256-GCM", key })`. Returned operations: `encrypt({ nonce, plaintext, additionalData? })`, `decrypt({ nonce, ciphertext, additionalData? })`.
+- **`Signature`**: Import: `importPrivateKey({ algorithm, privateKey })`. Returned operations: `sign(data)`.
+- **`Signature`**: Import: `importPublicKey({ algorithm, publicKey })`. Returned operations: `verify(data, signature)`.
 
 Imports validate and snapshot nonextractable native keys. Algorithm and usage
 stay fixed on each handle; AES still requires a unique nonce per encryption.
@@ -151,17 +146,13 @@ raw-key operations. XChaCha continues to use raw-key operations.
 
 ## Backends and resource limits
 
-| Backend                         | Native operations                                        | Portable operations        | Unsupported operations                              |
-| ------------------------------- | -------------------------------------------------------- | -------------------------- | --------------------------------------------------- |
-| `WebCrypto`                     | AES-GCM, HMAC, PBKDF2, HKDF, signatures                  | None                       | Argon2id, XChaCha                                   |
-| `Portable`                      | AES-GCM, HMAC, PBKDF2, HKDF, signatures                  | Owned Argon2id and XChaCha | Host-specific native capability gaps                |
-| `platform-node`, `platform-bun` | Node-compatible WebCrypto operations and native Argon2id | Owned XChaCha              | Native Argon2id when the host lacks `crypto.argon2` |
+- **`WebCrypto`**: Native operations: AES-GCM, HMAC, PBKDF2, HKDF, signatures. Portable operations: None. Unsupported operations: Argon2id, XChaCha.
+- **`Portable`**: Native operations: AES-GCM, HMAC, PBKDF2, HKDF, signatures. Portable operations: Owned Argon2id and XChaCha. Unsupported operations: Host-specific native capability gaps.
+- **`platform-node`, `platform-bun`**: Native operations: Node-compatible WebCrypto operations and native Argon2id. Portable operations: Owned XChaCha. Unsupported operations: Native Argon2id when the host lacks `crypto.argon2`.
 
 Backend selection is explicit. An unavailable native algorithm fails with
 `CryptoUnsupportedAlgorithm`; it does not silently select a different algorithm
-or password cost. The selected vectors pass on Node 24.21 and Bun 1.4.2.
-Other host WebCrypto implementations can differ; browser runtime coverage is not
-claimed by the presence of a WebCrypto-shaped API.
+or password cost. Check that your runtime supplies the native algorithms you select.
 
 `Kdf.defaultLimits` defines per-derivation resource ceilings. Backend construction
 validates overrides before exposing services. These are work limits, not a
@@ -174,12 +165,8 @@ validation, PHC parsing and rehash policy.
 `KdfAdmission.layer()` defaults to one running derivation, sixteen queued requests
 and a five-second acquisition wait. Waiting can be interrupted. Once native work
 starts, interruption waits for the work and cleanup to finish before releasing
-capacity. Portable Argon2id targets eight-millisecond time slices, checking elapsed
-time every 256 blocks and yielding after at most 2,048 blocks even when the host
-clock is frozen during computation, as on Workers. These are cooperative limits,
-not a wall-time guarantee. It accepts interruption between slices and clears its
-memory and scratch buffers before releasing admission. It remains on the calling
-thread. `KdfAdmission.run` preserves the work's interruptibility;
+capacity. Portable Argon2id yields and accepts interruption between time slices,
+but remains on the calling thread. `KdfAdmission.run` preserves interruptibility;
 custom backends must protect any nonabortable native work until it finishes.
 Nested `run` calls reuse admission only in the same fiber and on the same service
 instance. A child fiber acquires independently.
@@ -199,5 +186,4 @@ provide a guarantee that all secret copies are erased. Scope any retained secret
 and use dedicated keys for each application purpose.
 
 The [shipped third-party notices](https://github.com/yielded-dev/auth/blob/main/packages/crypto/THIRD_PARTY_NOTICES.md)
-credit selected Noble, Wycheproof and standards sources. The initial profile does
-not claim full parity with those libraries.
+credit selected Noble, Wycheproof and standards sources.
