@@ -300,6 +300,9 @@ Include every role table the requested mappings use.
 
 Explicit SQL session reads check current authority and expiry; committed revocations
 invalidate sessions immediately. Application claims remain application-owned.
+Session listing includes only the current security revision. If concurrent authority
+changes prevent a coherent page, listing fails with `SessionUnavailable` rather than
+reporting pagination exhaustion.
 
 Keep mapped subject IDs canonical through every column codec. PostgreSQL UUID
 keys can coexist with text subject references; use the same lowercase UUID spelling

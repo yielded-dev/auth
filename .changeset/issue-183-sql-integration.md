@@ -3,4 +3,4 @@
 "@yielded/auth-persistence-drizzle": patch
 ---
 
-Allow composed SQL persistence alongside explicit strategy services, and safely read mapped SQL IDs with differing physical types. Keep passkey, session, and pending-authentication snapshots coherent when their mappings require independently bound reads.
+Allow composed SQL persistence alongside explicit strategy services, and safely read mapped SQL IDs with differing physical types. Keep passkey, session, and pending-authentication reads coherent across independently bound SQL mappings, including session pagination during authority changes.
