@@ -29,6 +29,7 @@ export default defineConfig({
             { label: "Effect Atom client", slug: "guide/client" },
             { label: "Desktop & mobile sign-in", slug: "guide/browser-login" },
             { label: "Sessions & protected routes", slug: "guide/sessions" },
+            { label: "Rate limiting", slug: "guide/rate-limits" },
             { label: "How sign-in works", slug: "guide/authentication" },
           ],
         },

@@ -176,30 +176,12 @@ screening also fails closed: its default ten-second timeout returns
 
 Default limiters are process-local and reset on restart. Their stores are bounded
 to 10,000 keys; reaching capacity can reject requests for valid accounts too.
-Multiple replicas, or a runtime rebuilt per request, need a shared Effect
-`RateLimiterStore` for identifier, subject, and network limits. Action, global
-message, and passkey module budgets remain per instance.
+Multiple replicas, or a runtime rebuilt per request, need a shared Effect limiter
+or store for identifier, subject, and network limits. Action, global message, and
+passkey module budgets remain per instance.
 
-To use an Effect `KeyValueStore`, supply it with your crypto Layer:
-
-```ts title="apps/server/rate-limits.ts"
-import { Layer } from "effect";
-import { Persistence } from "@yielded/auth";
-
-import { CryptoLive } from "./crypto-live";
-import { KeyValueStoreLive } from "./rate-limit-store";
-
-export const RateLimitsLive = Persistence.keyValueRateLimiterStore.pipe(
-  Layer.provide(KeyValueStoreLive),
-  Layer.provide(CryptoLive),
-);
-```
-
-`KeyValueStoreLive` is your application's storage Layer. Provide `RateLimitsLive`
-to Auth, and keep stored entries for at least the longest limit window.
-Checks are non-atomic: concurrent requests and replication lag can exceed the
-configured limit. Read or write failures deny requests. For atomic limits, supply
-an Effect store such as `RateLimiter.layerStoreRedis()` instead.
+See [rate limiting](./rate-limits) for overrides, an Alchemy recipe using
+Cloudflare's native binding, and the `KeyValueStore` and Redis alternatives.
 
 ## Recover a password
 
