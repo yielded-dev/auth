@@ -166,8 +166,10 @@ export {
   OAuthRegistrationRequestId,
   OAuthRegistrationApplication,
   OAuthRegistrationInspection,
+  OAuthRegistrationAuthentication,
   OAuthRegistrationDecision,
   OAuthRegistrationResult,
+  registrationCompletionResult,
 } from "./oauth/registrationModels";
 
 export {

@@ -1268,6 +1268,9 @@ export const makeSessionModule = <
               DateTime.toEpochMillis(now) + configuration.pendingLifetimeMillis,
               DateTime.toEpochMillis(assessed.assurance.authenticatedAt) +
                 requirement.maximumAgeMillis,
+              input.evidence.completionExpiresAt === undefined
+                ? Infinity
+                : DateTime.toEpochMillis(input.evidence.completionExpiresAt),
             ),
           );
 

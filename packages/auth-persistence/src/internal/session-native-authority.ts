@@ -52,11 +52,14 @@ export const sessionEvidenceDeadline = Effect.fnUntraced(function* (
   if (!assessed.satisfied) return yield* StaleAuthentication.make({});
 
   const boundaries = [
-    ...new Set(
-      evidence.proofs.map(
+    ...new Set([
+      ...evidence.proofs.map(
         (proof) => DateTime.toEpochMillis(proof.verifiedAt) + requirement.maximumAgeMillis,
       ),
-    ),
+      ...(evidence.completionExpiresAt === undefined
+        ? []
+        : [DateTime.toEpochMillis(evidence.completionExpiresAt)]),
+    ]),
   ]
     .filter((n) => n > now)
     .sort((a, b) => a - b);

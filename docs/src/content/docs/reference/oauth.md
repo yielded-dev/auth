@@ -199,16 +199,36 @@ outcomes are not retried automatically.
 
 ### Register and link accounts
 
-Registration retains verified identity while your application collects its
-registration payload. `RegistrationAuthority` owns admission and provisioning.
-`RegistrationAccepted` confirms account creation; start a fresh sign-in to establish
-a session. An exact replay returns the saved outcome without provisioning or
-credential delivery. Changing a bound payload conflicts.
+`OAuth.makeRegistration` retains verified identity while your application collects
+its registration payload. `RegistrationAuthority` owns admission and provisioning.
+By default, registration returns `RegistrationAccepted`; start a fresh sign-in to
+establish a session.
 
-SQL provisioning and login ownership commit together. External account systems
-need application-owned idempotence and reconciliation for the supplied `requestId`.
-A lost or unknown acknowledgment does not authorize repeating a provider exchange
-or recovering a session credential from registration.
+To continue authentication after registration, enable `authenticate` on both the
+strategy and its shared action:
+
+```ts
+OAuth.makeRegistration({ registration: Registration, registrationPolicy, authenticate: true });
+
+// For register inside AuthContract.make's actions callback:
+AuthContract.oauthRegister(sessions, Registration, {
+  strategy: "registration",
+  authenticate: true,
+});
+```
+
+The first confirmed registration returns `Authenticated` or `PendingAuthentication`
+according to your session policy. Provide the strategy's `SessionClaims` and session
+services. Exact replays return `RegistrationAccepted` without credentials; changing
+bound registration input conflicts.
+
+SQL and Drizzle support this option. A replacement `RegistrationAuthority` must
+advertise `authentication: "first-confirmed-registration"`; otherwise registration
+fails with `OAuthMethodUnsupported`.
+
+Registration and session issuance commit separately. The account can remain after
+completion fails or its response is lost; recover with a fresh sign-in. External
+provisioning must be idempotent for the supplied `requestId` and payload.
 
 For linking, `OAuthActionEvidence.verify` supplies fresh authorization for the exact
 action challenge. Session-based evidence uses verified private provenance through

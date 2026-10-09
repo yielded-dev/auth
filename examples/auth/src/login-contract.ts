@@ -2,7 +2,6 @@ import {
   AuthContract,
   Email,
   Hooks,
-  Identity,
   OAuth,
   Operations,
   Proofs,
@@ -15,13 +14,6 @@ export const Registration = Schema.Struct({
   acceptedTerms: Schema.Literal(true),
   displayName: Schema.NonEmptyString.check(Schema.isMaxLength(128)),
 });
-
-const Failure = Schema.Union([
-  OAuth.OAuthRejected,
-  OAuth.OAuthUnavailable,
-  OAuth.OAuthMethodUnsupported,
-  Hooks.HookDenied,
-]);
 
 const EmailFailure = Schema.Union([
   Email.EmailRejected,
@@ -127,19 +119,6 @@ export const LoginApi = AuthContract.make("example/social-auth", {
     }),
     signIn: AuthContract.oauthSignIn(),
     completeSignIn: AuthContract.oauthCompleteSignIn(sessions),
-    register: AuthContract.action({
-      payload: Schema.Struct({
-        reference: OAuth.OAuthRegistrationReference,
-        flowId: OAuth.OAuthSignInBegin.fields.flowId,
-        commandId: OAuth.OAuthCommandId,
-        registration: Registration,
-      }),
-      success: OAuth.OAuthRegistrationResult,
-      error: Schema.Union([Failure, Identity.IdentityConflict]),
-      mode: "mutation",
-      replay: "single-use",
-      credentials: true,
-      requestFields: { requestBinding: "request-binding", credential: "registration" },
-    }),
+    register: AuthContract.oauthRegister(sessions, Registration),
   }),
 });

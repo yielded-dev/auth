@@ -4,11 +4,13 @@ import { RequestBindingCredential, RequestBindingFlowId } from "../operations/re
 import { TokenDigest } from "../Schema";
 import {
   OAuthCommandId,
+  OAuthCredentialSnapshot,
   OAuthDisplayProfile,
   OAuthExternalIdentity,
   OAuthInstant,
   OAuthModuleId,
   OAuthSignInTransactionContext,
+  OAuthVerifiedExternalIdentity,
 } from "./signInModels";
 
 export const OAuthRegistrationFingerprint = TokenDigest.check(Schema.isMaxLength(256));
@@ -47,6 +49,7 @@ export const OAuthRegistrationIntent = Schema.Struct({
   /** Original authenticated provider snapshot, available only to server-side
    * provisioning authority. It is not caller-supplied registration data. */
   profile: Schema.optionalKey(OAuthDisplayProfile),
+  upstreamAuthenticatedAt: OAuthVerifiedExternalIdentity.fields.upstreamAuthenticatedAt,
   verifiedAtMillis: OAuthInstant,
   credentialDigest: OAuthRegistrationBearerDigest,
   issuedAtMillis: OAuthInstant,
@@ -108,15 +111,33 @@ export const OAuthRegistrationInspection = Schema.Struct({
 
 export type OAuthRegistrationInspection = typeof OAuthRegistrationInspection.Type;
 
+/** Private first-winner handoff; never persist it or reconstruct it from a replay. */
+export const OAuthRegistrationAuthentication = Schema.Struct({
+  intent: OAuthRegistrationIntent,
+  credentialId: OAuthCredentialSnapshot.fields.credentialId,
+  credentialRevision: OAuthCredentialSnapshot.fields.credentialRevision,
+  revision: OAuthCredentialSnapshot.fields.revision,
+});
+
+export type OAuthRegistrationAuthentication = typeof OAuthRegistrationAuthentication.Type;
+
 export const OAuthRegistrationDecision = Schema.Union([
-  Schema.TaggedStruct("Registered", { replayed: Schema.Boolean }),
+  Schema.TaggedStruct("Registered", {
+    replayed: Schema.Literal(false),
+    authentication: Schema.optionalKey(OAuthRegistrationAuthentication),
+  }),
+  Schema.TaggedStruct("Registered", {
+    replayed: Schema.Literal(true),
+    authentication: Schema.optionalKey(Schema.Never),
+  }),
   Schema.TaggedStruct("Rejected", {}),
   Schema.TaggedStruct("Conflict", {}),
 ]);
 
 export type OAuthRegistrationDecision = typeof OAuthRegistrationDecision.Type;
 
-/** Registration never establishes a session, including replay after an unknown
- * outcome. Begin a fresh OAuth sign-in after acceptance; failed session issuance
- * requires another new ceremony, without a replacement session receipt. */
+/** Metadata-only acceptance, including every replay after an uncertain outcome. */
 export const OAuthRegistrationResult = Schema.TaggedStruct("RegistrationAccepted", {});
+
+export const registrationCompletionResult = <S extends Schema.Top>(completion: S) =>
+  Schema.Union([OAuthRegistrationResult, completion]);

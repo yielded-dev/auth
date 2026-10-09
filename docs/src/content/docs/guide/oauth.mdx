@@ -64,9 +64,9 @@ drivers, including D1. Export its tables and apply migrations as shown in the
 The [runnable explicit composition](https://github.com/yielded-dev/auth/blob/main/examples/auth/src/oauth-application.ts)
 shows provider configuration and application-owned services.
 
-Retained sign-in requires an existing account link. Register new users first, then
-connect provider access after authentication. After a failed or uncertain callback,
-start a fresh sign-in; authorization codes are single-use.
+Retained sign-in requires an existing account link. [Register new users](#register-new-users)
+first, then connect provider access after authentication. After a failed or uncertain
+callback, start a fresh sign-in; authorization codes are single-use.
 
 ### Use the session and provider access
 
@@ -101,10 +101,11 @@ application's registration Schema. An unknown provider identity returns
 `RegistrationRequired`. Collect the application details and call `register` using
 the returned flow and reference.
 
-After `RegistrationAccepted`, start a fresh `auth.signIn` to establish a session.
-Replaying registration returns its saved outcome without issuing credentials.
-See [registration](../reference/oauth#register-and-link-accounts) for application
-admission and recovery, and [GitHub email](./github#private-email-for-registration)
+Registration returns `RegistrationAccepted` by default; start a fresh `auth.signIn`
+to establish a session. To continue authentication immediately, set `authenticate: true`
+on the strategy and its `AuthContract.oauthRegister` action. Replays remain
+credential-free. See [registration](../reference/oauth#register-and-link-accounts)
+for configuration and recovery, and [GitHub email](./github#private-email-for-registration)
 when account provisioning requires an address.
 
 ## Show linked login methods

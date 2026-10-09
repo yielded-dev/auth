@@ -17,6 +17,7 @@ import { makeAuthStrategy } from "../auth/AuthStrategy";
 import { defaultLayer, hooksLayer } from "../auth/defaults";
 import { hasCommitScope, type PreparedCommit } from "../hooks/commit";
 import { HookDenied } from "../hooks/models";
+import { IdentityConflict } from "../identity/models";
 import { reportAuthFailure } from "../internal/diagnostics";
 import type { AuthInvocation } from "../operations/context";
 import type { AuthOperationResult } from "../operations/credentials";
@@ -51,7 +52,11 @@ import {
   type ProfileOptions,
 } from "./profiles";
 import { makeOAuthRegistration } from "./registration";
-import { OAuthRegistrationIntent, OAuthRegistrationPolicy } from "./registrationModels";
+import {
+  OAuthRegistrationAuthentication,
+  OAuthRegistrationIntent,
+  OAuthRegistrationPolicy,
+} from "./registrationModels";
 import * as registrationSecrets from "./registrationSecrets";
 import { signInAccess } from "./signInAccess";
 import {
@@ -163,6 +168,161 @@ export const makeOAuthMethod = <
     }
   >(`effect-auth/oauth/${moduleId.length}:${moduleId}/Claims`);
 
+  const checkCredential = Effect.fnUntraced(function* (
+    resolved: OAuthCredentialSnapshot,
+    identity: OAuthVerifiedExternalIdentity,
+  ) {
+    const credential = yield* snapshotOAuth(OAuthCredentialSnapshot, resolved);
+    const expectedModule: string = moduleId;
+
+    if (
+      credential.moduleId !== expectedModule ||
+      credential.identity.provider !== identity.identity.provider ||
+      credential.identity.issuer !== identity.identity.issuer ||
+      credential.identity.subject !== identity.identity.subject ||
+      new Set(credential.revision.credentials.map((item) => item.credentialId)).size !==
+        credential.revision.credentials.length ||
+      !credential.revision.credentials.some(
+        (item) =>
+          item.credentialId === credential.credentialId &&
+          item.revision === credential.credentialRevision,
+      )
+    )
+      return yield* OAuthUnavailable.make({});
+
+    return credential;
+  });
+
+  const makeAuthentication = Effect.gen(function* () {
+    const { resolve: resolveClaims } = yield* SessionClaims;
+    const { prepare: completeAuthentication } = yield* sessions.AuthenticationCompletion;
+    const { digest } = yield* Crypto.Crypto;
+
+    return Effect.fn("OAuth.authenticate")(function* (input: {
+      readonly context: OAuthSignInTransactionContext;
+      readonly identity: OAuthVerifiedExternalIdentity;
+      readonly credential: OAuthCredentialSnapshot;
+      readonly verifiedAtMillis: number;
+      readonly completionExpiresAtMillis?: number;
+    }) {
+      const { context, identity, credential } = input;
+
+      yield* noAmbient();
+
+      const encoded = yield* Schema.encodeEffect(contextJson)(context).pipe(
+        Effect.mapError(() => OAuthUnavailable.make({})),
+      );
+
+      const bindingDigest = TokenDigest.make(
+        Base64Url.encode(
+          yield* digest("SHA-256", encoder.encode(encoded)).pipe(
+            Effect.mapError(() => OAuthUnavailable.make({})),
+          ),
+        ),
+      );
+
+      // Validate the selected projection even for replacement protocol services.
+      const claimsIdentity = yield* Schema.decodeEffect(ClaimsIdentity)({
+        provider: identity.identity.provider,
+        identity: snapshotOAuthSync(OAuthVerifiedExternalIdentity, identity),
+      }).pipe(Effect.mapError(() => OAuthUnavailable.make({})));
+
+      freezeOAuth(claimsIdentity);
+
+      const claims = yield* resolveClaims({
+        subjectId: credential.revision.subjectId,
+        credential: snapshotOAuthSync(OAuthCredentialSnapshot, credential),
+        ...claimsIdentity,
+      });
+
+      return yield* completeAuthentication({
+        claims,
+        requirement: credential.requirement,
+        evidence: {
+          revision: credential.revision,
+          flowId: AuthenticationFlowId.make(context.flowId),
+          bindingDigest,
+          ...(input.completionExpiresAtMillis === undefined
+            ? {}
+            : { completionExpiresAt: DateTime.makeUnsafe(input.completionExpiresAtMillis) }),
+          proofs: [
+            {
+              method: context.protocol,
+              credentialId: credential.credentialId,
+              factors: ["possession"],
+              userVerified: false,
+              phishingResistant: false,
+              verifiedAt: DateTime.makeUnsafe(input.verifiedAtMillis),
+            },
+          ],
+        },
+      }).pipe(
+        Effect.mapError((error) =>
+          error._tag === "HookDenied"
+            ? error
+            : error._tag === "SessionUnavailable"
+              ? OAuthUnavailable.make({})
+              : OAuthRejected.make({}),
+        ),
+        Effect.flatMap(read),
+      );
+    });
+  });
+
+  const completeRegistration = Effect.fn("OAuthRegistration.authenticate")(function* (
+    raw: OAuthRegistrationAuthentication,
+  ) {
+    const authentication = yield* snapshotOAuth(OAuthRegistrationAuthentication, raw);
+    const { intent, revision } = authentication;
+    const now = DateTime.toEpochMillis(yield* DateTime.now);
+
+    if (now >= intent.expiresAtMillis) return yield* OAuthRejected.make({});
+
+    const identity = snapshotOAuthSync(OAuthVerifiedExternalIdentity, {
+      identity: intent.identity,
+      ...(intent.profile === undefined ? {} : { profile: intent.profile }),
+      ...(intent.upstreamAuthenticatedAt === undefined
+        ? {}
+        : { upstreamAuthenticatedAt: intent.upstreamAuthenticatedAt }),
+    });
+
+    const persistence = yield* OAuthSignInPersistence;
+
+    const resolved = yield* persistence.resolve({
+      moduleId: intent.context.moduleId,
+      identity: intent.identity,
+    });
+
+    if (resolved === undefined) return yield* OAuthRejected.make({});
+    const current = yield* checkCredential(resolved, identity);
+
+    if (
+      current.credentialId !== authentication.credentialId ||
+      current.credentialRevision !== authentication.credentialRevision ||
+      current.revision.subjectId !== revision.subjectId ||
+      current.revision.securityRevision !== revision.securityRevision ||
+      current.revision.credentials.length !== revision.credentials.length ||
+      new Set(revision.credentials.map((item) => item.credentialId)).size !==
+        revision.credentials.length ||
+      !revision.credentials.every((item) =>
+        current.revision.credentials.some(
+          (expected) =>
+            expected.credentialId === item.credentialId && expected.revision === item.revision,
+        ),
+      )
+    )
+      return yield* OAuthRejected.make({});
+    const authenticate = yield* makeAuthentication;
+
+    return yield* authenticate({
+      context: intent.context,
+      identity,
+      credential: snapshotOAuthSync(OAuthCredentialSnapshot, { ...current, revision }),
+      verifiedAtMillis: intent.verifiedAtMillis,
+      completionExpiresAtMillis: intent.expiresAtMillis,
+    });
+  });
+
   const CompletionResult = completionResult(sessions.CompletionResult);
 
   type CompletionResult = typeof CompletionResult.Type;
@@ -216,8 +376,7 @@ export const makeOAuthMethod = <
         const { resolve: returnTarget } = yield* OAuthReturnTargets;
         const { seal, open } = yield* OAuthTransactionProtector;
         const { issue, consume, resolve } = yield* OAuthSignInPersistence;
-        const { resolve: resolveClaims } = yield* SessionClaims;
-        const { prepare: completeAuthentication } = yield* sessions.AuthenticationCompletion;
+        const authenticate = yield* makeAuthentication;
         const crypto = yield* Crypto.Crypto;
         const { digest } = crypto;
 
@@ -570,22 +729,7 @@ export const makeOAuthMethod = <
                 credentialCommands: [prepared.command],
               };
             }
-            const credential = snapshotOAuthSync(OAuthCredentialSnapshot, resolved);
-
-            if (
-              credential.moduleId !== id ||
-              credential.identity.provider !== identity.identity.provider ||
-              credential.identity.issuer !== identity.identity.issuer ||
-              credential.identity.subject !== identity.identity.subject ||
-              new Set(credential.revision.credentials.map((item) => item.credentialId)).size !==
-                credential.revision.credentials.length ||
-              !credential.revision.credentials.some(
-                (item) =>
-                  item.credentialId === credential.credentialId &&
-                  item.revision === credential.credentialRevision,
-              )
-            )
-              return yield* OAuthUnavailable.make({});
+            const credential = yield* checkCredential(resolved, identity);
 
             const connection =
               access === undefined
@@ -597,54 +741,12 @@ export const makeOAuthMethod = <
                     return yield* access.retain(flow, credential, privateGrant, grantStartedAt);
                   });
 
-            const bindingDigest = yield* hash(
-              yield* Schema.encodeEffect(contextJson)(context).pipe(
-                Effect.mapError(() => OAuthUnavailable.make({})),
-              ),
-            );
-
-            // Validate the selected projection even for replacement protocol services.
-            const claimsIdentity = yield* Schema.decodeEffect(ClaimsIdentity)({
-              provider: identity.identity.provider,
-              identity: snapshotOAuthSync(OAuthVerifiedExternalIdentity, identity),
-            }).pipe(Effect.mapError(() => OAuthUnavailable.make({})));
-
-            freezeOAuth(claimsIdentity);
-
-            const claims = yield* resolveClaims({
-              subjectId: credential.revision.subjectId,
-              credential: snapshotOAuthSync(OAuthCredentialSnapshot, credential),
-              ...claimsIdentity,
+            const established = yield* authenticate({
+              context,
+              identity,
+              credential,
+              verifiedAtMillis: verifiedAt,
             });
-
-            const established = yield* completeAuthentication({
-              claims,
-              requirement: credential.requirement,
-              evidence: {
-                revision: credential.revision,
-                flowId: AuthenticationFlowId.make(context.flowId),
-                bindingDigest,
-                proofs: [
-                  {
-                    method: context.protocol,
-                    credentialId: credential.credentialId,
-                    factors: ["possession"],
-                    userVerified: false,
-                    phishingResistant: false,
-                    verifiedAt: DateTime.makeUnsafe(verifiedAt),
-                  },
-                ],
-              },
-            }).pipe(
-              Effect.mapError((error) =>
-                error._tag === "HookDenied"
-                  ? error
-                  : error._tag === "SessionUnavailable"
-                    ? OAuthUnavailable.make({})
-                    : OAuthRejected.make({}),
-              ),
-              Effect.flatMap(read),
-            );
 
             return {
               value: {
@@ -674,10 +776,58 @@ export const makeOAuthMethod = <
   const signInLayer = (configuration: OAuthSignInPolicy) =>
     makeSignInLayer(configuration, Effect.succeed(undefined));
 
-  const registration = <Registration extends Schema.Codec<unknown, unknown, unknown, unknown>>(
-    codec: Registration,
-  ) => {
-    const capability = makeOAuthRegistration(moduleId, codec, binding);
+  function registration<
+    Registration extends Schema.Codec<unknown, unknown, unknown, unknown>,
+    Authenticate extends boolean = false,
+  >(codec: Registration, configuration?: { readonly authenticate?: Authenticate }) {
+    type Completion = Authenticate extends true ? typeof sessions.CompletionResult : Schema.Never;
+    const authenticate = configuration?.authenticate === true;
+    const completion = (authenticate ? sessions.CompletionResult : Schema.Never) as Completion;
+
+    const capability = makeOAuthRegistration(moduleId, codec, binding, {
+      completion,
+      authenticate,
+    });
+
+    type Services =
+      | typeof capability.Registrations.Identifier
+      | typeof capability.RegistrationAuthority.Identifier
+      | (Authenticate extends true
+          ? Effect.Services<ReturnType<typeof completeRegistration>>
+          : never);
+
+    // The runtime opt-in selects the success schema and the handler's completion requirements.
+    const handlersLayer = capability.operations.Complete.credentialHandlerLayer(
+      Effect.fn("OAuthRegistration.Complete")(
+        function* (input: typeof capability.CompleteInput.Type) {
+          const plan = yield* (yield* capability.Registrations).planComplete(input);
+          const receipt = yield* plan.commit;
+          const result = yield* read(receipt);
+
+          if (result.value._tag === "Rejected") return yield* OAuthRejected.make({});
+          if (result.value._tag === "Conflict") return yield* IdentityConflict.make({});
+
+          if (result.authentication !== undefined) {
+            if (!authenticate) return yield* OAuthUnavailable.make({});
+            const authenticated = yield* completeRegistration(result.authentication);
+
+            return {
+              value: authenticated.value,
+              credentialCommands: [
+                ...authenticated.credentialCommands,
+                ...result.credentialCommands,
+              ],
+            };
+          }
+
+          return { value: result.value, credentialCommands: result.credentialCommands };
+        },
+        Effect.tapCause((cause) =>
+          Cause.hasDies(cause) ? reportAuthFailure("oauth-registration", cause) : Effect.void,
+        ),
+        Effect.catchDefect(() => Effect.fail(OAuthUnavailable.make({}))),
+      ) as Parameters<typeof capability.operations.Complete.credentialHandlerLayer<Services>>[0],
+    );
 
     const registrationSignInLayer = (
       configuration: OAuthSignInPolicy,
@@ -705,17 +855,18 @@ export const makeOAuthMethod = <
 
     return Object.freeze({
       ...capability,
+      handlersLayer,
       signInLayer: registrationSignInLayer,
       strategy: makeAuthStrategy(
         { register: capability.operations.Complete.invoke },
-        capability.handlersLayer.pipe(
+        handlersLayer.pipe(
           Layer.provide(defaultLayer(capability.Registrations, capability.layer)),
           Layer.provide(defaultLayer(binding.RequestBinding, binding.layer)),
           Layer.provide(hooksLayer),
         ),
       ),
     });
-  };
+  }
 
   const Begin = makeOperation(`${moduleId}/sign-in/begin`, {
     payload: OAuthSignInBegin,

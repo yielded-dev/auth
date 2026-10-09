@@ -17,6 +17,7 @@ export { signIn as passwordSignIn } from "./password/methods/contracts";
 export {
   signIn as oauthSignIn,
   completeSignIn as oauthCompleteSignIn,
+  register as oauthRegister,
   listLinkedAccounts as oauthListLinkedAccounts,
 } from "./oauth/contracts";
 

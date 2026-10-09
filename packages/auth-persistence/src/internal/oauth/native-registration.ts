@@ -293,6 +293,7 @@ export const makeNativeOAuthRegistrationServices = Effect.fnUntraced(function* <
     executor.read(Effect.provideService(effect, Crypto.Crypto, crypto));
 
   const service: OAuthRegistrationAuthority<Registration> = {
+    authentication: "first-confirmed-registration",
     read: (access) =>
       read(
         Effect.map(
@@ -399,6 +400,7 @@ export const makeNativeOAuthRegistrationServices = Effect.fnUntraced(function* <
                 (batch === undefined || (yield* sql`select 1 where ${eligible}`).length === 1);
 
               let final: Fragment = horizon(expected);
+              let authentication: M.OAuthRegistrationAuthentication | undefined;
 
               if (admitted) {
                 const nativeId = yield* mapping.allocateSubjectId;
@@ -488,14 +490,20 @@ export const makeNativeOAuthRegistrationServices = Effect.fnUntraced(function* <
 
                   invariant(a.isActiveStatus(factor[a.status]));
                   yield* state.change(authority.insert(factor));
-                  final = sql.and([
-                    horizon(expected),
-                    tables.expression(mapping.eligibility.postcondition(policy)),
-                    mutation.authorityCondition(nativeId, {
+                  authentication = M.snapshotOAuthSync(M.OAuthRegistrationAuthentication, {
+                    intent: expected,
+                    credentialId,
+                    credentialRevision: revision,
+                    revision: {
                       subjectId,
                       securityRevision: revision,
                       credentials: [{ credentialId, revision }],
-                    }),
+                    },
+                  });
+                  final = sql.and([
+                    horizon(expected),
+                    tables.expression(mapping.eligibility.postcondition(policy)),
+                    mutation.authorityCondition(nativeId, authentication.revision),
                     sql`exists(select 1 from ${credential.name} where ${credential.column(c.subjectId)} = ${credential.value(c.subjectId, nativeId)} and ${exactSqlText(sql, credential.column(c.credentialId), credential.value(c.credentialId, credentialId))} and ${exactSqlText(sql, credential.column(c.credentialRevision), credential.value(c.credentialRevision, revision))} and ${exactSqlText(sql, credential.column(c.identityKey), credential.value(c.identityKey, found.identityKey))} and ${tables.expression(c.activeCondition)})`,
                     sql`exists(select 1 from ${mutation.ownership.name} where ${mutation.ownerCondition(found.identityKey, nativeId)})`,
                   ]);
@@ -520,8 +528,11 @@ export const makeNativeOAuthRegistrationServices = Effect.fnUntraced(function* <
                   ]),
                 );
 
+              if (!admitted) return yield* rejected();
+              invariant(authentication !== undefined);
+
               return yield* prepareOAuthNative(
-                admitted ? { _tag: "Registered", replayed: false } : { _tag: "Rejected" },
+                { _tag: "Registered", replayed: false, authentication },
                 prepare,
               );
             }),

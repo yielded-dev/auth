@@ -100,6 +100,9 @@ export const prepare = Effect.fn("OAuthRegistration.prepareIntent")(function* (
     context: flow.context,
     identity: identity.identity,
     ...(identity.profile === undefined ? {} : { profile: identity.profile }),
+    ...(identity.upstreamAuthenticatedAt === undefined
+      ? {}
+      : { upstreamAuthenticatedAt: identity.upstreamAuthenticatedAt }),
     verifiedAtMillis,
     credentialDigest: yield* credentialDigest(
       flow.context.moduleId,
