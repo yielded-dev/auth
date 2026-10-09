@@ -27,6 +27,27 @@ const spec = <C extends Readonly<Record<string, Omit<StorageTable["columns"][str
   unique: ReadonlyArray<ReadonlyArray<Extract<keyof C, string>>>,
 ) => ({ columns, unique });
 
+const oauthFlow = spec(
+  {
+    moduleId: text,
+    flowId: text,
+    purpose: text,
+    generation: integer,
+    provider: text,
+    callbackId: text,
+    issuer: text,
+    responseIssuerMode: text,
+    subjectId: optionalText,
+    stateDigest: text,
+    binderVerifier: text,
+    binderExpiresAt: integer,
+    snapshot: text,
+    issuedAt: integer,
+    expiresAt: integer,
+  },
+  [["moduleId", "flowId"], ["stateDigest"]],
+);
+
 /** Logical roles are independent of table names and migration ownership. */
 export const storageTables = {
   subjects: spec({ id: text, active: boolean, securityRevision: text }, [["id"]]),
@@ -112,6 +133,61 @@ export const storageTables = {
       expiresAt: integer,
     },
     [["moduleId", "flowId"]],
+  ),
+  oauthIdentities: spec(
+    { identityKey: text, provider: text, issuer: text, externalSubject: text, subjectId: text },
+    [["identityKey"]],
+  ),
+  oauthCredentials: spec(
+    {
+      moduleId: text,
+      credentialId: text,
+      subjectId: text,
+      identityKey: text,
+      credentialRevision: text,
+      active: boolean,
+    },
+    [["credentialId"], ["identityKey"]],
+  ),
+  oauthSignInFlows: oauthFlow,
+  oauthConnectedFlows: oauthFlow,
+  oauthConnectedGrants: spec(
+    {
+      moduleId: text,
+      grantId: text,
+      subjectId: text,
+      identityKey: text,
+      profileKey: text,
+      grantVersion: text,
+      tokenVersion: text,
+      state: text,
+      snapshot: text,
+      summary: text,
+      refreshClaimId: optionalText,
+      refreshNextTokenVersion: optionalText,
+      refreshClaimedAt: optionalInteger,
+      refreshClaimExpiresAt: optionalInteger,
+      expiresAt: integer,
+    },
+    [
+      ["moduleId", "grantId"],
+      ["moduleId", "subjectId", "profileKey", "identityKey"],
+    ],
+  ),
+  oauthConnectedRevocations: spec(
+    {
+      jobId: text,
+      moduleId: text,
+      subjectId: text,
+      identityKey: text,
+      snapshot: text,
+      state: text,
+      claimId: optionalText,
+      claimedAt: optionalInteger,
+      claimExpiresAt: optionalInteger,
+      retentionUntil: integer,
+    },
+    [["jobId"]],
   ),
   proofs: spec(
     {

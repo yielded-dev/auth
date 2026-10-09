@@ -1,6 +1,12 @@
 import type { EmailAction, EmailAddressPersistence } from "@yielded/auth/Email";
 import type { LoginIdentifier } from "@yielded/auth/Identity";
 import type {
+  OAuthConnectedPersistence,
+  OAuthConnectedPolicy,
+  OAuthConnectedRevocations,
+  OAuthSignInPersistence,
+} from "@yielded/auth/OAuth";
+import type {
   PasskeyActionChallenge,
   PasskeyConfig,
   PasskeyCredentials,
@@ -44,10 +50,18 @@ export interface PasskeyFeature {
   readonly managementPolicy?: PasskeyManagementPolicy;
 }
 
+export interface OAuthFeature {
+  readonly kind: "oauth";
+  readonly moduleId: string;
+  readonly signIn: boolean;
+  readonly connected?: OAuthConnectedPolicy;
+}
+
 export interface Strategy {
   readonly strategy: object;
   readonly persistence?:
     | PasskeyFeature
+    | OAuthFeature
     | {
         readonly kind: "password" | "phone" | "email";
         readonly moduleId: string;
@@ -69,7 +83,7 @@ export interface Definition<C extends ClaimsCodec, Id extends string> {
 type KeyId<T> = T extends Context.Key<infer Id, infer _Service> ? Id : never;
 type Enabled<
   A extends { readonly strategies: Readonly<Record<string, Strategy>> },
-  Kind extends "password" | "phone" | "email" | "passkey",
+  Kind extends "password" | "phone" | "email" | "passkey" | "oauth",
 > = Extract<A["strategies"][keyof A["strategies"]], { persistence: { kind: Kind } }>;
 
 type ManagedPassword<A extends { readonly strategies: Readonly<Record<string, Strategy>> }> =
@@ -81,6 +95,14 @@ type ManagedPasskey<A extends { readonly strategies: Readonly<Record<string, Str
 export type PasskeyRequirement<
   A extends { readonly strategies: Readonly<Record<string, Strategy>> },
 > = Enabled<A, "passkey"> extends never ? never : PasskeyConfig;
+
+type OAuthSignIn<A extends { readonly strategies: Readonly<Record<string, Strategy>> }> = Extract<
+  Enabled<A, "oauth">,
+  { persistence: { signIn: true } }
+>;
+
+type OAuthConnected<A extends { readonly strategies: Readonly<Record<string, Strategy>> }> =
+  Extract<Enabled<A, "oauth">, { persistence: { connected: OAuthConnectedPolicy } }>;
 
 type RegistrationKey<S> = S extends { readonly RegistrationAuthority: infer K } ? K : never;
 type Registration<S> =
@@ -141,8 +163,11 @@ type UsesProofs<A extends { readonly strategies: Readonly<Record<string, Strateg
 
 export type Ports<C extends ClaimsCodec, Id extends string, A extends Definition<C, Id>> =
   | AuthenticationAuthority
-  | KeyId<A["sessions"]["StatefulSessionPersistence"]>
-  | KeyId<A["sessions"]["SessionRepository"]>
+  | ("stateful" extends A["sessionMode"]
+      ?
+          | KeyId<A["sessions"]["StatefulSessionPersistence"]>
+          | KeyId<A["sessions"]["SessionRepository"]>
+      : never)
   | KeyId<A["sessions"]["PendingAuthentication"]>
   | KeyId<A["sessions"]["SessionStepUpPersistence"]>
   | KeyId<A["sessions"]["SessionCleanup"]>
@@ -152,17 +177,26 @@ export type Ports<C extends ClaimsCodec, Id extends string, A extends Definition
   | (ManagedPasskey<A> extends never ? never : PasskeyManagementPersistence)
   | (Enabled<A, "email"> extends never ? never : EmailAddressPersistence)
   | (UsesProofs<A> extends never ? never : ProofPersistence)
-  | (Enabled<A, "phone"> extends never ? never : PhoneSignInTargets);
+  | (Enabled<A, "phone"> extends never ? never : PhoneSignInTargets)
+  | (OAuthSignIn<A> extends never ? never : OAuthSignInPersistence)
+  | (OAuthConnected<A> extends never
+      ? never
+      : OAuthConnectedPersistence | OAuthConnectedRevocations);
 
 export type Roles<C extends ClaimsCodec, Id extends string, A extends Definition<C, Id>> =
   | "identifiers"
   | "credentials"
-  | "sessions"
+  | ("stateful" extends A["sessionMode"] ? "sessions" : never)
   | "pending"
   | (Enabled<A, "password"> extends never ? never : "passwords")
   | (Enabled<A, "email"> extends never ? never : "emailCredentials")
   | (Enabled<A, "passkey"> extends never ? never : "passkeyCredentials" | "passkeyFlows")
-  | (UsesProofs<A> extends never ? never : ProofRoles);
+  | (UsesProofs<A> extends never ? never : ProofRoles)
+  | (Enabled<A, "oauth"> extends never ? never : "oauthIdentities" | "oauthCredentials")
+  | (OAuthSignIn<A> extends never ? never : "oauthSignInFlows")
+  | (OAuthConnected<A> extends never
+      ? never
+      : "oauthConnectedFlows" | "oauthConnectedGrants" | "oauthConnectedRevocations");
 
 export interface SubjectOptions<T extends object, NativeId> {
   readonly table: T;
@@ -240,9 +274,13 @@ export interface BoundPersistence<
    * or perform external side effects while preparing a subject.
    */
   readonly Provisioning: Context.Service<ProvisioningRequirement<A>, Provisioning<A>>;
-  /** Capture dependencies at acquisition; validate SQL metadata and configure storage
+  /** Stateful sessions and OAuth-only stateless sessions are supported. Other session
+   * configurations fail acquisition with PersistenceConfigurationError.
+   * Capture dependencies at acquisition; validate SQL metadata and configure storage
    * once on the first service operation. Initialization failures become that port's
    * unavailable error. Failure or interruption remains cached until layer reacquisition.
+   * Managed OAuth metadata/token-use authorizations bind policyRevision to the subject's
+   * securityRevision; changes to application authorization policy must advance it.
    */
   readonly layer: Layer.Layer<
     Ports<C, Id, A>,

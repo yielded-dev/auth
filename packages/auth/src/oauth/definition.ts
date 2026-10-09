@@ -76,6 +76,11 @@ const bindSignIn = <
 
   return Object.freeze({
     ...module,
+    persistence: Object.freeze({
+      kind: "oauth" as const,
+      moduleId: binding.namespace,
+      signIn: true as const,
+    }),
     strategy: makeAuthStrategy(
       {
         signIn: module.signIn,
@@ -103,12 +108,14 @@ const bindAccess = <
     captured,
   );
 
-  const access = base.connected({
+  const policy: OAuthConnectedPolicy = Object.freeze({
     ...captured.options.policy,
-    profiles: [profile],
+    profiles: Object.freeze([profile] as const),
     maximumEvidenceAgeMillis: 300_000,
     refreshClaimLifetimeMillis: captured.options.policy.exchangeTimeoutMillis,
   });
+
+  const access = base.connected(policy);
 
   const connectedLayer = access.handlersLayer.pipe(
     Layer.provide(defaultLayer(access.Connected, access.layer)),
@@ -119,6 +126,7 @@ const bindAccess = <
   return Object.freeze({
     ...base,
     access,
+    persistence: Object.freeze({ ...base.persistence, connected: policy }),
     strategy: makeAuthStrategy(
       {
         signIn: base.signIn,
@@ -503,9 +511,19 @@ const bindDefineConnected = <
 ) => {
   const { options } = captured;
 
-  return makeOAuthMethod<Id, SessionId, Claims>(binding.namespace, {
+  const module = makeOAuthMethod<Id, SessionId, Claims>(binding.namespace, {
     sessions: binding.sessions,
   }).connected(options.policy);
+
+  return Object.freeze({
+    ...module,
+    persistence: Object.freeze({
+      kind: "oauth" as const,
+      moduleId: binding.namespace,
+      signIn: false as const,
+      connected: options.policy,
+    }),
+  });
 };
 
 export interface DefineConnectedStrategy<

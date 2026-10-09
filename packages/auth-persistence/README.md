@@ -28,8 +28,15 @@ Applications own subject provisioning, policy, claims, delivery, and their datab
 connection and migration runner.
 
 The composed Layer covers password sign-in and management, email address verification
-and changes, phone sign-in, and passkey sign-in and management with stateful sessions
-on PostgreSQL and SQLite. Adapter authors use typed table mappings or
+and changes, phone sign-in, passkey sign-in and management, OAuth sign-in with optional
+retained access, and connected accounts with stateful sessions on PostgreSQL and SQLite.
+OAuth-only definitions also support stateless sessions without a session table; identity
+authority and OAuth flows remain durable. Other stateless combinations and state-assisted
+sessions require explicit persistence services.
+OAuth registration and login linking/unlinking still use explicit `OAuthPersistence`
+mappings. Applications provision login identities and supply OAuth action evidence,
+use authorization, provider configuration, and encryption keys.
+Adapter authors use typed table mappings or
 `NativeSqlTables` through `/Adapter`. Use the explicit coordinators when auth and
 application writes must share one commit; independent transaction owners are not atomic.
 See [persistence examples](../../docs/src/content/docs/reference/adapters.md#runnable-examples) for all

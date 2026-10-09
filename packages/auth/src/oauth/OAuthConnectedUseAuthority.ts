@@ -12,8 +12,9 @@ import type { OAuthRejected, OAuthUnavailable } from "./signInErrors";
 import type { OAuthModuleId } from "./signInModels";
 
 /** Application policy runs before any token is opened. Token use receives the
- * detached, frozen authority/grant snapshot already read by core; metadata policy
- * obtains its own authority as needed. Mutations recheck captured revisions,
+ * detached, frozen authority/grant snapshot already read by core; a captured
+ * policyRevision binds the returned authorization. Metadata policy obtains its
+ * own authority as needed. Mutations recheck captured revisions,
  * current policy and the fixed horizon. A snapshot cannot strengthen independent
  * application policy consistency beyond its own validity. */
 export class OAuthConnectedUseAuthority extends Context.Service<
@@ -36,6 +37,7 @@ export class OAuthConnectedUseAuthority extends Context.Service<
             readonly captured: {
               readonly revision: OAuthAccountRevision;
               readonly grant: OAuthConnectedGrantSnapshot;
+              readonly policyRevision?: OAuthConnectedUseAuthorization["policyRevision"];
             };
           }
       ),
