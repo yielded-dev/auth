@@ -1,12 +1,12 @@
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- Native scrypt is not exposed by Effect Crypto or WebCrypto.
 import * as crypto from "node:crypto";
 
-import { Effect, Result } from "effect";
+import { Effect, Layer, Result } from "effect";
 
 import { CryptoUnavailable, UnsupportedAlgorithm } from "../Errors";
-import type { Scrypt, ScryptParameters } from "./kdf";
+import { ScryptBackend, type ScryptParameters } from "./scrypt-backend";
 
-export const scrypt: Scrypt = Effect.fnUntraced(function* (input: ScryptParameters) {
+const derive = Effect.fnUntraced(function* (input: ScryptParameters) {
   if (typeof crypto.scrypt !== "function") return yield* UnsupportedAlgorithm.make({});
 
   // Native work cannot be cancelled. Keep admission and borrowed buffers until
@@ -34,3 +34,5 @@ export const scrypt: Scrypt = Effect.fnUntraced(function* (input: ScryptParamete
     if (Result.isFailure(registration)) resume(Effect.fail(registration.failure));
   }).pipe(Effect.uninterruptible);
 });
+
+export const layer = Layer.succeed(ScryptBackend, { derive });

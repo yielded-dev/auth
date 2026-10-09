@@ -3,11 +3,12 @@ import { Crypto, Effect, Layer, PlatformError } from "effect";
 import { Hmac } from "./Hmac";
 import { makeHmac } from "./internal/hmac";
 import { makeLayer } from "./internal/layer";
+import { layerUnsupported } from "./internal/scrypt-backend";
 import type { Limits } from "./Kdf";
 
 /** Supply the host capability explicitly; no implicit global backend selection. */
 export const layer = (subtle: SubtleCrypto, limits: Partial<Limits> = {}) =>
-  makeLayer(subtle, limits);
+  makeLayer(subtle, limits).pipe(Layer.provide(layerUnsupported));
 
 /** HMAC alone has no KDF admission requirement. */
 export const layerHmac = (subtle: SubtleCrypto): Layer.Layer<Hmac> =>

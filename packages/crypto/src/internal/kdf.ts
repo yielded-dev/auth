@@ -4,6 +4,7 @@ import { InvalidInput, type OperationError, UnsupportedAlgorithm } from "../Erro
 import { Argon2idInput, HkdfInput, Kdf, type Limits, Pbkdf2Input, ScryptInput } from "../Kdf";
 import { KdfAdmission } from "../KdfAdmission";
 import { copy, decode, importError, nativeError, withSecret } from "./common";
+import { ScryptBackend } from "./scrypt-backend";
 
 export interface Argon2Parameters {
   readonly password: Uint8Array<ArrayBuffer>;
@@ -18,25 +19,13 @@ export interface Argon2Parameters {
 
 export type Argon2 = (input: Argon2Parameters) => Effect.Effect<Uint8Array, OperationError>;
 
-export interface ScryptParameters {
-  readonly password: Uint8Array<ArrayBuffer>;
-  readonly salt: Uint8Array<ArrayBuffer>;
-  readonly cost: number;
-  readonly blockSize: number;
-  readonly parallelism: number;
-  readonly length: number;
-  readonly maximumMemoryBytes: number;
-}
-
-export type Scrypt = (input: ScryptParameters) => Effect.Effect<Uint8Array, OperationError>;
-
 export const makeKdf = Effect.fnUntraced(function* (
   subtle: SubtleCrypto,
   limits: Limits,
   argon2?: Argon2,
-  scrypt?: Scrypt,
 ) {
   const admission = yield* KdfAdmission;
+  const scrypt = yield* ScryptBackend;
   const boundedBytes = Schema.Uint8Array.check(Schema.isMaxLength(limits.maximumInputBytes));
 
   const output = Schema.Int.check(
@@ -66,20 +55,20 @@ export const makeKdf = Effect.fnUntraced(function* (
             (value.cost * value.blockSize * value.parallelism) / 8 > limits.maximumMemoryPasses
           )
             return yield* InvalidInput.make({ reason: "parameters" });
-          if (scrypt === undefined) return yield* UnsupportedAlgorithm.make({});
-
           const salt = yield* copy(value.salt);
 
           return yield* withSecret(value.password, (password) =>
-            scrypt({
-              password,
-              salt,
-              cost: value.cost,
-              blockSize: value.blockSize,
-              parallelism: value.parallelism,
-              length: value.length,
-              maximumMemoryBytes: limits.maximumMemoryKiB * 1024,
-            }).pipe(Effect.map(Redacted.make)),
+            scrypt
+              .derive({
+                password,
+                salt,
+                cost: value.cost,
+                blockSize: value.blockSize,
+                parallelism: value.parallelism,
+                length: value.length,
+                maximumMemoryBytes: limits.maximumMemoryKiB * 1024,
+              })
+              .pipe(Effect.map(Redacted.make)),
           );
         }),
       ),

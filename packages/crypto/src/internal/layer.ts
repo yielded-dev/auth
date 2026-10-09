@@ -7,7 +7,7 @@ import { Signature } from "../Signature";
 import { makeAead, type XChaCha } from "./aead";
 import { decode } from "./common";
 import { makeHmac } from "./hmac";
-import { type Argon2, makeKdf, type Scrypt } from "./kdf";
+import { type Argon2, makeKdf } from "./kdf";
 import { makeSignature } from "./signature";
 
 export const makeLayer = (
@@ -15,7 +15,6 @@ export const makeLayer = (
   input: Partial<Limits>,
   extensions: {
     readonly argon2?: Argon2;
-    readonly scrypt?: Scrypt;
     readonly xchacha?: XChaCha;
   } = {},
 ) => {
@@ -24,7 +23,7 @@ export const makeLayer = (
   return Layer.effectContext(
     Effect.gen(function* () {
       const limits = yield* decode(Limits, snapshot, "parameters");
-      const kdf = yield* makeKdf(subtle, limits, extensions.argon2, extensions.scrypt);
+      const kdf = yield* makeKdf(subtle, limits, extensions.argon2);
 
       return Context.make(Aead, makeAead(subtle, extensions.xchacha)).pipe(
         Context.add(Hmac, makeHmac(subtle)),
