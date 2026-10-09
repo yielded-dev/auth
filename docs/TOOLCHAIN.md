@@ -184,16 +184,21 @@ Vitest retries only timeout errors, up to twice. Dependency and compiler setup c
 also retry one failed attempt.
 
 Effect Agent reviews use `GITHUB_TOKEN` and the repository secret `OPENAI_API_KEY`.
-Set `PR_REVIEW_ENABLED=true` after the workflow reaches `main`.
-Automatic reviews follow completed pull-request CI runs after success or failure;
-cancelled runs, drafts, generated release metadata, and stale PR heads are skipped.
-For forks requiring GitHub workflow approval, click **Approve workflows to run** once:
-CI runs first, then review starts without another approval. All reviews use `pr-review`,
-which must have no required reviewers; `pr-review-forks` is no longer used.
-Authorized `@effect-agent review` comments start reviews without waiting for CI.
-Reviews execute trusted default-branch code and read PR source through GitHub's API;
-they never execute PR-head code or consume CI artifacts or caches. Approving CI does
-not grant that CI job repository secrets.
+Opening, reopening, pushing commits, or marking a PR ready starts review immediately,
+alongside CI. This includes forks and release metadata; drafts are skipped. The
+`pr-review` environment must have no required reviewers. Fork CI may still require
+GitHub workflow approval independently of review.
+
+Require both `ready` and `Effect Agent review` from GitHub Actions in the main branch
+ruleset. The review check reports progress on the inspected PR commit and passes only
+after complete review without unresolved blockers. Missing, failed, incomplete, or
+paused reviews block merging. After five automatic attempts, an authorized
+`@effect-agent review full` comment or a manual workflow dispatch starts a full retry;
+`@effect-agent review` requests an incremental pass.
+
+Reviews use a pinned Action and trusted default-branch guidance, reading PR source
+through GitHub's API. They never execute PR-head code or consume CI artifacts or
+caches. Stale event heads are skipped; a newer commit needs its own review.
 
 ## Documentation
 
