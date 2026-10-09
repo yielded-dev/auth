@@ -483,8 +483,14 @@ export const makeOAuthConnectedAccess = <const Id extends string>(
         if (inspected?.grant === undefined) return yield* OAuthRejected.make({});
 
         const captured = yield* snapshotOAuth(
-          Schema.Struct({ revision: OAuthAccountRevision, grant: M.OAuthConnectedGrantSnapshot }),
-          { revision: inspected.revision, grant: inspected.grant },
+          Schema.Struct({
+            revision: OAuthAccountRevision,
+            grant: M.OAuthConnectedGrantSnapshot,
+            policyRevision: Schema.optionalKey(
+              M.OAuthConnectedUseAuthorization.fields.policyRevision,
+            ),
+          }),
+          { ...inspected, grant: inspected.grant },
         );
 
         const snapshot = captured.grant;
@@ -514,7 +520,11 @@ export const makeOAuthConnectedAccess = <const Id extends string>(
           input.profileKey,
         );
 
-        if (!connectedSame(OAuthAccountRevision, captured.revision, authorization.revision))
+        if (
+          !connectedSame(OAuthAccountRevision, captured.revision, authorization.revision) ||
+          (captured.policyRevision !== undefined &&
+            captured.policyRevision !== authorization.policyRevision)
+        )
           return yield* OAuthRejected.make({});
 
         if (snapshot.state === "Refreshing") {

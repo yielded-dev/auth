@@ -17,10 +17,13 @@ export class OAuthConnectedPersistence extends Context.Service<
   OAuthConnectedPersistence,
   {
     /** One joined subject/authority/grant read. No token-use admission row. */
-    readonly read: (
-      input: M.OAuthConnectedReadInput,
-    ) => Effect.Effect<
-      | { readonly revision: OAuthAccountRevision; readonly grant?: M.OAuthConnectedGrantSnapshot }
+    readonly read: (input: M.OAuthConnectedReadInput) => Effect.Effect<
+      | {
+          readonly revision: OAuthAccountRevision;
+          readonly grant?: M.OAuthConnectedGrantSnapshot;
+          /** Expected policy revision captured by this read; checked before token decryption. */
+          readonly policyRevision?: M.OAuthConnectedUseAuthorization["policyRevision"];
+        }
       | undefined,
       OAuthUnavailable
     >;

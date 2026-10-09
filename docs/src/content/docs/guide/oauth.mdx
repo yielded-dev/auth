@@ -57,9 +57,12 @@ grant before completing authentication through your configured session authority
 Declare the [OAuth actions](../reference/oauth#shared-auth-setup), then configure
 `Http.make` with `GitHub.provider({ clientId, clientSecret, access: [profile] })`.
 Supply [persistence, claims, crypto and keys](../reference/oauth#supply-the-services)
-through Layers. The [runnable composition](https://github.com/yielded-dev/auth/blob/main/examples/auth/src/oauth-application.ts)
-shows the complete setup. Use [OAuthPersistence](../reference/adapters#oauth) for
-PostgreSQL or SQLite with direct Effect SQL.
+through Layers. `AuthPersistence.make(AppAuth).managed({ prefix, subjects })` supplies
+OAuth storage and shared authentication authority on composed SQL and Drizzle
+drivers, including D1. Export its tables and apply migrations as shown in the
+[storage guide](./storage.mdx#managed-tables).
+The [runnable explicit composition](https://github.com/yielded-dev/auth/blob/main/examples/auth/src/oauth-application.ts)
+shows provider configuration and application-owned services.
 
 Retained sign-in requires an existing account link. Register new users first, then
 connect provider access after authentication. After a failed or uncertain callback,

@@ -5,7 +5,7 @@ import * as SqliteClient from "@effect/sql-sqlite-node/SqliteClient";
 import { Auth, Email, Password, PhoneOtp, Sessions } from "@yielded/auth";
 import { makeStorageMappings } from "@yielded/auth-persistence/Adapter";
 import { SubjectId } from "@yielded/auth/Schema";
-import { is, sql } from "drizzle-orm";
+import { is, sql, type SQL } from "drizzle-orm";
 import * as DrizzleD1 from "drizzle-orm/effect-d1";
 import {
   getTableConfig,
@@ -84,8 +84,8 @@ export const d1Mapping = Effect.map(
       clock: {
         ...mapping.clock,
         engineNowMillis: clock,
-        toMillis: (value: import("drizzle-orm").SQL) => value,
-        fromMillis: (value: import("drizzle-orm").SQL) => value,
+        toMillis: (value: SQL) => value,
+        fromMillis: (value: SQL) => value,
       },
     }) as unknown as ProofPersistenceMapping<SQLiteTable, SQLiteTable, string>,
 );
@@ -129,27 +129,47 @@ export const database = Layer.effectDiscard(
 /** Only the SQL transport differs: production D1 planning and generated batch SQL
  * run unchanged, in a real atomic SQLite transaction. The callback introduces a
  * competing committed writer immediately before that transaction begins. */
+export const makeD1Transport = Effect.fnUntraced(function* (
+  beforeBatch: Effect.Effect<void, SqlError, SqlClient.SqlClient> = Effect.void,
+): Effect.fn.Return<D1ClientService, never, SqlClient.SqlClient> {
+  const client = yield* SqlClient.SqlClient;
+
+  const batch = (statements: ReadonlyArray<Statement<unknown>>) =>
+    beforeBatch.pipe(
+      Effect.andThen(
+        client.withTransaction(
+          Effect.forEach(statements, (statement) => statement, { concurrency: 1 }),
+        ),
+      ),
+      Effect.provideService(SqlClient.SqlClient, client),
+    );
+
+  const unsupported = Effect.die("transactions are not supported in D1");
+
+  const transport: SqlClient.SqlClient & { readonly batch: typeof batch } = Object.assign(
+    client.bind(undefined),
+    client,
+    {
+      batch,
+      withTransaction: () => unsupported,
+      reserve: unsupported,
+      withoutTransforms: () => transport,
+    },
+  );
+
+  // Keep SQLite's transaction owner private to batches; D1 views cannot recover it.
+  Object.assign(transport, { safe: transport });
+
+  return transport as unknown as D1ClientService;
+});
+
 export const d1Database = (
   beforeBatch: Effect.Effect<void, SqlError, SqlClient.SqlClient> = Effect.void,
 ) =>
   Layer.effect(
     D1Database,
     Effect.gen(function* () {
-      const client = yield* SqlClient.SqlClient;
-
-      const batch = (statements: ReadonlyArray<Statement<unknown>>) =>
-        beforeBatch.pipe(
-          Effect.andThen(
-            client.withTransaction(
-              Effect.forEach(statements, (statement) => statement, { concurrency: 1 }),
-            ),
-          ),
-          Effect.provideService(SqlClient.SqlClient, client),
-        );
-
-      // Keep the client callable for catalog validation as well as generated batches.
-      // Native Workers binding/config are absent; every query uses real SQLite.
-      const transport = Object.assign(client, { batch }) as unknown as D1ClientService;
+      const transport = yield* makeD1Transport(beforeBatch);
 
       return yield* DrizzleD1.makeWithDefaults({}).pipe(Effect.provideService(D1Client, transport));
     }),

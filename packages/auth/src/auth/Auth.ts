@@ -319,7 +319,10 @@ const bind = <
 
   return Object.freeze({
     claims: options.claims,
-    sessionMode: options.sessions?.mode,
+    // Persistence capability types retain the constructor's selected mode.
+    sessionMode: options.sessions?.mode as Sessions extends SessionConfiguration
+      ? Sessions["mode"]
+      : undefined,
     contract,
     namespace,
     sessions,

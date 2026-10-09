@@ -5,11 +5,13 @@ import {
   type OAuthCredentialKey,
 } from "@yielded/auth/OAuth";
 import type { SubjectId } from "@yielded/auth/Schema";
+import type { AuthenticationRequirement } from "@yielded/auth/Sessions";
 import { Effect, Schema } from "effect";
 import { SqlClient } from "effect/sql";
 import type { Fragment } from "effect/sql/Statement";
 
-import type { OAuthSignInMapping } from "../models/oauth-model";
+import type { PersistenceMappingError } from "../mapping-error";
+import type { OAuthSignInMapping, OAuthSubjectReadTable } from "../models/oauth-model";
 import type { NativeSqlTables } from "../native-sql-table";
 import { exactSqlText } from "../sql-change";
 import type { SqlExpression, TableModel } from "../table-model";
@@ -27,6 +29,15 @@ export type OAuthNativeReadMapping = OAuthSignInMapping<
 >;
 
 type Row = Readonly<Record<string, unknown>>;
+
+export const decodeOAuthRequirement = Effect.fnUntraced(function* (
+  subject: OAuthSubjectReadTable<TableModel>,
+  row: Row,
+): Effect.fn.Return<AuthenticationRequirement, PersistenceMappingError> {
+  const requirement = subject.decodeAuthenticationRequirement(row);
+
+  return yield* Effect.isEffect(requirement) ? requirement : Effect.succeed(requirement);
+});
 
 /** Unlocked snapshots and explicit subject-first reads share decoding rules.
  * No observation registry or discovered-identity placeholder is retained. */
@@ -208,8 +219,10 @@ export const makeOAuthNativeState = Effect.fnUntraced(function* (
     moduleId: string,
     nativeId?: unknown,
   ) {
-    if (rows.length === 0) return undefined;
-    const owned = o.decode(rows[0]!, "o_");
+    const first = rows[0];
+
+    if (first === undefined) return undefined;
+    const owned = o.decode(first, "o_");
 
     const identity = yield* Schema.decodeUnknownEffect(OAuthExternalIdentity)({
       provider: owned[mapping.ownership.provider],
@@ -223,14 +236,14 @@ export const makeOAuthNativeState = Effect.fnUntraced(function* (
     const ownerId = mapping.ownership.decodeSubjectId(owned);
 
     if (nativeId !== undefined) invariant(mapping.subjectId.equals(ownerId, nativeId));
-    const login = c.decode(rows[0]!, "c_");
+    const login = c.decode(first, "c_");
 
     invariant(mapping.subjectId.equals(login[mapping.credential.subjectId], ownerId));
     invariant(login[mapping.credential.identityKey] === identityKey);
     invariant(mapping.credential.isActiveStatus(login[mapping.credential.status]));
 
     const current = yield* revision(
-      s.decode(rows[0]!, "s_"),
+      s.decode(first, "s_"),
       rows.map((row) => a.decode(row, "a_")),
       ownerId,
     );
@@ -251,7 +264,7 @@ export const makeOAuthNativeState = Effect.fnUntraced(function* (
       credentialId,
       credentialRevision,
       revision: current,
-      requirement: mapping.subject.decodeAuthenticationRequirement(s.decode(rows[0]!, "s_")),
+      requirement: yield* decodeOAuthRequirement(mapping.subject, s.decode(first, "s_")),
     });
   });
 

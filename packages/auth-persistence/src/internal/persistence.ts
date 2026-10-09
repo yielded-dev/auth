@@ -2,6 +2,12 @@ import { EmailAddressPersistence, EmailUnavailable } from "@yielded/auth/Email";
 import type { LifecycleHooks } from "@yielded/auth/Hooks";
 import { hasCommitScope } from "@yielded/auth/Hooks";
 import {
+  OAuthConnectedPersistence,
+  OAuthConnectedRevocations,
+  OAuthSignInPersistence,
+  OAuthUnavailable,
+} from "@yielded/auth/OAuth";
+import {
   PasskeyCredentials,
   PasskeyManagementPersistence,
   PasskeyPersistence,
@@ -30,10 +36,12 @@ import {
   type SubjectOptions,
   type PasskeyFeature,
   type PasskeyRequirement,
+  type OAuthFeature,
 } from "./configuration";
 import { makeNativeEmailAddressServices } from "./email-native";
 import { PersistenceMappingError } from "./mapping-error";
 import type { NativeSqlTables } from "./native-sql-table";
+import { makeManagedOAuth } from "./oauth-managed";
 import { makeManagedPasskeys } from "./passkey-managed";
 import { makeNativePasswordServices } from "./password-native";
 import { makeComposedPhoneTargets } from "./phone-composed";
@@ -88,6 +96,11 @@ const timestampKeys = new Set([
   "deadline",
   "occurredAt",
   "dedupUntil",
+  "binderExpiresAt",
+  "refreshClaimedAt",
+  "refreshClaimExpiresAt",
+  "claimedAt",
+  "claimExpiresAt",
 ]);
 
 export const createPersistence = <T extends object, R, Database extends object = object>(
@@ -104,6 +117,16 @@ export const createPersistence = <T extends object, R, Database extends object =
       (feature): feature is PasskeyFeature => feature?.kind === "passkey",
     );
 
+    const oauth = features.filter((feature): feature is OAuthFeature => feature?.kind === "oauth");
+    const oauthSignIn = oauth.some((feature) => feature.signIn);
+    const oauthConnected = oauth.some((feature) => feature.connected !== undefined);
+    const stateful = auth.sessionMode === "stateful";
+
+    const stateless =
+      auth.sessionMode === "stateless" &&
+      features.length > 0 &&
+      features.every((feature) => feature?.kind === "oauth");
+
     const management = features.some(
       (feature) => feature?.kind === "password" && feature.management,
     );
@@ -111,12 +134,18 @@ export const createPersistence = <T extends object, R, Database extends object =
     const email = features.some((feature) => feature?.kind === "email" && feature.addresses);
     const proofs = phone || management || email;
 
-    const roles: StorageRole[] = ["identifiers", "credentials", "sessions", "pending"];
+    const roles: StorageRole[] = ["identifiers", "credentials"];
 
+    if (stateful) roles.push("sessions");
+    roles.push("pending");
     if (password) roles.push("passwords");
     if (email) roles.push("emailCredentials");
     if (passkeys.length > 0) roles.push("passkeyCredentials", "passkeyFlows");
     if (proofs) roles.push("proofs");
+    if (oauth.length > 0) roles.push("oauthIdentities", "oauthCredentials");
+    if (oauthSignIn) roles.push("oauthSignInFlows");
+    if (oauthConnected)
+      roles.push("oauthConnectedFlows", "oauthConnectedGrants", "oauthConnectedRevocations");
 
     const ConfigKey = Context.Service<
       ConfigId<A["namespace"]>,
@@ -248,8 +277,6 @@ export const createPersistence = <T extends object, R, Database extends object =
 
           if (dialect === undefined)
             return yield* configError("Use an explicit adapter for this SQL dialect");
-          if (auth.sessionMode !== "stateful")
-            return yield* configError("The composed layer currently requires stateful sessions");
           if (
             features.some(
               (feature) =>
@@ -287,17 +314,19 @@ export const createPersistence = <T extends object, R, Database extends object =
           yield* validateStorageBatch(dialect, validations);
           const nativeTables = backend.nativeTables(database);
           const mappings = yield* makeMappings(storage, nativeTables);
-          const sessionMapping = mappings.sessions(auth.claims, auth.sessions.moduleId);
-          const pendingMapping = mappings.pending(auth.claims, auth.sessions.moduleId);
 
-          const sessionServices = yield* makeNativeStatefulSessionServices(
-            nativeTables,
-            sessionMapping,
-          );
+          const sessionMapping = stateful
+            ? mappings.sessions(auth.claims, auth.sessions.moduleId)
+            : undefined;
+
+          const pendingMapping = mappings.pending(auth.claims, auth.sessions.moduleId);
 
           const { authenticationAuthority } = yield* makeNativeAuthenticationAuthorityServices(
             nativeTables,
-            sessionMapping,
+            sessionMapping ?? {
+              ...pendingMapping,
+              pending: { pending: pendingMapping.pending, login: pendingMapping.login },
+            },
           );
 
           const { pendingAuthentication } = yield* makeNativePendingAuthenticationServices(
@@ -309,12 +338,15 @@ export const createPersistence = <T extends object, R, Database extends object =
             nativeTables,
             {
               ...pendingMapping,
-              source: {
-                kind: "Stateful",
-                session: sessionMapping.session,
-                sessionId: sessionMapping.sessionId,
-                constraints: { sessionDigest: "unique(session.digest)" },
-              },
+              source:
+                sessionMapping === undefined
+                  ? { kind: "StatelessSigned" }
+                  : {
+                      kind: "Stateful",
+                      session: sessionMapping.session,
+                      sessionId: sessionMapping.sessionId,
+                      constraints: { sessionDigest: "unique(session.digest)" },
+                    },
             },
           );
 
@@ -327,15 +359,25 @@ export const createPersistence = <T extends object, R, Database extends object =
             AuthenticationAuthority,
             authenticationAuthority,
           ).pipe(
-            Context.add(
-              auth.sessions.StatefulSessionPersistence,
-              sessionServices.statefulSessionPersistence,
-            ),
-            Context.add(auth.sessions.SessionRepository, sessionServices.sessionRepository),
             Context.add(auth.sessions.PendingAuthentication, pendingAuthentication),
             Context.add(auth.sessions.SessionStepUpPersistence, sessionStepUpPersistence),
             Context.add(auth.sessions.SessionCleanup, sessionCleanup),
           );
+
+          if (sessionMapping !== undefined) {
+            const sessionServices = yield* makeNativeStatefulSessionServices(
+              nativeTables,
+              sessionMapping,
+            );
+
+            context = context.pipe(
+              Context.add(
+                auth.sessions.StatefulSessionPersistence,
+                sessionServices.statefulSessionPersistence,
+              ),
+              Context.add(auth.sessions.SessionRepository, sessionServices.sessionRepository),
+            );
+          }
 
           const proofMapping = proofs ? mappings.proofs() : undefined;
 
@@ -427,6 +469,9 @@ export const createPersistence = <T extends object, R, Database extends object =
             context = Context.merge(context, yield* services);
           }
 
+          if (oauth.length > 0)
+            context = Context.merge(context, yield* makeManagedOAuth(storage, nativeTables, oauth));
+
           // The checked capability metadata above determines exactly these service keys.
           return context as Context.Context<Ports<C, Id, A>>;
         }).pipe(Effect.provideService(SqlBatchCommit, backend.batch?.(database))),
@@ -442,6 +487,16 @@ export const createPersistence = <T extends object, R, Database extends object =
 
     const layer = Layer.effectContext(
       Effect.gen(function* () {
+        if (!stateful && !stateless) {
+          if (auth.sessionMode === "stateless")
+            return yield* configError(
+              "Composed stateless sessions support only OAuth strategies; use explicit persistence for other strategies",
+            );
+
+          return yield* configError(
+            "Composed persistence supports stateful or OAuth-only stateless sessions; state-assisted validity and other session modes require explicit persistence",
+          );
+        }
         const scope = yield* Effect.scope;
         const captured = yield* Effect.context<Layer.Services<typeof services>>();
         const client = Context.get(captured, SqlClient.SqlClient);
@@ -475,18 +530,6 @@ export const createPersistence = <T extends object, R, Database extends object =
         const authority = service(AuthenticationAuthority, sessionUnavailable, false);
         const authorityMutation = service(AuthenticationAuthority, sessionUnavailable);
 
-        const sessions = service(
-          auth.sessions.StatefulSessionPersistence,
-          sessionUnavailable,
-          false,
-        );
-
-        const sessionMutations = service(
-          auth.sessions.StatefulSessionPersistence,
-          sessionUnavailable,
-        );
-
-        const repository = service(auth.sessions.SessionRepository, sessionUnavailable, false);
         const pendingRead = service(auth.sessions.PendingAuthentication, sessionUnavailable, false);
         const pendingMutation = service(auth.sessions.PendingAuthentication, sessionUnavailable);
 
@@ -506,22 +549,6 @@ export const createPersistence = <T extends object, R, Database extends object =
           approve: (input, prepare) =>
             Effect.flatMap(authorityMutation, (s) => s.approve(input, prepare)),
         }).pipe(
-          Context.add(auth.sessions.StatefulSessionPersistence, {
-            establish: (input, prepare) =>
-              Effect.flatMap(sessionMutations, (s) => s.establish(input, prepare)),
-            verify: (input) => Effect.flatMap(sessions, (s) => s.verify(input)),
-            rotate: (input, prepare) =>
-              Effect.flatMap(sessionMutations, (s) => s.rotate(input, prepare)),
-            revokeDigest: (digest, prepare) =>
-              Effect.flatMap(sessionMutations, (s) => s.revokeDigest(digest, prepare)),
-            revoke: (input, prepare) =>
-              Effect.flatMap(sessionMutations, (s) => s.revoke(input, prepare)),
-            revokeAll: (input, prepare) =>
-              Effect.flatMap(sessionMutations, (s) => s.revokeAll(input, prepare)),
-          }),
-          Context.add(auth.sessions.SessionRepository, {
-            list: (input) => Effect.flatMap(repository, (s) => s.list(input)),
-          }),
           Context.add(auth.sessions.PendingAuthentication, {
             create: (input, now, prepare) =>
               Effect.flatMap(pendingMutation, (s) => s.create(input, now, prepare)),
@@ -542,6 +569,40 @@ export const createPersistence = <T extends object, R, Database extends object =
             cleanup: (input) => Effect.flatMap(cleanup, (s) => s.cleanup(input)),
           }),
         );
+
+        if (stateful) {
+          const sessions = service(
+            auth.sessions.StatefulSessionPersistence,
+            sessionUnavailable,
+            false,
+          );
+
+          const sessionMutations = service(
+            auth.sessions.StatefulSessionPersistence,
+            sessionUnavailable,
+          );
+
+          const repository = service(auth.sessions.SessionRepository, sessionUnavailable, false);
+
+          context = context.pipe(
+            Context.add(auth.sessions.StatefulSessionPersistence, {
+              establish: (input, prepare) =>
+                Effect.flatMap(sessionMutations, (s) => s.establish(input, prepare)),
+              verify: (input) => Effect.flatMap(sessions, (s) => s.verify(input)),
+              rotate: (input, prepare) =>
+                Effect.flatMap(sessionMutations, (s) => s.rotate(input, prepare)),
+              revokeDigest: (digest, prepare) =>
+                Effect.flatMap(sessionMutations, (s) => s.revokeDigest(digest, prepare)),
+              revoke: (input, prepare) =>
+                Effect.flatMap(sessionMutations, (s) => s.revoke(input, prepare)),
+              revokeAll: (input, prepare) =>
+                Effect.flatMap(sessionMutations, (s) => s.revokeAll(input, prepare)),
+            }),
+            Context.add(auth.sessions.SessionRepository, {
+              list: (input) => Effect.flatMap(repository, (s) => s.list(input)),
+            }),
+          );
+        }
 
         if (proofs) {
           const persistence = service(ProofPersistence, () => ProofUnavailable.make({}));
@@ -651,6 +712,83 @@ export const createPersistence = <T extends object, R, Database extends object =
               }),
             );
           }
+        }
+
+        const oauthUnavailable = () => OAuthUnavailable.make({});
+
+        function oauthService<I, S>(
+          key: Context.Key<I, S>,
+          moduleId: string,
+          capability: "signIn" | "connected",
+        ): Effect.Effect<S, OAuthUnavailable> {
+          const enabled = oauth.some(
+            (feature) =>
+              feature.moduleId === moduleId &&
+              (capability === "signIn" ? feature.signIn : feature.connected !== undefined),
+          );
+
+          return enabled ? service(key, oauthUnavailable) : Effect.fail(oauthUnavailable());
+        }
+
+        if (oauthSignIn) {
+          const persistence = (moduleId: string) =>
+            oauthService(OAuthSignInPersistence, moduleId, "signIn");
+
+          context = Context.add(context, OAuthSignInPersistence, {
+            issue: (input, prepare) =>
+              Effect.flatMap(persistence(input.context.moduleId), (s) => s.issue(input, prepare)),
+            consume: (input, prepare) =>
+              Effect.flatMap(persistence(input.moduleId), (s) => s.consume(input, prepare)),
+            resolve: (input) =>
+              Effect.flatMap(persistence(input.moduleId), (s) => s.resolve(input)),
+            cleanup: (input, prepare) =>
+              Effect.flatMap(persistence(input.moduleId), (s) => s.cleanup(input, prepare)),
+          });
+        }
+        if (oauthConnected) {
+          const persistence = (moduleId: string) =>
+            oauthService(OAuthConnectedPersistence, moduleId, "connected");
+
+          const revocations = (moduleId: string) =>
+            oauthService(OAuthConnectedRevocations, moduleId, "connected");
+
+          context = context.pipe(
+            Context.add(OAuthConnectedPersistence, {
+              read: (input) => Effect.flatMap(persistence(input.moduleId), (s) => s.read(input)),
+              issue: (input, prepare) =>
+                Effect.flatMap(persistence(input.context.moduleId), (s) => s.issue(input, prepare)),
+              consume: (input, prepare) =>
+                Effect.flatMap(persistence(input.moduleId), (s) => s.consume(input, prepare)),
+              settle: (input, prepare) =>
+                Effect.flatMap(persistence(input.grant.context.moduleId), (s) =>
+                  s.settle(input, prepare),
+                ),
+              list: (input) =>
+                Effect.flatMap(persistence(input.authorization.moduleId), (s) => s.list(input)),
+              disconnect: (input, prepare) =>
+                Effect.flatMap(persistence(input.key.moduleId), (s) =>
+                  s.disconnect(input, prepare),
+                ),
+              claimRefresh: (input, prepare) =>
+                Effect.flatMap(persistence(input.grant.context.moduleId), (s) =>
+                  s.claimRefresh(input, prepare),
+                ),
+              settleRefresh: (input, prepare) =>
+                Effect.flatMap(persistence(input.claim.grant.context.moduleId), (s) =>
+                  s.settleRefresh(input, prepare),
+                ),
+              cleanup: (input, prepare) =>
+                Effect.flatMap(persistence(input.moduleId), (s) => s.cleanup(input, prepare)),
+            }),
+            Context.add(OAuthConnectedRevocations, {
+              claim: (input, prepare) =>
+                Effect.flatMap(revocations(input.moduleId), (s) => s.claim(input, prepare)),
+              settle: (input, prepare) =>
+                Effect.flatMap(revocations(input.claim.job.grant.context.moduleId), (s) =>
+                  s.settle(input, prepare),
+                ),
+            }),
+          );
         }
 
         // Match the same capability-selected service keys as the acquired graph.

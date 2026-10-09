@@ -181,6 +181,9 @@ Account provisioning and session mode remain application choices.
 - `SessionClaims` and session services: application authentication completion.
 
 Connected persistence and sign-in share login ownership and subject authority.
+[Composed persistence](./adapters#oauth) supplies the sign-in, connected, and
+revocation services when `access` is enabled. Your application still supplies
+provider configuration, encryption keys, claims, and use/action authorization.
 The strategy exposes `access.ConnectedAccess`, `access.accessLayer`, and
 `access.maintenanceLayer`. Provide those Layers with the same services.
 

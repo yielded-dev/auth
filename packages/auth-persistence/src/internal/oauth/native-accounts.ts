@@ -14,7 +14,7 @@ import type { SqlExpression, TableModel } from "../table-model";
 import { makeOAuthNativeFlow } from "./native-flow";
 import { makeOAuthNativeMutation } from "./native-mutation";
 import { prepareOAuthNative } from "./native-sign-in";
-import { makeOAuthNativeState } from "./native-state";
+import { decodeOAuthRequirement, makeOAuthNativeState } from "./native-state";
 import { invariant, oauthIdentityKey, sameRevision, satisfies, unavailable } from "./state";
 
 // Physical metadata is validated by the adapter; schema values remain typed.
@@ -341,7 +341,7 @@ export const makeNativeOAuthAccountsServices = Effect.fnUntraced(function* (
             credentialId,
             credentialRevision,
             revision,
-            requirement: mapping.subject.decodeAuthenticationRequirement(current.subject),
+            requirement: yield* decodeOAuthRequirement(mapping.subject, current.subject),
           });
 
           return yield* prepareOAuthNative(
@@ -495,7 +495,7 @@ export const makeNativeOAuthAccountsServices = Effect.fnUntraced(function* (
           }
           const methods = [...eligible.values()];
           const facts = methods.map((entry) => entry.fact);
-          const requirement = mapping.subject.decodeAuthenticationRequirement(current.subject);
+          const requirement = yield* decodeOAuthRequirement(mapping.subject, current.subject);
 
           if (!facts.some((fact) => fact.usablePrimary) || !satisfies(facts, requirement))
             return yield* prepareOAuthNative({ _tag: "LastSignInMethod" }, prepare);
