@@ -15,6 +15,15 @@ import {
 
 const evidenceCodec = Schema.toCodecIso(AuthenticationEvidence);
 
+const snapshotInstant = (value: DateTime.Utc) => {
+  const instant = DateTime.makeUnsafe(DateTime.toEpochMillis(value));
+
+  // DateTime.Utc caches parts lazily; populate before freezing the detached instant.
+  Object.freeze(DateTime.toPartsUtc(instant));
+
+  return Object.freeze(instant);
+};
+
 export const snapshotAuthenticationEvidence = Effect.fn("snapshotAuthenticationEvidence")(
   function* (evidence: AuthenticationEvidence) {
     // Bound Type input before schema projection allocates a detached proof graph.
@@ -35,32 +44,33 @@ export const snapshotAuthenticationEvidence = Effect.fn("snapshotAuthenticationE
         ),
       }),
       proofs: Object.freeze(
-        Array.map(projected.proofs, (proof) => {
-          const verifiedAt = DateTime.makeUnsafe(DateTime.toEpochMillis(proof.verifiedAt));
-
-          // DateTime.Utc caches parts lazily; populate before freezing the detached instant.
-          Object.freeze(DateTime.toPartsUtc(verifiedAt));
-          Object.freeze(verifiedAt);
-
-          return Object.freeze({
+        Array.map(projected.proofs, (proof) =>
+          Object.freeze({
             ...proof,
             factors: Object.freeze([...proof.factors]),
-            verifiedAt,
-          });
-        }),
+            verifiedAt: snapshotInstant(proof.verifiedAt),
+          }),
+        ),
       ),
+      ...(projected.completionExpiresAt === undefined
+        ? {}
+        : { completionExpiresAt: snapshotInstant(projected.completionExpiresAt) }),
     });
   },
 );
 
 export const snapshotSessionAuthenticationProvenance = Effect.fn(
   "snapshotSessionAuthenticationProvenance",
-)(function* (input: SessionAuthenticationProvenance) {
+)(function* (
+  input: SessionAuthenticationProvenance,
+): Effect.fn.Return<SessionAuthenticationProvenance, StaleAuthentication> {
   if (input?.evidence?.proofs?.length > 64 || input?.evidence?.revision?.credentials?.length > 64)
     return yield* StaleAuthentication.make({});
-  yield* Schema.decodeEffect(Schema.toType(SessionAuthenticationProvenance))(input).pipe(
-    Effect.mapError(() => StaleAuthentication.make({})),
-  );
+
+  const projected = yield* Schema.decodeEffect(Schema.toType(SessionAuthenticationProvenance))(
+    input,
+  ).pipe(Effect.mapError(() => StaleAuthentication.make({})));
+
   const ids = new Set(input.evidence.revision.credentials.map((item) => item.credentialId));
 
   if (
@@ -69,7 +79,11 @@ export const snapshotSessionAuthenticationProvenance = Effect.fn(
   )
     return yield* StaleAuthentication.make({});
 
-  return Object.freeze({ evidence: yield* snapshotAuthenticationEvidence(input.evidence) });
+  const { revision, flowId, bindingDigest, proofs } = projected.evidence;
+
+  return Object.freeze({
+    evidence: yield* snapshotAuthenticationEvidence({ revision, flowId, bindingDigest, proofs }),
+  });
 });
 
 /** Assess once at the supplied owner clock; ordinary callers use the current clock. */
@@ -99,6 +113,12 @@ export const assessAuthentication = Effect.fn("assessAuthentication")(function* 
     return yield* StaleAuthentication.make({});
   const now = DateTime.toEpochMillis(at ?? (yield* DateTime.now));
   const { futureToleranceMillis } = yield* AuthenticationClock;
+
+  if (
+    evidence.completionExpiresAt !== undefined &&
+    now >= DateTime.toEpochMillis(evidence.completionExpiresAt)
+  )
+    return yield* StaleAuthentication.make({});
 
   for (const proof of evidence.proofs) {
     if (DateTime.toEpochMillis(proof.verifiedAt) - now > futureToleranceMillis)
@@ -188,8 +208,18 @@ export const combineAuthenticationEvidence = (
     revisions.set(credential.credentialId, credential);
   }
 
+  const deadline = Math.min(
+    original.completionExpiresAt === undefined
+      ? Infinity
+      : DateTime.toEpochMillis(original.completionExpiresAt),
+    additional.completionExpiresAt === undefined
+      ? Infinity
+      : DateTime.toEpochMillis(additional.completionExpiresAt),
+  );
+
   return Effect.succeed({
     ...original,
+    ...(deadline === Infinity ? {} : { completionExpiresAt: DateTime.makeUnsafe(deadline) }),
     revision: { ...original.revision, credentials: [...revisions.values()] },
     proofs: [...original.proofs, ...additional.proofs],
   });

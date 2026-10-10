@@ -469,6 +469,8 @@ export interface OAuthAccountsMapping<
 }
 
 export interface OAuthRegistrationAuthority<Registration> {
+  /** Only the first confirmed registration supplies its private authentication handoff. */
+  readonly authentication?: "first-confirmed-registration";
   readonly read: (
     access: OAuthRegistrationAccess,
   ) => Effect.Effect<OAuthRegistrationInspection | undefined, OAuthUnavailable>;

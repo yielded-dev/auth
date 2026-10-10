@@ -46,26 +46,25 @@ export const AuthenticationProof = Schema.Struct({
 
 export type AuthenticationProof = typeof AuthenticationProof.Type;
 
-/** Trusted method evidence. No public endpoint accepts subject/factor assertions as proof. */
-export const AuthenticationEvidence = Schema.Struct({
+const authenticationSourceFields = {
   revision: AuthenticationRevision,
   flowId: AuthenticationFlowId,
   bindingDigest: TokenDigest,
   proofs: Schema.NonEmptyArray(AuthenticationProof).check(Schema.isMaxLength(64)),
+};
+
+/** Trusted method evidence. No public endpoint accepts subject/factor assertions as proof. */
+export const AuthenticationEvidence = Schema.Struct({
+  ...authenticationSourceFields,
+  /** Absolute flow-completion deadline, not a session lifetime. */
+  completionExpiresAt: Schema.optionalKey(Schema.DateTimeUtcFromMillis),
 });
 
 export type AuthenticationEvidence = typeof AuthenticationEvidence.Type;
 
-/** Private authenticated source evidence. Never derive this from public metadata. */
+/** Private source evidence; successful issuance consumes the flow-completion deadline. */
 export const SessionAuthenticationProvenance = Schema.Struct({
-  evidence: Schema.Struct({
-    ...AuthenticationEvidence.fields,
-    revision: Schema.Struct({
-      ...AuthenticationRevision.fields,
-      credentials: Schema.Array(CredentialRevision).check(Schema.isMaxLength(64)),
-    }),
-    proofs: Schema.NonEmptyArray(AuthenticationProof).check(Schema.isMaxLength(64)),
-  }),
+  evidence: Schema.Struct(authenticationSourceFields),
 });
 
 export type SessionAuthenticationProvenance = typeof SessionAuthenticationProvenance.Type;
