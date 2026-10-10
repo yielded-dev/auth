@@ -1,7 +1,7 @@
-import type { Signature } from "@yielded/crypto/Signature";
+import { Signature } from "@yielded/crypto/Signature";
 import type * as OAuth from "@yielded/oauth/OAuth";
 import * as Oidc from "@yielded/oauth/Oidc";
-import { type Crypto, Effect, type Redacted } from "effect";
+import { Context, Crypto, Effect, type Redacted } from "effect";
 
 import { OAuthUnavailable } from "../signInErrors";
 import { installProvider, prepareConfigurations, type InstalledProvider } from "./configuration";
@@ -36,7 +36,9 @@ const makeVerifier = Effect.fn("OpenIdConnect.makeVerifier")(function* (
     readonly pkceS256: boolean;
   },
 ) {
-  const context = yield* Effect.context<Crypto.Crypto | Signature>();
+  const context = Context.make(Crypto.Crypto, yield* Crypto.Crypto).pipe(
+    Context.add(Signature, yield* Signature),
+  );
 
   const verifier = yield* Oidc.makeVerifier({
     metadata,

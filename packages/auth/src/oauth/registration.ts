@@ -5,7 +5,11 @@ import { hasCommitScope, type PreparedCommit } from "../hooks/commit";
 import { LifecycleHooks } from "../hooks/LifecycleHooks";
 import { HookDenied, LifecycleEventId, lifecycleEvent, lifecycleSnapshot } from "../hooks/models";
 import { IdentityConflict } from "../identity/models";
-import { reportAuthFailure } from "../internal/diagnostics";
+import {
+  reportAuthDiagnostic,
+  reportAuthFailure,
+  withoutObservability,
+} from "../internal/diagnostics";
 import type { AuthOperationResult } from "../operations/credentials";
 import { makeOperation, operationGroup } from "../operations/operation";
 import type { makeRequestBinding } from "../operations/requestBinding";
@@ -41,8 +45,14 @@ const Failure = Schema.Union([
 
 type Failure = typeof Failure.Type;
 
-const unexpected = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+const registrationBoundary = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   effect.pipe(
+    Effect.tapError((error) =>
+      reportAuthDiagnostic(
+        "oauth-registration",
+        Schema.is(OAuthUnavailable)(error) ? "unavailable" : "rejected",
+      ),
+    ),
     Effect.tapCause((cause) =>
       Cause.hasDies(cause) ? reportAuthFailure("oauth-registration", cause) : Effect.void,
     ),
@@ -174,9 +184,9 @@ export const makeOAuthRegistration = <
       const crypto = yield* Crypto.Crypto;
       const { randomBytes } = crypto;
 
-      const services = yield* Effect.context<
+      const services = (yield* Effect.context<
         Registration["DecodingServices"] | Registration["EncodingServices"]
-      >();
+      >()).pipe(withoutObservability);
 
       const dataCodec = Schema.toCodecJson(Schema.toType(RegistrationCodec));
       const intentCodec = Schema.fromJsonString(OAuthRegistrationIntent);
@@ -383,12 +393,12 @@ export const makeOAuthRegistration = <
                 },
                 prepare,
               );
-            }).pipe(unexpected);
+            }).pipe(registrationBoundary);
 
             return Object.freeze({ commit });
           },
           Effect.provideService(Crypto.Crypto, crypto),
-          unexpected,
+          registrationBoundary,
         ),
         cleanup: Effect.fn("OAuthRegistration.cleanup")(function* (limit) {
           yield* noAmbient();
@@ -403,7 +413,7 @@ export const makeOAuthRegistration = <
           );
 
           return yield* receipt.read.pipe(Effect.mapError(() => OAuthUnavailable.make({})));
-        }, unexpected),
+        }, registrationBoundary),
       });
     }),
   );

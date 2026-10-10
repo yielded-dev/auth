@@ -12,6 +12,7 @@ import {
   makeNativeSessionCleanupServices,
 } from "@yielded/auth-persistence/Adapter";
 import type { LifecycleHooks } from "@yielded/auth/Hooks";
+import { reportAuthDiagnostic } from "@yielded/auth/Persistence";
 import {
   AuthenticationAuthority,
   SessionUnavailable,
@@ -63,7 +64,9 @@ export const makeSessionTarget = <DatabaseId, D extends NativeDriverDatabase>(
         configuration.mode === "batch" &&
         (mapping.d1?.primary !== true || mapping.subject.requirementColumns === undefined)
       )
-        return yield* unavailable();
+        return yield* reportAuthDiagnostic("persistence-validation", "configuration").pipe(
+          Effect.andThen(unavailable()),
+        );
       const target = yield* nativeTarget(configuration);
 
       return yield* target.provide(
@@ -171,7 +174,9 @@ export const makeSessionTarget = <DatabaseId, D extends NativeDriverDatabase>(
         configuration.mode === "batch" &&
         (mapping.d1?.primary !== true || mapping.subject.requirementColumns === undefined)
       )
-        return yield* unavailable();
+        return yield* reportAuthDiagnostic("persistence-validation", "configuration").pipe(
+          Effect.andThen(unavailable()),
+        );
       const target = yield* nativeTarget(configuration);
 
       return yield* target.provide(makeNativePendingAuthenticationServices(target.tables, mapping));
@@ -275,7 +280,9 @@ export const makeSessionTarget = <DatabaseId, D extends NativeDriverDatabase>(
         configuration.mode === "batch" &&
         (mapping.d1?.primary !== true || mapping.subject.requirementColumns === undefined)
       )
-        return yield* unavailable();
+        return yield* reportAuthDiagnostic("persistence-validation", "configuration").pipe(
+          Effect.andThen(unavailable()),
+        );
       const target = yield* nativeTarget(configuration);
 
       return yield* target.provide(makeNativeStatefulSessionServices(target.tables, mapping));
@@ -397,7 +404,9 @@ export const makeSessionTarget = <DatabaseId, D extends NativeDriverDatabase>(
     Effect.gen(function* () {
       yield* validateDrizzleStorage(mapping).pipe(Effect.mapError(unavailable));
       if (configuration.mode === "batch" && mapping.d1?.primary !== true)
-        return yield* unavailable();
+        return yield* reportAuthDiagnostic("persistence-validation", "configuration").pipe(
+          Effect.andThen(unavailable()),
+        );
       const target = yield* nativeTarget(configuration);
 
       return yield* target.provide(makeNativeSignedSessionValidityServices(target.tables, mapping));
@@ -498,7 +507,9 @@ export const makeSessionTarget = <DatabaseId, D extends NativeDriverDatabase>(
         configuration.mode === "batch" &&
         (mapping.d1?.primary !== true || mapping.subject.requirementColumns === undefined)
       )
-        return yield* unavailable();
+        return yield* reportAuthDiagnostic("persistence-validation", "configuration").pipe(
+          Effect.andThen(unavailable()),
+        );
       const target = yield* nativeTarget(configuration);
 
       return yield* target.provide(makeNativeSessionStepUpServices(target.tables, mapping));

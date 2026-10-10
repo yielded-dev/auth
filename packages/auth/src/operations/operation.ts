@@ -12,7 +12,7 @@ import {
 } from "effect";
 import { Rpc, RpcGroup } from "effect/rpc";
 
-import { reportAuthFailure } from "../internal/diagnostics";
+import { reportAuthFailure, withoutObservability } from "../internal/diagnostics";
 import type { AuthInvocation } from "./context";
 import {
   AuthCredentialCommandCollector,
@@ -412,8 +412,9 @@ const buildOperation = <
     Layer.effect(
       HandlerService,
       Effect.gen(function* () {
-        const services = Context.omit(Scope.Scope)(
-          yield* Effect.context<R>(),
+        const services = (yield* Effect.context<R>()).pipe(
+          withoutObservability,
+          Context.omit(Scope.Scope),
         ) as unknown as Context.Context<R>;
 
         return {

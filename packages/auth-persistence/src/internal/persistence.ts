@@ -14,7 +14,7 @@ import {
   PasskeyUnavailable,
 } from "@yielded/auth/Passkey";
 import { PasswordPersistence, PasswordUnavailable } from "@yielded/auth/Password";
-import { hooksLayer } from "@yielded/auth/Persistence";
+import { hooksLayer, reportAuthDiagnostic } from "@yielded/auth/Persistence";
 import { PhoneSignInTargets, PhoneOtpUnavailable } from "@yielded/auth/PhoneOtp";
 import { ProofPersistence, ProofUnavailable } from "@yielded/auth/Proofs";
 import { AuthenticationAuthority, SessionUnavailable } from "@yielded/auth/Sessions";
@@ -475,14 +475,7 @@ export const createPersistence = <T extends object, R, Database extends object =
           // The checked capability metadata above determines exactly these service keys.
           return context as Context.Context<Ports<C, Id, A>>;
         }).pipe(Effect.provideService(SqlBatchCommit, backend.batch?.(database))),
-      ).pipe(
-        withStorageValidation,
-        Effect.mapError((error) =>
-          Schema.is(PersistenceConfigurationError)(error)
-            ? error
-            : configError("Cannot acquire SQL persistence"),
-        ),
-      ),
+      ).pipe(withStorageValidation),
     ).pipe(Layer.provide(hooksLayer));
 
     const layer = Layer.effectContext(
@@ -520,7 +513,22 @@ export const createPersistence = <T extends object, R, Database extends object =
             if (yield* hasCommitScope) return yield* Effect.fail(unavailable());
             yield* requireStandalone(unavailable, client.transactionService);
           }
-          const acquired = yield* initialize.pipe(Effect.mapError(unavailable));
+
+          // Observe the cached failure in this invocation, not the captured setup context.
+          const acquired = yield* initialize.pipe(
+            Effect.tapError((error) =>
+              reportAuthDiagnostic(
+                "persistence-initialization",
+                Schema.is(PersistenceConfigurationError)(error)
+                  ? "configuration"
+                  : Schema.is(PersistenceMappingError)(error)
+                    ? "mapping"
+                    : "unavailable",
+              ),
+            ),
+            Effect.mapError(unavailable),
+          );
+
           const value = Context.getOrUndefined(acquired, key);
 
           return value === undefined ? yield* Effect.fail(unavailable()) : value;

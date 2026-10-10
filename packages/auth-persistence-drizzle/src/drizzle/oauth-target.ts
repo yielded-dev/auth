@@ -15,6 +15,7 @@ import {
 } from "@yielded/auth-persistence/Adapter";
 import type { LifecycleHooks } from "@yielded/auth/Hooks";
 import { OAuthUnavailable } from "@yielded/auth/OAuth";
+import { reportAuthDiagnostic } from "@yielded/auth/Persistence";
 import { Effect } from "effect";
 
 import type { D1BatchStatements } from "./D1BatchStatements";
@@ -58,8 +59,11 @@ const mapped = Effect.fnUntraced(function* (
       "primary" in mapping.d1 &&
       mapping.d1.primary === true
     )
-  )
+  ) {
+    yield* reportAuthDiagnostic("persistence-validation", "configuration");
+
     return yield* unavailable();
+  }
 
   return { mapping, ...(yield* nativeTarget(configuration)) };
 });

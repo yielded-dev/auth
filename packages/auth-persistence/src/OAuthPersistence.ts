@@ -8,6 +8,7 @@ import {
   OAuthConnectedRevocations,
   OAuthUnavailable,
 } from "@yielded/auth/OAuth";
+import { reportAuthDiagnostic } from "@yielded/auth/Persistence";
 import { type Context, type Crypto, Effect, Predicate, Schema } from "effect";
 import { SqlClient } from "effect/sql";
 
@@ -78,10 +79,13 @@ const acquire = Effect.gen(function* () {
   if (
     !client.onDialectOrElse({ pg: () => true, sqlite: () => true, orElse: () => false }) ||
     Predicate.hasProperty(client, "~@effect/sql-d1/D1Client")
-  )
+  ) {
+    yield* reportAuthDiagnostic("persistence-validation", "configuration");
+
     return yield* PersistenceConfigurationError.make({
       reason: "OAuth persistence requires PostgreSQL or SQLite with interactive transactions",
     });
+  }
 
   return { client, tables: makeNativeSqlTables(client) };
 });

@@ -1,7 +1,11 @@
 import * as Pkce from "@yielded/oauth/Pkce";
 import { Cause, Crypto, DateTime, Effect, Fiber, Redacted, Schema, type Scope } from "effect";
 
-import { reportAuthFailure } from "../../internal/diagnostics";
+import {
+  reportAuthDiagnostic,
+  reportAuthFailure,
+  withoutObservability,
+} from "../../internal/diagnostics";
 import { RequestBindingFlowId } from "../../operations/requestBindingModels";
 import { selectCallback } from "../callback";
 import { OAuthProtocol } from "../OAuthProtocol";
@@ -82,7 +86,7 @@ export const makeOpenIdConnectOAuthProtocol = Effect.fn("makeOpenIdConnectOAuthP
     OpenIdConnectConfigurationError | OAuthUnavailable,
     R | Setup | Crypto.Crypto | Scope.Scope
   > {
-    const context = yield* Effect.context<R>();
+    const context = (yield* Effect.context<R>()).pipe(withoutObservability);
     const crypto = yield* Crypto.Crypto;
     const scope = yield* Effect.scope;
     // Setup shares the protocol's containment for supplied platform services.
@@ -357,6 +361,13 @@ export const makeOpenIdConnectOAuthProtocol = Effect.fn("makeOpenIdConnectOAuthP
               duration: timeoutSeconds * 1000,
               orElse: () => Effect.fail(unavailable()),
             }),
+          ),
+        ).pipe(
+          Effect.tapError((error) =>
+            reportAuthDiagnostic(
+              "oauth-exchange",
+              error._tag === "OAuthProtocolRejected" ? "rejected" : "unavailable",
+            ),
           ),
         ),
     });

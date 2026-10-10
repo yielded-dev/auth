@@ -3,7 +3,11 @@ import type * as Oidc from "@yielded/oauth/Oidc";
 import * as Pkce from "@yielded/oauth/Pkce";
 import { Cause, Crypto, DateTime, Effect, Fiber, Redacted, Schema, type Scope } from "effect";
 
-import { reportAuthFailure } from "../../../internal/diagnostics";
+import {
+  reportAuthDiagnostic,
+  reportAuthFailure,
+  withoutObservability,
+} from "../../../internal/diagnostics";
 import { RequestBindingFlowId } from "../../../operations/requestBindingModels";
 import * as M from "../../connectedModels";
 import { OAuthConnectedProtocol } from "../../OAuthConnectedProtocol";
@@ -148,7 +152,7 @@ export const makeConnectedProtocolWithCompatibility = Effect.fn(
   OpenIdConnectConfigurationError | OAuthUnavailable,
   R | Setup | ProviderRevocation | Crypto.Crypto | Scope.Scope
 > {
-  const decoderContext = yield* Effect.context<R>();
+  const decoderContext = (yield* Effect.context<R>()).pipe(withoutObservability);
   const crypto = yield* Crypto.Crypto;
   const providerRevocation = yield* ProviderRevocation;
   const scope = yield* Effect.scope;
@@ -710,6 +714,12 @@ export const makeConnectedProtocolWithCompatibility = Effect.fn(
           duration: timeoutSeconds * 1000,
           orElse: () => Effect.fail(unavailable()),
         }),
+        Effect.tapError((error) =>
+          reportAuthDiagnostic(
+            "oauth-exchange",
+            error._tag === "OAuthProtocolRejected" ? "rejected" : "unavailable",
+          ),
+        ),
       ),
     refreshGrant: (input) =>
       run(safe(refreshGrant(input))).pipe(
@@ -717,6 +727,12 @@ export const makeConnectedProtocolWithCompatibility = Effect.fn(
           duration: timeoutSeconds * 1000,
           orElse: () => Effect.fail(unavailable()),
         }),
+        Effect.tapError((error) =>
+          reportAuthDiagnostic(
+            "oauth-exchange",
+            error._tag === "OAuthProtocolRejected" ? "rejected" : "unavailable",
+          ),
+        ),
       ),
     revokeGrant: (input) =>
       run(safe(revokeGrant(input))).pipe(
