@@ -13,7 +13,11 @@ import {
 } from "./connected/configuration";
 import type { OpenIdConnectConnectedProtocolOptions } from "./connected/models";
 import { discoveryMetadataUrl, discoveryProfile, supplementDiscovery } from "./discovery";
-import { OpenIdConnectConfigurationError, type OpenIdConnectOAuthProtocolOptions } from "./models";
+import {
+  hasStaticSecret,
+  OpenIdConnectConfigurationError,
+  type OpenIdConnectOAuthProtocolOptions,
+} from "./models";
 import type { Requirements as OAuthRequirements } from "./native";
 
 export type Requirements = OAuthRequirements | Signature | Hmac;
@@ -93,8 +97,7 @@ export const installConfigurations = Effect.fn("OpenIdConnect.installConfigurati
             verifier: yield* makeVerifier(entry.metadata, provider.clientId, timeoutSeconds, {
               algorithms: provider.idTokenSignedResponseAlg,
               pkceS256: provider.pkceS256,
-              ...(provider.authentication.method !== "none" &&
-              provider.authentication.secret !== undefined
+              ...(hasStaticSecret(provider.authentication)
                 ? { clientSecret: provider.authentication.secret }
                 : {}),
             }),
@@ -136,8 +139,7 @@ export const installConnectedConfigurations = Effect.fn(
             verifier: yield* makeVerifier(entry.metadata, provider.clientId, timeoutSeconds, {
               algorithms: provider.idTokenSignedResponseAlg,
               pkceS256: provider.pkceS256,
-              ...(provider.authentication.method !== "none" &&
-              provider.authentication.secret !== undefined
+              ...(hasStaticSecret(provider.authentication)
                 ? { clientSecret: provider.authentication.secret }
                 : {}),
             }),

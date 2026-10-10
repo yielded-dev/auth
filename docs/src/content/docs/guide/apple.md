@@ -66,8 +66,8 @@ link accounts merely because profile emails match, even when `email_verified` is
 true. Hide My Email addresses set `is_private_email`.
 
 The preset carries `AppleUserProfile` through ID-token projection. Apple sends
-`email_verified` and `is_private_email` as the strings `"true"` and `"false"`;
-the schema decodes them to booleans. Declare the same schema on the strategy to
+`email_verified` and `is_private_email` as booleans or the strings `"true"` and
+`"false"`; the schema decodes both to booleans. Declare the same schema on the strategy to
 get typed `providerData` in `SessionClaims.resolve`:
 
 ```ts
@@ -88,7 +88,10 @@ POSTs on the same callback path as query callbacks. That sign-in sets the
 request-binding cookie to `SameSite=None; Secure` so the browser sends it on
 Apple's cross-site POST. The callback still requires the cookie and checks it
 against the flow before exchanging the code. Other auth cookies stay `SameSite=Lax`.
-HTTPS is required, because `SameSite=None` is invalid without `Secure`.
+Account linking and connected-account completion recover the caller from the
+continuation sealed at the authenticated begin, then still require that subject
+and the binding. Query callbacks still require the live session. HTTPS is
+required, because `SameSite=None` is invalid without `Secure`.
 
 ## Run the example
 

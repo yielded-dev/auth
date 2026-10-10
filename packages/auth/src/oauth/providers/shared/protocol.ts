@@ -25,7 +25,12 @@ import {
 import { snapshotOAuth } from "../../signInSnapshot";
 import { tokenCompatibility } from "./compatibility";
 import type { InstalledConfiguration } from "./configuration";
-import { persistedResponseIssuerMode, type OpenIdConnectConfigurationError } from "./models";
+import {
+  persistedResponseIssuerMode,
+  type OpenIdConnectAuthentication,
+  type OpenIdConnectConfigurationError,
+} from "./models";
+import { PrivateKeyClientSecret } from "./privateKeyJwt";
 import { decodeOidcProfile, mergeAppleCallbackUser } from "./profile";
 import { tokens } from "./receipt";
 import { subjectInTenant } from "./tenantSubject";
@@ -85,11 +90,16 @@ export const makeOpenIdConnectOAuthProtocol = Effect.fn("makeOpenIdConnectOAuthP
   ): Effect.fn.Return<
     OAuthProtocol["Service"],
     OpenIdConnectConfigurationError | OAuthUnavailable,
-    R | Setup | Crypto.Crypto | Scope.Scope
+    R | Setup | Crypto.Crypto | PrivateKeyClientSecret | Scope.Scope
   > {
     const context = (yield* Effect.context<R>()).pipe(withoutObservability);
     const crypto = yield* Crypto.Crypto;
+    const clientSecrets = yield* PrivateKeyClientSecret;
     const scope = yield* Effect.scope;
+
+    const requestSecret = (authentication: OpenIdConnectAuthentication) =>
+      clientSecrets.mint(authentication).pipe(Effect.mapError(unavailable));
+
     // Setup shares the protocol's containment for supplied platform services.
     const { installed, timeoutSeconds } = yield* installation;
 
@@ -241,6 +251,8 @@ export const makeOpenIdConnectOAuthProtocol = Effect.fn("makeOpenIdConnectOAuthP
         if (startedAt < 0 || startedAt > DateTime.toEpochMillis(yield* DateTime.now))
           return yield* rejected();
 
+        const clientSecret = yield* requestSecret(provider.authentication);
+
         const receipt = yield* entry.client
           .codeGrant({
             code: request.response.code,
@@ -251,8 +263,16 @@ export const makeOpenIdConnectOAuthProtocol = Effect.fn("makeOpenIdConnectOAuthP
             ...(provider.tokenParameters === undefined
               ? {}
               : { parameters: provider.tokenParameters }),
+            ...(clientSecret === undefined ? {} : { clientSecret }),
           })
-          .pipe(Effect.mapError(unavailable));
+          .pipe(
+            Effect.mapError(unavailable),
+            Effect.ensuring(
+              Effect.sync(() => {
+                if (clientSecret !== undefined) Redacted.wipeUnsafe(clientSecret);
+              }),
+            ),
+          );
 
         const grant = yield* tokens(
           receipt,

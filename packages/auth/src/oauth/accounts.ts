@@ -419,6 +419,7 @@ export const makeOAuthAccounts = <
 
           const intent = snapshotOAuthSync(OAuthLinkIntentContext, {
             ...prepared.configuration,
+            ...(prepared.responseMode === undefined ? {} : { responseMode: prepared.responseMode }),
             namespace: "effect-auth/oauth-link-context/v1",
             moduleId: id,
             generation: policy.generation,
@@ -497,7 +498,10 @@ export const makeOAuthAccounts = <
 
       const complete = Effect.fn("OAuthAccounts.complete")(
         function* (invocation: AuthInvocation, raw: typeof OAuthLinkComplete.Type) {
-          const caller = yield* available(invocation);
+          const authenticated = yield* available(invocation).pipe(
+            Effect.catchTag("AuthenticationRequired", () => Effect.succeed(undefined)),
+          );
+
           const request = yield* snapshotOAuth(OAuthLinkComplete, raw);
           const response = request.response;
 
@@ -510,10 +514,9 @@ export const makeOAuthAccounts = <
             )),
           };
 
-          const access = snapshotOAuthSync(OAuthLinkAccess, {
+          const binding = {
             moduleId: id,
             generation: policy.generation,
-            subjectId: caller.subjectId,
             flowId: request.flowId,
             provider: request.provider,
             callbackId: request.callbackId,
@@ -521,15 +524,31 @@ export const makeOAuthAccounts = <
             requestBindingVerifier: binder.verifier,
             requestBindingExpiresAtMillis: binder.expiresAtMillis,
             ...(response.issuer === undefined ? {} : { responseIssuer: response.issuer }),
-          });
+          };
+
+          const access = snapshotOAuthSync(
+            OAuthLinkAccess,
+            authenticated === undefined
+              ? { ...binding, formPostSubject: true as const }
+              : { ...binding, subjectId: authenticated.subjectId },
+          );
 
           const consumed = yield* consume(access, (value, journal) =>
             journal.prepare(snapshotOAuthSync(OAuthLinkConsumeDecision, value)),
           ).pipe(Effect.flatMap(read));
 
-          if (consumed._tag !== "Consumed") return yield* OAuthRejected.make({});
+          if (consumed._tag !== "Consumed") {
+            if (authenticated === undefined) return yield* AuthenticationRequired.make({});
+
+            return yield* OAuthRejected.make({});
+          }
           const flow = snapshotOAuthSync(OAuthLinkFlow, consumed.flow);
           const context = flow.context;
+
+          if (authenticated === undefined && context.responseMode !== "form_post")
+            return yield* AuthenticationRequired.make({});
+
+          const caller = authenticated ?? { subjectId: context.revision.subjectId };
 
           if (
             context.moduleId !== id ||
