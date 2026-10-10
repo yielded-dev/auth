@@ -21,6 +21,7 @@ import { LifecycleHooks } from "../hooks/LifecycleHooks";
 import type { HookDenied } from "../hooks/models";
 import { LifecycleEventId, lifecycleEvent, lifecycleSnapshot } from "../hooks/models";
 import { reportAuthFailure } from "../internal/diagnostics";
+import { AuthenticationClock } from "../operations/clock";
 import {
   AuthenticationAssurance,
   type AuthInvocation,
@@ -457,7 +458,13 @@ export const makeSessionModule = <
       subjectId: evidence.revision.subjectId,
       securityRevision: evidence.revision.securityRevision,
       assurance,
-      issuedAt: now,
+      issuedAt: DateTime.makeUnsafe(
+        Math.max(
+          DateTime.toEpochMillis(now),
+          ...evidence.proofs.map((proof) => DateTime.toEpochMillis(proof.verifiedAt)),
+          source === undefined ? -Infinity : DateTime.toEpochMillis(source.issuedAt),
+        ),
+      ),
       expiresAt: DateTime.makeUnsafe(
         Math.min(
           DateTime.toEpochMillis(absoluteExpiresAt),
@@ -492,7 +499,13 @@ export const makeSessionModule = <
       // A successful step-up dates authentication from its newly satisfied profile.
       // The source absolute expiry and each retained proof timestamp stay unchanged.
       assurance: AuthenticationAssurance.make(assurance),
-      issuedAt: now,
+      issuedAt: DateTime.makeUnsafe(
+        Math.max(
+          DateTime.toEpochMillis(now),
+          DateTime.toEpochMillis(source.issuedAt),
+          ...evidence.proofs.map((proof) => DateTime.toEpochMillis(proof.verifiedAt)),
+        ),
+      ),
       expiresAt: DateTime.makeUnsafe(
         Math.min(
           DateTime.toEpochMillis(source.absoluteExpiresAt),
@@ -511,6 +524,12 @@ export const makeSessionModule = <
     Layer.effectContext(
       Effect.gen(function* () {
         const policy = yield* validateSessionPolicy(configured, statefulCapabilities);
+
+        const withClockPolicy = Effect.provideService(
+          AuthenticationClock,
+          yield* AuthenticationClock,
+        );
+
         const store = yield* StatefulSessionPersistence;
         const repository = yield* SessionRepository;
         const secrets = yield* makeSessionSecrets(moduleId);
@@ -525,6 +544,7 @@ export const makeSessionModule = <
             Effect.flatMap((value) =>
               validateSessionTimeline(value, policy).pipe(Effect.as(value)),
             ),
+            withClockPolicy,
           );
 
         const inspect = Effect.fn("StatefulSession.inspect")(function* (
@@ -594,7 +614,7 @@ export const makeSessionModule = <
               return journal.prepare(issue(record, credential));
             },
           );
-        });
+        }, withClockPolicy);
 
         const strategy = SessionStrategy.of({
           policy,
@@ -663,7 +683,7 @@ export const makeSessionModule = <
             );
 
             return yield* readCommitted(receipt);
-          }),
+          }, withClockPolicy),
           signOut: Effect.fn("StatefulSession.signOut")(function* (
             credential: Redacted.Redacted<string>,
           ) {
@@ -762,7 +782,7 @@ export const makeSessionModule = <
               nextDigest,
             }),
           };
-        });
+        }, withClockPolicy);
 
         return Context.make(SessionStrategy, strategy).pipe(Context.add(StepUpPlanner, { plan }));
       }),
@@ -785,6 +805,10 @@ export const makeSessionModule = <
         };
 
         const policy = yield* validateSessionPolicy(configured, capabilities);
+        const clockPolicy = yield* AuthenticationClock;
+
+        const withClockPolicy = Effect.provideService(AuthenticationClock, clockPolicy);
+
         const hooks = yield* LifecycleHooks;
         const secrets = yield* makeSessionSecrets(moduleId);
 
@@ -837,7 +861,7 @@ export const makeSessionModule = <
             envelope.provenance,
             envelope.credentialVersion,
           );
-        });
+        }, withClockPolicy);
 
         const inspect = Effect.fn("SignedSession.inspect")(function* (
           credential: Redacted.Redacted<string>,
@@ -862,7 +886,7 @@ export const makeSessionModule = <
           yield* captureVerification(credential, source, checkedAt);
 
           return source;
-        });
+        }, withClockPolicy);
 
         const prepareEstablish = Effect.fn("SignedSession.prepareEstablish")(function* (
           input: Issuance,
@@ -901,6 +925,7 @@ export const makeSessionModule = <
               evidence: planned.evidence,
               ...(input.pending === undefined ? {} : { pending: input.pending }),
               now: yield* DateTime.now,
+              issuedAt: session.issuedAt,
               expiresAt: session.expiresAt,
               absoluteExpiresAt: session.absoluteExpiresAt,
             },
@@ -911,7 +936,7 @@ export const makeSessionModule = <
               return journal.prepare(issue(session, credential));
             },
           );
-        });
+        }, withClockPolicy);
 
         const strategy = SessionStrategy.of({
           policy,
@@ -964,7 +989,7 @@ export const makeSessionModule = <
             yield* hooks.after(event);
 
             return result;
-          }),
+          }, withClockPolicy),
           signOut: Effect.fn("SignedSession.signOut")(function* (
             credential: Redacted.Redacted<string>,
           ) {
@@ -1022,8 +1047,11 @@ export const makeSessionModule = <
                 {
                   subjectId: session.subjectId,
                   sessionId,
+                  // The target may have been issued by an ahead clock.
                   absoluteExpiresAt: DateTime.add(yield* DateTime.now, {
-                    milliseconds: policy.maximumIssuedAbsoluteLifetimeMillis,
+                    milliseconds:
+                      policy.maximumIssuedAbsoluteLifetimeMillis +
+                      clockPolicy.futureToleranceMillis,
                   }),
                 },
                 (_, journal) => {
@@ -1089,7 +1117,7 @@ export const makeSessionModule = <
             : Object.freeze({ _tag: "StatelessSigned", inspection });
 
           return { credential, replacement };
-        });
+        }, withClockPolicy);
 
         return Context.make(SessionStrategy, strategy).pipe(Context.add(StepUpPlanner, { plan }));
       }),
@@ -1169,6 +1197,12 @@ export const makeSessionModule = <
               );
 
         const pendingPort = yield* pending;
+
+        const withClockPolicy = Effect.provideService(
+          AuthenticationClock,
+          yield* AuthenticationClock,
+        );
+
         const strategy = yield* SessionStrategy;
         const authority = yield* AuthenticationAuthority;
         const secrets = yield* makeSessionSecrets(moduleId);
@@ -1262,7 +1296,7 @@ export const makeSessionModule = <
                 ],
               }),
           );
-        });
+        }, withClockPolicy);
 
         const pendingCodec = Schema.toCodecJson(
           Schema.toType(
@@ -1670,6 +1704,12 @@ export const makeSessionModule = <
         )
           return yield* SessionConfigurationError.make({ reason: "step-up" });
         const store = yield* SessionStepUpPersistence;
+
+        const withClockPolicy = Effect.provideService(
+          AuthenticationClock,
+          yield* AuthenticationClock,
+        );
+
         const strategy = yield* SessionStrategy;
         const planner = yield* StepUpPlanner;
         const crypto = yield* Crypto.Crypto;
@@ -1699,8 +1739,13 @@ export const makeSessionModule = <
           );
         }
 
-        const assess = (evidence: AuthenticationEvidence, requirement: AuthenticationRequirement) =>
-          assessAuthentication(evidence, requirement).pipe(
+        const assess = (
+          evidence: AuthenticationEvidence,
+          requirement: AuthenticationRequirement,
+          now: DateTime.Utc,
+        ) =>
+          assessAuthentication(evidence, requirement, now).pipe(
+            withClockPolicy,
             Effect.catchTag("SessionConfigurationError", () =>
               Effect.fail(SessionUnavailable.make({})),
             ),
@@ -1839,7 +1884,7 @@ export const makeSessionModule = <
                 ],
               }),
             );
-          }),
+          }, withClockPolicy),
           inspect,
           rejectCredential: Effect.fn("SessionStepUp.rejectCredential")(function* (credential) {
             const digest = yield* digestCredential(credential);
@@ -1872,8 +1917,9 @@ export const makeSessionModule = <
               ),
             );
 
-            const base = yield* assess(evidence, requirement);
-            const profile = yield* assess(evidence, intent.requirement);
+            const now = yield* DateTime.now;
+            const base = yield* assess(evidence, requirement, now);
+            const profile = yield* assess(evidence, intent.requirement, now);
 
             if (!base.satisfied || !profile.satisfied) return yield* SessionStepUpInvalid.make({});
 
@@ -1907,9 +1953,11 @@ export const makeSessionModule = <
             // The committing owner rechecks source, revisions and both policies
             // after hooks, against its final clock. Preserve this original snapshot.
             yield* validateSessionTimeline(planned.replacement.inspection.session, strategy.policy);
-            const now = yield* DateTime.now;
 
-            if (DateTime.toEpochMillis(now) >= DateTime.toEpochMillis(intent.expiresAt))
+            if (
+              DateTime.toEpochMillis(yield* DateTime.now) >=
+              DateTime.toEpochMillis(intent.expiresAt)
+            )
               return yield* SessionStepUpInvalid.make({});
 
             const plan: SessionStepUpCompletionPlan<Claims["Type"]> = Object.freeze({
@@ -1935,7 +1983,7 @@ export const makeSessionModule = <
                 ],
               });
             });
-          }),
+          }, withClockPolicy),
         });
       }),
     );

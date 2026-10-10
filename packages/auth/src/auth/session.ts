@@ -1,6 +1,7 @@
 import { Context, DateTime, Effect, Layer, Option, Redacted, Schema, Scope } from "effect";
 
 import type { HookDenied } from "../hooks/models";
+import { AuthenticationClock } from "../operations/clock";
 import { guest } from "../operations/context";
 import {
   AuthCredentialCommandCollector,
@@ -55,6 +56,7 @@ export const makeSessionApi = <
 ) =>
   Effect.gen(function* () {
     const strategy = yield* sessions.SessionStrategy;
+    const clockPolicy = yield* AuthenticationClock;
 
     const cache = yield* Effect.serviceOption(
       sessionCookieCache<Id, typeof sessions.Session.Type>(sessions.moduleId),
@@ -67,7 +69,9 @@ export const makeSessionApi = <
       yield* Effect.scope,
     ).pipe(
       Effect.updateContext((_: Context.Context<never>) =>
-        Context.make(sessions.SessionStrategy, strategy),
+        Context.make(sessions.SessionStrategy, strategy).pipe(
+          Context.add(AuthenticationClock, clockPolicy),
+        ),
       ),
     );
 
@@ -76,6 +80,7 @@ export const makeSessionApi = <
       Claims["DecodingServices"] | Claims["EncodingServices"]
     >()).pipe(
       Context.merge(handlers),
+      Context.add(AuthenticationClock, clockPolicy),
       Context.omit(
         AuthRequest,
         CurrentSessionInvocation,

@@ -38,7 +38,11 @@ export interface StatefulSessionPersistence<Claims> {
    * Never return an existing row: its digest cannot
    * recover the original bearer and does not match this attempt's new secret. Pending consumption and insertion
    * are one commit. Recheck current factor policy, proof freshness and both expiry
-   * bounds against the clock at the conditional commit. Never replace evidence with a newly read revision.
+   * bounds against the clock at the conditional commit. AuthenticationClock bounds
+   * cross-clock future lead only; accepted future proof ages are zero. Preserve
+   * proof/authentication times and choose issuedAt no earlier than the commit clock,
+   * trusted preparation, accepted proofs or handoff source. Never extend the supplied
+   * expiry bounds or replace evidence with a newly read revision.
    */
   readonly establish: <A>(
     input: {
@@ -64,8 +68,10 @@ export interface StatefulSessionPersistence<Claims> {
   }) => Effect.Effect<StatefulSessionRecord<Claims>, SessionInvalid | SessionUnavailable>;
   /** One CAS winner: guard the captured owner/session/digest and both live expiry
    * bounds at the committing clock. Preserve security revision, authenticatedAt,
-   * absolute expiry and private provenance; set issuedAt from that clock and rotate
-   * credentialVersion. Do not reread the row before the conditional update or upsert. */
+   * absolute expiry and private provenance; issuedAt is the latest of the commit
+   * clock, trusted preparation and source issuedAt. Bound cross-clock future lead
+   * with AuthenticationClock, but keep same-clock commit guards and renewal eligibility
+   * strict. Rotate credentialVersion; do not reread before the conditional update or upsert. */
   readonly rotate: <A>(
     input: {
       readonly record: StatefulSessionRecord<Claims>;
@@ -120,6 +126,9 @@ export interface SignedSessionValidity {
     session: SessionMetadata,
     now: DateTime.Utc,
   ) => Effect.Effect<void, SessionInvalid | SessionUnavailable>;
+  /** Retain the owner-scoped tombstone through absoluteExpiresAt; never shorten an
+   * existing tombstone. For an uninspected target, this conservative retention bound
+   * includes permitted future lead and can exceed the token's unchanged expiry. */
   readonly revoke: <A>(
     input: {
       readonly subjectId: SubjectId;

@@ -1,3 +1,4 @@
+import { AuthenticationClock } from "@yielded/auth/Operations";
 import { reportAuthFailure } from "@yielded/auth/Persistence";
 import type { SubjectId } from "@yielded/auth/Schema";
 import {
@@ -98,6 +99,7 @@ export const makeNativeSessionAuthorityState = Effect.fnUntraced(function* (
   batch = false,
 ) {
   const sql = (yield* SqlClient).withoutTransforms();
+  const clockPolicy = yield* AuthenticationClock;
 
   const s = mapping.subject,
     c = mapping.credential;
@@ -246,6 +248,7 @@ export const makeNativeSessionAuthorityState = Effect.fnUntraced(function* (
 
   return {
     sql,
+    clockPolicy,
     subject,
     credential,
     joinedSubject,

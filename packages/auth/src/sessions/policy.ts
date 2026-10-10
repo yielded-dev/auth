@@ -1,5 +1,6 @@
 import { DateTime, Effect, Schema } from "effect";
 
+import { AuthenticationClock } from "../operations/clock";
 import { SessionConfigurationError, SessionInvalid } from "./errors";
 import type { SessionCapabilities, SessionMetadata } from "./models";
 
@@ -56,6 +57,7 @@ export const validateSessionTimeline = Effect.fn("validateSessionTimeline")(func
   policy: SessionPolicy,
 ) {
   const now = DateTime.toEpochMillis(yield* DateTime.now);
+  const { futureToleranceMillis } = yield* AuthenticationClock;
   const authenticatedAt = DateTime.toEpochMillis(session.assurance.authenticatedAt);
   const issuedAt = DateTime.toEpochMillis(session.issuedAt);
   const expiresAt = DateTime.toEpochMillis(session.expiresAt);
@@ -74,7 +76,7 @@ export const validateSessionTimeline = Effect.fn("validateSessionTimeline")(func
     return yield* SessionInvalid.make({});
   if (
     authenticatedAt > issuedAt ||
-    issuedAt > now ||
+    issuedAt - now > futureToleranceMillis ||
     now >= expiresAt ||
     expiresAt > absoluteExpiresAt ||
     expiresAt <= issuedAt ||

@@ -250,11 +250,19 @@ export const makeNativeEmailAddressServices = Effect.fnUntraced(function* (
           .filter((time) => time > current.now)
           .sort((a, b) => a - b);
 
-        const deadline = boundaries.find((time) =>
-          requirements.some(
-            (r) => !passwordEvidenceSatisfiedAt(input.authorization.evidence, r, time),
-          ),
-        );
+        let deadline: number | undefined;
+
+        for (const time of boundaries) {
+          for (const requirement of requirements) {
+            if (
+              !(yield* passwordEvidenceSatisfiedAt(input.authorization.evidence, requirement, time))
+            ) {
+              deadline = time;
+              break;
+            }
+          }
+          if (deadline !== undefined) break;
+        }
 
         ensure(deadline !== undefined);
         const freshness = sql`${now} >= ${current.now} and ${now} < ${deadline}`;
@@ -470,7 +478,9 @@ export const makeNativeEmailAddressServices = Effect.fnUntraced(function* (
               );
               const policy = yield* s.decodeActionRequirement(final.subject, action);
 
-              ensure(passwordEvidenceSatisfiedAt(input.authorization.evidence, policy, final.now));
+              ensure(
+                yield* passwordEvidenceSatisfiedAt(input.authorization.evidence, policy, final.now),
+              );
               if (source !== undefined)
                 ensure(
                   final.sourceIdentifier !== undefined &&

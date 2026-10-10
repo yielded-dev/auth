@@ -17,6 +17,7 @@ import { LifecycleHooks } from "../hooks/LifecycleHooks";
 import { HookDenied, LifecycleEventId, lifecycleEvent, lifecycleSnapshot } from "../hooks/models";
 import { IdentityConflict, LastSignInMethod } from "../identity/models";
 import { reportAuthFailure } from "../internal/diagnostics";
+import { AuthenticationClock } from "../operations/clock";
 import { requireAuthenticated, type AuthInvocation } from "../operations/context";
 import type { AuthOperationResult, AuthCredentialCommand } from "../operations/credentials";
 import { AuthenticationRequired } from "../operations/errors";
@@ -209,6 +210,7 @@ export const makeOAuthAccounts = <
       const { before } = yield* LifecycleHooks;
       const { randomBytes, digest } = yield* Crypto.Crypto;
       const strategy = yield* sessions.SessionStrategy;
+      const clockPolicy = yield* AuthenticationClock;
 
       const invalidation = snapshotOAuthSync(
         SessionInvalidationWindow,
@@ -306,7 +308,7 @@ export const makeOAuthAccounts = <
           expected,
           grant,
           Math.min(policy.maximumEvidenceAgeMillis, maximumAgeMillis),
-        );
+        ).pipe(Effect.provideService(AuthenticationClock, clockPolicy));
 
         const authorization = yield* snapshotOAuth(OAuthActionAuthorization, {
           challenge: expected,

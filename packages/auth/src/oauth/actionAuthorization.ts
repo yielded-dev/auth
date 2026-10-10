@@ -1,5 +1,6 @@
 import { DateTime, Effect } from "effect";
 
+import { AuthenticationClock } from "../operations/clock";
 import type { AuthInvocation } from "../operations/context";
 import { assessAuthentication } from "../sessions/assurance";
 import {
@@ -26,6 +27,7 @@ export const authorizeOAuthEvidence = Effect.fn("OAuth.authorizeEvidence")(funct
   maximumAgeMillis: number,
 ) {
   const now = DateTime.toEpochMillis(yield* DateTime.now);
+  const { futureToleranceMillis } = yield* AuthenticationClock;
 
   const requirement = {
     ...grant.requirement,
@@ -62,19 +64,24 @@ export const authorizeOAuthEvidence = Effect.fn("OAuth.authorizeEvidence")(funct
     if (
       invocation.sessionId !== grant.source.sessionId ||
       DateTime.toEpochMillis(invocation.assurance.authenticatedAt) !== authenticatedAt ||
-      authenticatedAt > now ||
-      now - authenticatedAt > requirement.maximumAgeMillis
+      authenticatedAt - now > futureToleranceMillis ||
+      Math.max(0, now - authenticatedAt) >= requirement.maximumAgeMillis
     )
       return yield* OAuthActionRequired.make({});
     validUntilMillis = Math.min(validUntilMillis, authenticatedAt + requirement.maximumAgeMillis);
   }
-  if (evidence.proofs.some((proof) => DateTime.toEpochMillis(proof.verifiedAt) > now))
+  if (
+    evidence.proofs.some(
+      (proof) => DateTime.toEpochMillis(proof.verifiedAt) - now > futureToleranceMillis,
+    )
+  )
     return yield* OAuthActionRequired.make({});
 
   // A step-up can retain older, unused provenance. Only fresh proofs may satisfy
   // this action; preserve their timestamps and the complete captured revision.
   const [first, ...rest] = evidence.proofs.filter(
-    (proof) => now - DateTime.toEpochMillis(proof.verifiedAt) < requirement.maximumAgeMillis,
+    (proof) =>
+      Math.max(0, now - DateTime.toEpochMillis(proof.verifiedAt)) < requirement.maximumAgeMillis,
   );
 
   if (first === undefined) return yield* OAuthActionRequired.make({});

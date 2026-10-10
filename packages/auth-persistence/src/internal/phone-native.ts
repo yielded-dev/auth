@@ -428,7 +428,7 @@ export const makeNativePhoneServices = Effect.fnUntraced(function* (
               const requirement =
                 yield* Schema.decodeEffect(AuthenticationRequirement)(originalRequirement);
 
-              if (!passwordEvidenceSatisfiedAt(evidence, requirement, captured.now))
+              if (!(yield* passwordEvidenceSatisfiedAt(evidence, requirement, captured.now)))
                 return yield* rejected();
             }
             if (evidence.proofs.length === 0) return yield* rejected();

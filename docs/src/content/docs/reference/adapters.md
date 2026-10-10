@@ -322,6 +322,10 @@ preserve application claims. `SessionCleanup` shares one deletion limit across
 expired pending proofs and due revocation tombstones. See
 [session maintenance](./sessions#custom-composition).
 
+Provide the same `Operations.AuthenticationClock` Layer to Auth and independently
+acquired persistence services; see [clock configuration](./sessions#independent-clocks).
+Custom adapters follow the timing and expiry contracts on their persistence ports.
+
 ## Passwords
 
 `makePasswordPersistenceServices` supplies verification and mutation storage;

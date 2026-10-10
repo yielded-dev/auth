@@ -1,5 +1,6 @@
 import { Array, DateTime, Effect, Schema } from "effect";
 
+import { AuthenticationClock } from "../operations/clock";
 import { AuthenticationAssurance } from "../operations/context";
 import {
   PendingAuthenticationInvalid,
@@ -97,15 +98,16 @@ export const assessAuthentication = Effect.fn("assessAuthentication")(function* 
   if (evidence.proofs.some((proof) => !revisions.has(proof.credentialId)))
     return yield* StaleAuthentication.make({});
   const now = DateTime.toEpochMillis(at ?? (yield* DateTime.now));
+  const { futureToleranceMillis } = yield* AuthenticationClock;
 
   for (const proof of evidence.proofs) {
-    const age = now - DateTime.toEpochMillis(proof.verifiedAt);
-
-    if (age < 0) return yield* StaleAuthentication.make({});
+    if (DateTime.toEpochMillis(proof.verifiedAt) - now > futureToleranceMillis)
+      return yield* StaleAuthentication.make({});
   }
 
   const fresh = evidence.proofs.filter(
-    (proof) => now - DateTime.toEpochMillis(proof.verifiedAt) < requirement.maximumAgeMillis,
+    (proof) =>
+      Math.max(0, now - DateTime.toEpochMillis(proof.verifiedAt)) < requirement.maximumAgeMillis,
   );
 
   if (fresh.length === 0) return yield* StaleAuthentication.make({});

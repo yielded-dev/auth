@@ -1,5 +1,6 @@
 import { CurrentCommitJournal, type LifecycleHooks } from "@yielded/auth/Hooks";
 import type { LoginIdentifier } from "@yielded/auth/Identity";
+import { AuthenticationClock } from "@yielded/auth/Operations";
 import * as P from "@yielded/auth/Password";
 import { ProofRedemptionInput } from "@yielded/auth/Proofs";
 import type { SubjectId } from "@yielded/auth/Schema";
@@ -52,6 +53,7 @@ export const makeNativePasswordServices = Effect.fnUntraced(function* (
   SqlClient | LifecycleHooks | Crypto.Crypto | SqlBatchCommit
 > {
   const batch = yield* SqlBatchCommit;
+  const clockPolicy = yield* AuthenticationClock;
   const sql = (yield* SqlClient).withoutTransforms();
   const executor = yield* makeSqlCommitExecutor(unavailable);
   const crypto = yield* Crypto.Crypto;
@@ -87,11 +89,12 @@ export const makeNativePasswordServices = Effect.fnUntraced(function* (
     sql`${table.column(key)} = ${table.value(key, nativeId)}`;
 
   const run = <A, E, R>(work: Effect.Effect<A, E, R>) =>
-    batch === undefined
+    (batch === undefined
       ? executor.run(work.pipe(Effect.provideService(Crypto.Crypto, crypto)))
       : executor
           .batch(work.pipe(Effect.provideService(Crypto.Crypto, crypto)))
-          .pipe(Effect.provideService(SqlBatchCommit, batch));
+          .pipe(Effect.provideService(SqlBatchCommit, batch))
+    ).pipe(Effect.provideService(AuthenticationClock, clockPolicy));
 
   const read = Effect.fnUntraced(function* (
     moduleId: string,
@@ -346,7 +349,9 @@ export const makeNativePasswordServices = Effect.fnUntraced(function* (
             verifierVersion !== input.credential?.verifierVersion,
         );
 
-        const freshUntil = (requirement: AuthenticationRequirement) => {
+        const freshUntil = Effect.fnUntraced(function* (
+          requirement: AuthenticationRequirement,
+        ): Effect.fn.Return<number | undefined> {
           const deadlines = [
             ...new Set(
               input.authorization.evidence.proofs.map(
@@ -357,10 +362,13 @@ export const makeNativePasswordServices = Effect.fnUntraced(function* (
             .filter((time) => time > state.now)
             .sort((a, b) => a - b);
 
-          return deadlines.find(
-            (time) => !passwordEvidenceSatisfiedAt(input.authorization.evidence, requirement, time),
-          );
-        };
+          for (const time of deadlines) {
+            if (
+              !(yield* passwordEvidenceSatisfiedAt(input.authorization.evidence, requirement, time))
+            )
+              return time;
+          }
+        });
 
         if (batch !== undefined)
           yield* guardSqlitePolicy({
@@ -370,8 +378,8 @@ export const makeNativePasswordServices = Effect.fnUntraced(function* (
             values: state.policyValues,
           });
 
-        const requestedDeadline = freshUntil(input.authorization.requirement),
-          currentDeadline = freshUntil(requirement);
+        const requestedDeadline = yield* freshUntil(input.authorization.requirement),
+          currentDeadline = yield* freshUntil(requirement);
 
         ensure(requestedDeadline !== undefined && currentDeadline !== undefined);
         const deadline = Math.min(requestedDeadline, currentDeadline);

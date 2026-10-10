@@ -1,16 +1,15 @@
 import type { LifecycleHooks } from "@yielded/auth/Hooks";
-import { AuthenticationAssurance } from "@yielded/auth/Operations";
+import { AuthenticationClock } from "@yielded/auth/Operations";
 import {
   SessionConflict,
   SessionStepUpInvalid,
   StaleAuthentication,
-  SessionMetadata,
   type SessionStepUpPersistence,
   type SessionStepUpIntent,
   type StatefulSessionRecord,
   type SessionUnavailable,
 } from "@yielded/auth/Sessions";
-import { DateTime, Effect, Option, Schema } from "effect";
+import { DateTime, Effect, Option } from "effect";
 import type { SqlClient } from "effect/sql/SqlClient";
 import type { Fragment } from "effect/sql/Statement";
 
@@ -59,8 +58,6 @@ export type NativeSessionStepUpMapping<Claims> = SessionStepUpMapping<
   unknown
 >;
 
-const assuranceJson = Schema.encodeSync(Schema.fromJsonString(SessionMetadata.fields.assurance));
-
 export const makeNativeSessionStepUpServices = Effect.fnUntraced(function* <Claims>(
   tables: NativeSqlTables,
   mapping: NativeSessionStepUpMapping<Claims>,
@@ -93,11 +90,12 @@ export const makeNativeSessionStepUpServices = Effect.fnUntraced(function* <Clai
     work: Effect.Effect<A, E, R>,
     mode: "transaction" | "statement" = "transaction",
   ) =>
-    batch === undefined
+    (batch === undefined
       ? executor.operation(normalizeSessionOperation(work), mode)
       : executor
           .operationBatch(normalizeSessionOperation(work))
-          .pipe(Effect.provideService(SqlBatchCommit, batch));
+          .pipe(Effect.provideService(SqlBatchCommit, batch))
+    ).pipe(Effect.provideService(AuthenticationClock, state.clockPolicy));
 
   const decode = Effect.fnUntraced(function* (stored: StoredSessionPending) {
     const intent = yield* decodeStepUpIntent(stored.snapshot);
@@ -119,7 +117,7 @@ export const makeNativeSessionStepUpServices = Effect.fnUntraced(function* <Clai
     intent: Omit<SessionStepUpIntent, "version">,
     instant: number,
   ) {
-    if (!stepUpIntentLive(intent, mapping.source.kind, DateTime.makeUnsafe(instant)))
+    if (!(yield* stepUpIntentLive(intent, mapping.source.kind, DateTime.makeUnsafe(instant))))
       return undefined;
     const subject = yield* mapping.subjectId.toNative(intent.revision.subjectId);
 
@@ -179,6 +177,7 @@ export const makeNativeSessionStepUpServices = Effect.fnUntraced(function* <Clai
         check: Effect.gen(function* () {
           sessionInvariant((yield* sql`select 1 where ${condition}`).length === 1);
         }).pipe(
+          Effect.provideService(AuthenticationClock, state.clockPolicy),
           Effect.mapError((cause) => PersistenceMappingError.make({ operation: "decode", cause })),
         ),
       });
@@ -213,7 +212,7 @@ export const makeNativeSessionStepUpServices = Effect.fnUntraced(function* <Clai
             snapshot = yield* encodeStepUpIntent(intent);
 
           yield* state.guardPolicy(current);
-          const condition = sql`${state.authorityCondition(intent.revision, current.native)} and ${original.condition} and ${now} >= ${DateTime.toEpochMillis(intent.sourceAuthenticatedAt)} and ${now} < ${DateTime.toEpochMillis(intent.expiresAt)}`;
+          const condition = sql`${state.authorityCondition(intent.revision, current.native)} and ${original.condition} and ${now} >= ${current.now} and ${DateTime.toEpochMillis(intent.sourceAuthenticatedAt)} <= ${now} + ${state.clockPolicy.futureToleranceMillis} and ${now} < ${DateTime.toEpochMillis(intent.expiresAt)}`;
 
           yield* pending
             .insert(
@@ -259,7 +258,11 @@ export const makeNativeSessionStepUpServices = Effect.fnUntraced(function* <Clai
 
             if (
               !sameSessionRevision(current.revision, intent.revision) ||
-              !stepUpIntentLive(intent, mapping.source.kind, DateTime.makeUnsafe(current.now))
+              !(yield* stepUpIntentLive(
+                intent,
+                mapping.source.kind,
+                DateTime.makeUnsafe(current.now),
+              ))
             )
               return undefined;
 
@@ -269,6 +272,7 @@ export const makeNativeSessionStepUpServices = Effect.fnUntraced(function* <Clai
           }),
         )
         .pipe(
+          Effect.provideService(AuthenticationClock, state.clockPolicy),
           Effect.flatMap((value) =>
             value === undefined
               ? Effect.fail(SessionStepUpInvalid.make({}))
@@ -314,20 +318,16 @@ export const makeNativeSessionStepUpServices = Effect.fnUntraced(function* <Clai
               return yield* SessionStepUpInvalid.make({});
           }
 
-          const base = yield* sessionEvidenceDeadline(evidence, current.requirement, current.now),
+          const prepared = yield* sessionEvidenceDeadline(
+              evidence,
+              plan.baseRequirement,
+              current.now,
+            ),
+            base = yield* sessionEvidenceDeadline(evidence, current.requirement, current.now),
             profile = yield* sessionEvidenceDeadline(evidence, intent.requirement, current.now);
 
-          if (
-            assuranceJson(
-              AuthenticationAssurance.make({
-                ...base.assessed.assurance,
-                authenticatedAt: profile.assessed.assurance.authenticatedAt,
-              }),
-            ) !== assuranceJson(replacement.inspection.session.assurance)
-          )
-            return yield* SessionStepUpInvalid.make({});
-
           const deadline = Math.min(
+            prepared.validUntil,
             base.validUntil,
             profile.validUntil,
             DateTime.toEpochMillis(intent.expiresAt),
@@ -336,7 +336,8 @@ export const makeNativeSessionStepUpServices = Effect.fnUntraced(function* <Clai
 
           if (
             current.now >= deadline ||
-            DateTime.toEpochMillis(replacement.inspection.session.issuedAt) > current.now ||
+            DateTime.toEpochMillis(replacement.inspection.session.issuedAt) - current.now >
+              state.clockPolicy.futureToleranceMillis ||
             DateTime.toEpochMillis(replacement.inspection.session.expiresAt) >
               DateTime.toEpochMillis(intent.sourceAbsoluteExpiresAt)
           )
@@ -431,6 +432,7 @@ export const makeNativeSessionStepUpServices = Effect.fnUntraced(function* <Clai
                 sessionInvariant(
                   actual !== undefined && sameSessionRevision(actual.revision, evidence.revision),
                 );
+                yield* sessionEvidenceDeadline(evidence, plan.baseRequirement, actual.now);
                 yield* sessionEvidenceDeadline(evidence, actual.requirement, actual.now);
                 yield* sessionEvidenceDeadline(evidence, intent.requirement, actual.now);
                 if (replacementRecord !== undefined && records !== undefined) {
@@ -439,6 +441,7 @@ export const makeNativeSessionStepUpServices = Effect.fnUntraced(function* <Clai
                   sessionInvariant(row !== undefined && sameSessionRecord(row, replacementRecord));
                 }
               }).pipe(
+                Effect.provideService(AuthenticationClock, state.clockPolicy),
                 Effect.mapError((cause) =>
                   PersistenceMappingError.make({ operation: "decode", cause }),
                 ),

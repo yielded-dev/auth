@@ -1,3 +1,4 @@
+import { AuthenticationClock } from "@yielded/auth/Operations";
 import { TokenDigest } from "@yielded/auth/Schema";
 import {
   SessionId,
@@ -50,14 +51,14 @@ export const makeConditionalSqlInsert = Effect.fnUntraced(function* () {
   };
 });
 
-/** Security columns identify the row and own its live time bounds. In particular
- * issuedAt may be assigned by UPDATE's database clock without rewriting a JSON
- * copy of prepared metadata. Claims/provenance decoding remains consumer-owned. */
+/** Security columns own live time bounds and commit-time issuedAt adjustments,
+ * independently of prepared JSON metadata. Claims/provenance decoding remains consumer-owned. */
 export const makeNativeSessionRecords = Effect.fnUntraced(function* <Claims>(
   tables: NativeSqlTables,
   mapping: NativeSessionRecordMapping<Claims>,
 ) {
   const sql = (yield* SqlClient).withoutTransforms();
+  const { futureToleranceMillis } = yield* AuthenticationClock;
 
   const s = mapping.session,
     table = tables(s.table),
@@ -71,7 +72,8 @@ export const makeNativeSessionRecords = Effect.fnUntraced(function* <Claims>(
 
   const live = (t: SqlTable) =>
     sql.and([
-      sql`${millis(t, s.issuedAt)} <= ${now}`,
+      sql`${millis(t, s.issuedAt)} <= ${now} + ${futureToleranceMillis}`,
+      sql`${millis(t, s.issuedAt)} < ${millis(t, s.expiresAt)}`,
       sql`${millis(t, s.expiresAt)} > ${now}`,
       sql`${millis(t, s.absoluteExpiresAt)} >= ${millis(t, s.expiresAt)}`,
     ]);

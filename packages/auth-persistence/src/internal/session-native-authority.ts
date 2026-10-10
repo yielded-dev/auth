@@ -1,4 +1,5 @@
 import { type LifecycleHooks } from "@yielded/auth/Hooks";
+import { AuthenticationClock } from "@yielded/auth/Operations";
 import {
   type AuthenticationAuthority,
   StaleAuthentication,
@@ -139,11 +140,12 @@ export const makeNativeAuthenticationAuthorityServices = Effect.fnUntraced(funct
   });
 
   const native = <A, E, R>(work: Effect.Effect<A, E, R>) =>
-    batch === undefined
+    (batch === undefined
       ? executor.operation(normalizeSessionOperation(work))
       : executor
           .operationBatch(normalizeSessionOperation(work))
-          .pipe(Effect.provideService(SqlBatchCommit, batch));
+          .pipe(Effect.provideService(SqlBatchCommit, batch))
+    ).pipe(Effect.provideService(AuthenticationClock, state.clockPolicy));
 
   const authenticationAuthority: AuthenticationAuthority["Service"] = {
     capture: (subjectId, credentialIds) =>
@@ -183,10 +185,20 @@ export const makeNativeAuthenticationAuthorityServices = Effect.fnUntraced(funct
             current.now,
           );
 
-          const expires = DateTime.toEpochMillis(input.expiresAt),
+          const issued = DateTime.toEpochMillis(input.issuedAt),
+            expires = DateTime.toEpochMillis(input.expiresAt),
             absolute = DateTime.toEpochMillis(input.absoluteExpiresAt);
 
-          if (current.now >= expires || expires > absolute)
+          if (
+            Math.max(issued, DateTime.toEpochMillis(input.now)) - current.now >
+              state.clockPolicy.futureToleranceMillis ||
+            input.evidence.proofs.some(
+              (proof) => DateTime.toEpochMillis(proof.verifiedAt) > issued,
+            ) ||
+            issued >= expires ||
+            current.now >= expires ||
+            expires > absolute
+          )
             return yield* StaleAuthentication.make({});
 
           const pendingExpiry =
@@ -226,6 +238,7 @@ export const makeNativeAuthenticationAuthorityServices = Effect.fnUntraced(funct
                   if (rows.length !== 1) return yield* PendingAuthenticationInvalid.make({});
                 }
               }).pipe(
+                Effect.provideService(AuthenticationClock, state.clockPolicy),
                 Effect.mapError((cause) =>
                   PersistenceMappingError.make({ operation: "decode", cause }),
                 ),

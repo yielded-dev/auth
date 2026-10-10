@@ -1,3 +1,4 @@
+import { AuthenticationClock } from "@yielded/auth/Operations";
 import {
   PasskeyUnavailable,
   type PasskeyCeremony,
@@ -154,10 +155,11 @@ export interface PasskeyActionFacts {
 }
 
 /** Reject stale bindings before evaluating application requirements. */
-export const validPasskeyActionEvidence = (
+export const validPasskeyActionEvidence = Effect.fnUntraced(function* (
   facts: Pick<PasskeyActionFacts, "moduleId" | "revision" | "expected" | "nowMillis">,
   authorization: PasskeyActionAuthorization,
-) => {
+): Effect.fn.Return<boolean> {
+  const { futureToleranceMillis } = yield* AuthenticationClock;
   const { challenge, evidence } = authorization;
   const { expected, revision, nowMillis: now } = facts;
 
@@ -190,23 +192,25 @@ export const validPasskeyActionEvidence = (
   if (
     evidence.proofs.some(
       (proof) =>
-        DateTime.toEpochMillis(proof.verifiedAt) > now ||
+        DateTime.toEpochMillis(proof.verifiedAt) - now > futureToleranceMillis ||
         !evidence.revision.credentials.some((item) => item.credentialId === proof.credentialId),
     )
   )
     return false;
 
   return true;
-};
+});
 
 /** SQL policy predicates remain native. This authorizes the exact evidence and
  * returns the deadline every backend must retain through its final commit. */
-export const assessPasskeyAction = (
+export const assessPasskeyAction = Effect.fnUntraced(function* (
   facts: PasskeyActionFacts,
   authorization: PasskeyActionAuthorization,
   policy: PasskeyManagementPolicy,
-) => {
-  if (!validPasskeyActionEvidence(facts, authorization)) return undefined;
+): Effect.fn.Return<
+  { readonly notBeforeMillis: number; readonly expiresBeforeMillis: number } | undefined
+> {
+  if (!(yield* validPasskeyActionEvidence(facts, authorization))) return undefined;
   const { evidence } = authorization;
   const now = facts.nowMillis;
   let expiresBefore = Infinity;
@@ -219,7 +223,7 @@ export const assessPasskeyAction = (
     const age = Math.min(policy.maximumEvidenceAgeMillis, requirement.maximumAgeMillis);
 
     const fresh = evidence.proofs.filter(
-      (proof) => now - DateTime.toEpochMillis(proof.verifiedAt) < age,
+      (proof) => Math.max(0, now - DateTime.toEpochMillis(proof.verifiedAt)) < age,
     );
 
     const factors = new Set(fresh.flatMap((proof) => proof.factors));
@@ -243,4 +247,4 @@ export const assessPasskeyAction = (
   }
 
   return { notBeforeMillis: now, expiresBeforeMillis: expiresBefore };
-};
+});

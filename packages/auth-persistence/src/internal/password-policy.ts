@@ -1,4 +1,5 @@
 import type { LoginIdentifier } from "@yielded/auth/Identity";
+import { AuthenticationClock } from "@yielded/auth/Operations";
 import {
   PasswordUnavailable,
   snapshotPasswordCredential,
@@ -47,11 +48,13 @@ export const samePasswordCredential = (
   samePasswordIdentifier(left.identifier, right.identifier) &&
   Redacted.value(left.verifier) === Redacted.value(right.verifier);
 
-export const passwordEvidenceSatisfiedAt = (
+export const passwordEvidenceSatisfiedAt = Effect.fnUntraced(function* (
   evidence: AuthenticationEvidence,
   requirement: AuthenticationRequirement,
   now: number,
-): boolean => {
+): Effect.fn.Return<boolean> {
+  const { futureToleranceMillis } = yield* AuthenticationClock;
+
   if (evidence.proofs.length > 64 || evidence.revision.credentials.length > 64) return false;
   const revisions = new Map<string, string>();
 
@@ -60,12 +63,17 @@ export const passwordEvidenceSatisfiedAt = (
     revisions.set(item.credentialId, item.revision);
   }
   if (evidence.proofs.some((proof) => !revisions.has(proof.credentialId))) return false;
-  if (evidence.proofs.some((proof) => now < DateTime.toEpochMillis(proof.verifiedAt))) return false;
+  if (
+    evidence.proofs.some(
+      (proof) => DateTime.toEpochMillis(proof.verifiedAt) - now > futureToleranceMillis,
+    )
+  )
+    return false;
 
   const eligible = evidence.proofs.filter((proof) => {
-    const age = now - DateTime.toEpochMillis(proof.verifiedAt);
+    const age = Math.max(0, now - DateTime.toEpochMillis(proof.verifiedAt));
 
-    return age >= 0 && age < requirement.maximumAgeMillis;
+    return age < requirement.maximumAgeMillis;
   });
 
   const factors = new Set(eligible.flatMap((proof) => proof.factors));
@@ -81,7 +89,7 @@ export const passwordEvidenceSatisfiedAt = (
           (!alternative.phishingResistant || proof.phishingResistant),
       ),
   );
-};
+});
 
 export const snapshotPasswordMutation = Effect.fn("PasswordPersistence.snapshotMutation")(
   function* (input: PasswordMutationInput) {
@@ -272,8 +280,8 @@ export const validatePasswordMutation = Effect.fnUntraced(function* (
   const requirement = yield* current.requirement;
 
   if (
-    !passwordEvidenceSatisfiedAt(evidence, input.authorization.requirement, now) ||
-    !passwordEvidenceSatisfiedAt(evidence, requirement, now)
+    !(yield* passwordEvidenceSatisfiedAt(evidence, input.authorization.requirement, now)) ||
+    !(yield* passwordEvidenceSatisfiedAt(evidence, requirement, now))
   )
     return undefined;
   if (

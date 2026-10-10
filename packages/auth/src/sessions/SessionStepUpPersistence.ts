@@ -109,6 +109,7 @@ export interface SessionStepUpCompletionPlan<Claims> {
   readonly evidence: AuthenticationEvidence;
   readonly baseRequirement: AuthenticationRequirement;
   readonly profileRequirement: AuthenticationRequirement;
+  /** Shared assessment clock for the prepared assurance, before hooks. */
   readonly now: DateTime.Utc;
   readonly replacement: SessionStepUpReplacement<Claims>;
 }
