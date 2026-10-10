@@ -815,11 +815,14 @@ export const makeOAuthAccounts = <
     credentials: true,
   });
 
+  // form_post completion carries the binding cookie. A guest reaches the handler,
+  // which accepts only a form_post continuation whose sealed subject and binding
+  // match. Begin, list, and unlink stay authenticated.
   const Complete = makeOperation(`${moduleId}/accounts/link/complete`, {
     payload: OAuthLinkComplete,
     success: OAuthLinkResult,
     error: Failure,
-    access: "authenticated",
+    access: "any",
     exposure: "public",
     replay: "single-use",
     credentials: true,

@@ -787,11 +787,14 @@ export const makeOAuthConnected = <const Id extends string>(
     credentials: true,
   });
 
+  // form_post completion carries the binding cookie. A guest reaches the handler,
+  // which accepts only a form_post continuation whose sealed caller and binding
+  // match. Begin, list, and disconnect stay authenticated.
   const Complete = makeOperation(`${moduleId}/connected/complete`, {
     payload: M.OAuthConnectedComplete,
     success: M.OAuthConnectedResult,
     error: Failure,
-    access: "authenticated",
+    access: "any",
     exposure: "public",
     replay: "single-use",
     credentials: true,
