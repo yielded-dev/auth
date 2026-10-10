@@ -1,2 +1,7 @@
-export { provider, type ProviderOptions, type ProviderRegistration } from "./oauth/gitlab";
-export { GitLabUserProfile } from "./oauth/providers/profile";
+export {
+  provider,
+  type ProviderOptions,
+  type ProviderRegistration,
+} from "./oauth/providers/gitlab/provider";
+
+export { GitLabUserProfile } from "./oauth/providers/gitlab/profile";

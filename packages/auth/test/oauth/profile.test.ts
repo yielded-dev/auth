@@ -2,7 +2,7 @@ import { it } from "@effect/vitest";
 import { Effect } from "effect";
 import { describe, expect } from "vite-plus/test";
 
-import { decodeOidcProfile, OidcUserProfile } from "../../src/oauth/providers/profile";
+import { decodeOidcProfile, OidcUserProfile } from "../../src/oauth/providers/shared/profile";
 
 describe("OIDC profile claims", () => {
   it.effect("keeps Google's hosted domain from the verified ID token", () =>

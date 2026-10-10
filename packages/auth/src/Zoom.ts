@@ -1,6 +1,7 @@
 export {
   provider,
-  ZoomUserProfile,
   type ProviderOptions,
   type ProviderRegistration,
-} from "./oauth/zoom";
+} from "./oauth/providers/zoom/provider";
+
+export { ZoomUserProfile } from "./oauth/providers/zoom/profile";
