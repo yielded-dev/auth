@@ -377,8 +377,7 @@ export const makeGitHubOAuthAppConnectedProtocol = Effect.fn("makeGitHubOAuthApp
       ),
       compatibility,
     ).pipe(
-      Effect.provide(revocationLayer(saved)),
-      Effect.provide(PrivateKeyClientSecret.layerUnused),
+      Effect.provide(Layer.mergeAll(revocationLayer(saved), PrivateKeyClientSecret.layerUnused)),
     );
   },
 );
