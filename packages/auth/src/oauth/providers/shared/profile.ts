@@ -118,7 +118,10 @@ export const decodeOidcProfile = Effect.fn("OpenIdConnect.decodeProfile")(functi
     Effect.mapError(() => OAuthProtocolRejected.make({})),
   );
 
+  // Host codecs can normalize flags the standard profile does not accept, such
+  // as Apple's "true" and "false". Raw claims still supply fields that codec dropped.
   const display = yield* Schema.decodeUnknownEffect(OidcStandardUserProfile)(claims).pipe(
+    Effect.catch(() => Schema.decodeEffect(OidcStandardUserProfile)(profile)),
     Effect.mapError(() => OAuthProtocolRejected.make({})),
   );
 

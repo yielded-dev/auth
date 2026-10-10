@@ -1,4 +1,5 @@
 import { it } from "@effect/vitest";
+import { AppleUserProfile } from "@yielded/auth/Apple";
 import {
   OAuthProtocol,
   OAuthProviderKey,
@@ -194,6 +195,111 @@ describe("OIDC callback user field", () => {
       const appleIdentity = yield* exchange(protocol, apple);
 
       expect(appleIdentity.profile?.displayName).toBe("Arbitrary Name");
+    }).pipe(Effect.provide(platform)),
+  );
+});
+
+describe("Apple string verification flags", () => {
+  // AppleUserProfile accepts email_verified as "true" or "false", but the
+  // sign-in exchange also projects those raw claims through the boolean-only
+  // standard profile. That second decode rejects the callback before a session.
+  it.effect("completes Apple sign-in when email_verified is the string true or false", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(seconds * 1000);
+      const pair = yield* Jwk.generateKeyPair({ algorithm: "ES256", kid: "key" });
+      const signing = yield* Jwk.importPrivate(pair.privateKey, "ES256");
+      let idToken = "";
+
+      const fetch: typeof globalThis.fetch = async (input) => {
+        const url = input instanceof Request ? input.url : String(input);
+
+        if (url === "https://appleid.apple.com/.well-known/openid-configuration")
+          return json(
+            metadata(
+              "https://appleid.apple.com",
+              "https://appleid.apple.com/auth/authorize",
+              "https://appleid.apple.com/auth/token",
+              "https://appleid.apple.com/auth/keys",
+            ),
+          );
+        if (url.endsWith("/auth/token"))
+          return json({
+            access_token: "private-access",
+            token_type: "Bearer",
+            id_token: idToken,
+          });
+        if (url === "https://appleid.apple.com/auth/keys") return json({ keys: [pair.publicKey] });
+        throw new Error(`Unexpected endpoint ${url}`);
+      };
+
+      const protocol = yield* Layer.build(
+        OpenIdConnect.layer({
+          providers: [
+            {
+              protocol: "oidc",
+              provider: "apple",
+              issuer: "https://appleid.apple.com",
+              clientId: "com.example.app",
+              clientSecret: Redacted.make("client-secret"),
+              redirectUri: "https://app.test/apple/callback",
+              idTokenSignedResponseAlg: "ES256",
+              pkceS256: false,
+              responseIssuerMode: "unsupported",
+              profileSchema: AppleUserProfile,
+              scopes: ["openid", "email"],
+              [discoveryProfile]: "apple",
+            },
+          ],
+        }),
+      ).pipe(
+        Effect.map(Context.get(OAuthProtocol)),
+        Effect.provide(platform),
+        Effect.provideService(FetchHttpClient.Fetch, fetch),
+      );
+
+      const started = yield* protocol.prepareAuthorization({
+        provider: OAuthProviderKey.make("apple"),
+        flowId: RequestBindingFlowId.make("flow-apple-flags"),
+      });
+
+      const nonce = started.secrets.oidcNonce;
+
+      if (nonce === undefined) return yield* Effect.die("expected an OIDC nonce");
+
+      const sign = (emailVerified: "true" | "false") =>
+        Jwt.sign(
+          Schema.Struct({
+            ...IdToken.fields,
+            email_verified: Schema.Literals(["true", "false"]),
+          }),
+          {
+            iss: "https://appleid.apple.com",
+            sub: "provider-subject",
+            aud: "com.example.app",
+            iat: seconds,
+            exp: seconds + 300,
+            nonce: Redacted.value(nonce),
+            email: "ada@example.com",
+            email_verified: emailVerified,
+          },
+          signing,
+          { alg: "ES256", kid: "key" },
+        ).pipe(Effect.map(Redacted.value));
+
+      idToken = yield* sign("true");
+      const verified = yield* exchange(protocol, started);
+
+      expect(verified.identity.subject).toBe("provider-subject");
+      expect(verified.profile?.email).toBe("ada@example.com");
+      expect(verified.profile?.emailVerified).toBe(true);
+      expect(verified.profile?.providerData).toMatchObject({ email_verified: true });
+
+      idToken = yield* sign("false");
+      const unverified = yield* exchange(protocol, started);
+
+      expect(unverified.identity.subject).toBe("provider-subject");
+      expect(unverified.profile?.emailVerified).toBe(false);
+      expect(unverified.profile?.providerData).toMatchObject({ email_verified: false });
     }).pipe(Effect.provide(platform)),
   );
 });
