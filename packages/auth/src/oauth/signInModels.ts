@@ -73,6 +73,8 @@ export const OAuthSignInTransactionContext = Schema.Struct({
   issuedAtMillis: OAuthInstant,
   expiresAtMillis: OAuthInstant,
   exchangeTimeoutMillis: Schema.Int.check(Schema.isBetween({ minimum: 1000, maximum: 120000 })),
+  /** Captured at begin. form_post completion can recover the sealed caller without the session cookie. */
+  responseMode: Schema.optionalKey(Schema.Literals(["query", "form_post"])),
 });
 
 export type OAuthSignInTransactionContext = typeof OAuthSignInTransactionContext.Type;

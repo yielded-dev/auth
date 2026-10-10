@@ -1,4 +1,3 @@
-import { Unavailable } from "@yielded/oauth/Errors";
 import type * as OAuth from "@yielded/oauth/OAuth";
 import * as Oidc from "@yielded/oauth/Oidc";
 import { Effect, Predicate, Redacted, Schema } from "effect";
@@ -14,21 +13,23 @@ import {
 } from "../compatibility";
 import {
   callbackEndpoint,
+  copyAuth,
   copyIdentitySource,
   endpoint,
   identitySourceSchema,
+  nativeAuthentication,
   nativeOAuthClientOptions,
   validateIdentitySource,
 } from "../configuration";
 import {
   advertisedIdTokenAlgorithms,
+  hasStaticSecret,
   IdTokenSignedResponseAlg,
+  isPrivateKeyAuthentication,
   OidcUserInfoMode,
   OpenIdConnectConfigurationError,
-  type MintClientSecret,
   type OidcProfileSchema,
   type OidcSubjectDecoder,
-  type OpenIdConnectAuthentication,
 } from "../models";
 import { install, type NativeProvider } from "../native";
 import { resolveOptions } from "../options";
@@ -46,6 +47,16 @@ const fields = Schema.Record(
 
 const secret = Schema.RedactedFromValue(text(4096));
 
+const privateKeyJwt = Schema.Struct({
+  algorithm: Schema.Literal("ES256"),
+  keyId: text(256),
+  issuer: text(2048),
+  subject: text(1024),
+  audience: text(2048),
+  lifetimeSeconds: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 15_777_000 })),
+  privateKey: secret,
+});
+
 const authentication = Schema.Union([
   Schema.Struct({
     method: Schema.Literal("client_secret_basic"),
@@ -53,15 +64,14 @@ const authentication = Schema.Union([
   }),
   Schema.Struct({
     method: Schema.Literal("client_secret_post"),
-    secret: Schema.optionalKey(secret),
-    mintSecret: Schema.optionalKey(
-      Schema.declare<MintClientSecret>((input): input is MintClientSecret =>
-        Predicate.isFunction(input),
-      ),
-    ),
-  }).check(
-    Schema.makeFilter((value) => (value.secret === undefined) !== (value.mintSecret === undefined)),
-  ),
+    secret,
+    privateKeyJwt: Schema.optionalKey(Schema.Never),
+  }),
+  Schema.Struct({
+    method: Schema.Literal("client_secret_post"),
+    privateKeyJwt,
+    secret: Schema.optionalKey(Schema.Never),
+  }),
   Schema.Struct({ method: Schema.Literal("none"), publicClient: Schema.Literal(true) }),
 ]);
 
@@ -210,18 +220,6 @@ const forbiddenHeaders = new Set([
 const configurationError = (reason: OpenIdConnectConfigurationError["reason"]) =>
   OpenIdConnectConfigurationError.make({ reason });
 
-const copyAuth = (value: OpenIdConnectAuthentication): OpenIdConnectAuthentication => {
-  if (value.method === "none") return { ...value };
-  if (value.method === "client_secret_basic")
-    return { method: "client_secret_basic", secret: Redacted.make(Redacted.value(value.secret)) };
-  if (value.mintSecret !== undefined)
-    return { method: "client_secret_post", mintSecret: value.mintSecret };
-  if (value.secret === undefined)
-    return { method: "client_secret_post", mintSecret: () => Effect.fail(Unavailable.make({})) };
-
-  return { method: "client_secret_post", secret: Redacted.make(Redacted.value(value.secret)) };
-};
-
 const copyRevocation = <
   T extends
     | OpenIdConnectConnectedOAuthProvider<never>["revocation"]
@@ -327,6 +325,16 @@ export const prepareConnectedConfigurations = Effect.fn(
       }),
     ),
   );
+
+  for (const provider of providers) {
+    const saved = provider.authentication;
+
+    if (isPrivateKeyAuthentication(saved)) {
+      const privateKey = saved.privateKeyJwt.privateKey;
+
+      yield* Effect.addFinalizer(() => Effect.sync(() => Redacted.wipeUnsafe(privateKey)));
+    }
+  }
 
   const generations = new Set<string>(),
     active = new Set<string>(),
@@ -499,10 +507,7 @@ export const installConnectedProvider = Effect.fn("OpenIdConnect.installConnecte
       const usesAsymmetric = algorithms?.some((algorithm) => algorithm !== "HS256") === true;
 
       if (usesHmac && usesAsymmetric) return yield* configurationError("parameters");
-      if (
-        usesHmac &&
-        (provider.authentication.method === "none" || provider.authentication.secret === undefined)
-      )
+      if (usesHmac && !hasStaticSecret(provider.authentication))
         return yield* configurationError("authentication");
       if (
         algorithms === undefined ||
@@ -542,7 +547,7 @@ export const installConnectedProvider = Effect.fn("OpenIdConnect.installConnecte
       {
         metadata,
         clientId: provider.clientId,
-        authentication: provider.authentication,
+        authentication: nativeAuthentication(provider.authentication),
         timeoutMs: timeoutSeconds * 1000,
         ...(provider.protocol === "oauth"
           ? nativeOAuthClientOptions(provider)
@@ -550,7 +555,7 @@ export const installConnectedProvider = Effect.fn("OpenIdConnect.installConnecte
             ? { profile: { url: metadata.userinfo_endpoint } }
             : {}),
         ...(provider.revocation.mode === "rfc7009"
-          ? { revocationAuthentication: provider.revocation.authentication }
+          ? { revocationAuthentication: nativeAuthentication(provider.revocation.authentication) }
           : {}),
       },
       provider.protocol === "oauth" && provider[githubVerifiedPrimaryEmail] === true,

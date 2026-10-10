@@ -17,6 +17,7 @@ import {
   resolveProvider,
   type ProviderOptions as RegistrationInput,
 } from "./options";
+import { PrivateKeyClientSecret } from "./privateKeyJwt";
 import { makeOpenIdConnectOAuthProtocol } from "./protocol";
 
 export type Provider<R = never> = RegistrationInput<
@@ -88,7 +89,7 @@ export const provider = <R = never>(
           providers: registrations,
           timeoutSeconds: options.timeoutSeconds ?? 10,
         }),
-      );
+      ).pipe(Effect.provide(PrivateKeyClientSecret.layer));
 
       const access = "registrations" in options ? options.registrations : [options];
 
@@ -105,7 +106,7 @@ export const provider = <R = never>(
           providers: connectedProviders,
           timeoutSeconds: options.timeoutSeconds ?? 10,
         }),
-      );
+      ).pipe(Effect.provide(PrivateKeyClientSecret.layer));
 
       return { ...protocol, connected };
     }),
@@ -138,7 +139,9 @@ export const layer = <R = never>(options: Options<R>) =>
       ),
     ).pipe(
       Effect.flatMap((configuration) =>
-        makeOpenIdConnectOAuthProtocol(installConfigurations<R>(configuration)),
+        makeOpenIdConnectOAuthProtocol(installConfigurations<R>(configuration)).pipe(
+          Effect.provide(PrivateKeyClientSecret.layer),
+        ),
       ),
     ),
   );

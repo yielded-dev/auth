@@ -385,6 +385,7 @@ export const makeOAuthConnected = <const Id extends string>(
 
         const intent = snapshotOAuthSync(M.OAuthConnectedIntentContext, {
           ...prepared.configuration,
+          ...(prepared.responseMode === undefined ? {} : { responseMode: prepared.responseMode }),
           namespace: "effect-auth/oauth-connected-context/v1",
           moduleId: id,
           generation: policy.generation,
@@ -398,6 +399,7 @@ export const makeOAuthConnected = <const Id extends string>(
             ? { reconnect: snapshotOAuthSync(M.OAuthConnectedTarget, owned.grant!.context) }
             : {}),
           maximumEvidenceAgeMillis: policy.maximumEvidenceAgeMillis,
+          authenticatedCaller: caller,
           returnTarget,
           stateDigest: yield* stateDigest(request.flowId, provider, prepared.secrets.state),
           requestBindingVerifier: binder.verifier,
@@ -464,7 +466,10 @@ export const makeOAuthConnected = <const Id extends string>(
         invocation: AuthInvocation,
         raw: typeof M.OAuthConnectedComplete.Type,
       ) {
-        const caller = yield* connectedCaller(invocation);
+        const authenticated = yield* connectedCaller(invocation).pipe(
+          Effect.catchTag("AuthenticationRequired", () => Effect.succeed(undefined)),
+        );
+
         const request = yield* snapshotOAuth(M.OAuthConnectedComplete, raw);
         const response = request.response;
 
@@ -480,10 +485,9 @@ export const makeOAuthConnected = <const Id extends string>(
           )),
         };
 
-        const access = snapshotOAuthSync(M.OAuthConnectedAccess, {
+        const binding = {
           moduleId: id,
           generation: policy.generation,
-          subjectId: caller.subjectId,
           flowId: request.flowId,
           provider: request.provider,
           callbackId: request.callbackId,
@@ -491,15 +495,33 @@ export const makeOAuthConnected = <const Id extends string>(
           requestBindingVerifier: binder.verifier,
           requestBindingExpiresAtMillis: binder.expiresAtMillis,
           ...(response.issuer === undefined ? {} : { responseIssuer: response.issuer }),
-        });
+        };
+
+        const access = snapshotOAuthSync(
+          M.OAuthConnectedAccess,
+          authenticated === undefined
+            ? { ...binding, formPostSubject: true as const }
+            : { ...binding, subjectId: authenticated.subjectId },
+        );
 
         const consumed = yield* consume(access, (value, journal) =>
           journal.prepare(snapshotOAuthSync(M.OAuthConnectedConsumeDecision, value)),
         ).pipe(Effect.flatMap(connectedRead));
 
-        if (consumed._tag !== "Consumed") return yield* OAuthRejected.make({});
+        if (consumed._tag !== "Consumed") {
+          if (authenticated === undefined) return yield* AuthenticationRequired.make({});
+
+          return yield* OAuthRejected.make({});
+        }
         const flow = yield* snapshotOAuth(M.OAuthConnectedFlow, consumed.flow);
         const context = flow.context;
+
+        if (authenticated === undefined && context.responseMode !== "form_post")
+          return yield* AuthenticationRequired.make({});
+
+        const caller = authenticated ?? context.authenticatedCaller;
+
+        if (caller === undefined) return yield* AuthenticationRequired.make({});
 
         if (
           context.moduleId !== id ||

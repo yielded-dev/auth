@@ -1,4 +1,4 @@
-import { Effect, Predicate, Redacted, Schema, type Scope } from "effect";
+import { Effect, Redacted, Schema, type Scope } from "effect";
 import { Base64 } from "effect/encoding";
 import type { HttpClient } from "effect/http";
 import { HttpClientRequest } from "effect/http";
@@ -41,21 +41,13 @@ export const Metadata = Schema.Struct({
 
 export type Metadata = typeof Metadata.Type;
 
-export type MintClientSecret = () => Effect.Effect<Redacted.Redacted<string>, Unavailable>;
-
-const mintSecret = Schema.declare<MintClientSecret>((input): input is MintClientSecret =>
-  Predicate.isFunction(input),
-);
-
 export const Authentication = Schema.Union([
   Schema.Struct({ method: Schema.Literal("client_secret_basic"), secret: V.secret(4096) }),
   Schema.Struct({
     method: Schema.Literal("client_secret_post"),
+    /** Omit when each token request supplies clientSecret. */
     secret: Schema.optionalKey(V.secret(4096)),
-    mintSecret: Schema.optionalKey(mintSecret),
-  }).check(
-    Schema.makeFilter((value) => (value.secret === undefined) !== (value.mintSecret === undefined)),
-  ),
+  }),
   Schema.Struct({ method: Schema.Literal("none"), publicClient: Schema.Literal(true) }),
 ]);
 
@@ -127,16 +119,22 @@ export interface CodeGrantInput extends Parameters {
   readonly code: Redacted.Redacted<string>;
   readonly redirectUri: string;
   readonly pkceVerifier?: Redacted.Redacted<string>;
+  /** Used when client_secret_post has no stored secret. */
+  readonly clientSecret?: Redacted.Redacted<string>;
 }
 
 export interface RefreshGrantInput extends Parameters {
   readonly refreshToken: Redacted.Redacted<string>;
   readonly scopes?: ReadonlyArray<string>;
+  /** Used when client_secret_post has no stored secret. */
+  readonly clientSecret?: Redacted.Redacted<string>;
 }
 
 export interface RevocationInput {
   readonly token: Redacted.Redacted<string>;
   readonly tokenTypeHint: "access_token" | "refresh_token";
+  /** Used when client_secret_post has no stored secret. */
+  readonly clientSecret?: Redacted.Redacted<string>;
 }
 
 export interface Client {
@@ -194,22 +192,27 @@ const Authorization = Schema.Struct({
   responseMode: Schema.optionalKey(Schema.Literals(["query", "form_post"])),
 });
 
+const requestSecret = Schema.optionalKey(V.secret(8192));
+
 const CodeGrant = Schema.Struct({
   ...additional,
   code: V.secret(16384),
   redirectUri: V.Callback,
   pkceVerifier: Schema.optionalKey(V.Verifier),
+  clientSecret: requestSecret,
 });
 
 const RefreshGrant = Schema.Struct({
   ...additional,
   refreshToken: V.secret(16384),
   scopes: Schema.optionalKey(V.Scopes),
+  clientSecret: requestSecret,
 });
 
 const Revocation = Schema.Struct({
   token: V.secret(16384),
   tokenTypeHint: Schema.Literals(["access_token", "refresh_token"]),
+  clientSecret: requestSecret,
 });
 
 const ExpiresIn = Schema.Union([
@@ -323,6 +326,7 @@ const authenticated = Effect.fnUntraced(function* (
   authentication: Authentication,
   body: URLSearchParams,
   format: "form" | "json" = "form",
+  clientSecret?: Redacted.Redacted<string>,
 ) {
   let request = HttpClientRequest.post(url).pipe(HttpClientRequest.acceptJson);
 
@@ -338,14 +342,11 @@ const authenticated = Effect.fnUntraced(function* (
   } else {
     body.set("client_id", clientId);
     if (authentication.method === "client_secret_post") {
-      const minted =
-        authentication.mintSecret === undefined ? undefined : yield* authentication.mintSecret();
-
-      const secret = minted ?? authentication.secret;
+      const secret = authentication.secret ?? clientSecret;
 
       if (secret === undefined) return yield* Unavailable.make({});
       body.set("client_secret", yield* V.reveal(secret));
-      if (minted !== undefined) Redacted.wipeUnsafe(minted);
+      if (authentication.secret === undefined) Redacted.wipeUnsafe(secret);
     }
   }
 
@@ -434,7 +435,10 @@ export const make = Effect.fnUntraced(function* (
     }),
   );
 
-  const send = Effect.fnUntraced(function* (body: URLSearchParams) {
+  const send = Effect.fnUntraced(function* (
+    body: URLSearchParams,
+    clientSecret?: Redacted.Redacted<string>,
+  ) {
     yield* available;
 
     const request = yield* authenticated(
@@ -443,6 +447,7 @@ export const make = Effect.fnUntraced(function* (
       authentication,
       body,
       tokenBodyFormat,
+      clientSecret,
     );
 
     return yield* Transport.json(yield* Transport.request(http, request, options));
@@ -485,7 +490,7 @@ export const make = Effect.fnUntraced(function* (
       body.set("code_verifier", yield* V.reveal(value.pkceVerifier));
     body.set("redirect_uri", value.redirectUri);
 
-    return yield* send(body);
+    return yield* send(body, value.clientSecret);
   }, use);
 
   const refreshGrant = Effect.fnUntraced(function* (input: RefreshGrantInput) {
@@ -498,7 +503,7 @@ export const make = Effect.fnUntraced(function* (
     if (value.scopes !== undefined && value.scopes.length > 0)
       body.set("scope", value.scopes.join(scopeSeparator));
 
-    return yield* send(body);
+    return yield* send(body, value.clientSecret);
   }, use);
 
   const fetchProfile = Effect.fnUntraced(function* (input: Redacted.Redacted<string>) {
@@ -541,6 +546,8 @@ export const make = Effect.fnUntraced(function* (
         token: yield* V.reveal(value.token),
         token_type_hint: value.tokenTypeHint,
       }),
+      "form",
+      value.clientSecret,
     );
 
     const response = yield* Transport.request(http, request, options);
@@ -559,8 +566,8 @@ const detachAuthentication = Effect.fnUntraced(function* (
   authentication: Authentication,
 ): Effect.fn.Return<Authentication, Unavailable> {
   if (authentication.method === "none") return { ...authentication };
-  if (authentication.method === "client_secret_post" && authentication.mintSecret !== undefined)
-    return { method: "client_secret_post", mintSecret: authentication.mintSecret };
+  if (authentication.method === "client_secret_post" && authentication.secret === undefined)
+    return { method: "client_secret_post" };
   if (authentication.secret === undefined) return yield* Unavailable.make({});
 
   return { ...authentication, secret: Redacted.make(yield* V.reveal(authentication.secret)) };

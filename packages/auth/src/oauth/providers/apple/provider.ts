@@ -1,8 +1,5 @@
-import type { Hmac } from "@yielded/crypto/Hmac";
-import type { Signature } from "@yielded/crypto/Signature";
-import { Jwk, Jwt } from "@yielded/jose";
-import { Unavailable } from "@yielded/oauth/Errors";
-import { Clock, Effect, Redacted, Result, Schema } from "effect";
+import { Jwk } from "@yielded/jose";
+import { Effect, Redacted, Result, Schema } from "effect";
 import { Base64 } from "effect/encoding";
 
 import type { ProviderDefinition } from "../../providerDefinition";
@@ -12,6 +9,7 @@ import { provider as oidcProvider } from "../shared/layer";
 import { OpenIdConnectConfigurationError } from "../shared/models";
 import type { Requirements } from "../shared/oidc";
 import { resolveOptions } from "../shared/options";
+import { signPrivateKeyJwt } from "../shared/privateKeyJwt";
 import { AppleUserProfile } from "./profile";
 
 const identifier = Schema.NonEmptyString.check(Schema.isPattern(/^[A-Z0-9]{10}$/));
@@ -39,14 +37,6 @@ export type ProviderOptions = {
   /** Per-request timeout in seconds, from 1 to 30. Defaults to 10. */
   readonly timeoutSeconds?: number;
 } & (ProviderRegistration | { readonly registrations: ReadonlyArray<ProviderRegistration> });
-
-const ClientSecret = Schema.Struct({
-  iss: Schema.NonEmptyString,
-  sub: Schema.NonEmptyString,
-  aud: Schema.Literal("https://appleid.apple.com"),
-  iat: Schema.Finite,
-  exp: Schema.Finite,
-});
 
 const decodePem = (value: string): Uint8Array | undefined =>
   Result.getOrUndefined(
@@ -94,26 +84,27 @@ export const mintClientSecret = Effect.fn("Apple.mintClientSecret")(function* (o
   ).pipe(Effect.mapError(() => OpenIdConnectConfigurationError.make({ reason: "provider" })));
 
   const key = yield* importSigningKey(options.privateKey, keyId);
-  const now = Math.floor((yield* Clock.currentTimeMillis) / 1000);
 
-  return yield* Jwt.sign(
-    ClientSecret,
+  return yield* signPrivateKeyJwt(
     {
-      iss: teamId,
-      sub: options.clientId,
-      aud: "https://appleid.apple.com",
-      iat: now,
-      exp: now + lifetimeSeconds,
+      algorithm: "ES256",
+      keyId,
+      issuer: teamId,
+      subject: options.clientId,
+      audience: "https://appleid.apple.com",
+      lifetimeSeconds,
     },
     key,
-    { alg: "ES256", kid: keyId },
-  ).pipe(Effect.mapError(() => OpenIdConnectConfigurationError.make({ reason: "authentication" })));
+  ).pipe(
+    Effect.mapError(() => OpenIdConnectConfigurationError.make({ reason: "authentication" })),
+    Effect.ensuring(Effect.sync(() => Redacted.wipeUnsafe(key.material))),
+  );
 });
 
 /** Sign in with Apple through the shared OIDC implementation. Defaults to the
  * openid scope, client_secret_post, form_post callbacks, advertised RS256, and
- * no PKCE. AppleUserProfile decodes string email_verified / is_private_email
- * flags. Name arrives once in the user form field on first consent and is merged
+ * no PKCE. AppleUserProfile decodes boolean or string email_verified /
+ * is_private_email flags. Name arrives once in the user form field on first consent and is merged
  * into that profile. No UserInfo request or retained API access is installed.
  * Credentials are captured when the host builds its Layer; supply HttpClient and
  * crypto in that Scope. */
@@ -127,25 +118,36 @@ export const provider = (
           "registrations" in options ? options.registrations : [options],
         ).pipe(Effect.mapError(() => OpenIdConnectConfigurationError.make({ reason: "provider" })));
 
-        const services = yield* Effect.context<Hmac | Signature>();
-
         const prepared = yield* Effect.forEach(registrations, (registration) =>
           Effect.gen(function* () {
-            const key = yield* importSigningKey(registration.privateKey, registration.keyId);
+            const der = decodePem(Redacted.value(registration.privateKey));
+
+            if (der === undefined || der.length === 0)
+              return yield* OpenIdConnectConfigurationError.make({ reason: "authentication" });
+
+            const encoded = Base64.encode(der);
+
+            const key = yield* importSigningKey(registration.privateKey, registration.keyId).pipe(
+              Effect.ensuring(
+                Effect.sync(() => {
+                  der.fill(0);
+                  Redacted.wipeUnsafe(registration.privateKey);
+                }),
+              ),
+            );
+
+            Redacted.wipeUnsafe(key.material);
 
             const lifetimeSeconds =
               registration.clientSecretLifetimeSeconds === undefined
                 ? 300
                 : registration.clientSecretLifetimeSeconds;
 
-            Redacted.wipeUnsafe(registration.privateKey);
-            yield* Effect.addFinalizer(() => Effect.sync(() => Redacted.wipeUnsafe(key.material)));
-
             const {
               privateKey: _privateKey,
               clientSecretLifetimeSeconds: _lifetime,
-              teamId: _teamId,
-              keyId: _keyId,
+              teamId,
+              keyId,
               ...rest
             } = registration;
 
@@ -161,23 +163,15 @@ export const provider = (
               [discoveryProfile]: "apple" as const,
               authentication: {
                 method: "client_secret_post" as const,
-                mintSecret: () =>
-                  Effect.gen(function* () {
-                    const now = Math.floor((yield* Clock.currentTimeMillis) / 1000);
-
-                    return yield* Jwt.sign(
-                      ClientSecret,
-                      {
-                        iss: registration.teamId,
-                        sub: registration.clientId,
-                        aud: "https://appleid.apple.com",
-                        iat: now,
-                        exp: now + lifetimeSeconds,
-                      },
-                      key,
-                      { alg: "ES256", kid: registration.keyId },
-                    ).pipe(Effect.mapError(() => Unavailable.make({})));
-                  }).pipe(Effect.provideContext(services)),
+                privateKeyJwt: {
+                  algorithm: "ES256" as const,
+                  keyId,
+                  issuer: teamId,
+                  subject: registration.clientId,
+                  audience: "https://appleid.apple.com",
+                  lifetimeSeconds,
+                  privateKey: Redacted.make(encoded),
+                },
               },
             };
           }),
