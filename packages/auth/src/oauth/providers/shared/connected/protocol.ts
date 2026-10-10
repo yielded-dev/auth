@@ -676,7 +676,16 @@ export const makeConnectedProtocolWithCompatibility = Effect.fn(
           continuation: previous,
         });
       }
-    } else if (provider.identitySource.from !== "token") {
+    } else if (provider.identitySource.from === "token") {
+      const identity = yield* decodeIdentity(
+        entry,
+        Redacted.value(receipt.body),
+        grant.accessToken,
+      );
+
+      if (identity.identity.subject !== request.context.identity.subject)
+        return yield* unavailable();
+    } else {
       const body = yield* entry.client
         .fetchProfile(grant.accessToken)
         .pipe(Effect.mapError(unavailable));
