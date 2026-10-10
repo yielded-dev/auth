@@ -8,8 +8,10 @@ Use `OAuth.make` for an installed client and `Oidc.makeVerifier` for its OIDC
 verifier. Both require `HttpClient` and an owning `Scope`; keep that scope open
 for their lifetime. `Pkce` requires Effect `Crypto`; verification also requires
 `Signature` from `@yielded/crypto`. `Oidc.discover` retrieves metadata from the
-exact trusted issuer, or from an explicit `metadataUrl` whose document issuer must
-still equal that identifier. Closing a factory's scope cancels its work and prevents reuse.
+exact trusted issuer, or from an explicit `metadataUrl`. A discovered issuer
+may use a `{tenantid}` path segment when that template matches the configured
+authority. Verification then substitutes the verified `tid` and checks the
+selected signing key's issuer. Generic issuers still require an exact match. Closing a factory's scope cancels its work and prevents reuse.
 
 `client.codeGrant` and `client.refreshGrant` return private `TokenReceipt` values.
 Check the provider-specific receipt, then call `OAuth.tokens`. A receipt alone
