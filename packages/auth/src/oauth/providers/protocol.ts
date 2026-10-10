@@ -329,7 +329,12 @@ export const makeOpenIdConnectOAuthProtocol = Effect.fn("makeOpenIdConnectOAuthP
           ),
         );
 
-        const identity = yield* Schema.decodeEffect(plainIdentitySchema)(decoded).pipe(
+        const enriched =
+          entry.enrichIdentity === undefined
+            ? decoded
+            : yield* entry.enrichIdentity(decoded, grant.accessToken);
+
+        const identity = yield* Schema.decodeEffect(plainIdentitySchema)(enriched).pipe(
           Effect.mapError(rejected),
         );
 

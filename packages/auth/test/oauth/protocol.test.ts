@@ -47,10 +47,15 @@ const loadProtocol = (options: OpenIdConnect.Options) =>
     Effect.provide(platform),
   );
 
-const github = (configurationGeneration?: number, issuance?: "active" | "retired") =>
+const github = (
+  configurationGeneration?: number,
+  issuance?: "active" | "retired",
+  verifiedPrimaryEmail = false,
+) =>
   GitHub.gitHubOAuthAppProvider({
     configurationGeneration: configurationGeneration ?? 1,
     issuance: issuance ?? "active",
+    verifiedPrimaryEmail,
     clientId: `github-${configurationGeneration ?? 1}`,
     clientSecret: Redacted.make(`github-secret-${configurationGeneration ?? 1}`),
     callbacks: [
@@ -61,7 +66,21 @@ const github = (configurationGeneration?: number, issuance?: "active" | "retired
     ],
   });
 
-const makeTransport = (input: { readonly userResponse?: () => Response } = {}) => {
+const primaryEmail = { email: "private-primary@example.test", primary: true, verified: true };
+
+const secondaryEmails = Array.from({ length: 100 }, (_, index) => ({
+  email: `secondary-${index}@example.test`,
+  primary: false,
+  verified: true,
+}));
+
+const makeTransport = (
+  input: {
+    readonly userResponse?: () => Response;
+    readonly emailResponse?: (url: URL) => Response;
+  } = {},
+) => {
+  let scope = "read:user";
   const requests: Array<{ url: string; clientId: string | null; method: string | undefined }> = [];
 
   const fetch: typeof globalThis.fetch = async (request, init) => {
@@ -83,8 +102,23 @@ const makeTransport = (input: { readonly userResponse?: () => Response } = {}) =
       return json({
         access_token: "github-token-never-returned",
         token_type: "bearer",
-        scope: "read:user",
+        scope,
       });
+    if (url.startsWith("https://api.github.com/user/emails?")) {
+      expect(url).toMatch(/^https:\/\/api\.github\.com\/user\/emails\?per_page=100&page=\d+$/u);
+      expect(init?.method).toBe("GET");
+      expect(init?.redirect).toMatch(/^(?:error|manual)$/u);
+      expect(init?.credentials).toBe("omit");
+      const headers = new Headers(init?.headers);
+
+      expect(headers.get("authorization")).toMatch(
+        /^Bearer (?:github-token-never-returned|access)$/u,
+      );
+      expect(headers.has("cookie")).toBe(false);
+      expect(headers.has("traceparent")).toBe(false);
+
+      return input.emailResponse?.(new URL(url)) ?? json([primaryEmail]);
+    }
     if (url === "https://api.github.com/user")
       return (
         input.userResponse?.() ??
@@ -93,7 +127,17 @@ const makeTransport = (input: { readonly userResponse?: () => Response } = {}) =
     throw new Error("Unexpected endpoint");
   };
 
-  return { fetch, requests };
+  return {
+    fetch,
+    requests,
+    consent: (started: OAuthProtocolPreparation) => {
+      const value = new URL(Redacted.value(started.authorizationUrl)).searchParams.get("scope");
+
+      scope = (value ?? "").replaceAll(" ", ",");
+
+      return value;
+    },
+  };
 };
 
 const begin = (protocol: OAuthProtocol["Service"], provider: "github") =>
@@ -141,6 +185,180 @@ it.effect("fails invalid GitHub provider configuration through the typed error c
     "OpenIdConnectConfigurationError",
   ),
 );
+
+// https://github.com/yielded-dev/auth/issues/183: /user alone omits private email.
+// Native HTTP fixtures can force pagination and unsafe responses without live account access.
+describe("GitHub verified primary email", () => {
+  it.effect(
+    "captures opt-in consent and selects the private primary across pages without changing /user",
+    () =>
+      Effect.gen(function* () {
+        const transport = makeTransport({
+          userResponse: () => json({ id: 42, login: "octocat", email: null }),
+          emailResponse: (url) =>
+            url.searchParams.get("page") === "1"
+              ? Response.json(secondaryEmails, {
+                  headers: { link: '<https://untrusted.example/emails>; rel="next"' },
+                })
+              : json([primaryEmail]),
+        });
+
+        const input = {
+          clientId: "client",
+          clientSecret: Redacted.make("fixture-secret"),
+          verifiedPrimaryEmail: true,
+        };
+
+        const protocol = yield* GitHub.provider(input)
+          .configure({
+            provider: OAuthProviderKey.make("github"),
+            callbacks: [
+              {
+                callbackId: OAuthCallbackId.make("github"),
+                redirectUri: OAuthRedirectUri.make("https://app.test/callback"),
+              },
+            ],
+          })
+          .pipe(
+            Effect.provide(platform),
+            Effect.provideService(FetchHttpClient.Fetch, transport.fetch),
+          );
+
+        input.verifiedPrimaryEmail = false;
+        const started = yield* begin(protocol, "github");
+        const consent = transport.consent(started);
+        const identity = yield* exchange(protocol, started);
+
+        expect(identity.profile?.email).toBe(primaryEmail.email);
+        expect(identity.profile?.emailVerified).toBe(true);
+        expect(identity.identity.subject).toBe("42");
+        expect(identity.profile?.providerData).toEqual({ id: 42, login: "octocat", email: null });
+        expect(JSON.stringify(identity)).not.toContain("github-token-never-returned");
+        expect(consent).toBe("read:user user:email");
+        expect(transport.requests.map(({ url }) => url)).toEqual([
+          "https://github.com/login/oauth/access_token",
+          "https://api.github.com/user",
+          "https://api.github.com/user/emails?per_page=100&page=1",
+          "https://api.github.com/user/emails?per_page=100&page=2",
+        ]);
+
+        const ordinaryTransport = makeTransport();
+
+        const ordinary = yield* loadProtocol({ providers: [github()] }).pipe(
+          Effect.provideService(FetchHttpClient.Fetch, ordinaryTransport.fetch),
+        );
+
+        const ordinaryStart = yield* begin(ordinary, "github");
+        const ordinaryIdentity = yield* exchange(ordinary, ordinaryStart);
+
+        expect(ordinaryTransport.consent(ordinaryStart)).toBe("read:user");
+        expect(ordinaryIdentity.profile?.email).toBe("untrusted-profile@example.test");
+        expect(ordinaryIdentity.profile?.emailVerified).toBeUndefined();
+        expect(ordinaryTransport.requests).toHaveLength(2);
+      }),
+  );
+
+  it.effect.each([
+    {
+      name: "unverified primary and verified secondary",
+      emails: [secondaryEmails[0], { ...primaryEmail, verified: false }],
+    },
+    {
+      name: "ambiguous primaries",
+      emails: [primaryEmail, { ...primaryEmail, email: "other-primary@example.test" }],
+    },
+  ])("omits normalized email for $name instead of substituting /user email", ({ emails }) =>
+    Effect.gen(function* () {
+      const transport = makeTransport({ emailResponse: () => json(emails) });
+
+      const services = yield* Layer.build(
+        GitHub.layer({
+          clientId: "client",
+          clientSecret: Redacted.make("fixture-secret"),
+          redirectUri: "https://app.test/callback",
+          verifiedPrimaryEmail: true,
+        }),
+      ).pipe(
+        Effect.provide(platform),
+        Effect.provideService(FetchHttpClient.Fetch, transport.fetch),
+      );
+
+      const protocol = Context.get(services, OAuthProtocol);
+      const started = yield* begin(protocol, "github");
+
+      transport.consent(started);
+      const identity = yield* exchange(protocol, started);
+
+      expect(identity.profile).not.toHaveProperty("email");
+      expect(identity.profile).not.toHaveProperty("emailVerified");
+      expect(identity.profile?.providerData?.email).toBe("untrusted-profile@example.test");
+      expect(identity.identity.subject).toBe("42");
+      expect(transport.requests).toHaveLength(3);
+    }),
+  );
+
+  it.effect.each([
+    {
+      name: "unterminated pagination",
+      response: () => json(secondaryEmails),
+      requests: 12,
+      tag: "OAuthUnavailable" as const,
+    },
+    {
+      name: "oversized body",
+      response: () =>
+        new Response("x".repeat(65_537), { headers: { "content-type": "application/json" } }),
+      requests: 3,
+      tag: "OAuthUnavailable" as const,
+    },
+    {
+      name: "redirect",
+      response: () =>
+        new Response(null, {
+          status: 302,
+          headers: { location: "https://untrusted.example/emails" },
+        }),
+      requests: 3,
+      tag: "OAuthUnavailable" as const,
+    },
+    {
+      name: "malformed verification flag",
+      response: () => json([{ ...primaryEmail, verified: "true" }]),
+      requests: 3,
+      tag: "OAuthProtocolRejected" as const,
+    },
+  ])("rejects $name without repeating the exchange", (failure) =>
+    Effect.gen(function* () {
+      const transport = makeTransport({ emailResponse: failure.response });
+
+      const protocol = yield* loadProtocol({ providers: [github(1, "active", true)] }).pipe(
+        Effect.provideService(FetchHttpClient.Fetch, transport.fetch),
+      );
+
+      const started = yield* begin(protocol, "github");
+
+      transport.consent(started);
+      yield* expectTag(exchange(protocol, started), failure.tag);
+      expect(transport.requests).toHaveLength(failure.requests);
+      expect(transport.requests.filter(({ method }) => method === "POST")).toHaveLength(1);
+    }),
+  );
+
+  it.effect("requires explicit email permission in retained access profiles", () =>
+    expectTag(
+      Layer.build(
+        GitHub.layerConnected({
+          clientId: "client",
+          clientSecret: Redacted.make("fixture-secret"),
+          redirectUri: "https://app.test/callback",
+          verifiedPrimaryEmail: true,
+          profiles: [GitHub.accessProfile({ clientId: "client" })],
+        }),
+      ).pipe(Effect.provide(platform)),
+      "OpenIdConnectConfigurationError",
+    ),
+  );
+});
 
 describe("OAuth protocol credential and resource lifetimes", () => {
   // At 28374b35, owner closure left application identity decoding running after HTTP completed.
@@ -209,18 +427,28 @@ describe("OAuth protocol credential and resource lifetimes", () => {
         const transport = makeTransport();
 
         const old = yield* loadProtocol({
-          providers: [github()],
+          providers: [github(1, "active", true)],
           timeoutSeconds: 1,
         }).pipe(Effect.provideService(FetchHttpClient.Fetch, transport.fetch));
 
         const started = yield* begin(old, "github");
 
+        transport.consent(started);
+
         const current = yield* loadProtocol({
-          providers: [github(1, "retired"), github(2)],
+          providers: [github(1, "retired", true), github(2)],
           timeoutSeconds: 1,
         }).pipe(Effect.provideService(FetchHttpClient.Fetch, transport.fetch));
 
-        yield* exchange(current, started);
+        const identity = yield* exchange(current, started);
+
+        expect(identity.profile?.email).toBe(primaryEmail.email);
+        expect(identity.profile?.emailVerified).toBe(true);
+        expect(
+          new URL(
+            Redacted.value((yield* begin(current, "github")).authorizationUrl),
+          ).searchParams.get("scope"),
+        ).toBe("read:user");
         expect(
           transport.requests
             .filter((request) => request.method === "POST")
@@ -250,13 +478,13 @@ describe("OAuth protocol credential and resource lifetimes", () => {
   );
 
   for (const termination of ["interruption", "timeout"]) {
-    it.live(`${termination} cancels an acquired response body without repeating the exchange`, () =>
+    it.live(`${termination} cancels the private email body without repeating the exchange`, () =>
       Effect.gen(function* () {
         const reading = yield* Deferred.make<void>();
         let cancelled = false;
 
         const transport = makeTransport({
-          userResponse: () =>
+          emailResponse: () =>
             new Response(
               new ReadableStream(
                 {
@@ -274,14 +502,21 @@ describe("OAuth protocol credential and resource lifetimes", () => {
         });
 
         const protocol = yield* loadProtocol({
-          providers: [github()],
+          providers: [github(1, "active", true)],
           timeoutSeconds: 1,
         }).pipe(Effect.provideService(FetchHttpClient.Fetch, transport.fetch));
 
         const started = yield* begin(protocol, "github");
+
+        transport.consent(started);
         const fiber = yield* exchange(protocol, started).pipe(Effect.forkChild);
 
-        yield* Deferred.await(reading);
+        const reached = yield* Effect.raceFirst(
+          Deferred.await(reading).pipe(Effect.as("reading")),
+          Fiber.await(fiber).pipe(Effect.as("completed")),
+        );
+
+        expect(reached).toBe("reading");
         if (termination === "interruption") yield* Fiber.interrupt(fiber);
         else yield* expectTag(Fiber.join(fiber), "OAuthUnavailable");
         expect(cancelled).toBe(true);
@@ -362,7 +597,7 @@ it.live("owns GitHub cohort revocation until its provider scope closes", () =>
           access_token: "access",
           refresh_token: "refresh",
           token_type: "bearer",
-          scope: "read:user",
+          scope: "read:user,user:email",
           expires_in: 3600,
           refresh_token_expires_in: 7200,
         });
@@ -387,7 +622,10 @@ it.live("owns GitHub cohort revocation until its provider scope closes", () =>
       return transport.fetch(request, init);
     };
 
-    const profile = GitHub.accessProfile({ clientId: "client" });
+    const profile = GitHub.accessProfile({
+      clientId: "client",
+      scopes: ["read:user", "user:email"],
+    });
 
     const services = yield* Layer.buildWithScope(
       GitHub.layerConnected({
@@ -395,6 +633,7 @@ it.live("owns GitHub cohort revocation until its provider scope closes", () =>
         clientSecret: Redacted.make("secret"),
         redirectUri: "https://app.test/callback",
         profiles: [profile],
+        verifiedPrimaryEmail: true,
       }).pipe(Layer.provide(platform)),
       owner,
     ).pipe(Effect.provideService(FetchHttpClient.Fetch, fetch));
@@ -421,6 +660,10 @@ it.live("owns GitHub cohort revocation until its provider scope closes", () =>
       },
     });
 
+    expect(grant.identity.subject).toBe("42");
+    expect(grant.profile?.email).toBe(primaryEmail.email);
+    expect(grant.profile?.emailVerified).toBe(true);
+    expect(grant.scopes).toEqual(["read:user", "user:email"]);
     const start = DateTime.toEpochMillis(now);
 
     const context = yield* Schema.decodeUnknownEffect(Schema.toType(OAuthConnectedTokenContext))({

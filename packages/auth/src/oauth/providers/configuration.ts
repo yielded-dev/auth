@@ -9,7 +9,11 @@ import {
   OAuthRedirectUri,
 } from "../signInModels";
 import { freezeOAuth } from "../signInSnapshot";
-import { TokenCompatibility, tokenCompatibility } from "./compatibility";
+import {
+  TokenCompatibility,
+  tokenCompatibility,
+  githubVerifiedPrimaryEmail,
+} from "./compatibility";
 import { DiscoveryProfile, discoveryProfile } from "./discovery";
 import {
   advertisedIdTokenAlgorithms,
@@ -83,6 +87,7 @@ const optionsSchema = <R>() =>
             ...common,
             protocol: Schema.Literal("oauth"),
             [tokenCompatibility]: Schema.optionalKey(TokenCompatibility),
+            [githubVerifiedPrimaryEmail]: Schema.optionalKey(Schema.Boolean),
             authorizationEndpoint: boundedString(2048),
             tokenEndpoint: boundedString(2048),
             pkceS256: Schema.Boolean,
@@ -388,17 +393,20 @@ export const installProvider = Effect.fn("OpenIdConnect.installProvider")(functi
   }
   freezeOAuth(metadata);
 
-  const native = yield* install({
-    metadata,
-    clientId: provider.clientId,
-    authentication: provider.authentication,
-    timeoutMs: timeoutSeconds * 1000,
-    ...(provider.protocol === "oauth"
-      ? { profile: provider.identitySource }
-      : provider.userInfo === "merge" && metadata.userinfo_endpoint !== undefined
-        ? { profile: { url: metadata.userinfo_endpoint } }
-        : {}),
-  });
+  const native = yield* install(
+    {
+      metadata,
+      clientId: provider.clientId,
+      authentication: provider.authentication,
+      timeoutMs: timeoutSeconds * 1000,
+      ...(provider.protocol === "oauth"
+        ? { profile: provider.identitySource }
+        : provider.userInfo === "merge" && metadata.userinfo_endpoint !== undefined
+          ? { profile: { url: metadata.userinfo_endpoint } }
+          : {}),
+    },
+    provider.protocol === "oauth" && provider[githubVerifiedPrimaryEmail] === true,
+  );
 
   const placeholder = Redacted.make("a".repeat(43));
 

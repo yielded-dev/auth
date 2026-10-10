@@ -11,6 +11,9 @@ export interface GitHubOAuthAppGeneration {
   readonly issuance: "active" | "retired";
   readonly clientId: string;
   readonly clientSecret: Redacted.Redacted<string>;
+  /** Opt in to user:email and a verified primary email lookup. Defaults to false.
+   * Connected profiles must explicitly include user:email; their scopes are not expanded. */
+  readonly verifiedPrimaryEmail?: boolean;
   readonly callbacks: ReadonlyArray<{
     readonly callbackId: OAuthProtocolConfiguration["callbackId"];
     readonly redirectUri: OAuthProtocolConfiguration["redirectUri"];

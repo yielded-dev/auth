@@ -35,8 +35,19 @@ export const AuthRoutes = Http.layer(AppAuth, {
 
 [Supply your services](../reference/oauth#supply-the-services) and keep the Layer
 alive for the server's lifetime. `AuthRoutes` derives the callback URL from `origin`.
-GitHub sign-in requests `read:user`. Its numeric user ID identifies the account;
-profile email can be absent and needs application verification when required.
+GitHub sign-in requests `read:user` by default.
+
+## Private email for registration
+
+Set `verifiedPrimaryEmail: true` on the provider registration to request
+`user:email`. A verified primary address becomes `profile.email` with
+`profile.emailVerified: true`. If none is available, your application decides
+whether to request an email separately or decline registration.
+
+The numeric GitHub ID identifies the account. Email is profile data and must not
+be used to automatically link accounts. When retaining API access, also include
+`user:email` in the connected profile's scopes. See
+[email permission](../reference/oauth#github-email-permission) for the options and limits.
 
 ## Sign in
 

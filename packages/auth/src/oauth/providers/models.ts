@@ -5,7 +5,11 @@ import {
   type OAuthProtocolConfiguration,
   type OAuthVerifiedExternalIdentity,
 } from "../signInModels";
-import type { TokenCompatibility, tokenCompatibility } from "./compatibility";
+import type {
+  TokenCompatibility,
+  tokenCompatibility,
+  githubVerifiedPrimaryEmail,
+} from "./compatibility";
 import type { DiscoveryProfile, discoveryProfile } from "./discovery";
 
 export const IdTokenSignedResponseAlg = Schema.Literals(["RS256", "PS256", "ES256", "EdDSA"]);
@@ -92,6 +96,8 @@ export interface OpenIdConnectOidcProvider extends ProviderGeneration {
 export interface OpenIdConnectOAuthProvider<R = never> extends ProviderGeneration {
   /** @internal First-party provider behavior, retained by the configuration codec. */
   readonly [tokenCompatibility]?: TokenCompatibility;
+  /** @internal Opt-in GitHub email lookup, retained by the generation codec. */
+  readonly [githubVerifiedPrimaryEmail]?: boolean;
   readonly protocol: "oauth";
   readonly authorizationEndpoint: string;
   readonly tokenEndpoint: string;

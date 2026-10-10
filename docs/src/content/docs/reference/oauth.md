@@ -402,6 +402,24 @@ revocation, and thirty days of local refresh retention. `Strava.accessProfile`
 requires scopes and supports local disconnection. Custom HTTP clients must reject
 redirects and must not retry token exchanges.
 
+### GitHub email permission
+
+Set `verifiedPrimaryEmail: true` on a GitHub registration to request `user:email`
+and select a verified primary address. It defaults to false and applies to
+`GitHub.provider`, `GitHub.layer`, and `GitHub.gitHubOAuthAppProvider`.
+
+| Behavior       | Contract                                                                                            |
+| -------------- | --------------------------------------------------------------------------------------------------- |
+| Result         | One verified primary address sets normalized `email` and `emailVerified`; otherwise both are absent |
+| Identity       | Numeric GitHub ID; email never selects the account                                                  |
+| `providerData` | The `/user` profile, including its separate nullable email                                          |
+| Lookup limits  | 64 KiB per response, ten pages of 100 entries, bounded by the configured timeout                    |
+
+Connected profiles must explicitly include `user:email` when lookup is enabled.
+Refresh rechecks identity and preserves the stored email snapshot. Update the
+configuration generation when changing this option. Failed or incomplete lookups
+require a fresh sign-in.
+
 ### Generic providers
 
 For plain OAuth, configure authorization/token endpoints and
@@ -464,8 +482,8 @@ A supplied map rejects undeclared providers or malformed data. Omit it for a gen
 JSON profile, or provide your own service-free JSON-object Schema. Registration
 exposes profile data on the server-side `OAuthRegistrationIntent`.
 
-Missing claims stay absent. GitHub's nullable email is unverified display data.
-Google exposes verified `hd` for
+Missing claims stay absent. GitHub's nullable `/user.email` is separate from its
+opt-in verified email fields. Google exposes verified `hd` for
 [Workspace policy](../guide/google#identity-and-workspace-policy); GitLab can expose
 `groups`, and Slack exposes its workspace and user identifiers for
 [workspace policy](../guide/slack#identity-and-workspace-policy).

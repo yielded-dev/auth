@@ -3,6 +3,7 @@ import type * as Oidc from "@yielded/oauth/Oidc";
 import { type Crypto, Effect, type Redacted, type Scope } from "effect";
 import type { HttpClient } from "effect/http";
 
+import { makeEmailEnrichment } from "../github/email";
 import { OAuthUnavailable } from "../signInErrors";
 import { OpenIdConnectConfigurationError } from "./models";
 
@@ -11,6 +12,7 @@ export type Requirements = Crypto.Crypto | HttpClient.HttpClient | Scope.Scope;
 
 export interface NativeProvider {
   readonly client: OAuth.Client;
+  readonly enrichIdentity?: Effect.Success<ReturnType<typeof makeEmailEnrichment>>;
   readonly verifier?: {
     readonly verify: (
       token: Redacted.Redacted<string>,
@@ -21,6 +23,7 @@ export interface NativeProvider {
 
 export const install = Effect.fn("OpenIdConnect.installNative")(function* (
   options: OAuth.ClientOptions,
+  githubVerifiedPrimaryEmail = false,
 ) {
   const client = yield* OAuth.make(options).pipe(
     Effect.mapError((error) =>
@@ -30,5 +33,10 @@ export const install = Effect.fn("OpenIdConnect.installNative")(function* (
     ),
   );
 
-  return { client };
+  return {
+    client,
+    ...(githubVerifiedPrimaryEmail
+      ? { enrichIdentity: yield* makeEmailEnrichment(options.timeoutMs) }
+      : {}),
+  };
 });
