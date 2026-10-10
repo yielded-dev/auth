@@ -109,6 +109,24 @@ export const OidcUserProfile = Schema.Struct({
 
 export type OidcUserProfile = typeof OidcUserProfile.Type;
 
+const standardFlags = ["email_verified", "phone_number_verified"] as const;
+
+/** Keep every standard claim, and replace only flags the host codec normalized. */
+const claimsWithHostFlags = (claims: unknown, profile: Schema.JsonObject) =>
+  Schema.decodeUnknownEffect(Schema.Record(Schema.String, Schema.Unknown))(claims).pipe(
+    Effect.map((raw) => {
+      const normalized = { ...raw };
+
+      for (const key of standardFlags) {
+        const value = profile[key];
+
+        if (typeof value === "boolean") normalized[key] = value;
+      }
+
+      return normalized;
+    }),
+  );
+
 export const decodeOidcProfile = Effect.fn("OpenIdConnect.decodeProfile")(function* (
   claims: unknown,
   schema: Schema.Codec<Schema.JsonObject>,
@@ -118,10 +136,14 @@ export const decodeOidcProfile = Effect.fn("OpenIdConnect.decodeProfile")(functi
     Effect.mapError(() => OAuthProtocolRejected.make({})),
   );
 
-  // Host codecs can normalize flags the standard profile does not accept, such
-  // as Apple's "true" and "false". Raw claims still supply fields that codec dropped.
+  // A host codec may turn Apple's "true"/"false" into a boolean and drop every
+  // other claim. Display still comes from the verified claims; only that flag moves.
   const display = yield* Schema.decodeUnknownEffect(OidcStandardUserProfile)(claims).pipe(
-    Effect.catch(() => Schema.decodeEffect(OidcStandardUserProfile)(profile)),
+    Effect.catch(() =>
+      claimsWithHostFlags(claims, profile).pipe(
+        Effect.flatMap((value) => Schema.decodeEffect(OidcStandardUserProfile)(value)),
+      ),
+    ),
     Effect.mapError(() => OAuthProtocolRejected.make({})),
   );
 

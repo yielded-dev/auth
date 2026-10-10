@@ -2,6 +2,7 @@ import { it } from "@effect/vitest";
 import { Effect, Schema } from "effect";
 import { describe, expect } from "vite-plus/test";
 
+import { AppleUserProfile } from "../../src/oauth/providers/apple/profile";
 import { decodeOidcProfile, OidcUserProfile } from "../../src/oauth/providers/shared/profile";
 
 describe("OIDC profile claims", () => {
@@ -50,6 +51,31 @@ describe("OIDC profile claims", () => {
       expect(profile?.email).toBe("ada@example.com");
       expect(profile?.emailVerified).toBe(true);
       expect(profile?.providerData).toEqual({ hd: "example.com" });
+    }),
+  );
+
+  // A host schema that only models hd plus Apple's string flag normalizes
+  // email_verified and drops name and email. The fallback used that projection
+  // as the entire display source, so the verified name disappeared.
+  it.effect("keeps verified name and email when only the flag is normalized", () =>
+    Effect.gen(function* () {
+      const profile = yield* decodeOidcProfile(
+        {
+          hd: "example.com",
+          name: "Ada",
+          email: "ada@example.com",
+          email_verified: "true",
+        },
+        Schema.Struct({
+          hd: Schema.String,
+          email_verified: AppleUserProfile.fields.email_verified,
+        }),
+      );
+
+      expect(profile?.displayName).toBe("Ada");
+      expect(profile?.email).toBe("ada@example.com");
+      expect(profile?.emailVerified).toBe(true);
+      expect(profile?.providerData).toEqual({ hd: "example.com", email_verified: true });
     }),
   );
 });
