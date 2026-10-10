@@ -406,6 +406,7 @@ expired-row cleanup and ingress limits.
 
 | Integration        | Configure                                                              |
 | ------------------ | ---------------------------------------------------------------------- |
+| Apple              | [`Apple.provider`](../guide/apple)                                     |
 | Atlassian          | [`Atlassian.provider`](../guide/atlassian)                             |
 | Auth0              | [`Auth0.provider`](../guide/enterprise-oidc)                           |
 | Cognito            | [`Cognito.provider`](../guide/enterprise-oidc)                         |
@@ -530,7 +531,8 @@ optional `amr`. Roblox keeps optional `type` and `created_at` and preserves the
 trailing-slash issuer. Railway merges UserInfo because its ID token omits name,
 email, and picture. `Microsoft.provider` keeps `oid` and `tid`. The durable
 subject is `oid:tid` when the token issuer equals the configured authority, and
-`tid:oid:tid` when it does not.
+`tid:oid:tid` when it does not. `Apple.provider` decodes string
+`email_verified` and `is_private_email` flags and merges the first-consent name.
 
 Set `userInfo: "merge"` when an OIDC identity token omits needed profile claims.
 Provider schemas describe the returned projection; applications choose permission
