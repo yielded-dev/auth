@@ -142,6 +142,16 @@ combine auth and application writes under one owner. Credentials and lifecycle
 events are released only after that owner commits. An unknown outcome does not
 authorize repeating credential issuance or delivery.
 
+### Mix composed and explicit services
+
+Pass the complete `AppAuth` to `AuthPersistence.make`. Provide explicit services for
+strategies outside its composed capabilities, such as [OAuth registration and account
+linking](#oauth), alongside `Persistence.layer`. Share subject identity, status,
+policy, security revisions, and the complete active credential authority; credential
+changes must maintain that authority atomically. The default composed passkey-removal
+policy does not count OAuth as a remaining sign-in method; use an
+[explicit removal policy](#passkeys) when it should.
+
 ### Managed D1
 
 Import `AuthPersistence` from `@yielded/auth-persistence-drizzle/D1` and supply
@@ -290,12 +300,17 @@ Include every role table the requested mappings use.
 
 Explicit SQL session reads check current authority and expiry; committed revocations
 invalidate sessions immediately. Application claims remain application-owned.
+Session listing includes only the current security revision. If concurrent authority
+changes prevent a coherent page, listing fails with `SessionUnavailable` rather than
+reporting pagination exhaustion.
 
-Keep mapped subject IDs canonical through every column codec. Permit database
-catalog reads: explicit factories validate required unique keys at acquisition,
-while composed storage validates on its first operation. Schema declarations do not
-install constraints. Apply migrations before use and reacquire persistence Layers
-after schema changes.
+Keep mapped subject IDs canonical through every column codec. PostgreSQL UUID
+keys can coexist with text subject references; use the same lowercase UUID spelling
+throughout. Logical column types describe driver values, not migration DDL.
+Permit database catalog reads: explicit factories validate required keys and column
+compatibility at acquisition, while composed storage validates on its first operation.
+Schema declarations do not install constraints. Apply migrations before use and
+reacquire persistence Layers after schema changes.
 
 Explicit session mappings require `moduleId`, the engine clock, and native
 active-status values. Declare every mutable input of `decodeRequirement` in

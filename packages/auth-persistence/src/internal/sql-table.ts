@@ -22,6 +22,7 @@ export const identifier = (name: string) => '"' + name.replaceAll('"', '""') + '
 
 export interface ColumnOptions {
   readonly name: string;
+  /** Driver value representation, not the database column's physical SQL type. */
   readonly type: "text" | "integer" | "boolean";
   readonly nullable?: boolean;
 }

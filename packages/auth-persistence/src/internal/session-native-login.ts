@@ -5,6 +5,7 @@ import {
   SessionConflict,
   type PendingAuthentication,
   type PendingAuthenticationRecord,
+  type SessionUnavailable,
 } from "@yielded/auth/Sessions";
 import { DateTime, Effect, Option } from "effect";
 import type { SqlClient } from "effect/sql/SqlClient";
@@ -46,7 +47,7 @@ export const makeNativePendingAuthenticationServices = Effect.fnUntraced(functio
   mapping: NativePendingAuthenticationMapping<Claims>,
 ): Effect.fn.Return<
   { readonly pendingAuthentication: PendingAuthentication<Claims> },
-  never,
+  SessionUnavailable,
   SqlClient | LifecycleHooks | SqlBatchCommit
 > {
   const batch = yield* SqlBatchCommit;

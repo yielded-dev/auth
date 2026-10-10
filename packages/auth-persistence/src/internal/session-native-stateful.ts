@@ -10,6 +10,7 @@ import {
   type StatefulSessionPersistence,
   type StatefulSessionRecord,
   type SessionRepository,
+  type SessionUnavailable,
 } from "@yielded/auth/Sessions";
 import { DateTime, Effect, Option, Schema } from "effect";
 import type { SqlClient } from "effect/sql/SqlClient";
@@ -43,6 +44,7 @@ import {
   registerSqlBatchPostcondition,
   registerSqlPostcondition,
 } from "./sql-commit";
+import { canJoinTextColumns, withStorageValidation } from "./storage-validation";
 import type { AnyTableModel } from "./table-model";
 
 export type NativeStatefulSessionMapping<Claims> = StatefulSessionMapping<
@@ -63,7 +65,7 @@ export const makeNativeStatefulSessionServices = Effect.fnUntraced(function* <Cl
     readonly statefulSessionPersistence: StatefulSessionPersistence<Claims>;
     readonly sessionRepository: SessionRepository;
   },
-  never,
+  SessionUnavailable,
   SqlClient | LifecycleHooks | SqlBatchCommit
 > {
   const batch = yield* SqlBatchCommit;
@@ -139,47 +141,63 @@ export const makeNativeStatefulSessionServices = Effect.fnUntraced(function* <Cl
       ),
     );
 
+  const [joinedIds, joinedRevisions] = yield* Effect.forEach(
+    [
+      [
+        table.unencodedTextColumn?.(s.subjectId),
+        state.subject.unencodedTextColumn?.(mapping.subject.id),
+      ],
+      [
+        table.unencodedTextColumn?.(s.securityRevision),
+        state.subject.unencodedTextColumn?.(mapping.subject.securityRevision),
+      ],
+    ],
+    canJoinTextColumns,
+  ).pipe(withStorageValidation, Effect.mapError(sessionUnavailable));
+
   const verify = Effect.fnUntraced(function* (digest: StatefulSessionRecord<Claims>["digest"]) {
     const subject = state.subject.as("verified_subject"),
       session = table.as("verified_session"),
       owner = mapping.subject;
 
-    if (
-      table.unencodedTextColumn?.(s.subjectId) !== undefined &&
-      state.subject.unencodedTextColumn?.(owner.id) !== undefined
-    ) {
-      const rows =
-        yield* sql`select ${session.fields("session_")}, ${subject.fields("subject_")} from ${session.name} join ${subject.name} on ${exactSqlText(sql, subject.column(owner.id), session.column(s.subjectId))} and ${state.activeSubject(subject)} and ${exactSqlText(sql, subject.column(owner.securityRevision), session.column(s.securityRevision))} where ${exact(session, s.digest, digest)} and ${live(session)} limit 2`;
+    let discoveredSubjectId: StatefulSessionRecord<Claims>["subjectId"] | undefined;
+    let nativeSubject: unknown;
 
-      sessionInvariant(rows.length <= 1);
-      if (rows[0] === undefined) return undefined;
-      const record = yield* records.decode(session.decode(rows[0], "session_"));
-      const decoded = subject.decode(rows[0], "subject_");
+    if (!joinedIds) {
+      const discovered = yield* records.read(digest);
 
-      sessionInvariant(
-        (yield* mapping.subjectId.toSubject(decoded[owner.id])) === record.subjectId &&
-          decoded[owner.securityRevision] === record.securityRevision &&
-          owner.isActiveStatus(decoded[owner.status]),
-      );
-
-      return record;
+      if (discovered === undefined) return undefined;
+      discoveredSubjectId = discovered.subjectId;
+      nativeSubject = yield* mapping.subjectId.toNative(discoveredSubjectId);
     }
-    const record = yield* records.read(digest);
 
-    if (record === undefined) return undefined;
-    const nativeSubject = yield* mapping.subjectId.toNative(record.subjectId);
+    const owns = joinedIds
+      ? exactSqlText(sql, subject.column(owner.id), session.column(s.subjectId))
+      : sql`${state.id(subject, owner.id, nativeSubject)} and ${state.id(session, s.subjectId, nativeSubject)}`;
+
+    const revision = joinedRevisions
+      ? exactSqlText(
+          sql,
+          subject.column(owner.securityRevision),
+          session.column(s.securityRevision),
+        )
+      : sql`true`;
 
     const rows =
-      yield* sql`select ${subject.fields("subject_")} from ${subject.name} where ${state.id(subject, owner.id, nativeSubject)} and ${state.activeSubject(subject)} and ${state.exact(subject, owner.securityRevision, record.securityRevision)} and ${now} < ${DateTime.toEpochMillis(record.expiresAt)} limit 2`;
+      yield* sql`select ${session.fields("session_")}, ${subject.fields("subject_")} from ${session.name} join ${subject.name} on ${owns} and ${state.activeSubject(subject)} and ${revision} where ${exact(session, s.digest, digest)} and ${live(session)} limit 2`;
 
     sessionInvariant(rows.length <= 1);
     if (rows[0] === undefined) return undefined;
+    const record = yield* records.decode(session.decode(rows[0], "session_"));
+    const decoded = subject.decode(rows[0], "subject_");
+
     sessionInvariant(
-      (yield* mapping.subjectId.toSubject(subject.decode(rows[0], "subject_")[owner.id])) ===
-        record.subjectId,
+      (joinedIds || record.subjectId === discoveredSubjectId) &&
+        (yield* mapping.subjectId.toSubject(decoded[owner.id])) === record.subjectId &&
+        owner.isActiveStatus(decoded[owner.status]),
     );
 
-    return record;
+    return decoded[owner.securityRevision] === record.securityRevision ? record : undefined;
   });
 
   const persistence: StatefulSessionPersistence<Claims> = {
@@ -486,26 +504,81 @@ export const makeNativeStatefulSessionServices = Effect.fnUntraced(function* <Cl
                   yield* Schema.decodeEffect(SessionId)(input.cursor),
                 );
 
-          const rows =
-            yield* sql`select ${list.fields("session_")}, ${st.fields("subject_")} from ${list.name} join ${st.name} on ${state.id(st, owner.id, nativeSubject)} and ${state.activeSubject(st)} and ${exactSqlText(sql, st.column(owner.securityRevision), list.column(s.securityRevision))} where ${state.id(list, s.subjectId, nativeSubject)} and ${live(list)}${cursor === undefined ? sql`` : sql` and ${list.column(s.sessionId)} > ${list.value(s.sessionId, cursor)}`} order by ${list.column(s.sessionId)} limit ${input.limit + 1}`;
+          let revision: StatefulSessionRecord<Claims>["securityRevision"] | undefined;
 
-          const decoded = yield* Effect.forEach(rows.slice(0, input.limit), (row) =>
-            Effect.gen(function* () {
-              const record = yield* records.decode(list.decode(row, "session_"));
+          // Bind both revisions in SQL so stale rows cannot consume a page.
+          if (!joinedRevisions) {
+            const subjects =
+              yield* sql`select ${st.fields("subject_")} from ${st.name} where ${state.id(st, owner.id, nativeSubject)} and ${state.activeSubject(st)} limit 2`;
+
+            sessionInvariant(subjects.length <= 1);
+            if (subjects[0] === undefined) return { sessions: [] };
+            const subject = st.decode(subjects[0], "subject_");
+
+            sessionInvariant(
+              (yield* mapping.subjectId.toSubject(subject[owner.id])) === input.subjectId,
+            );
+            revision = yield* Schema.decodeUnknownEffect(SessionMetadata.fields.securityRevision)(
+              subject[owner.securityRevision],
+            );
+          }
+
+          // Keep the owner in the page snapshot even when its discovered revision changed.
+          // Retry that read once; continued authority changes are not pagination exhaustion.
+          for (let attempt = 0; attempt < 2; attempt++) {
+            const currentRevision = joinedRevisions
+              ? exactSqlText(
+                  sql,
+                  st.column(owner.securityRevision),
+                  list.column(s.securityRevision),
+                )
+              : sql`${state.exact(st, owner.securityRevision, revision)} and ${exact(list, s.securityRevision, revision)}`;
+
+            const rows =
+              yield* sql`select ${list.fields("session_")}, ${st.fields("subject_")}, ${list.column(s.subjectId)} as session_owner from ${st.name} left join ${list.name} on ${state.id(list, s.subjectId, nativeSubject)} and ${currentRevision} and ${live(list)}${cursor === undefined ? sql`` : sql` and ${list.column(s.sessionId)} > ${list.value(s.sessionId, cursor)}`} where ${state.id(st, owner.id, nativeSubject)} and ${state.activeSubject(st)} order by ${list.column(s.sessionId)} limit ${input.limit + 1}`;
+
+            const first = rows[0];
+
+            if (first === undefined) return { sessions: [] };
+            if (!joinedRevisions) {
+              const subject = st.decode(first, "subject_");
 
               sessionInvariant(
-                record.subjectId === input.subjectId &&
-                  (yield* mapping.subjectId.toSubject(st.decode(row, "subject_")[owner.id])) ===
-                    input.subjectId,
+                (yield* mapping.subjectId.toSubject(subject[owner.id])) === input.subjectId,
               );
 
-              return yield* Schema.decodeEffect(Schema.toType(SessionMetadata))(record);
-            }),
-          );
+              const current = yield* Schema.decodeUnknownEffect(
+                SessionMetadata.fields.securityRevision,
+              )(subject[owner.securityRevision]);
 
-          const nextCursor = rows.length > input.limit ? decoded.at(-1)?.sessionId : undefined;
+              if (current !== revision) {
+                revision = current;
+                continue;
+              }
+            }
+            if (first.session_owner === null) return { sessions: [] };
 
-          return { sessions: decoded, ...(nextCursor === undefined ? {} : { nextCursor }) };
+            const decoded = yield* Effect.forEach(rows.slice(0, input.limit), (row) =>
+              Effect.gen(function* () {
+                const record = yield* records.decode(list.decode(row, "session_"));
+                const subject = st.decode(row, "subject_");
+
+                sessionInvariant(
+                  record.subjectId === input.subjectId &&
+                    (yield* mapping.subjectId.toSubject(subject[owner.id])) === input.subjectId &&
+                    subject[owner.securityRevision] === record.securityRevision,
+                );
+
+                return yield* Schema.decodeEffect(Schema.toType(SessionMetadata))(record);
+              }),
+            );
+
+            const nextCursor = rows.length > input.limit ? decoded.at(-1)?.sessionId : undefined;
+
+            return { sessions: decoded, ...(nextCursor === undefined ? {} : { nextCursor }) };
+          }
+
+          return yield* sessionUnavailable();
         }),
       ),
   };

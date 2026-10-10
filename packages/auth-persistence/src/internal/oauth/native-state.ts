@@ -14,8 +14,9 @@ import type { PersistenceMappingError } from "../mapping-error";
 import type { OAuthSignInMapping, OAuthSubjectReadTable } from "../models/oauth-model";
 import type { NativeSqlTables } from "../native-sql-table";
 import { exactSqlText } from "../sql-change";
+import { canJoinTextColumns, withStorageValidation } from "../storage-validation";
 import type { SqlExpression, TableModel } from "../table-model";
-import { invariant, oauthIdentityKey } from "./state";
+import { invariant, oauthIdentityKey, unavailable } from "./state";
 
 // Expression handles are checked by the physical compiler, not domain codecs.
 export type OAuthNativeReadMapping = OAuthSignInMapping<
@@ -208,11 +209,21 @@ export const makeOAuthNativeState = Effect.fnUntraced(function* (
     return sql`(select * from ${physical.name} where ${tables.expression(descriptor.activeCondition)}) as ${sql(alias)}`;
   };
 
-  const joinedIds =
-    ownership.unencodedTextColumn?.(mapping.ownership.subjectId) !== undefined &&
-    subject.unencodedTextColumn?.(mapping.subject.id) !== undefined &&
-    credential.unencodedTextColumn?.(mapping.credential.subjectId) !== undefined &&
-    authority.unencodedTextColumn?.(mapping.authority.subjectId) !== undefined;
+  const [joinedIds, joinedIdentityKeys] = yield* Effect.forEach(
+    [
+      [
+        ownership.unencodedTextColumn?.(mapping.ownership.subjectId),
+        subject.unencodedTextColumn?.(mapping.subject.id),
+        credential.unencodedTextColumn?.(mapping.credential.subjectId),
+        authority.unencodedTextColumn?.(mapping.authority.subjectId),
+      ],
+      [
+        credential.unencodedTextColumn?.(mapping.credential.identityKey),
+        ownership.unencodedTextColumn?.(mapping.ownership.identityKey),
+      ],
+    ],
+    canJoinTextColumns,
+  ).pipe(withStorageValidation, Effect.mapError(unavailable));
 
   const decodeSnapshot = Effect.fnUntraced(function* (
     rows: ReadonlyArray<Row>,
@@ -326,11 +337,7 @@ export const makeOAuthNativeState = Effect.fnUntraced(function* (
     const nativeId = yield* mapping.subjectId.toNative(input.subjectId);
     let identityKey: unknown;
 
-    const direct =
-      credential.unencodedTextColumn?.(mapping.credential.identityKey) !== undefined &&
-      ownership.unencodedTextColumn?.(mapping.ownership.identityKey) !== undefined;
-
-    if (!direct) {
+    if (!joinedIdentityKeys) {
       const selected = yield* sql`select ${credential.fields("c_")} from ${credential.name}
         where ${exact(credential.column(mapping.credential.moduleId), credential.value(mapping.credential.moduleId, input.moduleId))}
           and ${exact(credential.column(mapping.credential.credentialId), credential.value(mapping.credential.credentialId, input.credentialId))}
@@ -347,7 +354,7 @@ export const makeOAuthNativeState = Effect.fnUntraced(function* (
     const rows =
       yield* sql`select ${o.fields("o_")}, ${s.fields("s_")}, ${c.fields("c_")}, ${a.fields("a_")}
       from ${active("credential", "oauth_credential")}
-      join ${o.name} on ${direct ? exact(o.column(mapping.ownership.identityKey), c.column(mapping.credential.identityKey)) : exact(o.column(mapping.ownership.identityKey), o.value(mapping.ownership.identityKey, identityKey))}
+      join ${o.name} on ${joinedIdentityKeys ? exact(o.column(mapping.ownership.identityKey), c.column(mapping.credential.identityKey)) : exact(o.column(mapping.ownership.identityKey), o.value(mapping.ownership.identityKey, identityKey))}
         and ${owner(o, mapping.ownership.subjectId)}
       join ${active("subject", "oauth_subject")} on ${owner(s, mapping.subject.id)}
       join ${active("authority", "oauth_authority")} on ${owner(a, mapping.authority.subjectId)}

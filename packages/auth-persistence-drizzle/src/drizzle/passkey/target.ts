@@ -85,7 +85,11 @@ interface PasskeyMapped<M> {
   readonly provide: <A, E, R>(
     effect: Effect.Effect<A, E, R>,
   ) => Effect.Effect<A, E, Exclude<Exclude<R, SqlClient.SqlClient>, SqlBatchCommit>>;
-  readonly base: () => Effect.Effect<NativePasskeyServices, never, Crypto.Crypto | LifecycleHooks>;
+  readonly base: () => Effect.Effect<
+    NativePasskeyServices,
+    PasskeyUnavailable,
+    Crypto.Crypto | LifecycleHooks
+  >;
 }
 
 export const makePasskeyMapped = Effect.fnUntraced(function* <M, R>(

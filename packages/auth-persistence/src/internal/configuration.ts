@@ -59,6 +59,7 @@ export interface OAuthFeature {
 
 export interface Strategy {
   readonly strategy: object;
+  /** Absent metadata leaves the strategy's persistence services application-supplied. */
   readonly persistence?:
     | PasskeyFeature
     | OAuthFeature
