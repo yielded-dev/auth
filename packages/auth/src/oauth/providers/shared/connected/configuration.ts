@@ -335,6 +335,14 @@ export const prepareConnectedConfigurations = Effect.fn(
 
       yield* Effect.addFinalizer(() => Effect.sync(() => Redacted.wipeUnsafe(privateKey)));
     }
+
+    const revocation = provider.revocation;
+
+    if (revocation.mode === "rfc7009" && isPrivateKeyAuthentication(revocation.authentication)) {
+      const privateKey = revocation.authentication.privateKeyJwt.privateKey;
+
+      yield* Effect.addFinalizer(() => Effect.sync(() => Redacted.wipeUnsafe(privateKey)));
+    }
   }
 
   const generations = new Set<string>(),

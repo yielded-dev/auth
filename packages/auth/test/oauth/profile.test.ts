@@ -1,5 +1,5 @@
 import { it } from "@effect/vitest";
-import { Effect } from "effect";
+import { Effect, Schema } from "effect";
 import { describe, expect } from "vite-plus/test";
 
 import { decodeOidcProfile, OidcUserProfile } from "../../src/oauth/providers/shared/profile";
@@ -28,6 +28,28 @@ describe("OIDC profile claims", () => {
       );
 
       expect(profile?.providerData).not.toHaveProperty("hd");
+    }),
+  );
+
+  // A host schema such as `{ hd }` used to be decoded first, and standard
+  // display claims were then read from that projection. Effect Schema drops
+  // unmodeled properties, so name and email disappeared.
+  it.effect("keeps standard display claims when the host schema is narrower", () =>
+    Effect.gen(function* () {
+      const profile = yield* decodeOidcProfile(
+        {
+          hd: "example.com",
+          name: "Ada",
+          email: "ada@example.com",
+          email_verified: true,
+        },
+        Schema.Struct({ hd: Schema.String }),
+      );
+
+      expect(profile?.displayName).toBe("Ada");
+      expect(profile?.email).toBe("ada@example.com");
+      expect(profile?.emailVerified).toBe(true);
+      expect(profile?.providerData).toEqual({ hd: "example.com" });
     }),
   );
 });

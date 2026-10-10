@@ -25,6 +25,7 @@ import {
 import { snapshotOAuth } from "../../signInSnapshot";
 import { tokenCompatibility } from "./compatibility";
 import type { InstalledConfiguration } from "./configuration";
+import { discoveryProfile } from "./discovery";
 import {
   persistedResponseIssuerMode,
   type OpenIdConnectAuthentication,
@@ -322,7 +323,9 @@ export const makeOpenIdConnectOAuthProtocol = Effect.fn("makeOpenIdConnectOAuthP
               : Redacted.value(verified.claims);
 
           const profile = yield* decodeOidcProfile(
-            yield* mergeAppleCallbackUser(claims, request.response.user),
+            provider[discoveryProfile] === "apple"
+              ? yield* mergeAppleCallbackUser(claims, request.response.user)
+              : claims,
             provider.profileSchema,
           );
 

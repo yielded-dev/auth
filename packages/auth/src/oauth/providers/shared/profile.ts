@@ -118,7 +118,7 @@ export const decodeOidcProfile = Effect.fn("OpenIdConnect.decodeProfile")(functi
     Effect.mapError(() => OAuthProtocolRejected.make({})),
   );
 
-  const display = yield* Schema.decodeEffect(OidcStandardUserProfile)(profile).pipe(
+  const display = yield* Schema.decodeUnknownEffect(OidcStandardUserProfile)(claims).pipe(
     Effect.mapError(() => OAuthProtocolRejected.make({})),
   );
 
