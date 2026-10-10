@@ -26,7 +26,7 @@ import { snapshotOAuth } from "../../signInSnapshot";
 import { tokenCompatibility } from "./compatibility";
 import type { InstalledConfiguration } from "./configuration";
 import { persistedResponseIssuerMode, type OpenIdConnectConfigurationError } from "./models";
-import { decodeOidcProfile } from "./profile";
+import { decodeOidcProfile, mergeAppleCallbackUser } from "./profile";
 import { tokens } from "./receipt";
 import { subjectInTenant } from "./tenantSubject";
 
@@ -165,6 +165,7 @@ export const makeOpenIdConnectOAuthProtocol = Effect.fn("makeOpenIdConnectOAuthP
             : {}),
           ...(request.prompt === undefined ? {} : { prompt: request.prompt }),
           ...(request.loginHint === undefined ? {} : { loginHint: request.loginHint }),
+          ...(provider.responseMode === undefined ? {} : { responseMode: provider.responseMode }),
         })
         .pipe(Effect.mapError(unavailable));
 
@@ -190,6 +191,7 @@ export const makeOpenIdConnectOAuthProtocol = Effect.fn("makeOpenIdConnectOAuthP
           ...(pkce === undefined ? {} : { pkceVerifier: pkce.verifier }),
           ...(nonce === undefined ? {} : { oidcNonce: nonce }),
         },
+        ...(provider.responseMode === undefined ? {} : { responseMode: provider.responseMode }),
       };
 
       return yield* snapshotOAuth(OAuthProtocolPreparation, result);
@@ -299,7 +301,10 @@ export const makeOpenIdConnectOAuthProtocol = Effect.fn("makeOpenIdConnectOAuthP
                 })
               : Redacted.value(verified.claims);
 
-          const profile = yield* decodeOidcProfile(claims, provider.profileSchema);
+          const profile = yield* decodeOidcProfile(
+            yield* mergeAppleCallbackUser(claims, request.response.user),
+            provider.profileSchema,
+          );
 
           const decodedSubject =
             provider.decodeSubject === undefined

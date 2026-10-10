@@ -1,3 +1,4 @@
+import { Unavailable } from "@yielded/oauth/Errors";
 import type * as OAuth from "@yielded/oauth/OAuth";
 import * as Oidc from "@yielded/oauth/Oidc";
 import { Effect, Predicate, Redacted, Schema } from "effect";
@@ -21,8 +22,10 @@ import {
   IdTokenSignedResponseAlg,
   OidcUserInfoMode,
   OpenIdConnectConfigurationError,
+  type MintClientSecret,
   type OidcProfileSchema,
   type OidcSubjectDecoder,
+  type OpenIdConnectAuthentication,
   type OpenIdConnectOAuthProvider,
   type OpenIdConnectOAuthProtocolOptions,
   type OpenIdConnectOidcProvider,
@@ -63,7 +66,17 @@ export const identitySourceSchema = <R>() =>
 
 export const authentication = Schema.Union([
   Schema.Struct({ method: Schema.Literal("client_secret_basic"), secret }),
-  Schema.Struct({ method: Schema.Literal("client_secret_post"), secret }),
+  Schema.Struct({
+    method: Schema.Literal("client_secret_post"),
+    secret: Schema.optionalKey(secret),
+    mintSecret: Schema.optionalKey(
+      Schema.declare<MintClientSecret>((input): input is MintClientSecret =>
+        Predicate.isFunction(input),
+      ),
+    ),
+  }).check(
+    Schema.makeFilter((value) => (value.secret === undefined) !== (value.mintSecret === undefined)),
+  ),
   Schema.Struct({ method: Schema.Literal("none"), publicClient: Schema.Literal(true) }),
 ]);
 
@@ -83,6 +96,7 @@ const common = {
   ).check(Schema.isMaxLength(32)),
   authorizationParameters: Schema.optionalKey(fields),
   tokenParameters: Schema.optionalKey(fields),
+  responseMode: Schema.optionalKey(Schema.Literals(["query", "form_post"])),
 };
 
 const optionsSchema = <R>() =>
@@ -318,6 +332,18 @@ export interface InstalledConfiguration<R> {
   readonly timeoutSeconds: number;
 }
 
+const copyAuth = (value: OpenIdConnectAuthentication): OpenIdConnectAuthentication => {
+  if (value.method === "none") return { ...value };
+  if (value.method === "client_secret_basic")
+    return { method: "client_secret_basic", secret: Redacted.make(Redacted.value(value.secret)) };
+  if (value.mintSecret !== undefined)
+    return { method: "client_secret_post", mintSecret: value.mintSecret };
+  if (value.secret === undefined)
+    return { method: "client_secret_post", mintSecret: () => Effect.fail(Unavailable.make({})) };
+
+  return { method: "client_secret_post", secret: Redacted.make(Redacted.value(value.secret)) };
+};
+
 export const prepareConfigurations = Effect.fn("OpenIdConnect.prepareConfigurations")(function* <R>(
   input: OpenIdConnectOAuthProtocolOptions<R>,
 ) {
@@ -336,13 +362,7 @@ export const prepareConfigurations = Effect.fn("OpenIdConnect.prepareConfigurati
       ...(provider.tokenParameters === undefined
         ? {}
         : { tokenParameters: { ...provider.tokenParameters } }),
-      authentication:
-        provider.authentication.method === "none"
-          ? { ...provider.authentication }
-          : {
-              ...provider.authentication,
-              secret: Redacted.make(Redacted.value(provider.authentication.secret)),
-            },
+      authentication: copyAuth(provider.authentication),
     };
 
     return provider.protocol === "oidc"
@@ -456,7 +476,10 @@ export const installProvider = Effect.fn("OpenIdConnect.installProvider")(functi
     const usesAsymmetric = algorithms?.some((algorithm) => algorithm !== "HS256") === true;
 
     if (usesHmac && usesAsymmetric) return yield* configError("parameters");
-    if (usesHmac && provider.authentication.method === "none")
+    if (
+      usesHmac &&
+      (provider.authentication.method === "none" || provider.authentication.secret === undefined)
+    )
       return yield* configError("authentication");
     if (
       algorithms === undefined ||
@@ -497,6 +520,7 @@ export const installProvider = Effect.fn("OpenIdConnect.installProvider")(functi
         scopes: provider.scopes,
         state: placeholder,
         ...(provider.pkceS256 ? { codeChallenge: Redacted.value(placeholder) } : {}),
+        ...(provider.responseMode === undefined ? {} : { responseMode: provider.responseMode }),
         ...(provider.authorizationParameters === undefined
           ? {}
           : { parameters: provider.authorizationParameters }),

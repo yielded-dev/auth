@@ -116,6 +116,7 @@ export const OAuthProtocolPreparation = Schema.Struct({
   configuration: OAuthProtocolConfiguration,
   authorizationUrl: OAuthAuthorizationUrl,
   secrets: OAuthTransactionSecrets,
+  responseMode: Schema.optionalKey(Schema.Literals(["query", "form_post"])),
 });
 
 export type OAuthProtocolPreparation = typeof OAuthProtocolPreparation.Type;
@@ -249,6 +250,8 @@ export const OAuthCodeResponse = Schema.TaggedStruct("Code", {
   ),
   /** Provider callback scope receipt; adapters must validate before trusting it. */
   scope: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(16384))),
+  /** First-consent name payload. Apple sends this once as a `user` form field. */
+  user: Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(4096))),
   error: Schema.optionalKey(Schema.Never),
 });
 

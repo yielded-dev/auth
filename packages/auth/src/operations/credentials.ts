@@ -18,8 +18,19 @@ export type AuthCredentialCommand =
       readonly slot: CredentialSlot;
       readonly credential: Redacted.Redacted<string>;
       readonly expiresAtMillis: number;
+      /** form_post callbacks. The HTTP layer requires a Secure cookie before setting it. */
+      readonly sameSite?: "none";
     }
   | { readonly _tag: "Clear"; readonly slot: CredentialSlot };
+
+/** An explicit SameSite=Lax cookie is omitted on a cross-site POST. None is sent. */
+export const formPostBinding = (
+  command: AuthCredentialCommand,
+  responseMode: "query" | "form_post" | undefined,
+): AuthCredentialCommand =>
+  command._tag === "Issue" && command.slot === "request-binding" && responseMode === "form_post"
+    ? Object.freeze({ ...command, sameSite: "none" })
+    : command;
 
 /** Acceptance into a caller-owned collector, not fallible cookie or secure-store persistence. */
 export type AuthCredentialCommandSink = (

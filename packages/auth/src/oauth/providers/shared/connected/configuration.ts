@@ -1,3 +1,4 @@
+import { Unavailable } from "@yielded/oauth/Errors";
 import type * as OAuth from "@yielded/oauth/OAuth";
 import * as Oidc from "@yielded/oauth/Oidc";
 import { Effect, Predicate, Redacted, Schema } from "effect";
@@ -24,6 +25,7 @@ import {
   IdTokenSignedResponseAlg,
   OidcUserInfoMode,
   OpenIdConnectConfigurationError,
+  type MintClientSecret,
   type OidcProfileSchema,
   type OidcSubjectDecoder,
   type OpenIdConnectAuthentication,
@@ -42,15 +44,24 @@ const fields = Schema.Record(
   Schema.String.check(Schema.isMaxLength(2048)),
 ).check(Schema.makeFilter((value) => Object.keys(value).length <= 16));
 
+const secret = Schema.RedactedFromValue(text(4096));
+
 const authentication = Schema.Union([
   Schema.Struct({
     method: Schema.Literal("client_secret_basic"),
-    secret: Schema.RedactedFromValue(text(4096)),
+    secret,
   }),
   Schema.Struct({
     method: Schema.Literal("client_secret_post"),
-    secret: Schema.RedactedFromValue(text(4096)),
-  }),
+    secret: Schema.optionalKey(secret),
+    mintSecret: Schema.optionalKey(
+      Schema.declare<MintClientSecret>((input): input is MintClientSecret =>
+        Predicate.isFunction(input),
+      ),
+    ),
+  }).check(
+    Schema.makeFilter((value) => (value.secret === undefined) !== (value.mintSecret === undefined)),
+  ),
   Schema.Struct({ method: Schema.Literal("none"), publicClient: Schema.Literal(true) }),
 ]);
 
@@ -67,6 +78,7 @@ const common = {
   ).check(Schema.isMinLength(1), Schema.isMaxLength(16)),
   authorizationParameters: Schema.optionalKey(fields),
   tokenParameters: Schema.optionalKey(fields),
+  responseMode: Schema.optionalKey(Schema.Literals(["query", "form_post"])),
   refreshParameters: Schema.optionalKey(fields),
   clientRegistrationId: OAuthConnectedProfile.fields.clientRegistrationId,
   profiles: Schema.Array(OAuthConnectedProfile).check(
@@ -198,10 +210,17 @@ const forbiddenHeaders = new Set([
 const configurationError = (reason: OpenIdConnectConfigurationError["reason"]) =>
   OpenIdConnectConfigurationError.make({ reason });
 
-const copyAuth = (value: OpenIdConnectAuthentication): OpenIdConnectAuthentication =>
-  value.method === "none"
-    ? { ...value }
-    : { ...value, secret: Redacted.make(Redacted.value(value.secret)) };
+const copyAuth = (value: OpenIdConnectAuthentication): OpenIdConnectAuthentication => {
+  if (value.method === "none") return { ...value };
+  if (value.method === "client_secret_basic")
+    return { method: "client_secret_basic", secret: Redacted.make(Redacted.value(value.secret)) };
+  if (value.mintSecret !== undefined)
+    return { method: "client_secret_post", mintSecret: value.mintSecret };
+  if (value.secret === undefined)
+    return { method: "client_secret_post", mintSecret: () => Effect.fail(Unavailable.make({})) };
+
+  return { method: "client_secret_post", secret: Redacted.make(Redacted.value(value.secret)) };
+};
 
 const copyRevocation = <
   T extends
@@ -480,7 +499,10 @@ export const installConnectedProvider = Effect.fn("OpenIdConnect.installConnecte
       const usesAsymmetric = algorithms?.some((algorithm) => algorithm !== "HS256") === true;
 
       if (usesHmac && usesAsymmetric) return yield* configurationError("parameters");
-      if (usesHmac && provider.authentication.method === "none")
+      if (
+        usesHmac &&
+        (provider.authentication.method === "none" || provider.authentication.secret === undefined)
+      )
         return yield* configurationError("authentication");
       if (
         algorithms === undefined ||

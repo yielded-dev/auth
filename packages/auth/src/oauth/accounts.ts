@@ -19,7 +19,11 @@ import { IdentityConflict, LastSignInMethod } from "../identity/models";
 import { reportAuthFailure } from "../internal/diagnostics";
 import { AuthenticationClock } from "../operations/clock";
 import { requireAuthenticated, type AuthInvocation } from "../operations/context";
-import type { AuthOperationResult, AuthCredentialCommand } from "../operations/credentials";
+import {
+  formPostBinding,
+  type AuthOperationResult,
+  type AuthCredentialCommand,
+} from "../operations/credentials";
 import { AuthenticationRequired } from "../operations/errors";
 import { makeOperation, operationGroup } from "../operations/operation";
 import { makeRequestBinding } from "../operations/requestBinding";
@@ -482,7 +486,7 @@ export const makeOAuthAccounts = <
               authorizationUrl: prepared.authorizationUrl,
               expiresAtMillis,
             },
-            credentialCommands: [command],
+            credentialCommands: [formPostBinding(command, prepared.responseMode)],
           };
         },
         Effect.tapCause((cause) =>
