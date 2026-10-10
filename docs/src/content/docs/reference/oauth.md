@@ -484,8 +484,10 @@ checking the same subject; ID-token claims take precedence. Discovery accepts a
 `{tenantid}` path segment when it matches the configured authority; verification
 substitutes the signed `tid` and checks the selected signing key's issuer. A
 concrete GUID authority discovered from that template keeps its own issuer, and
-a published signing-key issuer is still checked. Refresh against the template
-requires that original `iss`.
+a published signing-key issuer is still checked. Commercial `consumers` pins the
+personal-account issuer. A tenant domain does not match that template. `common`
+and `organizations` stay on it. Refresh against the template requires that
+original `iss`.
 
 Sign-in accepts per-request `prompt` and `loginHint`. Public clients use
 `authentication: { method: "none", publicClient: true }`. Load secrets with

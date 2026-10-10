@@ -11,7 +11,9 @@ for their lifetime. `Pkce` requires Effect `Crypto`; verification also requires
 exact trusted issuer, or from an explicit `metadataUrl`. A discovered issuer
 may use a `{tenantid}` path segment when that template matches the configured
 authority. A concrete GUID pinned from that document keeps its token issuer
-and still rejects a signing key published for another issuer.
+and still rejects a signing key published for another issuer. Commercial
+`consumers` pins the personal-account issuer. A tenant domain does not match
+that template. `common` and `organizations` stay multi-tenant.
 Verification then substitutes the verified `tid` and checks the
 selected signing key's issuer. Generic issuers still require an exact match. Closing a factory's scope cancels its work and prevents reuse.
 

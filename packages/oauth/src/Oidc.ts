@@ -202,54 +202,87 @@ export const substituteTenantIssuer = (template: string, tenantId: string): stri
   return `${parts.origin}${segments.join("/")}`;
 };
 
-/** Exact issuer match, or a `{tenantid}` template whose remaining path and origin
- * equal the configured authority once that segment is filled from the authority. */
-export const discoveredIssuerMatches = (configured: string, discovered: string): boolean => {
-  if (configured === discovered) return true;
-  if (!isTenantIssuerTemplate(discovered)) return false;
+/** Commercial personal-account tenant. `consumers` is this GUID's nickname. */
+const personalMicrosoftAccountTenant = "9188040d-6c67-4c5b-b112-36a304b66dad";
 
-  const configuredParts = issuerOriginAndPath(configured);
-  const discoveredParts = issuerOriginAndPath(discovered);
+const multiTenantAlias = (segment: string) => segment === "common" || segment === "organizations";
 
-  if (configuredParts === undefined || discoveredParts === undefined) return false;
-  if (configuredParts.origin !== discoveredParts.origin) return false;
+/** Replace one `consumers` segment on the commercial host with its tenant GUID. */
+const personalAccountIssuer = (configured: string): string | undefined => {
+  const parts = issuerOriginAndPath(configured);
 
-  const configuredSegments = configuredParts.path.split("/");
-  const discoveredSegments = discoveredParts.path.split("/");
+  if (parts === undefined || parts.origin !== "https://login.microsoftonline.com") return undefined;
 
-  if (configuredSegments.length !== discoveredSegments.length) return false;
+  const segments = parts.path.split("/");
+  const index = segments.indexOf("consumers");
 
-  const index = discoveredSegments.indexOf(tenantPlaceholder);
-  const tenant = configuredSegments[index];
+  if (index < 0 || segments.filter((segment) => segment === "consumers").length !== 1)
+    return undefined;
 
-  if (tenant === undefined || tenant === "" || tenant === tenantPlaceholder) return false;
+  segments[index] = personalMicrosoftAccountTenant;
 
-  const filled = discoveredSegments.map((segment) =>
-    segment === tenantPlaceholder ? tenant : segment,
-  );
-
-  return (
-    filled.every((segment, segmentIndex) => segment === configuredSegments[segmentIndex]) &&
-    `${discoveredParts.origin}${filled.join("/")}` === configured
-  );
+  return `${parts.origin}${segments.join("/")}`;
 };
 
-/** A concrete GUID authority that matched a broader `{tenantid}` document.
- * Alias segments such as `common` stay on the template. */
-const pinnedConcreteIssuer = (configured: string, discovered: string): string | undefined => {
+/** Tenant segment when `discovered` is a `{tenantid}` template of `configured`. */
+const templateTenantSegment = (configured: string, discovered: string): string | undefined => {
   if (configured === discovered || !isTenantIssuerTemplate(discovered)) return undefined;
-  if (!discoveredIssuerMatches(configured, discovered)) return undefined;
 
   const configuredParts = issuerOriginAndPath(configured);
   const discoveredParts = issuerOriginAndPath(discovered);
 
   if (configuredParts === undefined || discoveredParts === undefined) return undefined;
+  if (configuredParts.origin !== discoveredParts.origin) return undefined;
 
   const configuredSegments = configuredParts.path.split("/");
   const discoveredSegments = discoveredParts.path.split("/");
-  const tenant = configuredSegments[discoveredSegments.indexOf(tenantPlaceholder)];
 
-  return tenant !== undefined && Schema.is(TenantId)(tenant) ? configured : undefined;
+  if (configuredSegments.length !== discoveredSegments.length) return undefined;
+
+  const index = discoveredSegments.indexOf(tenantPlaceholder);
+  const tenant = configuredSegments[index];
+
+  if (tenant === undefined || tenant === "" || tenant === tenantPlaceholder) return undefined;
+
+  const filled = discoveredSegments.map((segment) =>
+    segment === tenantPlaceholder ? tenant : segment,
+  );
+
+  return filled.every((segment, segmentIndex) => segment === configuredSegments[segmentIndex]) &&
+    `${discoveredParts.origin}${filled.join("/")}` === configured
+    ? tenant
+    : undefined;
+};
+
+/** Exact issuer match, or a `{tenantid}` template whose remaining path and origin
+ * equal the configured authority once that segment is filled from the authority.
+ * `common` and `organizations` may use that template. A GUID segment, and
+ * commercial `consumers`, stay restricted to one tenant. Other segments,
+ * including a tenant domain, do not match. */
+export const discoveredIssuerMatches = (configured: string, discovered: string): boolean => {
+  if (configured === discovered) return true;
+
+  const personal = personalAccountIssuer(configured);
+
+  if (personal !== undefined && personal === discovered) return true;
+
+  const tenant = templateTenantSegment(configured, discovered);
+
+  return (
+    tenant !== undefined &&
+    (Schema.is(TenantId)(tenant) || multiTenantAlias(tenant) || personal !== undefined)
+  );
+};
+
+/** A single-tenant authority that matched a broader `{tenantid}` document.
+ * `common` and `organizations` stay on the template. */
+const pinnedConcreteIssuer = (configured: string, discovered: string): string | undefined => {
+  const tenant = templateTenantSegment(configured, discovered);
+
+  if (tenant === undefined || multiTenantAlias(tenant)) return undefined;
+  if (Schema.is(TenantId)(tenant)) return configured;
+
+  return personalAccountIssuer(configured);
 };
 
 const DiscoverConfiguration = Schema.Struct({
@@ -260,8 +293,9 @@ const DiscoverConfiguration = Schema.Struct({
 /** OIDC discovery uses the trusted issuer identifier, retaining its exact
  * spelling for claim comparison even if its network URL normalizes. A discovered
  * `{tenantid}` path segment is accepted when it templates this same authority.
- * A concrete GUID authority keeps that issuer, so the document's template does
- * not become an unrestricted multi-tenant verifier. */
+ * A GUID authority keeps that issuer. Commercial `consumers` keeps the
+ * personal-account issuer. `common` and `organizations` stay on the template.
+ * Any other segment is rejected, so a tenant domain does not become common. */
 export const discover = Effect.fnUntraced(function* (
   input: string,
   inputOptions: DiscoverOptions,
@@ -290,7 +324,11 @@ export const discover = Effect.fnUntraced(function* (
   if (!discoveredIssuerMatches(issuer, metadata.issuer))
     return yield* ConfigurationError.make({ reason: "issuer" });
 
+  const segment = templateTenantSegment(issuer, metadata.issuer);
   const pinned = pinnedConcreteIssuer(issuer, metadata.issuer);
+
+  if (segment !== undefined && !multiTenantAlias(segment) && pinned === undefined)
+    return yield* ConfigurationError.make({ reason: "issuer" });
 
   const accepted =
     pinned === undefined
