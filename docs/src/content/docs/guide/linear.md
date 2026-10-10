@@ -89,7 +89,7 @@ files, and clear cookies for the development origin.
 | ------------------------ | ---------------------------------------------------------------------------------------------- |
 | Issuer                   | Exact `https://linear.app`                                                                     |
 | Authorization / callback | `/oauth/authorize`, authorization code, query response                                         |
-| Token exchange           | `https://api.linear.app/oauth/token`, form body                                                |
+| Token exchange           | `https://api.linear.app/oauth/token`, `client_secret_post`                                     |
 | Identity                 | POST `https://api.linear.app/graphql` `{ viewer { id name email avatarUrl displayName url } }` |
 | PKCE                     | S256 challenge and captured verifier on every exchange                                         |
 | Scopes                   | Comma-separated on the authorize URL; token receipts use spaces; default `read`                |

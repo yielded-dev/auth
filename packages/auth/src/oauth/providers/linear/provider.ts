@@ -69,9 +69,6 @@ const Registration = Schema.Struct({
   configurationGeneration: Schema.optionalKey(Schema.Int),
   issuance: Schema.optionalKey(Schema.Literals(["active", "retired"])),
   scopes: Schema.optionalKey(Scopes),
-  tokenEndpointAuthMethod: Schema.optionalKey(
-    Schema.Literals(["client_secret_basic", "client_secret_post"]),
-  ),
 });
 
 export type ProviderRegistration = typeof Registration.Type;
@@ -82,10 +79,12 @@ export type ProviderOptions = {
 } & (ProviderRegistration | { readonly registrations: ReadonlyArray<ProviderRegistration> });
 
 /** Sign in with Linear through shared plain OAuth. Identity is GraphQL viewer
- * over POST. Authorize scopes are comma-separated. PKCE S256 is sent. Linear
- * does not advertise RFC 9207 iss; the HTTP host must give it a distinct
- * callback. No retained API access is installed. Credentials are captured when
- * the host builds its Layer; supply HttpClient and crypto in that Scope. */
+ * over POST. Authorize scopes are comma-separated. PKCE S256 is sent. Token
+ * exchange uses client_secret_post so the authorization-code body includes
+ * client id and secret. Linear does not advertise RFC 9207 iss; the HTTP host
+ * must give it a distinct callback. No retained API access is installed.
+ * Credentials are captured when the host builds its Layer; supply HttpClient
+ * and crypto in that Scope. */
 export const provider = (
   options: ProviderOptions,
 ): ProviderDefinition<OpenIdConnectConfigurationError | OAuthUnavailable, Requirements> => ({
@@ -105,6 +104,7 @@ export const provider = (
             authorizationEndpoint: "https://linear.app/oauth/authorize",
             tokenEndpoint: "https://api.linear.app/oauth/token",
             pkceS256: true,
+            tokenEndpointAuthMethod: "client_secret_post" as const,
             scopeSeparator: "," as const,
             scopes: registration.scopes === undefined ? ["read"] : [...registration.scopes],
             identitySource: {
