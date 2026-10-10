@@ -1,5 +1,12 @@
 # @yielded/auth-react-native
 
+## 0.1.0-beta.32
+
+### Patch Changes
+
+- Updated dependencies [[`32b9eb9`](https://github.com/yielded-dev/auth/commit/32b9eb9aad6945bc6065ca7c33857fd7d7627a32), [`93eab41`](https://github.com/yielded-dev/auth/commit/93eab4198349a9cfbfec73e66ca601701cd7c685), [`4c74ac6`](https://github.com/yielded-dev/auth/commit/4c74ac6325d14e4681c989acaa23760fe746728d), [`a33138f`](https://github.com/yielded-dev/auth/commit/a33138fd6fb853fd6763b3618bd93e3204f94dc2), [`dfdc622`](https://github.com/yielded-dev/auth/commit/dfdc622a346622474ca9a34f6215ee070cd718fc)]:
+  - @yielded/auth@0.1.0-beta.32
+
 ## 0.1.0-beta.31
 
 ### Patch Changes

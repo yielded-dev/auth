@@ -1,5 +1,24 @@
 # @yielded/auth-persistence
 
+## 0.1.0-beta.32
+
+### Minor Changes
+
+- [#190](https://github.com/yielded-dev/auth/pull/190) [`a33138f`](https://github.com/yielded-dev/auth/commit/a33138fd6fb853fd6763b3618bd93e3204f94dc2) Thanks [@danieljvdm](https://github.com/danieljvdm)! - Add opt-in authentication after the first confirmed OAuth registration, including pending MFA, while keeping default registration and every replay metadata-only.
+
+### Patch Changes
+
+- [#189](https://github.com/yielded-dev/auth/pull/189) [`93eab41`](https://github.com/yielded-dev/auth/commit/93eab4198349a9cfbfec73e66ca601701cd7c685) Thanks [@danieljvdm](https://github.com/danieljvdm)! - Apply one opt-in future-clock policy across Auth, SQL sessions, and protected password and passkey actions while preserving strict freshness and expiry. **BEHAVIOR CHANGE:** Custom `AuthenticationAuthority.approve` implementations must validate the prepared `issuedAt` supplied by Auth.
+
+- [#186](https://github.com/yielded-dev/auth/pull/186) [`2482c7e`](https://github.com/yielded-dev/auth/commit/2482c7edd89106c31189237ae7d04e2696dc7fe9) Thanks [@danieljvdm](https://github.com/danieljvdm)! - Allow composed SQL persistence alongside explicit strategy services, and safely read mapped SQL IDs with differing physical types. Keep passkey, session, and pending-authentication reads coherent across independently bound SQL mappings, including session pagination during authority changes.
+
+- [#195](https://github.com/yielded-dev/auth/pull/195) [`4c74ac6`](https://github.com/yielded-dev/auth/commit/4c74ac6325d14e4681c989acaa23760fe746728d) Thanks [@danieljvdm](https://github.com/danieljvdm)! - Support composed managed OAuth sign-in and retained provider grants across the PostgreSQL and SQLite adapters, including D1. Allow OAuth-only compositions to use stateless sessions.
+
+- [#191](https://github.com/yielded-dev/auth/pull/191) [`dfdc622`](https://github.com/yielded-dev/auth/commit/dfdc622a346622474ca9a34f6215ee070cd718fc) Thanks [@danieljvdm](https://github.com/danieljvdm)! - Add opt-in, sanitized Debug diagnostics and preserve request logging and tracing without changing authentication outcomes or retry guarantees.
+- Updated dependencies [[`32b9eb9`](https://github.com/yielded-dev/auth/commit/32b9eb9aad6945bc6065ca7c33857fd7d7627a32), [`93eab41`](https://github.com/yielded-dev/auth/commit/93eab4198349a9cfbfec73e66ca601701cd7c685), [`4c74ac6`](https://github.com/yielded-dev/auth/commit/4c74ac6325d14e4681c989acaa23760fe746728d), [`a33138f`](https://github.com/yielded-dev/auth/commit/a33138fd6fb853fd6763b3618bd93e3204f94dc2), [`dfdc622`](https://github.com/yielded-dev/auth/commit/dfdc622a346622474ca9a34f6215ee070cd718fc)]:
+  - @yielded/auth@0.1.0-beta.32
+  - @yielded/crypto@0.1.0-beta.32
+
 ## 0.1.0-beta.31
 
 ### Patch Changes
