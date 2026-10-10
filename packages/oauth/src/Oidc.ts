@@ -108,7 +108,12 @@ const VerifyInput = Schema.Struct({
   accessToken: Schema.optional(V.secret(16384)),
   code: Schema.optional(V.secret(16384)),
   previous: Schema.optional(
-    Schema.Struct({ subject: V.text(1024), authTime: Schema.optional(V.NumericDate) }),
+    Schema.Struct({
+      subject: V.text(1024),
+      authTime: Schema.optional(V.NumericDate),
+      /** Concrete `iss` from the original authentication. Refresh must keep it. */
+      issuer: Schema.optional(V.text(2048)),
+    }),
   ),
 });
 
@@ -145,13 +150,113 @@ const tokenHash = (algorithm: string) =>
       ? { digest: "SHA-256" as const, octets: 16 }
       : undefined;
 
+const tenantPlaceholder = "{tenantid}";
+
+const TenantId = Schema.String.check(
+  Schema.isPattern(
+    /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/u,
+  ),
+);
+
+const issuerOriginAndPath = (value: string) => {
+  const match = /^(https:\/\/[^/?#]+)(\/[^?#]*)?$/u.exec(value);
+
+  if (match === null) return undefined;
+
+  const origin = match[1];
+
+  return origin === undefined ? undefined : { origin, path: match[2] ?? "" };
+};
+
+/** True when `issuer` has exactly one `{tenantid}` path segment. The URL parser
+ * percent-encodes braces, so matching stays on the raw identifier. */
+export const isTenantIssuerTemplate = (issuer: string): boolean => {
+  const parts = issuerOriginAndPath(issuer);
+
+  return (
+    parts !== undefined &&
+    parts.path.split("/").filter((segment) => segment === tenantPlaceholder).length === 1
+  );
+};
+
+export const substituteTenantIssuer = (template: string, tenantId: string): string | undefined => {
+  if (!Schema.is(TenantId)(tenantId)) return undefined;
+
+  const parts = issuerOriginAndPath(template);
+
+  if (parts === undefined) return undefined;
+
+  const segments = parts.path.split("/");
+  const index = segments.indexOf(tenantPlaceholder);
+
+  if (index < 0 || segments.filter((segment) => segment === tenantPlaceholder).length !== 1)
+    return undefined;
+
+  segments[index] = tenantId;
+
+  return `${parts.origin}${segments.join("/")}`;
+};
+
+/** Exact issuer match, or a `{tenantid}` template whose remaining path and origin
+ * equal the configured authority once that segment is filled from the authority. */
+export const discoveredIssuerMatches = (configured: string, discovered: string): boolean => {
+  if (configured === discovered) return true;
+  if (!isTenantIssuerTemplate(discovered)) return false;
+
+  const configuredParts = issuerOriginAndPath(configured);
+  const discoveredParts = issuerOriginAndPath(discovered);
+
+  if (configuredParts === undefined || discoveredParts === undefined) return false;
+  if (configuredParts.origin !== discoveredParts.origin) return false;
+
+  const configuredSegments = configuredParts.path.split("/");
+  const discoveredSegments = discoveredParts.path.split("/");
+
+  if (configuredSegments.length !== discoveredSegments.length) return false;
+
+  const index = discoveredSegments.indexOf(tenantPlaceholder);
+  const tenant = configuredSegments[index];
+
+  if (tenant === undefined || tenant === "" || tenant === tenantPlaceholder) return false;
+
+  const filled = discoveredSegments.map((segment) =>
+    segment === tenantPlaceholder ? tenant : segment,
+  );
+
+  return (
+    filled.every((segment, segmentIndex) => segment === configuredSegments[segmentIndex]) &&
+    `${discoveredParts.origin}${filled.join("/")}` === configured
+  );
+};
+
+/** A concrete GUID authority that matched a broader `{tenantid}` document.
+ * Alias segments such as `common` stay on the template. */
+const pinnedConcreteIssuer = (configured: string, discovered: string): string | undefined => {
+  if (configured === discovered || !isTenantIssuerTemplate(discovered)) return undefined;
+  if (!discoveredIssuerMatches(configured, discovered)) return undefined;
+
+  const configuredParts = issuerOriginAndPath(configured);
+  const discoveredParts = issuerOriginAndPath(discovered);
+
+  if (configuredParts === undefined || discoveredParts === undefined) return undefined;
+
+  const configuredSegments = configuredParts.path.split("/");
+  const discoveredSegments = discoveredParts.path.split("/");
+  const tenant = configuredSegments[discoveredSegments.indexOf(tenantPlaceholder)];
+
+  return tenant !== undefined && Schema.is(TenantId)(tenant) ? configured : undefined;
+};
+
 const DiscoverConfiguration = Schema.Struct({
   ...V.RequestOptions.fields,
   metadataUrl: Schema.optionalKey(V.Endpoint),
 });
 
 /** OIDC discovery uses the trusted issuer identifier, retaining its exact
- * spelling for claim comparison even if its network URL normalizes. */
+ * spelling for claim comparison even if its network URL normalizes. A discovered
+ * `{tenantid}` path segment is accepted when it templates this same authority.
+ * A concrete GUID authority keeps that issuer, so the document's template does
+ * not become an unrestricted multi-tenant verifier. */
 export const discover = Effect.fnUntraced(function* (
   input: string,
   inputOptions: DiscoverOptions,
@@ -177,9 +282,17 @@ export const discover = Effect.fnUntraced(function* (
   const document = yield* Transport.json(response);
   const metadata = yield* V.configuration(Metadata, yield* V.reveal(document.body), "metadata");
 
-  if (metadata.issuer !== issuer) return yield* ConfigurationError.make({ reason: "issuer" });
+  if (!discoveredIssuerMatches(issuer, metadata.issuer))
+    return yield* ConfigurationError.make({ reason: "issuer" });
 
-  return V.freeze(metadata);
+  const pinned = pinnedConcreteIssuer(issuer, metadata.issuer);
+
+  const accepted =
+    pinned === undefined
+      ? metadata
+      : yield* V.configuration(Metadata, { ...metadata, issuer: pinned }, "metadata");
+
+  return V.freeze(accepted);
 });
 
 const claimFailure = () => Rejected.make({ reason: "claims" });
@@ -270,9 +383,11 @@ export const makeVerifier = Effect.fnUntraced(function* (
 
     // Jwt verifies the signature before any registered/application claim checks.
     // Unauthenticated malformed/key/signature failures must never burn a receipt.
+    const tenantTemplate = isTenantIssuerTemplate(metadata.issuer);
+
     const jwtPolicy = {
       algorithms: advertised,
-      issuer: metadata.issuer,
+      ...(tenantTemplate ? {} : { issuer: metadata.issuer }),
       audience: options.clientId,
       requiredClaims: ["iss", "sub", "aud", "exp", "iat"] as const,
       clockTolerance: 0,
@@ -281,19 +396,50 @@ export const makeVerifier = Effect.fnUntraced(function* (
     const mapJwtError = (error: { readonly _tag: string }) =>
       error._tag === "JoseClaimValidationFailed" ? claimFailure() : Unavailable.make({});
 
-    const verified =
+    const opened =
       hmacKey !== undefined
-        ? yield* Jwt.verify(JsonObject, token, hmacKey, jwtPolicy).pipe(
-            Effect.mapError(mapJwtError),
-          )
+        ? {
+            verified: yield* Jwt.verify(JsonObject, token, hmacKey, jwtPolicy).pipe(
+              Effect.mapError(mapJwtError),
+            ),
+            signingKey: undefined,
+          }
         : keys === undefined
           ? yield* Unavailable.make({})
           : yield* Jwt.verifyWithKeySet(JsonObject, token, jwtPolicy).pipe(
               Effect.provideService(Jwks.Jwks, keys),
+              Effect.map((verified) => ({ verified, signingKey: verified.key })),
               Effect.mapError(mapJwtError),
             );
 
+    const verified = opened.verified;
+    const signingKey = opened.signingKey;
+
     const claims = yield* V.decode(IdClaims, verified.claims).pipe(Effect.mapError(claimFailure));
+
+    if (tenantTemplate) {
+      const tenant = yield* Schema.decodeUnknownEffect(Schema.Struct({ tid: TenantId }))(
+        verified.claims,
+      ).pipe(Effect.mapError(claimFailure));
+
+      const expected = substituteTenantIssuer(metadata.issuer, tenant.tid);
+
+      if (expected === undefined || claims.iss !== expected) return yield* claimFailure();
+
+      if (verified.protectedHeader.alg === "HS256" || signingKey === undefined)
+        return yield* claimFailure();
+
+      const keyIssuer = signingKey.jwk.issuer;
+
+      const allowed =
+        keyIssuer === undefined
+          ? undefined
+          : isTenantIssuerTemplate(keyIssuer)
+            ? substituteTenantIssuer(keyIssuer, tenant.tid)
+            : keyIssuer;
+
+      if (allowed !== claims.iss) return yield* claimFailure();
+    }
 
     const now = (yield* Clock.currentTimeMillis) / 1000;
 
@@ -317,6 +463,7 @@ export const makeVerifier = Effect.fnUntraced(function* (
         return yield* claimFailure();
     } else if (
       claims.sub !== policy.previous.subject ||
+      (policy.previous.issuer !== undefined && claims.iss !== policy.previous.issuer) ||
       (claims.nonce !== undefined && claims.nonce !== expectedNonce) ||
       (claims.auth_time !== undefined && claims.auth_time !== policy.previous.authTime)
     )
