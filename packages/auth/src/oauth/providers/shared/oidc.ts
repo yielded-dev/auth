@@ -93,9 +93,10 @@ export const installConfigurations = Effect.fn("OpenIdConnect.installConfigurati
             verifier: yield* makeVerifier(entry.metadata, provider.clientId, timeoutSeconds, {
               algorithms: provider.idTokenSignedResponseAlg,
               pkceS256: provider.pkceS256,
-              ...(provider.authentication.method === "none"
-                ? {}
-                : { clientSecret: provider.authentication.secret }),
+              ...(provider.authentication.method !== "none" &&
+              provider.authentication.secret !== undefined
+                ? { clientSecret: provider.authentication.secret }
+                : {}),
             }),
           }
         : entry,
@@ -135,9 +136,10 @@ export const installConnectedConfigurations = Effect.fn(
             verifier: yield* makeVerifier(entry.metadata, provider.clientId, timeoutSeconds, {
               algorithms: provider.idTokenSignedResponseAlg,
               pkceS256: provider.pkceS256,
-              ...(provider.authentication.method === "none"
-                ? {}
-                : { clientSecret: provider.authentication.secret }),
+              ...(provider.authentication.method !== "none" &&
+              provider.authentication.secret !== undefined
+                ? { clientSecret: provider.authentication.secret }
+                : {}),
             }),
           }
         : entry,

@@ -1,3 +1,4 @@
+import type { Unavailable } from "@yielded/oauth/Errors";
 import { type Effect, type Redacted, Schema } from "effect";
 
 import { type OAuthProtocolRejected } from "../../signInErrors";
@@ -71,9 +72,15 @@ export class OpenIdConnectConfigurationError extends Schema.TaggedError<OpenIdCo
   },
 ) {}
 
+export type MintClientSecret = () => Effect.Effect<Redacted.Redacted<string>, Unavailable>;
+
 export type OpenIdConnectAuthentication =
   | { readonly method: "client_secret_basic"; readonly secret: Redacted.Redacted<string> }
-  | { readonly method: "client_secret_post"; readonly secret: Redacted.Redacted<string> }
+  | {
+      readonly method: "client_secret_post";
+      readonly secret?: Redacted.Redacted<string>;
+      readonly mintSecret?: MintClientSecret;
+    }
   | { readonly method: "none"; readonly publicClient: true };
 
 export interface PlainOAuthIdentity {
@@ -110,6 +117,8 @@ interface ProviderGeneration {
   readonly scopes: ReadonlyArray<string>;
   readonly authorizationParameters?: Readonly<Record<string, string>>;
   readonly tokenParameters?: Readonly<Record<string, string>>;
+  /** Defaults to query. */
+  readonly responseMode?: "query" | "form_post";
 }
 
 export interface OpenIdConnectOidcProvider extends ProviderGeneration {

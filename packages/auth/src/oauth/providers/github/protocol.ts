@@ -235,6 +235,7 @@ const revocationLayer = (options: Pick<GitHubOAuthAppConnectedProtocolOptions, "
         revoke: Effect.fn("GitHubOAuthApp.revoke")(function* (input) {
           if (
             input.authentication.method !== "client_secret_post" ||
+            input.authentication.secret === undefined ||
             input.context.configuration.profile.clientRegistrationId !== input.clientId ||
             input.context.identity.provider !== gitHubOAuthAppProviderKey ||
             input.context.identity.issuer !== issuer

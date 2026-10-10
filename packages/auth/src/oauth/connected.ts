@@ -6,7 +6,11 @@ import { HookDenied, LifecycleEventId, lifecycleEvent, lifecycleSnapshot } from 
 import { IdentityConflict } from "../identity/models";
 import { AuthenticationClock } from "../operations/clock";
 import type { AuthInvocation } from "../operations/context";
-import type { AuthCredentialCommand, AuthOperationResult } from "../operations/credentials";
+import {
+  formPostBinding,
+  type AuthCredentialCommand,
+  type AuthOperationResult,
+} from "../operations/credentials";
 import { AuthenticationRequired } from "../operations/errors";
 import { makeOperation, operationGroup } from "../operations/operation";
 import { makeRequestBinding } from "../operations/requestBinding";
@@ -78,6 +82,7 @@ const preparationSchema = Schema.Struct({
   configuration: M.OAuthConnectedConfiguration,
   authorizationUrl: OAuthAuthorizationUrl,
   secrets: OAuthTransactionSecrets,
+  responseMode: Schema.optionalKey(Schema.Literals(["query", "form_post"])),
 });
 
 const encoder = new TextEncoder();
@@ -451,7 +456,7 @@ export const makeOAuthConnected = <const Id extends string>(
             authorizationUrl: prepared.authorizationUrl,
             expiresAtMillis,
           },
-          credentialCommands: [command],
+          credentialCommands: [formPostBinding(command, prepared.responseMode)],
         };
       }, connectedSafe);
 

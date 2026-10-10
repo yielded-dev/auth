@@ -118,8 +118,10 @@ export const provider = <R = never>(
  * the openid scope, ID-token profile claims, and
  * OidcUserProfile. Set pkceS256 false only for issuers that cannot complete
  * PKCE. Plain OAuth defaults to no scopes. clientSecret uses client_secret_basic
- * unless tokenEndpointAuthMethod is supplied. Discovery must confirm the host's
- * capabilities. Invalid configuration fails when building the Layer.
+ * unless tokenEndpointAuthMethod is supplied. Authorization defaults to
+ * response_mode=query; set responseMode to form_post when the issuer POSTs the
+ * callback. Discovery must confirm the host's capabilities. Invalid
+ * configuration fails when building the Layer.
  *
  * Keep retired generations in providers until their outstanding flows expire;
  * never reuse a generation for changed credentials or protocol configuration.

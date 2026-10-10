@@ -447,6 +447,9 @@ export const makeConnectedProtocolWithCompatibility = Effect.fn(
           : {}),
         ...(request.prompt === undefined ? {} : { prompt: request.prompt }),
         ...(request.loginHint === undefined ? {} : { loginHint: request.loginHint }),
+        ...(entry.provider.responseMode === undefined
+          ? {}
+          : { responseMode: entry.provider.responseMode }),
       })
       .pipe(Effect.mapError(unavailable));
 
@@ -473,6 +476,9 @@ export const makeConnectedProtocolWithCompatibility = Effect.fn(
         ...(pkce === undefined ? {} : { pkceVerifier: pkce.verifier }),
         ...(nonce === undefined ? {} : { oidcNonce: nonce }),
       },
+      ...(entry.provider.responseMode === undefined
+        ? {}
+        : { responseMode: entry.provider.responseMode }),
     };
 
     return yield* snapshotOAuth(prepareOutput, result);
