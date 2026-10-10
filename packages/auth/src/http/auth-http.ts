@@ -498,12 +498,19 @@ export const make = <
             continue;
           }
 
+          const sameSite =
+            command._tag === "Issue" && command.sameSite === "none" ? "none" : cookie.sameSite;
+
+          if (sameSite === "none" && !cookie.secure)
+            return yield* OperationHttpError.make({ reason: "credentials" });
+
           response = yield* HttpServerResponse.setCookie(
             response,
             cookie.name,
             command._tag === "Issue" ? Redacted.value(command.credential) : "",
             {
               ...cookie,
+              sameSite,
               httpOnly: true,
               maxAge: Duration.millis(
                 command._tag === "Issue" ? Math.max(0, command.expiresAtMillis - now) : 0,

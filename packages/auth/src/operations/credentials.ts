@@ -79,6 +79,7 @@ const decodeCommand = Schema.decodeSync(
       slot,
       credential: Schema.Redacted(Schema.String),
       expiresAtMillis: Schema.Finite,
+      sameSite: Schema.optionalKey(Schema.Literal("none")),
     }),
     Schema.Struct({ _tag: Schema.Literal("Clear"), slot }),
   ]),
@@ -108,10 +109,18 @@ export const snapshotCredentialCommands = (
               slot,
               credential: Redacted.make(Redacted.value(input.credential)),
               expiresAtMillis: input.expiresAtMillis,
+              ...(input.sameSite === undefined ? {} : { sameSite: input.sameSite }),
             }
           : { _tag: tag, slot };
 
       const command = decodeCommand(value);
+
+      if (
+        command._tag === "Issue" &&
+        command.sameSite === "none" &&
+        command.slot !== "request-binding"
+      )
+        throw new globalThis.Error();
 
       if (slots.has(command.slot)) {
         throw new globalThis.Error();

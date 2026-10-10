@@ -787,8 +787,11 @@ export const makeConnectedProtocolWithCompatibility = Effect.fn(
 
       return "Confirmed" as const;
     }
+    if (revocation.mode !== "rfc7009") return yield* unavailable();
+    const revocationAuthentication = revocation.authentication;
+
     if (request.material.refreshToken !== undefined) {
-      const clientSecret = yield* requestSecret(entry.provider.authentication);
+      const clientSecret = yield* requestSecret(revocationAuthentication);
 
       yield* entry.client
         .revoke({
@@ -805,7 +808,7 @@ export const makeConnectedProtocolWithCompatibility = Effect.fn(
           ),
         );
     }
-    const accessSecret = yield* requestSecret(entry.provider.authentication);
+    const accessSecret = yield* requestSecret(revocationAuthentication);
 
     yield* entry.client
       .revoke({
