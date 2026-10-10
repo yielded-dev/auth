@@ -59,7 +59,9 @@ limited to that audience. The commercial cloud host is
 `login.microsoftonline.com`. Discovery for `common` and `organizations`
 publishes `https://login.microsoftonline.com/{tenantid}/v2.0`. Verification
 substitutes the signed `tid` GUID into that template and checks the selected
-signing key's `issuer`. `consumers` uses the personal Microsoft account tenant
+signing key's `issuer`. A tenant GUID discovered from that document keeps its
+own token issuer and still rejects a key restricted to another tenant.
+`consumers` uses the personal Microsoft account tenant
 `https://login.microsoftonline.com/9188040d-6c67-4c5b-b112-36a304b66dad/v2.0`,
 which is the issuer that document returns. A token whose `iss` does not match
 is rejected.

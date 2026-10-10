@@ -483,7 +483,9 @@ configuration choices. `userInfo: "merge"` fills missing ID-token claims after
 checking the same subject; ID-token claims take precedence. Discovery accepts a
 `{tenantid}` path segment when it matches the configured authority; verification
 substitutes the signed `tid` and checks the selected signing key's issuer. A
-concrete GUID authority discovered from that template keeps its own issuer.
+concrete GUID authority discovered from that template keeps its own issuer, and
+a published signing-key issuer is still checked. Refresh against the template
+requires that original `iss`.
 
 Sign-in accepts per-request `prompt` and `loginHint`. Public clients use
 `authentication: { method: "none", publicClient: true }`. Load secrets with

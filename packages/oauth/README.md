@@ -10,7 +10,9 @@ for their lifetime. `Pkce` requires Effect `Crypto`; verification also requires
 `Signature` from `@yielded/crypto`. `Oidc.discover` retrieves metadata from the
 exact trusted issuer, or from an explicit `metadataUrl`. A discovered issuer
 may use a `{tenantid}` path segment when that template matches the configured
-authority. Verification then substitutes the verified `tid` and checks the
+authority. A concrete GUID pinned from that document keeps its token issuer
+and still rejects a signing key published for another issuer.
+Verification then substitutes the verified `tid` and checks the
 selected signing key's issuer. Generic issuers still require an exact match. Closing a factory's scope cancels its work and prevents reuse.
 
 `client.codeGrant` and `client.refreshGrant` return private `TokenReceipt` values.

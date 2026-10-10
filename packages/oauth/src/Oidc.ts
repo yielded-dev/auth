@@ -67,8 +67,13 @@ export interface VerificationInput {
   readonly maxAgeSeconds?: number;
   readonly accessToken?: Redacted.Redacted<string>;
   readonly code?: Redacted.Redacted<string>;
-  /** Refresh continuation: same subject, optional nonce must match, auth_time cannot change. */
-  readonly previous?: { readonly subject: string; readonly authTime?: number };
+  /** Refresh continuation: same subject, optional nonce must match, auth_time cannot change.
+   * A `{tenantid}` metadata issuer also requires the original token `iss`. */
+  readonly previous?: {
+    readonly subject: string;
+    readonly authTime?: number;
+    readonly issuer?: string;
+  };
 }
 
 export interface Verified {
@@ -111,7 +116,7 @@ const VerifyInput = Schema.Struct({
     Schema.Struct({
       subject: V.text(1024),
       authTime: Schema.optional(V.NumericDate),
-      /** Concrete `iss` from the original authentication. Refresh must keep it. */
+      /** Original token `iss`. Required when the metadata issuer is a `{tenantid}` template. */
       issuer: Schema.optional(V.text(2048)),
     }),
   ),
@@ -439,6 +444,21 @@ export const makeVerifier = Effect.fnUntraced(function* (
             : keyIssuer;
 
       if (allowed !== claims.iss) return yield* claimFailure();
+    } else if (signingKey !== undefined && signingKey.jwk.issuer !== undefined) {
+      // Pinning replaces the template issuer but keeps the common key set.
+      // A published key issuer still has to match this token.
+      const keyIssuer = signingKey.jwk.issuer;
+
+      const allowed = isTenantIssuerTemplate(keyIssuer)
+        ? substituteTenantIssuer(
+            keyIssuer,
+            (yield* Schema.decodeUnknownEffect(Schema.Struct({ tid: TenantId }))(
+              verified.claims,
+            ).pipe(Effect.mapError(claimFailure))).tid,
+          )
+        : keyIssuer;
+
+      if (allowed !== claims.iss) return yield* claimFailure();
     }
 
     const now = (yield* Clock.currentTimeMillis) / 1000;
@@ -463,7 +483,9 @@ export const makeVerifier = Effect.fnUntraced(function* (
         return yield* claimFailure();
     } else if (
       claims.sub !== policy.previous.subject ||
-      (policy.previous.issuer !== undefined && claims.iss !== policy.previous.issuer) ||
+      (tenantTemplate
+        ? claims.iss !== policy.previous.issuer
+        : policy.previous.issuer !== undefined && claims.iss !== policy.previous.issuer) ||
       (claims.nonce !== undefined && claims.nonce !== expectedNonce) ||
       (claims.auth_time !== undefined && claims.auth_time !== policy.previous.authTime)
     )
