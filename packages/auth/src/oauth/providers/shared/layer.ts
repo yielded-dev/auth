@@ -13,7 +13,7 @@ import type {
 import {
   installConfigurations,
   installConnectedConfigurations,
-  makeDiscovery,
+  ProviderDiscovery,
   type Requirements,
 } from "./oidc";
 import {
@@ -91,16 +91,11 @@ export const provider = <R = never>(
         ),
       );
 
-      const discovery = makeDiscovery();
-
       const protocol = yield* makeOpenIdConnectOAuthProtocol(
-        installConfigurations<R>(
-          {
-            providers: registrations,
-            timeoutSeconds: options.timeoutSeconds ?? 10,
-          },
-          discovery,
-        ),
+        installConfigurations<R>({
+          providers: registrations,
+          timeoutSeconds: options.timeoutSeconds ?? 10,
+        }),
       ).pipe(Effect.provide(PrivateKeyClientSecret.layer));
 
       const access = "registrations" in options ? options.registrations : [options];
@@ -114,17 +109,14 @@ export const provider = <R = never>(
       if (connectedProviders.length === 0) return protocol;
 
       const connected = yield* makeOpenIdConnectConnectedProtocol(
-        installConnectedConfigurations<R>(
-          {
-            providers: connectedProviders,
-            timeoutSeconds: options.timeoutSeconds ?? 10,
-          },
-          discovery,
-        ),
+        installConnectedConfigurations<R>({
+          providers: connectedProviders,
+          timeoutSeconds: options.timeoutSeconds ?? 10,
+        }),
       ).pipe(Effect.provide(PrivateKeyClientSecret.layer));
 
       return { ...protocol, connected };
-    }),
+    }).pipe(Effect.provideServiceEffect(ProviderDiscovery, ProviderDiscovery.make)),
 });
 
 /** One protocol Layer for all OAuth/OIDC hosts. Each provider defaults to
@@ -156,6 +148,7 @@ export const layer = <R = never>(options: Options<R>) =>
       Effect.flatMap((configuration) =>
         makeOpenIdConnectOAuthProtocol(installConfigurations<R>(configuration)).pipe(
           Effect.provide(PrivateKeyClientSecret.layer),
+          Effect.provideServiceEffect(ProviderDiscovery, ProviderDiscovery.make),
         ),
       ),
     ),
