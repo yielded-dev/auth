@@ -40,23 +40,25 @@ export class Jwks extends Context.Service<
   }
 >()("@yielded/jose/Jwks") {}
 
+/** Capture one detached immutable key-set generation without acquiring resources.
+ * Retain the resolver for that generation; create a new one when keys change.
+ * Each resolution still uses the caller's Signature service and selection policy. */
+export const makeLocal = Effect.fnUntraced(function* (input: unknown) {
+  const set = yield* readSet(input);
+  const importKey = makePublicImporter();
+
+  return Jwks.of({
+    resolve: Effect.fnUntraced(function* (input) {
+      const selection = yield* readSelection(input);
+
+      return yield* importKey(yield* select(set, selection), selection.algorithm);
+    }),
+  });
+});
+
 /** One immutable public key set; local selection never requires HttpClient. */
 export const layerLocal = (input: unknown): Layer.Layer<Jwks, InvalidKey> =>
-  Layer.effect(
-    Jwks,
-    Effect.gen(function* () {
-      const set = yield* readSet(input);
-      const importKey = makePublicImporter();
-
-      return Jwks.of({
-        resolve: Effect.fnUntraced(function* (input) {
-          const selection = yield* readSelection(input);
-
-          return yield* importKey(yield* select(set, selection), selection.algorithm);
-        }),
-      });
-    }),
-  );
+  Layer.effect(Jwks, makeLocal(input));
 
 export interface RemoteOptions {
   /** Trusted application configuration, never a URL from a token. HTTPS only. */
