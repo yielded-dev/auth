@@ -366,7 +366,8 @@ export const validateStorage = (
 
 /** Stronger than ordinary mapped uniqueness: a generated managed pending key
  * must probe exactly one physical row. Schema metadata is acquired with the
- * service graph; migrations require reacquisition, as for all storage checks. */
+ * service graph; migrations require reacquisition, as for all storage checks.
+ * Resolve each catalog/PRAGMA in the same schema: TEMP can reuse index names. */
 export const hasManagedSqliteCleanupKey = Effect.fnUntraced(function* (
   table: PhysicalStorageTable,
   key: string,
@@ -379,18 +380,18 @@ export const hasManagedSqliteCleanupKey = Effect.fnUntraced(function* (
 
   const rows = yield* sql`
     select 1 as valid
-    from sqlite_schema s
+    from main.sqlite_schema s
     where s.type = 'table' and s.name = ${table.name}
       and instr(lower(s.sql), 'collate') = 0
-      and not exists(select 1 from sqlite_schema t where t.type = 'trigger' and t.tbl_name = s.name collate nocase)
-      and not exists(select 1 from sqlite_temp_schema t
+      and not exists(select 1 from main.sqlite_schema t where t.type = 'trigger' and t.tbl_name = s.name collate nocase)
+      and not exists(select 1 from temp.sqlite_schema t
         where (t.type in ('table', 'view') and t.name = s.name collate nocase) or (t.type = 'trigger' and t.tbl_name = s.name collate nocase))
-      and exists(select 1 from pragma_table_info(s.name) c
+      and exists(select 1 from pragma_table_info(s.name, 'main') c
         where c.name = ${column.name} and upper(c.type) = 'TEXT' and c."notnull" = 1)
-      and exists(select 1 from pragma_index_list(s.name) i
+      and exists(select 1 from pragma_index_list(s.name, 'main') i
         where i."unique" = 1 and i.partial = 0
-          and (select count(*) from pragma_index_xinfo(i.name) x where x.key = 1) = 1
-          and exists(select 1 from pragma_index_xinfo(i.name) x
+          and (select count(*) from pragma_index_xinfo(i.name, 'main') x where x.key = 1) = 1
+          and exists(select 1 from pragma_index_xinfo(i.name, 'main') x
             where x.key = 1 and x.name = ${column.name} and x.coll = 'BINARY'))`;
 
   return rows.length === 1;
