@@ -223,6 +223,7 @@ export interface InstalledProvider<R> extends NativeProvider {
 
 const metadataSchema = Schema.Struct({
   issuer: OAuthIssuer,
+  signing_key_issuer_required: Schema.optionalKey(Schema.Literal(true)),
   authorization_endpoint: boundedString(2048),
   token_endpoint: boundedString(2048),
   jwks_uri: Schema.optionalKey(boundedString(2048)),

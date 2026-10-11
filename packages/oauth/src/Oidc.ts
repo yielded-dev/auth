@@ -333,7 +333,11 @@ export const discover = Effect.fnUntraced(function* (
   const accepted =
     pinned === undefined
       ? metadata
-      : yield* V.configuration(Metadata, { ...metadata, issuer: pinned }, "metadata");
+      : yield* V.configuration(
+          Metadata,
+          { ...metadata, issuer: pinned, signing_key_issuer_required: true },
+          "metadata",
+        );
 
   return V.freeze(accepted);
 });
@@ -468,24 +472,19 @@ export const makeVerifier = Effect.fnUntraced(function* (
       const expected = substituteTenantIssuer(metadata.issuer, tenant.tid);
 
       if (expected === undefined || claims.iss !== expected) return yield* claimFailure();
+    }
 
+    if (
+      tenantTemplate ||
+      metadata.signing_key_issuer_required === true ||
+      signingKey?.jwk.issuer !== undefined
+    ) {
       if (verified.protectedHeader.alg === "HS256" || signingKey === undefined)
         return yield* claimFailure();
 
       const keyIssuer = signingKey.jwk.issuer;
 
-      const allowed =
-        keyIssuer === undefined
-          ? undefined
-          : isTenantIssuerTemplate(keyIssuer)
-            ? substituteTenantIssuer(keyIssuer, tenant.tid)
-            : keyIssuer;
-
-      if (allowed !== claims.iss) return yield* claimFailure();
-    } else if (signingKey !== undefined && signingKey.jwk.issuer !== undefined) {
-      // Pinning replaces the template issuer but keeps the common key set.
-      // A published key issuer still has to match this token.
-      const keyIssuer = signingKey.jwk.issuer;
+      if (keyIssuer === undefined) return yield* claimFailure();
 
       const allowed = isTenantIssuerTemplate(keyIssuer)
         ? substituteTenantIssuer(
