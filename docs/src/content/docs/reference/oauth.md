@@ -373,6 +373,8 @@ only loopback completions may use HTTP with insecure host-only cookies.
 Mount `OAuthProxy.routes` and register the provider callback. Supply a separate
 protector keyring, an HTTP client, crypto, and `OAuthProxyPersistence.layer` with
 SQLite, D1, or PostgreSQL. Apply its migration. Replicas share storage and keys.
+Callbacks use the provider's declared GET query or POST form transport; Apple
+first-consent `user` data reaches provider verification. App handoffs use GET.
 The [proxy application](https://github.com/yielded-dev/auth/blob/main/examples/auth/src/oauth-proxy-application.ts)
 shows the complete composition.
 
