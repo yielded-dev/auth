@@ -13,35 +13,26 @@ const encoder = new TextEncoder();
 const bindingCodec = Schema.fromJsonString(TotpSecretBinding);
 const fail = () => TotpUnavailable.make({});
 
-/** RFC 6238 SHA-1, big-endian 64-bit counter and six displayed digits by default. */
-const codeAtWithKey = Effect.fnUntraced(function* (key: Key, step: number, digits = 6) {
-  const counter = yield* Effect.try({
-    try: () => {
-      const bytes = new Uint8Array(8);
+/** RFC 6238 SHA-1 uses a big-endian 64-bit counter. */
+const counterAt = (step: number) => {
+  const bytes = new Uint8Array(8);
 
-      new DataView(bytes.buffer).setBigUint64(0, BigInt(step), false);
+  new DataView(bytes.buffer).setBigUint64(0, BigInt(step), false);
 
-      return bytes;
-    },
-    catch: fail,
-  });
+  return bytes;
+};
 
-  const mac = yield* key.sign(counter).pipe(Effect.mapError(fail));
+const codeFromMac = (mac: Uint8Array, digits = 6) => {
+  const offset = mac[mac.length - 1]! & 15;
 
-  try {
-    const offset = mac[mac.length - 1]! & 15;
+  const binary =
+    ((mac[offset]! & 127) << 24) |
+    (mac[offset + 1]! << 16) |
+    (mac[offset + 2]! << 8) |
+    mac[offset + 3]!;
 
-    const binary =
-      ((mac[offset]! & 127) << 24) |
-      (mac[offset + 1]! << 16) |
-      (mac[offset + 2]! << 8) |
-      mac[offset + 3]!;
-
-    return String(binary % 10 ** digits).padStart(digits, "0");
-  } finally {
-    mac.fill(0);
-  }
-});
+  return String(binary % 10 ** digits).padStart(digits, "0");
+};
 
 export const codeAt = Effect.fn("Totp.codeAt")(function* (
   secret: Uint8Array,
@@ -49,13 +40,18 @@ export const codeAt = Effect.fn("Totp.codeAt")(function* (
   digits = 6,
 ) {
   const hmac = yield* Hmac;
+  const counter = yield* Effect.try({ try: () => counterAt(step), catch: fail });
 
-  const key = yield* hmac
-    .importKey({ algorithm: "SHA-1", key: Redacted.make(secret) })
+  const mac = yield* hmac
+    .sign({ algorithm: "SHA-1", key: Redacted.make(secret), data: counter })
     .pipe(Effect.mapError(fail));
 
-  return yield* codeAtWithKey(key, step, digits);
-}, Effect.scoped);
+  try {
+    return codeFromMac(mac, digits);
+  } finally {
+    mac.fill(0);
+  }
+});
 
 export const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
@@ -99,9 +95,14 @@ export const make = Effect.gen(function* () {
           key ??= yield* hmac
             .importKey({ algorithm: "SHA-1", key: Redacted.make(secret) })
             .pipe(Effect.mapError(fail));
-          const expected = yield* codeAtWithKey(key, step);
+          const counter = yield* Effect.try({ try: () => counterAt(step), catch: fail });
+          const mac = yield* key.sign(counter).pipe(Effect.mapError(fail));
 
-          if (equalBytes(encoder.encode(expected), encoder.encode(code))) matched = step;
+          try {
+            if (equalBytes(encoder.encode(codeFromMac(mac)), encoder.encode(code))) matched = step;
+          } finally {
+            mac.fill(0);
+          }
         }
       }
 
