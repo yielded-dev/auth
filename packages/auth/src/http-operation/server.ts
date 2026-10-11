@@ -55,6 +55,7 @@ const responseSchema = Schema.Union([
 
 const encodeResponse = Schema.encodeEffect(Schema.fromJsonString(responseSchema));
 const encodeCredential = Schema.encodeSync(Schema.fromJsonString(CredentialWire));
+const decodeRequestBody = Schema.decodeEffect(Schema.fromJsonString(HttpRequestBody));
 
 export interface OAuthHttpCallback<R = never> {
   readonly route: AnyRoute;
@@ -102,10 +103,7 @@ export const oauthCallback = <R extends AnyRoute, ResponseR = never>(
   });
 };
 
-const boundedText = Effect.fn("OperationHttp.boundedText")(function* (
-  request: Request,
-  maximum: number,
-) {
+const boundedText = Effect.fnUntraced(function* (request: Request, maximum: number) {
   return yield* Effect.tryPromise({
     try: async (signal) => {
       if (request.body === null) return "";
@@ -291,7 +289,7 @@ const inject = (route: AnyRoute, input: unknown, credentials: HttpCredentials) =
     catch: () => OperationHttpError.make({ reason: "credentials" }),
   });
 
-const applyCommands = Effect.fn("OperationHttp.applyCommands")(function* (
+const applyCommands = Effect.fnUntraced(function* (
   headers: Headers,
   commands: ReadonlyArray<AuthCredentialCommand>,
   config: OperationHttpConfiguration,
@@ -455,7 +453,7 @@ export const make = <
           callback === undefined && route.method === "GET"
             ? undefined
             : callback === undefined
-              ? (yield* Schema.decodeEffect(Schema.fromJsonString(HttpRequestBody))(
+              ? (yield* decodeRequestBody(
                   yield* boundedText(request, config.maximumBodyBytes),
                 ).pipe(Effect.mapError(() => OperationHttpError.make({ reason: "request" }))))
                   .payload
