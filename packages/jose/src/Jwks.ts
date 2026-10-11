@@ -153,7 +153,7 @@ const makePublicImporter = () => {
 
     // Metadata is frozen, but Uint8Array contents cannot be. Never expose the
     // retained material to callers or to a verification service implementation.
-    return Object.freeze({ ...key, material: key.material.slice() });
+    return Object.freeze({ ...key, material: new Uint8Array(key.material) });
   });
 };
 
