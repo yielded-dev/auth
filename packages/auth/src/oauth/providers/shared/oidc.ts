@@ -3,6 +3,7 @@ import { Signature } from "@yielded/crypto/Signature";
 import type * as OAuth from "@yielded/oauth/OAuth";
 import * as Oidc from "@yielded/oauth/Oidc";
 import { Context, Crypto, Effect, type Redacted } from "effect";
+import { FetchHttpClient, HttpClient } from "effect/http";
 
 import { OAuthUnavailable } from "../../signInErrors";
 import { installProvider, prepareConfigurations, type InstalledProvider } from "./configuration";
@@ -27,11 +28,42 @@ const configurationError = (error: Effect.Error<ReturnType<typeof Oidc.discover>
     ? OpenIdConnectConfigurationError.make({ reason: "metadata" })
     : OAuthUnavailable.make({});
 
-const discover = (issuer: string, timeoutSeconds: number, metadataUrl: string | undefined) =>
-  Oidc.discover(issuer, {
-    timeoutMs: timeoutSeconds * 1000,
-    ...(metadataUrl === undefined ? {} : { metadataUrl }),
-  }).pipe(Effect.mapError(configurationError));
+/** Successful raw discovery for one initialization only. Transport overrides and
+ * exact discovery policy stay independent; every client still installs its own
+ * metadata validation, supplements and ID-token verifier. */
+export const makeDiscovery = () => {
+  const cache = new Map<
+    string,
+    {
+      readonly client: HttpClient.HttpClient;
+      readonly fetch: typeof globalThis.fetch;
+      readonly metadata: OAuth.Metadata;
+    }
+  >();
+
+  return Effect.fnUntraced(function* (
+    issuer: string,
+    timeoutSeconds: number,
+    metadataUrl: string | undefined,
+  ) {
+    const client = yield* HttpClient.HttpClient;
+    const fetch = yield* FetchHttpClient.Fetch;
+    // oxlint-disable-next-line no-restricted-properties -- Collision-free tuple of bounded, validated discovery configuration.
+    const key = JSON.stringify([issuer, timeoutSeconds, metadataUrl ?? null]);
+    const found = cache.get(key);
+
+    if (found?.client === client && found.fetch === fetch) return found.metadata;
+
+    const metadata = yield* Oidc.discover(issuer, {
+      timeoutMs: timeoutSeconds * 1000,
+      ...(metadataUrl === undefined ? {} : { metadataUrl }),
+    }).pipe(Effect.mapError(configurationError));
+
+    cache.set(key, { client, fetch, metadata });
+
+    return metadata;
+  });
+};
 
 const makeVerifier = Effect.fn("OpenIdConnect.makeVerifier")(function* (
   metadata: OAuth.Metadata,
@@ -66,7 +98,9 @@ const makeVerifier = Effect.fn("OpenIdConnect.makeVerifier")(function* (
 /** Only the OIDC adapter installs discovery and signed ID-token verification. */
 export const installConfigurations = Effect.fn("OpenIdConnect.installConfigurations")(function* <R>(
   input: OpenIdConnectOAuthProtocolOptions<R>,
+  sharedDiscovery?: ReturnType<typeof makeDiscovery>,
 ) {
+  const discover = sharedDiscovery ?? makeDiscovery();
   const { providers, timeoutSeconds } = yield* prepareConfigurations(input);
   const installed: InstalledProvider<R>[] = [];
 
@@ -111,7 +145,11 @@ export const installConfigurations = Effect.fn("OpenIdConnect.installConfigurati
 
 export const installConnectedConfigurations = Effect.fn(
   "OpenIdConnect.installConnectedConfigurations",
-)(function* <R>(input: OpenIdConnectConnectedProtocolOptions<R>) {
+)(function* <R>(
+  input: OpenIdConnectConnectedProtocolOptions<R>,
+  sharedDiscovery?: ReturnType<typeof makeDiscovery>,
+) {
+  const discover = sharedDiscovery ?? makeDiscovery();
   const { providers, timeoutSeconds } = yield* prepareConnectedConfigurations(input);
   const installed: InstalledConnectedProvider<R>[] = [];
 

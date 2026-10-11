@@ -10,7 +10,12 @@ import type {
   OpenIdConnectOAuthProvider,
   OpenIdConnectOidcProvider,
 } from "./models";
-import { installConfigurations, installConnectedConfigurations, type Requirements } from "./oidc";
+import {
+  installConfigurations,
+  installConnectedConfigurations,
+  makeDiscovery,
+  type Requirements,
+} from "./oidc";
 import {
   resolveOidcDefaults,
   resolveOptions,
@@ -69,7 +74,9 @@ const resolve = <R>(providers: ReadonlyArray<Provider<R>>) =>
   );
 
 /** Declare an OIDC or OAuth provider for Http.layer. No I/O runs until its
- * Layer builds. The HTTP host supplies the provider ID and callback URLs. */
+ * Layer builds. The HTTP host supplies the provider ID and callback URLs. One
+ * initialization shares equivalent discovery responses; client and verification
+ * policy remain separate for each protocol and registration. */
 export const provider = <R = never>(
   options: ProviderOptions<R>,
 ): ProviderDefinition<OpenIdConnectConfigurationError | OAuthUnavailable, R | Requirements> => ({
@@ -84,11 +91,16 @@ export const provider = <R = never>(
         ),
       );
 
+      const discovery = makeDiscovery();
+
       const protocol = yield* makeOpenIdConnectOAuthProtocol(
-        installConfigurations<R>({
-          providers: registrations,
-          timeoutSeconds: options.timeoutSeconds ?? 10,
-        }),
+        installConfigurations<R>(
+          {
+            providers: registrations,
+            timeoutSeconds: options.timeoutSeconds ?? 10,
+          },
+          discovery,
+        ),
       ).pipe(Effect.provide(PrivateKeyClientSecret.layer));
 
       const access = "registrations" in options ? options.registrations : [options];
@@ -102,10 +114,13 @@ export const provider = <R = never>(
       if (connectedProviders.length === 0) return protocol;
 
       const connected = yield* makeOpenIdConnectConnectedProtocol(
-        installConnectedConfigurations<R>({
-          providers: connectedProviders,
-          timeoutSeconds: options.timeoutSeconds ?? 10,
-        }),
+        installConnectedConfigurations<R>(
+          {
+            providers: connectedProviders,
+            timeoutSeconds: options.timeoutSeconds ?? 10,
+          },
+          discovery,
+        ),
       ).pipe(Effect.provide(PrivateKeyClientSecret.layer));
 
       return { ...protocol, connected };
