@@ -320,9 +320,10 @@ supplies those application Layers. Native providers require HTTP and crypto serv
 OpenID Connect also requires `Signature`. Protectors require `Aead` and `Crypto`.
 Their Layers check for XChaCha20-Poly1305 support and fail with
 `OAuthConfigurationError` (`reason: "crypto"`) when it is absent. On Workers,
-use `Portable.layer(globalThis.crypto.subtle)` from `@yielded/crypto/Portable`
-with the [portable crypto composition](./crypto.md#use-with-auth). It avoids the
-Argon2 Wasm import in `platform-workerd`; `WebCrypto.layer` alone lacks XChaCha.
+provide `WorkerdPasswordlessServices.layer` from
+`@yielded/auth/WorkerdPasswordlessServices` for HTTP and crypto without Wasm.
+Use `WorkerdServices` when the application also hashes passwords; see
+[runtime composition](./crypto.md#use-with-auth).
 Keep the resulting Layer alive for the application's lifetime.
 
 Flows default to five minutes; strategy `policy` controls their lifetime. Account

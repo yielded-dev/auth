@@ -23,7 +23,7 @@ export class OAuthConfigurationError extends Schema.TaggedError<OAuthConfigurati
 ) {
   override get message() {
     return this.reason === "crypto"
-      ? "OAuth requires Aead support for XChaCha20-Poly1305. On Workers, use @yielded/crypto/Portable instead of @yielded/crypto/WebCrypto."
+      ? "OAuth protectors require an Aead service with XChaCha20-Poly1305 support."
       : `Invalid OAuth configuration: ${this.reason}`;
   }
 }
