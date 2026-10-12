@@ -149,59 +149,40 @@ authorize repeating credential issuance or delivery.
 ### Workers and request-scoped SQL
 
 Share `WorkerdServices` across requests to retain its KDF admission limits. The
-simplest composition builds auth and persistence per request with one SQL client,
-shared by auth, application queries, and explicit coordinators. Workers
+simplest composition builds auth and persistence per request with one SQL client
+for auth, application queries, and explicit coordinators. Workers
 [TCP sockets belong to the request](https://developers.cloudflare.com/workers/runtime-apis/tcp-sockets/#considerations),
 whether connecting directly or through Hyperdrive.
 
-This example uses `AuthPersistence.make(AppAuth)` from `@yielded/auth-persistence`
-for direct Effect SQL; `./schema` exports its `Persistence` and `storage` mapping.
-`ApplicationLive` below supplies application claims, policy, keys, delivery, and
-[shared rate-limit storage](../guide/passwords#share-rate-limits).
-`handleRequest(request)` is the complete handler Effect returning a `Response`.
+Inside an [Alchemy Worker constructor](https://alchemy.run/infrastructure-as-effects/runtime/),
+bind Hyperdrive once and acquire SQL inside the handler. Imports and application
+wiring are elided: `AuthLive` supplies auth and persistence but requires SQL;
+`workerdServices` is the shared context built from `WorkerdServices.layer`;
+`handleRequest` is an Effect HTTP handler returning `HttpServerResponse`.
 
-```ts title="apps/server/worker.ts"
-import * as PgClient from "@effect/sql-pg/PgClient";
-import * as WorkerdServices from "@yielded/auth/WorkerdServices";
-import { Effect, Layer, ManagedRuntime, Redacted } from "effect";
-import { AppAuth } from "./auth";
-import { ApplicationLive } from "./application";
-import { handleRequest } from "./handler";
-import { Persistence, storage } from "./schema";
+```ts
+const hyperdrive = yield* Cloudflare.Hyperdrive.Connect(Database);
 
-const runtime = ManagedRuntime.make(WorkerdServices.layer);
-const AuthLive = AppAuth.layer.pipe(
-  Layer.provide(Persistence.layer),
-  Layer.provide(ApplicationLive),
-  Layer.provide(Persistence.Config.layer(storage)),
-);
+return {
+  fetch: Effect.gen(function* () {
+    const url = yield* hyperdrive.connectionString;
+    const SqlLive = PgClient.layerFrom(PgClient.makeClient({ url }));
+    const RequestLive = AuthLive.pipe(Layer.provideMerge(SqlLive), Layer.orDie);
 
-export default {
-  fetch(request: Request, env: { HYPERDRIVE: { connectionString: string } }) {
-    const SqlLive = PgClient.layerFrom(
-      PgClient.makeClient({ url: Redacted.make(env.HYPERDRIVE.connectionString) }),
-    );
-    const RequestLive = AuthLive.pipe(Layer.provideMerge(SqlLive));
-
-    return runtime.runPromise(
-      handleRequest(request).pipe(Effect.provide(RequestLive, { local: true })),
-      { signal: request.signal },
-    );
-  },
+    return yield* handleRequest.pipe(Effect.provide(RequestLive, { local: true }));
+  }).pipe(Effect.provide(workerdServices)),
 };
 ```
 
-`{ local: true }` gives each request an independent Layer build and scope, while
-the shared runtime supplies `WorkerdServices`. `PgClient.makeClient` opens one
-physical client; `layerFrom` exposes it as both `PgClient` and `SqlClient`. The
-request scope closes it on success, failure, or interruption. Finish SQL work
-inside the handler Effect; a returned response stream cannot keep using this
-client after the Effect completes.
+`{ local: true }` gives each request its own Layer build and scope.
+`PgClient.makeClient` opens one physical client; `layerFrom` exposes it as both
+`PgClient` and `SqlClient`. Finish SQL work inside the handler Effect: its scope
+closes the client when the Effect completes, including on failure or interruption.
 
-Enable Workers’ `nodejs_compat` flag for the PostgreSQL driver. For a direct
-connection, use your database URL in place of the Hyperdrive connection string.
-Configure the auth Hyperdrive binding with [query caching disabled](https://developers.cloudflare.com/hyperdrive/concepts/query-caching/)
-so session, credential, and authority reads observe current state.
+Provide Alchemy's `Cloudflare.Hyperdrive.ConnectBinding` and enable `nodejs_compat`
+in the Worker setup. Set `caching: { disabled: true }` on the Hyperdrive resource
+so auth reads observe current state ([query caching](https://developers.cloudflare.com/hyperdrive/concepts/query-caching/)).
+For a direct connection, substitute a redacted database URL for `url`.
 
 Applications that already share persistence Layers can supply a logical `SqlClient`
 whose acquirer resolves the invoking request's scoped physical client. Initialization
