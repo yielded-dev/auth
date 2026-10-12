@@ -13,8 +13,22 @@ the pre-commit hook runs Vite+ checks on staged TypeScript and JavaScript.
 Use `vp help` and command help for task options. Include `vp env doctor` output
 when investigating toolchain failures.
 
-Shared strict compiler settings live in `tsconfig.base.json`. Public packages
-use Effect as a peer and the exact catalog pin for development; the standalone
+Shared strict compiler settings live in `tsconfig.base.json`. The normal
+`effect-tsgo patch --typescript` prepare step makes the installed compiler authoritative
+for TypeScript and Effect diagnostics. Workspace `check` tasks and `check:scripts`
+run that compiler; `vp run check` composes them with formatting and linting.
+Oxlint keeps `typeAware` for semantic lint, including switch exhaustiveness,
+unbound methods, and awaiting non-thenables; its duplicate full `typeCheck` is disabled.
+`vp check` alone therefore runs formatting and lint, not the compiler gate.
+
+Construct Schema classes and tagged errors with `.make(...)`. Expected workflow
+failures use `return yield* ErrorClass.make(...)` or `Effect.fail(ErrorClass.make(...))`,
+including checks around foreign calls captured with `Effect.try` or `Effect.tryPromise`.
+The compiler rejects Schema `new` construction and native Error failure channels;
+source lint rejects native Error construction and throws. Synchronous host or adapter
+contracts use narrowly documented line exceptions, never workflow-wide suppressions.
+
+Public packages use Effect as a peer and the exact catalog pin for development; the standalone
 patch CLI bundles its tooling dependencies. Upgrade the
 Effect family together and rerun installation and the handoff gate. Vite+ 1.1.0
 bundles Vitest 5.0.3. The root override keeps Effect's test integration on the
