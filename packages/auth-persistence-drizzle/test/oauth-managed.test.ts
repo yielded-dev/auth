@@ -52,6 +52,15 @@ it.live.each(["sqlite", "d1"] as const)(
 
       yield* rejected({ ...input, subjectId: SubjectId.make("missing") });
       yield* rejected({ ...input, moduleId: OAuth.OAuthModuleId.make("disabled") });
+      // Admission must use the same snapshot as the deferred import.
+      const mutable = { ...input };
+      const deferred = importer.importIdentity(mutable);
+
+      mutable.moduleId = OAuth.OAuthModuleId.make("disabled");
+      expect(yield* deferred.pipe(Effect.result)).toMatchObject({
+        _tag: "Failure",
+        failure: { _tag: "OAuthUnavailable" },
+      });
       yield* rejected({ ...input, subject: "\ud800" });
       yield* sql`update athletes set active = 0`;
       yield* rejected(input);
