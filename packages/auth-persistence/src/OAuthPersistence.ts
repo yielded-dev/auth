@@ -107,7 +107,12 @@ const using = <M, A>(
   Effect.gen(function* () {
     const target = yield* acquire;
     const mapping = captureOAuthMapping(original);
-    const captured = yield* Effect.context<Crypto.Crypto | LifecycleHooks | SqlClient.SqlClient>();
+
+    // Preserve explicit ownership, but never retain the construction transaction's connection.
+    const captured = yield* Effect.context<
+      Crypto.Crypto | LifecycleHooks | SqlClient.SqlClient
+    >().pipe(Effect.map(Context.omit(target.client.transactionService)));
+
     const executor = yield* makeSqlCommitExecutor(() => OAuthUnavailable.make({}));
 
     // Physical checks and native read planning need the first request's connection.
@@ -120,14 +125,7 @@ const using = <M, A>(
         withStorageValidation,
         Effect.updateContext((current: Context.Context<never>) =>
           Context.merge(
-            current.pipe(
-              Context.omit(
-                CurrentSqlCommit,
-                CurrentCommitJournal,
-                SqlNativeCommit,
-                target.client.transactionService,
-              ),
-            ),
+            current.pipe(Context.omit(CurrentSqlCommit, CurrentCommitJournal, SqlNativeCommit)),
             captured,
           ),
         ),

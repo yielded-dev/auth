@@ -1,10 +1,10 @@
-import { NodeCrypto } from "@effect/platform-node";
+import { NodeCrypto, NodeFileSystem } from "@effect/platform-node";
 import * as SqliteClient from "@effect/sql-sqlite-node/SqliteClient";
 import { it } from "@effect/vitest";
 import { Auth, OAuth, Password, Sessions } from "@yielded/auth";
 import { hooksLayer } from "@yielded/auth/Persistence";
 import { SubjectId } from "@yielded/auth/Schema";
-import { Clock, Context, Effect, Layer, Schema } from "effect";
+import { Clock, Context, Effect, FileSystem, Layer, Schema } from "effect";
 import { Reactivity } from "effect/reactivity";
 import { SqlClient, Statement } from "effect/sql";
 import { ConnectionError, SqlError } from "effect/sql/SqlError";
@@ -202,8 +202,22 @@ it.live(
     Effect.gen(function* () {
       const first = yield* SqliteClient.make({ filename: ":memory:" });
       const second = yield* SqliteClient.make({ filename: ":memory:" });
+      const fs = yield* FileSystem.FileSystem;
+      const directory = yield* fs.makeTempDirectoryScoped();
+      const reactivity = yield* Reactivity.Reactivity;
 
-      for (const client of [first, second]) {
+      // 284f08ba retained a construction-time transaction during lazy OAuth setup.
+      // Closing each physical connection on release makes expiration deterministic.
+      const reconnecting = yield* SqlClient.make({
+        compiler: Statement.makeCompilerSqlite(),
+        spanAttributes: [],
+        acquirer: SqliteClient.make({ filename: `${directory}/oauth.sqlite` }).pipe(
+          Effect.flatMap((client) => client.reserve),
+          Effect.provideService(Reactivity.Reactivity, reactivity),
+        ),
+      });
+
+      for (const client of [first, second, reconnecting]) {
         yield* client`create table ownership (identity_key text, subject_id text, provider text, issuer text, external_subject text)`;
         yield* client`create table intents (module_id text, reference text, flow_id text, identity_key text, snapshot text, expires_at integer, retention_until integer, unique(module_id, reference), unique(module_id, flow_id))`;
       }
@@ -261,7 +275,7 @@ it.live(
         ),
       ).toMatchObject({ _tag: "Failure", failure: { _tag: "OAuthUnavailable" } });
       expect(yield* first`select count(*) as count from intents`).toEqual([{ count: 0 }]);
-      for (const client of [first, second])
+      for (const client of [first, second, reconnecting])
         yield* client`create unique index ownership_identity on ownership (identity_key)`;
 
       const valid = yield* construct;
@@ -293,6 +307,21 @@ it.live(
       for (const client of [first, second])
         expect(yield* client`select count(*) as count from intents`).toEqual([{ count: 1 }]);
 
+      const constructedInTransaction = yield* OAuthPersistence.makeOAuthRegistrationIntentServices(
+        mapping,
+      ).pipe(
+        Effect.provideService(SqlClient.SqlClient, reconnecting),
+        Effect.provide(dependencies),
+        reconnecting.withTransaction,
+      );
+
+      expect(
+        (yield* issue(constructedInTransaction.oauthRegistrationIntents).pipe(
+          Effect.flatMap((receipt) => receipt.read),
+        ))._tag,
+      ).toBe("RegistrationIssued");
+      expect(yield* reconnecting`select count(*) as count from intents`).toEqual([{ count: 1 }]);
+
       const coordinatedIntent = yield* Schema.decodeUnknownEffect(
         Schema.toType(OAuth.OAuthRegistrationIntent),
       )({
@@ -321,5 +350,5 @@ it.live(
           Effect.result,
         ),
       ).toMatchObject({ _tag: "Failure", failure: { _tag: "OAuthUnavailable" } });
-    }).pipe(Effect.provide(Reactivity.layer)),
+    }).pipe(Effect.provide([Reactivity.layer, NodeFileSystem.layer])),
 );
