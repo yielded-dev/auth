@@ -162,7 +162,7 @@ This direct Effect SQL setup keeps only a logical client at the composition root
 
 ```ts title="apps/server/request-sql.ts"
 import * as PgClient from "@effect/sql-pg/PgClient";
-import { Context, Effect, Layer, Schema } from "effect";
+import { Context, Effect, Layer, Redacted, Schema } from "effect";
 import { Reactivity } from "effect/reactivity";
 import { SqlClient } from "effect/sql";
 import { ConnectionError, SqlError, UnknownError } from "effect/sql/SqlError";
@@ -202,9 +202,8 @@ export const SqlLive = Layer.effect(
 
 Provide `SqlLive` to persistence instead of a global physical client. Build
 composed persistence with `{ validation: "skip" }`, and use the same option on
-explicit OAuth factories. Inside the request Effect, acquire
-`PgClient.makeClient({ url: Redacted.make(env.HYPERDRIVE.connectionString) })`, then
-provide that client as `RequestSqlClient` to the complete auth operation:
+explicit OAuth factories. Inside each request, supply its client to the complete
+handler Effect, `handleRequest`:
 
 ```ts
 const response = Effect.scoped(
@@ -217,8 +216,7 @@ const response = Effect.scoped(
 ).pipe(Effect.provide(Reactivity.layer));
 ```
 
-Enable Workers’ `nodejs_compat` flag for the PostgreSQL driver. Import `Redacted`
-from `effect`; `handleRequest` is your request handler Effect.
+Enable Workers’ `nodejs_compat` flag for the PostgreSQL driver.
 Run `response` through the shared runtime and await it within the Worker handler.
 The request scope closes the physical client on success, failure, or interruption.
 The logical client's transactions reserve one connection through commit or rollback.

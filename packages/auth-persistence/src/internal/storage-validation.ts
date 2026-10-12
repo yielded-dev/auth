@@ -97,34 +97,31 @@ const CurrentMetadata = Context.Reference<MetadataCache | undefined>(
 
 /** Share metadata only while constructing one service graph. Captured contexts
  * cannot reuse it after acquisition succeeds, fails, or is interrupted. */
-export const withStorageValidationOptions = Effect.fnUntraced(function* <A, E, R>(
-  effect: Effect.Effect<A, E, R>,
-  options?: PersistenceOptions,
-): Effect.fn.Return<A, E, R> {
-  const parent = yield* CurrentMetadata;
+export const withStorageValidationOptions = (options?: PersistenceOptions) =>
+  Effect.fnUntraced(function* <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.fn.Return<A, E, R> {
+    const parent = yield* CurrentMetadata;
 
-  if (parent?.active && options === undefined) return yield* effect;
+    if (parent?.active && options === undefined) return yield* effect;
 
-  const cache: MetadataCache = {
-    active: true,
-    validation: options?.validation ?? "check",
-    clients: new Map(),
-  };
+    const cache: MetadataCache = {
+      active: true,
+      validation: options?.validation ?? "check",
+      clients: new Map(),
+    };
 
-  return yield* effect.pipe(
-    Effect.provideService(CurrentMetadata, cache),
-    Effect.ensuring(
-      Effect.sync(() => {
-        cache.active = false;
-        cache.clients.clear();
-      }),
-    ),
-  );
-});
+    return yield* effect.pipe(
+      Effect.provideService(CurrentMetadata, cache),
+      Effect.ensuring(
+        Effect.sync(() => {
+          cache.active = false;
+          cache.clients.clear();
+        }),
+      ),
+    );
+  });
 
 /** Unary so Effect.fn postprocessors cannot pass mapping arguments as options. */
-export const withStorageValidation = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-  withStorageValidationOptions(effect);
+export const withStorageValidation = withStorageValidationOptions();
 
 /** Requirements checked against one physical catalog snapshot. */
 export interface StorageValidation {

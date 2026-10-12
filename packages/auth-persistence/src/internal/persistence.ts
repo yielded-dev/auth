@@ -329,22 +329,21 @@ export const createPersistence = <T extends object, R, Database extends object =
         table: backend.describe(storage.subjects.table as T),
         required: [[storage.subjects.id]],
       });
+      yield* validateStorageBatch(dialect, validations);
 
-      return { storage, dialect, validations };
+      return { storage, dialect };
     });
 
-    const validate = Effect.gen(function* () {
-      const { dialect, validations } = yield* configuration;
-
-      yield* validateStorageBatch(dialect, validations);
-    }).pipe((effect) => withStorageValidationOptions(effect, { validation: "check" }));
+    const validate = configuration.pipe(
+      Effect.asVoid,
+      withStorageValidationOptions({ validation: "check" }),
+    );
 
     const services = Layer.effectContext(
       Effect.flatMap(backend.acquire, (database) =>
         Effect.gen(function* () {
-          const { storage, dialect, validations } = yield* configuration;
+          const { storage, dialect } = yield* configuration;
 
-          yield* validateStorageBatch(dialect, validations);
           const nativeTables = backend.nativeTables(database);
           const mappings = yield* makeMappings(storage, nativeTables);
 
@@ -518,7 +517,7 @@ export const createPersistence = <T extends object, R, Database extends object =
           // The checked capability metadata above determines exactly these service keys.
           return context as Context.Context<Ports<C, Id, A>>;
         }).pipe(Effect.provideService(SqlBatchCommit, backend.batch?.(database))),
-      ).pipe((effect) => withStorageValidationOptions(effect, options)),
+      ).pipe(withStorageValidationOptions(options)),
     ).pipe(Layer.provide(hooksLayer));
 
     const layer = Layer.effectContext(

@@ -102,7 +102,7 @@ const using = <M, A, E, R>(
     yield* validateSqlStorage(mapping).pipe(Effect.mapError(() => OAuthUnavailable.make({})));
 
     return yield* make(target.tables, mapping);
-  }).pipe((effect) => withStorageValidationOptions(effect, options));
+  }).pipe(withStorageValidationOptions(options));
 
 /** Validate explicit OAuth physical columns and unique keys in deploy/CI.
  * Always reads fresh metadata, independent of runtime validation options. */
@@ -114,10 +114,7 @@ export const validate = <N, Registration>(
     | OAuthRegistrationMapping<Registration, Table, Table, Table, Table, Table, N>
     | OAuthConnectedMapping<Table, Table, Table, Table, Table, N, Table>
     | OAuthConnectedRevocationMapping<Table, Table, Table, N>,
-) =>
-  validateSqlStorage(mapping).pipe((effect) =>
-    withStorageValidationOptions(effect, { validation: "check" }),
-  );
+) => validateSqlStorage(mapping).pipe(withStorageValidationOptions({ validation: "check" }));
 
 const coordinate = <S, A, E, R, ES, RS>(
   make: Effect.Effect<S, ES, RS>,
