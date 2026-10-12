@@ -162,21 +162,32 @@ This direct Effect SQL setup keeps only a logical client at the composition root
 
 ```ts title="apps/server/request-sql.ts"
 import * as PgClient from "@effect/sql-pg/PgClient";
-import { Context, Effect, Layer } from "effect";
+import { Context, Effect, Layer, Schema } from "effect";
 import { Reactivity } from "effect/reactivity";
 import { SqlClient } from "effect/sql";
-import { ConnectionError, SqlError } from "effect/sql/SqlError";
+import { ConnectionError, SqlError, UnknownError } from "effect/sql/SqlError";
 
 export const RequestSqlClient = Context.Reference<SqlClient.SqlClient | undefined>(
   "app/RequestSqlClient",
   { defaultValue: () => undefined },
 );
 
+const Committed = Schema.Struct({ command: Schema.Literal("COMMIT") });
+
 export const SqlLive = Layer.effect(
   SqlClient.SqlClient,
   SqlClient.make({
     compiler: PgClient.makeCompiler(),
     spanAttributes: [],
+    releaseSavepoint: (name) => `RELEASE SAVEPOINT ${name}`,
+    commit: (connection) =>
+      connection.executeRaw("COMMIT", []).pipe(
+        Effect.flatMap(Schema.decodeUnknownEffect(Committed)),
+        Effect.asVoid,
+        Effect.catchTag("SchemaError", (cause) =>
+          Effect.fail(SqlError.make({ reason: UnknownError.make({ cause, operation: "commit" }) })),
+        ),
+      ),
     acquirer: Effect.gen(function* () {
       const client = yield* RequestSqlClient;
       if (client === undefined)
@@ -211,6 +222,8 @@ from `effect`; `handleRequest` is your request handler Effect.
 Run `response` through the shared runtime and await it within the Worker handler.
 The request scope closes the physical client on success, failure, or interruption.
 The logical client's transactions reserve one connection through commit or rollback.
+Its commit check rejects PostgreSQL's `ROLLBACK` completion tag for an aborted
+transaction, even when application code caught the statement error.
 Use that logical client for application SQL and explicit coordinators too; do not
 mix its transaction owner with the underlying request client's transaction owner.
 
