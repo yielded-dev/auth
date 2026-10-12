@@ -1,6 +1,6 @@
 import { EmailAddressPersistence, EmailUnavailable } from "@yielded/auth/Email";
 import type { LifecycleHooks } from "@yielded/auth/Hooks";
-import { hasCommitScope } from "@yielded/auth/Hooks";
+import { CurrentCommitJournal, hasCommitScope } from "@yielded/auth/Hooks";
 import {
   OAuthConnectedPersistence,
   OAuthConnectedRevocations,
@@ -18,7 +18,7 @@ import { hooksLayer, reportAuthDiagnostic } from "@yielded/auth/Persistence";
 import { PhoneSignInTargets, PhoneOtpUnavailable } from "@yielded/auth/PhoneOtp";
 import { ProofPersistence, ProofUnavailable } from "@yielded/auth/Proofs";
 import { AuthenticationAuthority, SessionUnavailable } from "@yielded/auth/Sessions";
-import { Context, type Crypto, Effect, Layer, Schema } from "effect";
+import { Context, type Crypto, Effect, Layer, Ref, Schema } from "effect";
 import { SqlClient } from "effect/sql";
 
 import {
@@ -56,7 +56,7 @@ import {
 import { makeNativePendingAuthenticationServices } from "./session-native-login";
 import { makeNativeStatefulSessionServices } from "./session-native-stateful";
 import { makeNativeSessionStepUpServices } from "./session-native-step-up";
-import { SqlBatchCommit } from "./sql-commit";
+import { CurrentSqlCommit, SqlBatchCommit, SqlNativeCommit } from "./sql-commit";
 import { requireStandalone } from "./standalone";
 import { makeMappings } from "./storage-mapping";
 import {
@@ -530,13 +530,34 @@ export const createPersistence = <T extends object, R, Database extends object =
         const scope = yield* Effect.scope;
         const captured = yield* Effect.context<Layer.Services<typeof services>>();
         const client = Context.get(captured, SqlClient.SqlClient);
+        const started = yield* Ref.make(false);
 
-        // Construction uses the layer's exact environment and lifetime, never the
-        // first operation's SQL transaction, service overrides, or request scope.
-        // Cache the full exit: concurrent callers share failures/interruption too,
-        // and cannot retry partially completed setup within this acquired layer.
+        // Keep the layer's dependencies and lifetime while letting its SQL acquirer
+        // resolve request-local services. Never capture the caller's commit owner
+        // or transaction in the shared services built by the first operation.
+        // cached shares active waiters and completed failures, but discards interrupted
+        // runs. Claim the sole attempt before building so abandoning all waiters cannot
+        // restart partially completed setup, even while its finalizers are still running.
         const initialize = yield* Effect.cached(
-          Layer.buildWithScope(services, scope).pipe(Effect.setContext(captured)),
+          Effect.flatMap(Ref.getAndSet(started, true), (alreadyStarted) =>
+            alreadyStarted
+              ? Effect.succeed(undefined)
+              : Layer.buildWithScope(services, scope).pipe(
+                  Effect.updateContext((current: Context.Context<never>) =>
+                    Context.merge(
+                      current.pipe(
+                        Context.omit(
+                          CurrentSqlCommit,
+                          CurrentCommitJournal,
+                          SqlNativeCommit,
+                          client.transactionService,
+                        ),
+                      ),
+                      captured,
+                    ),
+                  ),
+                ),
+          ),
         );
 
         const service = Effect.fnUntraced(function* <I, S, Failure>(
@@ -566,6 +587,11 @@ export const createPersistence = <T extends object, R, Database extends object =
             Effect.mapError(unavailable),
           );
 
+          if (acquired === undefined) {
+            yield* reportAuthDiagnostic("persistence-initialization", "unavailable");
+
+            return yield* Effect.fail(unavailable());
+          }
           const value = Context.getOrUndefined(acquired, key);
 
           return value === undefined ? yield* Effect.fail(unavailable()) : value;

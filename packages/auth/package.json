@@ -1,6 +1,6 @@
 {
   "name": "@yielded/auth",
-  "version": "0.1.0-beta.34",
+  "version": "0.1.0-beta.38",
   "description": "Composable authentication, sessions, and identity workflows for Effect.",
   "keywords": [
     "authentication",
@@ -68,6 +68,8 @@
     "./Operations": "./src/Operations.ts",
     "./Schema": "./src/Schema.ts",
     "./WebCrypto": "./src/WebCrypto.ts",
+    "./WorkerdServices": "./src/WorkerdServices.ts",
+    "./WorkerdPasswordlessServices": "./src/WorkerdPasswordlessServices.ts",
     "./Sessions": "./src/Sessions.ts",
     "./SessionContract": "./src/SessionContract.ts",
     "./Proofs": "./src/Proofs.ts",

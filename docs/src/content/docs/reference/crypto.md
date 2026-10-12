@@ -59,12 +59,16 @@ second argument containing KDF limit overrides; `NodeCrypto.layer(limits?)`
 takes those overrides as its first argument. Bun uses the same implementation
 through `@yielded/crypto/platform-bun`.
 
-For Cloudflare Workers, use `WorkerdCrypto.layer(globalThis.crypto.subtle)` from
+`Portable.layerWithoutKdf(subtle)` supplies AEAD, HMAC and signatures, including
+XChaCha20-Poly1305, without KDF services or admission.
+
+For Workers with Wasm Argon2id and native scrypt, use `WorkerdCrypto.layer(globalThis.crypto.subtle)` from
 `@yielded/crypto/platform-workerd`. It uses a bundled Wasm module for Argon2id
 and native `node:crypto.scrypt`. Wrangler includes the Wasm module in the Worker
 deployment; consumers need no compiler or runtime download. This backend
 requires Node.js compatibility. All Argon2id backends use the same parameters
 and stored-hash format.
+Use `WorkerdCrypto.layerKdf(subtle, limits?)` when other crypto services are already supplied.
 
 PBKDF2 uses the supplied WebCrypto and remains subject to the host's iteration
 limit, which can be lower than the library's configured ceiling. Stored PBKDF2
@@ -77,8 +81,54 @@ capability, use `layerHmac(subtle)`. These focused Layers need no `KdfAdmission`
 
 ## Use with Auth
 
-Choose the backend at your application's composition root. This portable setup
-supplies Effect entropy/digests and owned KDF, AEAD, HMAC, and signature services:
+For Cloudflare Workers, select the services your application needs:
+
+| Direct import                               | Services                                                                         |
+| ------------------------------------------- | -------------------------------------------------------------------------------- |
+| `@yielded/auth/WorkerdPasswordlessServices` | Entropy/digests, XChaCha-capable AEAD, HMAC, signatures and a Fetch `HttpClient` |
+| `@yielded/auth/WorkerdServices`             | All of the above, plus KDFs, bounded admission and password hashing              |
+
+Provide the selected `layer` once at your application's composition root:
+
+```ts title="apps/server/live.ts"
+import * as WorkerdServices from "@yielded/auth/WorkerdPasswordlessServices";
+import { Layer } from "effect";
+
+import { ApplicationLive } from "./application";
+
+export const MainLive = ApplicationLive.pipe(Layer.provide(WorkerdServices.layer));
+```
+
+`WorkerdPasswordlessServices` supports OAuth, sessions, passkeys, codes and TOTP
+without importing Wasm or requiring Node.js compatibility. Storage, account policy,
+keys, delivery and protocol adapters remain application-owned. Import either
+Workers module directly; the package root does not export them.
+
+OAuth protector Layers check for XChaCha20-Poly1305 support and fail with
+`OAuthConfigurationError` (`reason: "crypto"`) when it is absent. Both Workers
+Layers provide it; `WebCrypto.layer` alone does not.
+
+For password hashing, change the import to `@yielded/auth/WorkerdServices` and
+enable `"compatibility_flags": ["nodejs_compat"]` in your Wrangler configuration.
+Password hashing defaults to Argon2id and shares bounded KDF admission with the
+backend. Wrangler bundles its Argon2id Wasm module.
+The [Workers example](https://github.com/yielded-dev/auth/blob/main/examples/auth/src/workerd-services.ts)
+shows this password-capable route composition.
+
+Use `WorkerdServices.layerWith({ passwordHashing, kdfLimits, kdfAdmission })` to
+override password policy and resource bounds. `passwordHashing` accepts
+`Password.PasswordHashingConfig`, including `Password.defaultScryptPasswordHashingConfig`.
+`kdfLimits` accepts the backend's per-derivation ceilings; `kdfAdmission` accepts
+the [concurrency and queue options](#backends-and-resource-limits).
+
+Admission is shared for the built services' lifetime. To bound concurrent requests
+within a Worker isolate, build and retain these services at that lifetime and
+supply them to [request-scoped auth/database Layers](./adapters#workers-and-request-scoped-sql).
+Rebuilding the Layer for every request creates independent admission services.
+This does not coordinate limits between isolates or replace sign-in rate limiting.
+
+For other runtimes or custom composition, select the backend explicitly. This
+portable setup supplies Effect entropy/digests and KDF, AEAD, HMAC, and signature services:
 
 ```ts title="apps/server/crypto-live.ts"
 import * as KdfAdmission from "@yielded/crypto/KdfAdmission";
@@ -93,28 +143,7 @@ export const CryptoLive = Layer.merge(
 );
 ```
 
-For Cloudflare Workers, use this composition instead. It selects Wasm Argon2id
-without changing password parameters or stored hashes:
-
-```ts title="apps/server/crypto-live.ts"
-import { KdfAdmission } from "@yielded/crypto";
-import * as WorkerdCrypto from "@yielded/crypto/platform-workerd";
-import * as WebCrypto from "@yielded/crypto/WebCrypto";
-import { Layer } from "effect";
-
-const Admission = KdfAdmission.layer();
-export const CryptoLive = Layer.merge(
-  WebCrypto.layerCryptoWeb,
-  WorkerdCrypto.layer(globalThis.crypto.subtle).pipe(Layer.provideMerge(Admission)),
-);
-```
-
-Enable `"compatibility_flags": ["nodejs_compat"]` in your Wrangler configuration.
-Wrangler bundles the Wasm module; do not import this backend into a Bun, Node,
-or browser entrypoint. The [Workers composition example](https://github.com/yielded-dev/auth/blob/main/examples/auth/src/crypto-workerd.ts)
-can be imported by your Worker's application Layer.
-
-Provide `CryptoLive` to your Auth Layer and to `Password.PasswordHashing.layer()`,
+With manual composition, provide `CryptoLive` to your Auth Layer and to `Password.PasswordHashing.layer()`,
 `Totp.TotpCryptography.layer`, and the `OAuth` protector Layers. TOTP also requires
 `TotpSecretKeys`; OAuth protectors take their application keyring as an argument.
 `OpenIdConnect` and `GitHub` provider Layers additionally require `HttpClient`.
@@ -122,7 +151,7 @@ Build provider and protector Layers in the application's owning scope.
 
 Sessions and numeric proofs use `Hmac` for their imported keys. Auth owns keyring
 validation, key IDs, and credential formats; crypto owns native key handling.
-Auth requires application-supplied crypto services and does not select a backend.
+Auth requires explicitly selected runtime services and does not detect a backend.
 Stateful sessions require Effect `Crypto`; signed sessions and numeric proofs also require `Hmac`.
 `@yielded/auth/WebCrypto` also exports `layerCryptoWeb` and `layerWebCrypto`.
 Direct callers of
@@ -188,6 +217,8 @@ raw-key operations. XChaCha continues to use raw-key operations.
 Backend selection is explicit. An unavailable native algorithm fails with
 `CryptoUnsupportedAlgorithm`; it does not silently select a different algorithm
 or password cost. Check that your runtime supplies the native algorithms you select.
+`Aead.supports(algorithm)` reports whether the selected backend implements that
+algorithm; host operations can still fail. Custom `Aead` services must implement it.
 
 `Kdf.defaultLimits` defines per-derivation resource ceilings. Backend construction
 validates overrides before exposing services. These are work limits, not a

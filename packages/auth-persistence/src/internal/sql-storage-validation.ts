@@ -10,7 +10,7 @@ import { validateStorageBatch, type StorageValidation } from "./storage-validati
 const invalidMapping = () =>
   PersistenceMappingError.make({ operation: "mapping", cause: "Invalid storage key mapping" });
 
-/** Check declared mappings against physical keys before acquiring OAuth services. */
+/** Check declared mappings against physical keys before executing OAuth operations. */
 export const validateSqlStorage = Effect.fnUntraced(
   function* (mapping: unknown) {
     const plans = yield* Effect.try({

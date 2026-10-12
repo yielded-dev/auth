@@ -53,6 +53,8 @@ export default defineConfig({
       "src/Operations.ts",
       "src/Schema.ts",
       "src/WebCrypto.ts",
+      "src/WorkerdServices.ts",
+      "src/WorkerdPasswordlessServices.ts",
       "src/Sessions.ts",
       "src/SessionContract.ts",
       "src/Proofs.ts",

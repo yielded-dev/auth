@@ -41,6 +41,12 @@ Optional adapters are direct imports, for example `@yielded/auth-persistence-dri
 `@yielded/auth/adapters/Twilio`. Install only the peers
 required by the selected adapters.
 
+For Cloudflare Workers, import `@yielded/auth/WorkerdPasswordlessServices` directly
+for runtime crypto and HTTP without Wasm. Use `@yielded/auth/WorkerdServices` when
+the application also hashes passwords. Provide the selected `layer` once to your
+application. These modules are absent from the package root; see
+[runtime setup](./crypto#use-with-auth).
+
 ## Application composition
 
 Import application services and authentication methods from the root:
