@@ -71,6 +71,7 @@ export const makeAead = (subtle: SubtleCrypto, xchacha?: XChaCha): Aead["Service
     }).pipe(Effect.map((decrypted) => new Uint8Array(decrypted)));
 
   return Aead.of({
+    supports: (algorithm) => algorithm === "AES-256-GCM" || xchacha !== undefined,
     importKey: Effect.fnUntraced(function* (input) {
       const value = yield* decode(KeyInput, input, "key");
 

@@ -19,5 +19,11 @@ export class OAuthProtocolRejected extends Schema.TaggedError<OAuthProtocolRejec
 
 export class OAuthConfigurationError extends Schema.TaggedError<OAuthConfigurationError>()(
   "OAuthConfigurationError",
-  { reason: Schema.Literals(["module", "policy", "keyring", "return-target"]) },
-) {}
+  { reason: Schema.Literals(["module", "policy", "keyring", "return-target", "crypto"]) },
+) {
+  override get message() {
+    return this.reason === "crypto"
+      ? "OAuth requires Aead support for XChaCha20-Poly1305. On Workers, use @yielded/crypto/Portable instead of @yielded/crypto/WebCrypto."
+      : `Invalid OAuth configuration: ${this.reason}`;
+  }
+}

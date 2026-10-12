@@ -59,7 +59,12 @@ second argument containing KDF limit overrides; `NodeCrypto.layer(limits?)`
 takes those overrides as its first argument. Bun uses the same implementation
 through `@yielded/crypto/platform-bun`.
 
-For Cloudflare Workers, use `WorkerdCrypto.layer(globalThis.crypto.subtle)` from
+OAuth protectors require XChaCha20-Poly1305 and reject `WebCrypto.layer` at
+construction with `OAuthConfigurationError` (`reason: "crypto"`). On Workers, use
+`Portable.layer` for OAuth without importing the Argon2 Wasm module or requiring
+Node.js compatibility.
+
+For Workers with Wasm Argon2id and native scrypt, use `WorkerdCrypto.layer(globalThis.crypto.subtle)` from
 `@yielded/crypto/platform-workerd`. It uses a bundled Wasm module for Argon2id
 and native `node:crypto.scrypt`. Wrangler includes the Wasm module in the Worker
 deployment; consumers need no compiler or runtime download. This backend
@@ -113,7 +118,7 @@ supply them to request-scoped auth/database Layers. Rebuilding the Layer for eve
 request creates independent admission services. This does not coordinate limits
 between isolates or replace sign-in rate limiting.
 
-For other runtimes or custom composition, select the backend explicitly. This
+For passwordless Workers or other custom composition, select the backend explicitly. This
 portable setup supplies Effect entropy/digests and KDF, AEAD, HMAC, and signature services:
 
 ```ts title="apps/server/crypto-live.ts"
@@ -203,6 +208,8 @@ raw-key operations. XChaCha continues to use raw-key operations.
 Backend selection is explicit. An unavailable native algorithm fails with
 `CryptoUnsupportedAlgorithm`; it does not silently select a different algorithm
 or password cost. Check that your runtime supplies the native algorithms you select.
+`Aead.supports(algorithm)` reports whether the selected backend implements that
+algorithm; host operations can still fail. Custom `Aead` services must implement it.
 
 `Kdf.defaultLimits` defines per-derivation resource ceilings. Backend construction
 validates overrides before exposing services. These are work limits, not a
