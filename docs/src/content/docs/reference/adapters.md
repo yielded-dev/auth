@@ -103,10 +103,11 @@ and reads fresh metadata on every run. `AuthPersistence.make(AppAuth, { validati
 disables runtime catalog reads, including catalog-dependent query optimizations.
 Use it only after validating the deployed schema, and rerun validation for every
 schema change. Mapping, row, and authority checks still run.
-Retain the Layer at the composition root and rebuild it after schema changes or
-failed initialization. Canceling one caller leaves setup running for other waiting
-callers. Interrupted setup requires rebuilding the Layer before storage operations
-resume. Cookie-cached and anonymous session reads do not trigger initialization.
+Build persistence in the same scope as its SQL client and rebuild it after schema
+changes or failed initialization. Canceling one caller leaves setup running for
+other waiting callers. Interrupted setup requires rebuilding the Layer before
+storage operations resume. Cookie-cached and anonymous session reads do not
+trigger initialization.
 
 Composition supports password sign-in, registration and management, email address
 verification and changes, phone sign-in, passkey sign-in and management, OAuth
@@ -149,86 +150,62 @@ combine auth and application writes under one owner. Credentials and lifecycle
 events are released only after that owner commits. An unknown outcome does not
 authorize repeating credential issuance or delivery.
 
-### Request-local SQL and Hyperdrive
+### Workers and request-scoped SQL
 
-A shared persistence Layer can use an Effect SQL client whose connection acquirer
-resolves a provider from the invoking fiber. Composed initialization preserves
-request-local services while retaining its configured dependencies and lifetime.
-It does not retain the first request's connection or transaction. Use the same
-schema and SQL dialect for every request served by that Layer.
+Share `WorkerdServices` across requests to retain its KDF admission limits. Build
+auth and persistence per request with one SQL client, shared by auth, application
+queries, and explicit coordinators. Workers [TCP sockets belong to the request](https://developers.cloudflare.com/workers/runtime-apis/tcp-sockets/#considerations),
+whether connecting directly or through Hyperdrive.
 
-On Workers, [create the physical client inside each request](https://developers.cloudflare.com/hyperdrive/concepts/connection-lifecycle/).
-This direct Effect SQL setup keeps only a logical client at the composition root:
+In `./schema`, use `AuthPersistence.make(AppAuth, { validation: "skip" })` after
+running `Persistence.validate` with a deployment connection. Apply the same option
+to explicit OAuth factories and validate their mappings before serving requests.
+`ApplicationLive` below supplies application claims, policy, keys, delivery, and
+[shared rate-limit storage](../guide/passwords#share-rate-limits).
+`handleRequest(request)` is the complete handler Effect returning a `Response`.
 
-```ts title="apps/server/request-sql.ts"
+```ts title="apps/server/worker.ts"
 import * as PgClient from "@effect/sql-pg/PgClient";
-import { Context, Effect, Layer, Redacted, Schema } from "effect";
-import { Reactivity } from "effect/reactivity";
-import { SqlClient } from "effect/sql";
-import { ConnectionError, SqlError, UnknownError } from "effect/sql/SqlError";
+import * as WorkerdServices from "@yielded/auth/WorkerdServices";
+import { Effect, Layer, ManagedRuntime, Redacted } from "effect";
+import { AppAuth } from "./auth";
+import { ApplicationLive } from "./application";
+import { handleRequest } from "./handler";
+import { Persistence, storage } from "./schema";
 
-export const RequestSqlClient = Context.Reference<SqlClient.SqlClient | undefined>(
-  "app/RequestSqlClient",
-  { defaultValue: () => undefined },
+const runtime = ManagedRuntime.make(WorkerdServices.layer);
+const AuthLive = AppAuth.layer.pipe(
+  Layer.provide(Persistence.layer),
+  Layer.provide(ApplicationLive),
+  Layer.provide(Persistence.Config.layer(storage)),
 );
 
-const Committed = Schema.Struct({ command: Schema.Literal("COMMIT") });
+export default {
+  fetch(request: Request, env: { HYPERDRIVE: { connectionString: string } }) {
+    const SqlLive = PgClient.layerFrom(
+      PgClient.makeClient({ url: Redacted.make(env.HYPERDRIVE.connectionString) }),
+    );
+    const RequestLive = AuthLive.pipe(Layer.provideMerge(SqlLive));
 
-export const SqlLive = Layer.effect(
-  SqlClient.SqlClient,
-  SqlClient.make({
-    compiler: PgClient.makeCompiler(),
-    spanAttributes: [],
-    releaseSavepoint: (name) => `RELEASE SAVEPOINT ${name}`,
-    commit: (connection) =>
-      connection.executeRaw("COMMIT", []).pipe(
-        Effect.flatMap(Schema.decodeUnknownEffect(Committed)),
-        Effect.asVoid,
-        Effect.catchTag("SchemaError", (cause) =>
-          Effect.fail(SqlError.make({ reason: UnknownError.make({ cause, operation: "commit" }) })),
-        ),
-      ),
-    acquirer: Effect.gen(function* () {
-      const client = yield* RequestSqlClient;
-      if (client === undefined)
-        return yield* SqlError.make({
-          reason: ConnectionError.make({ cause: "No request SQL client" }),
-        });
-      return yield* client.reserve;
-    }),
-  }),
-).pipe(Layer.provide(Reactivity.layer));
+    return runtime.runPromise(
+      handleRequest(request).pipe(Effect.provide(RequestLive, { local: true })),
+      { signal: request.signal },
+    );
+  },
+};
 ```
 
-Provide `SqlLive` to persistence instead of a global physical client. Build
-composed persistence with `{ validation: "skip" }`, and use the same option on
-explicit OAuth factories. Inside each request, supply its client to the complete
-handler Effect, `handleRequest`:
+`{ local: true }` gives each request an independent Layer build and scope, while
+the shared runtime supplies `WorkerdServices`. `PgClient.makeClient` opens one
+physical client; `layerFrom` exposes it as both `PgClient` and `SqlClient`. The
+request scope closes it on success, failure, or interruption. Finish SQL work
+inside the handler Effect; a returned response stream cannot keep using this
+client after the Effect completes.
 
-```ts
-const response = Effect.scoped(
-  Effect.gen(function* () {
-    const client = yield* PgClient.makeClient({
-      url: Redacted.make(env.HYPERDRIVE.connectionString),
-    });
-    return yield* handleRequest.pipe(Effect.provideService(RequestSqlClient, client));
-  }),
-).pipe(Effect.provide(Reactivity.layer));
-```
-
-Enable Workers’ `nodejs_compat` flag for the PostgreSQL driver.
-Run `response` through the shared runtime and await it within the Worker handler.
-The request scope closes the physical client on success, failure, or interruption.
-The logical client's transactions reserve one connection through commit or rollback.
-Its commit check rejects PostgreSQL's `ROLLBACK` completion tag for an aborted
-transaction, even when application code caught the statement error.
-Use that logical client for application SQL and explicit coordinators too; do not
-mix its transaction owner with the underlying request client's transaction owner.
-
+Enable Workers’ `nodejs_compat` flag for the PostgreSQL driver. For a direct
+connection, use your database URL in place of the Hyperdrive connection string.
 Configure the auth Hyperdrive binding with [query caching disabled](https://developers.cloudflare.com/hyperdrive/concepts/query-caching/)
-so session, credential, and authority reads observe current state. Run validation
-with a deployment connection before serving requests; skipping it does not verify
-that a new database has the required constraints.
+so session, credential, and authority reads observe current state.
 
 ### Mix composed and explicit services
 
@@ -504,7 +481,7 @@ with the deployment `SqlClient` first; it checks physical columns and unique key
 without crypto or hooks. Validation is enabled by default. Coordinators accept
 `{ mapping, validation: "skip" }` for the same runtime policy. Skip mode retains
 mapping validation and uses conservative queries instead of catalog-based joins.
-For a shared Worker Layer, use the [request-local SQL setup](#request-local-sql-and-hyperdrive).
+On Workers, build these services with the [request-scoped SQL client](#workers-and-request-scoped-sql).
 
 Describe tables with `OAuthPersistence.table` and map columns, row codecs, subject
 IDs, authority policy, and required unique keys. `OAuthPersistence.clock` supplies

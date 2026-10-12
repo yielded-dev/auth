@@ -284,8 +284,8 @@ export interface BoundPersistence<
   /** Stateful sessions and OAuth-only stateless sessions are supported. Other session
    * configurations fail acquisition with PersistenceConfigurationError.
    * Capture dependencies at acquisition; configure storage once on the first operation.
-   * Request-local services remain visible during initialization. Physical metadata
-   * validation runs by default unless make receives `{ validation: "skip" }`.
+   * For request-scoped SQL clients, acquire persistence in the same request scope.
+   * Physical metadata validation runs unless make receives `{ validation: "skip" }`.
    * Initialization failures become that port's unavailable error until reacquisition.
    * Canceling a caller leaves initialization running for other waiting callers;
    * interrupted initialization requires layer reacquisition before operations resume.

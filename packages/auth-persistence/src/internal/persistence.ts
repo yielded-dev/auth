@@ -1,6 +1,6 @@
 import { EmailAddressPersistence, EmailUnavailable } from "@yielded/auth/Email";
 import type { LifecycleHooks } from "@yielded/auth/Hooks";
-import { CurrentCommitJournal, hasCommitScope } from "@yielded/auth/Hooks";
+import { hasCommitScope } from "@yielded/auth/Hooks";
 import {
   OAuthConnectedPersistence,
   OAuthConnectedRevocations,
@@ -57,7 +57,7 @@ import {
 import { makeNativePendingAuthenticationServices } from "./session-native-login";
 import { makeNativeStatefulSessionServices } from "./session-native-stateful";
 import { makeNativeSessionStepUpServices } from "./session-native-step-up";
-import { CurrentSqlCommit, SqlBatchCommit, SqlNativeCommit } from "./sql-commit";
+import { SqlBatchCommit } from "./sql-commit";
 import { requireStandalone } from "./standalone";
 import { makeMappings } from "./storage-mapping";
 import {
@@ -537,30 +537,16 @@ export const createPersistence = <T extends object, R, Database extends object =
         const client = Context.get(captured, SqlClient.SqlClient);
         const started = yield* Ref.make(false);
 
-        // Keep request-local connection providers visible, while configured services
-        // win over caller overrides. Setup owns the persistence scope and must never
-        // capture the first caller's transaction or commit journal.
-        // cached discards interrupted runs. Claim the sole attempt so abandoning all
-        // waiters cannot restart setup, even while its finalizers are still running.
+        // Construction uses the layer's exact environment and lifetime, never the
+        // first operation's SQL transaction, service overrides, or request scope.
+        // cached shares active waiters and completed failures, but discards interrupted
+        // runs. Claim the sole attempt before building so abandoning all waiters cannot
+        // restart partially completed setup, even while its finalizers are still running.
         const initialize = yield* Effect.cached(
           Effect.flatMap(Ref.getAndSet(started, true), (alreadyStarted) =>
             alreadyStarted
               ? Effect.succeed(undefined)
-              : Layer.buildWithScope(services, scope).pipe(
-                  Effect.updateContext((current: Context.Context<never>) =>
-                    Context.merge(
-                      current.pipe(
-                        Context.omit(
-                          CurrentSqlCommit,
-                          CurrentCommitJournal,
-                          SqlNativeCommit,
-                          client.transactionService,
-                        ),
-                      ),
-                      captured,
-                    ),
-                  ),
-                ),
+              : Layer.buildWithScope(services, scope).pipe(Effect.setContext(captured)),
           ),
         );
 

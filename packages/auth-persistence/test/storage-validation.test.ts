@@ -3,15 +3,14 @@ import * as SqliteClient from "@effect/sql-sqlite-node/SqliteClient";
 import { it } from "@effect/vitest";
 import { Auth, Password, Sessions } from "@yielded/auth";
 import { SubjectId } from "@yielded/auth/Schema";
-import { Context, Effect, Layer, Schema } from "effect";
+import { Effect, Layer, Schema } from "effect";
 import { Reactivity } from "effect/reactivity";
 import { SqlClient, Statement } from "effect/sql";
-import { ConnectionError, SqlError } from "effect/sql/SqlError";
 import { expect } from "vite-plus/test";
 
 import { AuthPersistence } from "../src/index";
 
-const app = Auth.make("test/request-sql", {
+const app = Auth.make("test/storage-validation", {
   claims: Schema.Struct({}),
   strategies: { password: Password.make() },
   sessions: Sessions.stateful(),
@@ -39,7 +38,7 @@ const requirement = Sessions.AuthenticationRequirement.make({
   maximumAgeMillis: 60_000,
 });
 
-const persistence = AuthPersistence.make(app);
+const persistence = AuthPersistence.make(app, { validation: "skip" });
 
 const storage = persistence.managed({
   prefix: "request_auth",
@@ -74,59 +73,8 @@ const migrate = Effect.fnUntraced(function* (revision: string) {
   yield* sql`insert into subjects values ('member', 1, ${revision})`;
 });
 
-const RequestClient = Context.Reference<SqlClient.SqlClient | undefined>("test/RequestClient", {
-  defaultValue: () => undefined,
-});
-
-const requestSql = Layer.effect(
-  SqlClient.SqlClient,
-  SqlClient.make({
-    compiler: Statement.makeCompilerSqlite(),
-    spanAttributes: [],
-    acquirer: Effect.gen(function* () {
-      const client = yield* RequestClient;
-
-      if (client === undefined)
-        return yield* new SqlError({
-          reason: new ConnectionError({ cause: "No request SQL client" }),
-        });
-
-      return yield* client.reserve;
-    }),
-  }),
-).pipe(Layer.provide(Reactivity.layer));
-
 const capture = Effect.flatMap(Sessions.AuthenticationAuthority, (authority) =>
   authority.capture(SubjectId.make("member"), []),
-);
-
-// https://github.com/yielded-dev/auth/issues/200: the first lazy build dropped
-// request services; subsequent operations must also use their own connection.
-it.effect("preserves request-local SQL during initialization and across concurrent requests", () =>
-  Effect.gen(function* () {
-    const first = yield* SqliteClient.make({ filename: ":memory:" });
-    const second = yield* SqliteClient.make({ filename: ":memory:" });
-
-    yield* migrate("first").pipe(Effect.provideService(SqlClient.SqlClient, first));
-    yield* migrate("second").pipe(Effect.provideService(SqlClient.SqlClient, second));
-
-    const services = yield* Layer.build(
-      persistence.layer.pipe(
-        Layer.provide(persistence.Config.layer(storage)),
-        Layer.provide(requestSql),
-        Layer.provide(NodeCrypto.layer),
-      ),
-    );
-
-    const read = (client: SqlClient.SqlClient) =>
-      capture.pipe(Effect.provide(services), Effect.provideService(RequestClient, client));
-
-    expect((yield* read(first)).revision.securityRevision).toBe("first");
-    const results = yield* Effect.all([read(first), read(second)], { concurrency: 2 });
-
-    expect(results.map((result) => result.revision.securityRevision)).toEqual(["first", "second"]);
-    expect((yield* capture.pipe(Effect.provide(services), Effect.result))._tag).toBe("Failure");
-  }).pipe(Effect.provide(Reactivity.layer)),
 );
 
 // Explicit request: runtime skip must avoid catalog reads, while standalone
@@ -136,15 +84,11 @@ it.effect("skips runtime catalog probes and validates physical storage independe
     const sql = yield* SqliteClient.make({ filename: ":memory:" });
 
     yield* migrate("current").pipe(Effect.provideService(SqlClient.SqlClient, sql));
-    const runtime = AuthPersistence.make(app, { validation: "skip" });
-    const config = runtime.Config.layer(storage);
+    const config = persistence.Config.layer(storage);
 
-    const services = yield* Layer.build(
-      runtime.layer.pipe(
-        Layer.provide(config),
-        Layer.provide(requestSql),
-        Layer.provide(NodeCrypto.layer),
-      ),
+    const PersistenceLive = persistence.layer.pipe(
+      Layer.provide(config),
+      Layer.provide(NodeCrypto.layer),
     );
 
     const rejectCatalog = (statement: Statement.Statement<unknown>) => {
@@ -157,15 +101,15 @@ it.effect("skips runtime catalog probes and validates physical storage independe
 
     expect(
       (yield* capture.pipe(
-        Effect.provide(services),
-        Effect.provideService(RequestClient, sql),
+        Effect.provide(PersistenceLive, { local: true }),
+        Effect.provideService(SqlClient.SqlClient, sql),
         Effect.provideService(Statement.CurrentTransformer, rejectCatalog),
       )).revision.securityRevision,
     ).toBe("current");
     yield* sql`drop table request_auth_credentials`;
     yield* sql`create table request_auth_credentials (credential_id text, subject_id text, revision text, active integer)`;
 
-    const validate = runtime.validate.pipe(
+    const validate = persistence.validate.pipe(
       Effect.provide(config),
       Effect.provideService(SqlClient.SqlClient, sql),
     );

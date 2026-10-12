@@ -99,10 +99,11 @@ yourself. The [Effect SQL app](https://github.com/yielded-dev/auth/tree/main/exa
 runs on SQLite and PostgreSQL. Keep mapped subject IDs canonical and allow the
 adapter to validate the database's columns and unique keys; see
 [mapping requirements](../reference/adapters#sql-session-verification).
-For Workers with Hyperdrive, use a [request-local SQL provider](../reference/adapters#request-local-sql-and-hyperdrive)
-with the shared auth Layer. Run `Persistence.validate` during deployment or CI,
-then use `AuthPersistence.make(AppAuth, { validation: "skip" })` to avoid catalog
-queries in each isolate.
+For Workers, share `WorkerdServices` across requests and build auth and persistence
+with [one SQL client per request](../reference/adapters#workers-and-request-scoped-sql).
+Run `Persistence.validate` during deployment or CI, then use
+`AuthPersistence.make(AppAuth, { validation: "skip" })` to avoid catalog queries
+in each request.
 
 OAuth sign-in and retained provider access use the same managed or mapped composition.
 Applications with custom registration, login linking, or SQL authorization predicates
