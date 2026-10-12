@@ -26,9 +26,7 @@ on SQLite/D1 or PostgreSQL. Its operations require standalone commits.
 
 Applications own subject provisioning, policy, claims, delivery, and their database
 connection and migration runner. On Workers, build [auth and persistence per request](../../docs/src/content/docs/reference/adapters.md#workers-and-request-scoped-sql)
-with that request's SQL client and shared `WorkerdServices`. Run `Persistence.validate`
-or `OAuthPersistence.validate(mapping)` with a deployment client before selecting
-`{ validation: "skip" }` at runtime.
+with that request's SQL client and shared `WorkerdServices`.
 
 The composed Layer covers password sign-in and management, email address verification
 and changes, phone sign-in, passkey sign-in and management, OAuth sign-in with optional

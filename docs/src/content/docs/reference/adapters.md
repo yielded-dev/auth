@@ -97,17 +97,11 @@ changes. SQLite WASM and D1 take a `migrations` map instead of a folder. Direct
 Effect SQL applications supply their own migration runner.
 
 The composed Layer validates mapped columns and unique keys on its first storage
-operation. Run `Persistence.validate` with `Persistence.Config` and `SqlClient` in
-deploy or CI to check them independently; it needs no crypto or strategy services
-and reads fresh metadata on every run. `AuthPersistence.make(AppAuth, { validation: "skip" })`
-disables runtime catalog reads, including catalog-dependent query optimizations.
-Use it only after validating the deployed schema, and rerun validation for every
-schema change. Mapping, row, and authority checks still run.
-Build persistence in the same scope as its SQL client and rebuild it after schema
-changes or failed initialization. Canceling one caller leaves setup running for
-other waiting callers. Interrupted setup requires rebuilding the Layer before
-storage operations resume. Cookie-cached and anonymous session reads do not
-trigger initialization.
+operation. Build persistence in the same scope as its SQL client and rebuild it
+after schema changes or failed initialization. Canceling one caller leaves setup
+running for other waiting callers. Interrupted setup requires rebuilding the Layer
+before storage operations resume. Cookie-cached and anonymous session reads do
+not trigger initialization.
 
 Composition supports password sign-in, registration and management, email address
 verification and changes, phone sign-in, passkey sign-in and management, OAuth
@@ -157,9 +151,8 @@ auth and persistence per request with one SQL client, shared by auth, applicatio
 queries, and explicit coordinators. Workers [TCP sockets belong to the request](https://developers.cloudflare.com/workers/runtime-apis/tcp-sockets/#considerations),
 whether connecting directly or through Hyperdrive.
 
-In `./schema`, use `AuthPersistence.make(AppAuth, { validation: "skip" })` after
-running `Persistence.validate` with a deployment connection. Apply the same option
-to explicit OAuth factories and validate their mappings before serving requests.
+This example uses `AuthPersistence.make(AppAuth)` from `@yielded/auth-persistence`
+for direct Effect SQL; `./schema` exports its `Persistence` and `storage` mapping.
 `ApplicationLive` below supplies application claims, policy, keys, delivery, and
 [shared rate-limit storage](../guide/passwords#share-rate-limits).
 `handleRequest(request)` is the complete handler Effect returning a `Response`.
@@ -475,12 +468,6 @@ not MySQL or D1 batches. Drizzle applications use their driver entrypoints.
 The [Effect SQL consumer](https://github.com/yielded-dev/auth/tree/main/examples/persistence-sql)
 has no Drizzle dependency.
 
-Each direct `makeOAuth*Services(mapping, { validation: "skip" })` factory can skip
-physical catalog reads at construction. Run `OAuthPersistence.validate(mapping)`
-with the deployment `SqlClient` first; it checks physical columns and unique keys
-without crypto or hooks. Validation is enabled by default. Coordinators accept
-`{ mapping, validation: "skip" }` for the same runtime policy. Skip mode retains
-mapping validation and uses conservative queries instead of catalog-based joins.
 On Workers, build these services with the [request-scoped SQL client](#workers-and-request-scoped-sql).
 
 Describe tables with `OAuthPersistence.table` and map columns, row codecs, subject

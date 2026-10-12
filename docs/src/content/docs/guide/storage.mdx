@@ -101,9 +101,6 @@ adapter to validate the database's columns and unique keys; see
 [mapping requirements](../reference/adapters#sql-session-verification).
 For Workers, share `WorkerdServices` across requests and build auth and persistence
 with [one SQL client per request](../reference/adapters#workers-and-request-scoped-sql).
-Run `Persistence.validate` during deployment or CI, then use
-`AuthPersistence.make(AppAuth, { validation: "skip" })` to avoid catalog queries
-in each request.
 
 OAuth sign-in and retained provider access use the same managed or mapped composition.
 Applications with custom registration, login linking, or SQL authorization predicates

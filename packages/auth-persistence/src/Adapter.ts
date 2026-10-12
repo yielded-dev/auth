@@ -147,7 +147,6 @@ export type {
   ClaimsCodec,
   Definition,
   PersistenceApi,
-  PersistenceOptions,
 } from "./internal/configuration";
 
 export {

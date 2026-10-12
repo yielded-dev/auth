@@ -37,7 +37,6 @@ import {
   type PasskeyFeature,
   type PasskeyRequirement,
   type OAuthFeature,
-  type PersistenceOptions,
 } from "./configuration";
 import { makeNativeEmailAddressServices } from "./email-native";
 import { PersistenceMappingError } from "./mapping-error";
@@ -69,7 +68,7 @@ import {
 import {
   validateStorageBatch,
   hasManagedSqliteCleanupKey,
-  withStorageValidationOptions,
+  withStorageValidation,
   type StorageValidation,
 } from "./storage-validation";
 
@@ -113,7 +112,6 @@ export const createPersistence = <T extends object, R, Database extends object =
 ): PersistenceApi<T, R> => {
   const make = <C extends ClaimsCodec, const Id extends string, const A extends Definition<C, Id>>(
     auth: A & Definition<C, Id>,
-    options?: PersistenceOptions,
   ) => {
     const features = Object.values(auth.strategies).flatMap((strategy) =>
       strategy.persistence === undefined ? [] : [strategy.persistence],
@@ -284,66 +282,54 @@ export const createPersistence = <T extends object, R, Database extends object =
       return result;
     };
 
-    const configuration = Effect.gen(function* () {
-      const storage = yield* ConfigKey;
-      const client = yield* SqlClient.SqlClient;
-
-      const dialect = client.onDialectOrElse({
-        pg: () => "pg" as const,
-        sqlite: () => "sqlite" as const,
-        orElse: () => undefined,
-      });
-
-      if (dialect === undefined)
-        return yield* configError("Use an explicit adapter for this SQL dialect");
-      if (
-        features.some(
-          (feature) =>
-            ("lifecycle" in feature && feature.lifecycle) ||
-            (feature.kind === "email" && !feature.addresses),
-        )
-      )
-        return yield* configError(
-          "Use explicit services for strategies without composed persistence support",
-        );
-      if (storage.namespace !== auth.namespace)
-        return yield* configError(
-          "Persistence configuration belongs to a different Auth definition",
-        );
-      const validations: StorageValidation[] = [];
-
-      for (const role of roles) {
-        const table = (storage.schema as Partial<Record<StorageRole, T>>)[role];
-
-        if (table === undefined) return yield* configError(`Missing ${role} table`);
-        const description = backend.describe(table);
-        const columns = description.columns;
-
-        for (const name of Object.keys(storageTables[role].columns)) {
-          if (columns[name] === undefined)
-            return yield* configError(`Missing ${role}.${name} column`);
-        }
-        validations.push({ table: description, required: storageTables[role].unique });
-      }
-      validations.push({
-        table: backend.describe(storage.subjects.table as T),
-        required: [[storage.subjects.id]],
-      });
-      yield* validateStorageBatch(dialect, validations);
-
-      return { storage, dialect };
-    });
-
-    const validate = configuration.pipe(
-      Effect.asVoid,
-      withStorageValidationOptions({ validation: "check" }),
-    );
-
     const services = Layer.effectContext(
       Effect.flatMap(backend.acquire, (database) =>
         Effect.gen(function* () {
-          const { storage, dialect } = yield* configuration;
+          const storage = yield* ConfigKey;
+          const client = yield* SqlClient.SqlClient;
 
+          const dialect = client.onDialectOrElse({
+            pg: () => "pg" as const,
+            sqlite: () => "sqlite" as const,
+            orElse: () => undefined,
+          });
+
+          if (dialect === undefined)
+            return yield* configError("Use an explicit adapter for this SQL dialect");
+          if (
+            features.some(
+              (feature) =>
+                ("lifecycle" in feature && feature.lifecycle) ||
+                (feature.kind === "email" && !feature.addresses),
+            )
+          )
+            return yield* configError(
+              "Use explicit services for strategies without composed persistence support",
+            );
+          if (storage.namespace !== auth.namespace)
+            return yield* configError(
+              "Persistence configuration belongs to a different Auth definition",
+            );
+          const validations: StorageValidation[] = [];
+
+          for (const role of roles) {
+            const table = (storage.schema as Partial<Record<StorageRole, T>>)[role];
+
+            if (table === undefined) return yield* configError(`Missing ${role} table`);
+            const description = backend.describe(table);
+            const columns = description.columns;
+
+            for (const name of Object.keys(storageTables[role].columns)) {
+              if (columns[name] === undefined)
+                return yield* configError(`Missing ${role}.${name} column`);
+            }
+            validations.push({ table: description, required: storageTables[role].unique });
+          }
+          validations.push({
+            table: backend.describe(storage.subjects.table as T),
+            required: [[storage.subjects.id]],
+          });
+          yield* validateStorageBatch(dialect, validations);
           const nativeTables = backend.nativeTables(database);
           const mappings = yield* makeMappings(storage, nativeTables);
 
@@ -517,7 +503,7 @@ export const createPersistence = <T extends object, R, Database extends object =
           // The checked capability metadata above determines exactly these service keys.
           return context as Context.Context<Ports<C, Id, A>>;
         }).pipe(Effect.provideService(SqlBatchCommit, backend.batch?.(database))),
-      ).pipe(withStorageValidationOptions(options)),
+      ).pipe(withStorageValidation),
     ).pipe(Layer.provide(hooksLayer));
 
     const layer = Layer.effectContext(
@@ -861,7 +847,6 @@ export const createPersistence = <T extends object, R, Database extends object =
       Config,
       Provisioning: ProvisioningKey,
       layer,
-      validate,
       managed: <N, Instant = number>(options: {
         readonly subjects: SubjectOptions<T, N>;
         readonly tables?: Partial<Record<Roles<C, Id, A>, T>>;
