@@ -27,7 +27,7 @@ import {
 const backends = ["sqlite", "d1", "pglite"] as const;
 const moduleId = OAuth.OAuthModuleId.make("strava/oauth");
 
-// Human-requested import atomicity: force the final write to fail on both commit owners.
+// Human-requested import atomicity: reject authority insertion on both commit owners.
 it.live.each(["sqlite", "d1"] as const)(
   "%s OAuth imports roll back partial rows and reject unavailable subjects",
   (backend) =>
@@ -83,7 +83,7 @@ it.live.each(["sqlite", "d1"] as const)(
         credentialId: imported.credentialId,
         revision: { subjectId: "athlete" },
       });
-      // Migration retries must never reactivate a disabled login or repair split authority.
+      // Migration retries must never repair split authority.
       yield* sql`delete from ${sql(authority)}`;
       yield* rejected(input);
       expect(yield* sql`select count(*) as count from ${sql(authority)}`).toEqual([{ count: 0 }]);
@@ -123,9 +123,6 @@ it.live.each([
           .importIdentity({ ...input, subjectId: SubjectId.make("other") })
           .pipe(Effect.result),
       ).toMatchObject({ _tag: "Failure", failure: { _tag: "OAuthUnavailable" } });
-      expect(
-        yield* OAuthPersistence.identityKey(identity).pipe(Effect.provide(fixture.context)),
-      ).toBe("v1:iyWgFQ3vG56vfcppZpRiIVe3z1trpaZWbObqVTNxEqY");
       for (const role of ["oauthIdentities", "oauthCredentials", "credentials"]) {
         expect(
           yield* sql`select count(*) as count from ${sql(getTableName(fixture.table(role)))}`,

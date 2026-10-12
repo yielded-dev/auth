@@ -51,7 +51,7 @@ export const makeNativeOAuthIdentityImports = Effect.fnUntraced(function* (
       const key = yield* oauthIdentityKey(input);
 
       const found =
-        yield* sql`select ${credential.fields("c_")} from ${credential.name} where ${exact(c.identityKey, key)}`;
+        yield* sql`select 1 from ${credential.name} where ${exact(c.identityKey, key)} limit 2`;
 
       invariant(found.length <= 1);
       if (found.length !== 0) {
