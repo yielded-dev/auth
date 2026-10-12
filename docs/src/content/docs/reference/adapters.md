@@ -97,8 +97,10 @@ changes. SQLite WASM and D1 take a `migrations` map instead of a folder. Direct
 Effect SQL applications supply their own migration runner.
 
 The composed Layer validates mapped columns and unique keys on its first storage
-operation. Build persistence in the same scope as its SQL client and rebuild it
-after schema changes or failed initialization. Canceling one caller leaves setup
+operation. Its configured SQL client's connection acquirer can read services from
+the invoking request during initialization and subsequent operations. Build
+persistence in the same scope as its SQL client and rebuild it after schema changes
+or failed initialization. Canceling one caller leaves setup
 running for other waiting callers. Interrupted setup requires rebuilding the Layer
 before storage operations resume. Cookie-cached and anonymous session reads do
 not trigger initialization.
@@ -146,9 +148,10 @@ authorize repeating credential issuance or delivery.
 
 ### Workers and request-scoped SQL
 
-Share `WorkerdServices` across requests to retain its KDF admission limits. Build
-auth and persistence per request with one SQL client, shared by auth, application
-queries, and explicit coordinators. Workers [TCP sockets belong to the request](https://developers.cloudflare.com/workers/runtime-apis/tcp-sockets/#considerations),
+Share `WorkerdServices` across requests to retain its KDF admission limits. The
+simplest composition builds auth and persistence per request with one SQL client,
+shared by auth, application queries, and explicit coordinators. Workers
+[TCP sockets belong to the request](https://developers.cloudflare.com/workers/runtime-apis/tcp-sockets/#considerations),
 whether connecting directly or through Hyperdrive.
 
 This example uses `AuthPersistence.make(AppAuth)` from `@yielded/auth-persistence`
@@ -199,6 +202,11 @@ Enable Workers’ `nodejs_compat` flag for the PostgreSQL driver. For a direct
 connection, use your database URL in place of the Hyperdrive connection string.
 Configure the auth Hyperdrive binding with [query caching disabled](https://developers.cloudflare.com/hyperdrive/concepts/query-caching/)
 so session, credential, and authority reads observe current state.
+
+Applications that already share persistence Layers can supply a logical `SqlClient`
+whose acquirer resolves the invoking request's scoped physical client. Initialization
+and later operations use that request context. Keep the shared Layer tied to one
+database and mapping; schema checks run once per Layer, not once per connection.
 
 ### Mix composed and explicit services
 
@@ -365,8 +373,9 @@ reporting pagination exhaustion.
 Keep mapped subject IDs canonical through every column codec. PostgreSQL UUID
 keys can coexist with text subject references; use the same lowercase UUID spelling
 throughout. Logical column types describe driver values, not migration DDL.
-Permit database catalog reads: explicit factories validate required keys and column
-compatibility at acquisition, while composed storage validates on its first operation.
+Permit database catalog reads: explicit session factories validate required keys and
+column compatibility at acquisition; composed storage and direct OAuth factories
+validate on their first operation.
 Schema declarations do not install constraints. Apply migrations before use and
 reacquire persistence Layers after schema changes.
 
@@ -468,7 +477,11 @@ not MySQL or D1 batches. Drizzle applications use their driver entrypoints.
 The [Effect SQL consumer](https://github.com/yielded-dev/auth/tree/main/examples/persistence-sql)
 has no Drizzle dependency.
 
-On Workers, build these services with the [request-scoped SQL client](#workers-and-request-scoped-sql).
+Direct OAuth factories capture their dependencies at construction and defer database
+access until their first operation. Required schema checks still run before that
+operation; a missing key fails with `OAuthUnavailable` before any write. Rebuild the
+services after schema changes or failed validation. On Workers, supply a
+[request-scoped SQL connection](#workers-and-request-scoped-sql).
 
 Describe tables with `OAuthPersistence.table` and map columns, row codecs, subject
 IDs, authority policy, and required unique keys. `OAuthPersistence.clock` supplies

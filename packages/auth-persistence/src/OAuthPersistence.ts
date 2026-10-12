@@ -1,5 +1,7 @@
-/** Direct PostgreSQL and SQLite owners for upstream OAuth. Provider exchange stays outside these transactions. */
-import { hasCommitScope, type LifecycleHooks } from "@yielded/auth/Hooks";
+/** Direct PostgreSQL and SQLite owners for upstream OAuth. Factories capture
+ * dependencies at construction and validate physical storage on first use.
+ * Provider exchange stays outside these transactions. */
+import { CurrentCommitJournal, hasCommitScope, type LifecycleHooks } from "@yielded/auth/Hooks";
 import {
   OAuthAccountsPersistence,
   OAuthSignInPersistence,
@@ -9,7 +11,7 @@ import {
   OAuthUnavailable,
 } from "@yielded/auth/OAuth";
 import { reportAuthDiagnostic } from "@yielded/auth/Persistence";
-import { type Context, type Crypto, Effect, Predicate, Schema } from "effect";
+import { Context, type Crypto, Effect, Predicate, Schema } from "effect";
 import { SqlClient } from "effect/sql";
 
 import { PersistenceConfigurationError } from "./internal/configuration";
@@ -33,7 +35,7 @@ import {
 import { makeNativeOAuthSignInServices } from "./internal/oauth/native-sign-in";
 import { type OAuthNativeReadMapping } from "./internal/oauth/native-state";
 import { captureOAuthMapping } from "./internal/oauth/state";
-import { makeSqlCommitExecutor } from "./internal/sql-commit";
+import { CurrentSqlCommit, makeSqlCommitExecutor, SqlNativeCommit } from "./internal/sql-commit";
 import { sql, SqlExpression } from "./internal/sql-expression";
 import type {
   OAuthConnectedMapping,
@@ -90,18 +92,54 @@ const acquire = Effect.gen(function* () {
   return { client, tables: makeNativeSqlTables(client) };
 });
 
-const using = <M, A, E, R>(
+const using = <M, A>(
   original: M,
-  make: (tables: ReturnType<typeof makeNativeSqlTables>, mapping: M) => Effect.Effect<A, E, R>,
+  make: (
+    tables: ReturnType<typeof makeNativeSqlTables>,
+    mapping: M,
+  ) => Effect.Effect<A, OAuthUnavailable, Crypto.Crypto | LifecycleHooks | SqlClient.SqlClient>,
+  defer: (
+    run: <B>(
+      body: (services: A) => Effect.Effect<B, OAuthUnavailable>,
+    ) => Effect.Effect<B, OAuthUnavailable>,
+  ) => NoInfer<A>,
 ) =>
   Effect.gen(function* () {
     const target = yield* acquire;
     const mapping = captureOAuthMapping(original);
+    const captured = yield* Effect.context<Crypto.Crypto | LifecycleHooks | SqlClient.SqlClient>();
+    const executor = yield* makeSqlCommitExecutor(() => OAuthUnavailable.make({}));
 
-    yield* validateSqlStorage(mapping).pipe(Effect.mapError(() => OAuthUnavailable.make({})));
+    // Physical checks and native read planning need the first request's connection.
+    // Only this read-only setup is cached; operations keep resolving their own
+    // connection. Preserve construction-time ownership, including explicit coordinators.
+    const initialize = yield* Effect.cached(
+      validateSqlStorage(mapping).pipe(
+        Effect.mapError(() => OAuthUnavailable.make({})),
+        Effect.andThen(make(target.tables, mapping)),
+        withStorageValidation,
+        Effect.updateContext((current: Context.Context<never>) =>
+          Context.merge(
+            current.pipe(
+              Context.omit(
+                CurrentSqlCommit,
+                CurrentCommitJournal,
+                SqlNativeCommit,
+                target.client.transactionService,
+              ),
+            ),
+            captured,
+          ),
+        ),
+      ),
+    );
 
-    return yield* make(target.tables, mapping);
-  }).pipe(withStorageValidation);
+    // Check the owner before touching the cache, so an invalid caller cannot bind
+    // the shared services or poison their first initialization attempt.
+    const services = executor.read(initialize);
+
+    return defer((body) => Effect.flatMap(services, body));
+  });
 
 const coordinate = <S, A, E, R, ES, RS>(
   make: Effect.Effect<S, ES, RS>,
@@ -126,8 +164,18 @@ export const makeOAuthSignInServices = <N>(
   OAuthUnavailable | PersistenceConfigurationError,
   Crypto.Crypto | LifecycleHooks | SqlClient.SqlClient
 > =>
-  using(mapping, (tables, value) =>
-    makeNativeOAuthSignInServices(tables, value as unknown as OAuthNativeReadMapping),
+  using(
+    mapping,
+    (tables, value) =>
+      makeNativeOAuthSignInServices(tables, value as unknown as OAuthNativeReadMapping),
+    (run) => ({
+      oauthSignInPersistence: {
+        issue: (input, prepare) => run((s) => s.oauthSignInPersistence.issue(input, prepare)),
+        consume: (input, prepare) => run((s) => s.oauthSignInPersistence.consume(input, prepare)),
+        resolve: (input) => run((s) => s.oauthSignInPersistence.resolve(input)),
+        cleanup: (input, prepare) => run((s) => s.oauthSignInPersistence.cleanup(input, prepare)),
+      },
+    }),
   );
 
 export const coordinateOAuthSignIn = <N, A, E, R>(
@@ -149,8 +197,22 @@ export const makeOAuthAccountsServices = <N>(
   OAuthUnavailable | PersistenceConfigurationError,
   Crypto.Crypto | LifecycleHooks | SqlClient.SqlClient
 > =>
-  using(mapping, (tables, value) =>
-    makeNativeOAuthAccountsServices(tables, value as unknown as OAuthNativeAccountsMapping),
+  using(
+    mapping,
+    (tables, value) =>
+      makeNativeOAuthAccountsServices(tables, value as unknown as OAuthNativeAccountsMapping),
+    (run) => ({
+      oauthAccountsPersistence: {
+        list: (input) => run((s) => s.oauthAccountsPersistence.list(input)),
+        capture: (input) => run((s) => s.oauthAccountsPersistence.capture(input)),
+        issue: (input, prepare) => run((s) => s.oauthAccountsPersistence.issue(input, prepare)),
+        consume: (input, prepare) => run((s) => s.oauthAccountsPersistence.consume(input, prepare)),
+        link: (input, prepare) => run((s) => s.oauthAccountsPersistence.link(input, prepare)),
+        readCredential: (input) => run((s) => s.oauthAccountsPersistence.readCredential(input)),
+        unlink: (input, prepare) => run((s) => s.oauthAccountsPersistence.unlink(input, prepare)),
+        cleanup: (input, prepare) => run((s) => s.oauthAccountsPersistence.cleanup(input, prepare)),
+      },
+    }),
   );
 
 export const coordinateOAuthAccounts = <N, A, E, R>(
@@ -172,11 +234,18 @@ export const makeOAuthRegistrationIntentServices = <N>(
   OAuthUnavailable | PersistenceConfigurationError,
   Crypto.Crypto | LifecycleHooks | SqlClient.SqlClient
 > =>
-  using(mapping, (tables, value) =>
-    makeNativeOAuthRegistrationIntentServices(
-      tables,
-      value as unknown as OAuthNativeRegistrationIntentMapping,
-    ),
+  using(
+    mapping,
+    (tables, value) =>
+      makeNativeOAuthRegistrationIntentServices(
+        tables,
+        value as unknown as OAuthNativeRegistrationIntentMapping,
+      ),
+    (run) => ({
+      oauthRegistrationIntents: {
+        issue: (input, prepare) => run((s) => s.oauthRegistrationIntents.issue(input, prepare)),
+      },
+    }),
   );
 
 export const coordinateOAuthRegistrationIntents = <N, A, E, R>(
@@ -198,8 +267,28 @@ export const makeOAuthConnectedServices = <N>(
   OAuthUnavailable | PersistenceConfigurationError,
   Crypto.Crypto | LifecycleHooks | SqlClient.SqlClient
 > =>
-  using(mapping, (tables, value) =>
-    makeNativeOAuthConnectedServices(tables, value as unknown as OAuthNativeConnectedMapping),
+  using(
+    mapping,
+    (tables, value) =>
+      makeNativeOAuthConnectedServices(tables, value as unknown as OAuthNativeConnectedMapping),
+    (run) => ({
+      oauthConnectedPersistence: {
+        read: (input) => run((s) => s.oauthConnectedPersistence.read(input)),
+        issue: (input, prepare) => run((s) => s.oauthConnectedPersistence.issue(input, prepare)),
+        consume: (input, prepare) =>
+          run((s) => s.oauthConnectedPersistence.consume(input, prepare)),
+        settle: (input, prepare) => run((s) => s.oauthConnectedPersistence.settle(input, prepare)),
+        list: (input) => run((s) => s.oauthConnectedPersistence.list(input)),
+        disconnect: (input, prepare) =>
+          run((s) => s.oauthConnectedPersistence.disconnect(input, prepare)),
+        claimRefresh: (input, prepare) =>
+          run((s) => s.oauthConnectedPersistence.claimRefresh(input, prepare)),
+        settleRefresh: (input, prepare) =>
+          run((s) => s.oauthConnectedPersistence.settleRefresh(input, prepare)),
+        cleanup: (input, prepare) =>
+          run((s) => s.oauthConnectedPersistence.cleanup(input, prepare)),
+      },
+    }),
   );
 
 export const coordinateOAuthConnected = <N, A, E, R>(
@@ -221,8 +310,16 @@ export const makeOAuthConnectedRevocationServices = <N>(
   OAuthUnavailable | PersistenceConfigurationError,
   Crypto.Crypto | LifecycleHooks | SqlClient.SqlClient
 > =>
-  using(mapping, (tables, value) =>
-    makeNativeOAuthRevocationServices(tables, value as unknown as OAuthNativeRevocationMapping),
+  using(
+    mapping,
+    (tables, value) =>
+      makeNativeOAuthRevocationServices(tables, value as unknown as OAuthNativeRevocationMapping),
+    (run) => ({
+      oauthConnectedRevocations: {
+        claim: (input, prepare) => run((s) => s.oauthConnectedRevocations.claim(input, prepare)),
+        settle: (input, prepare) => run((s) => s.oauthConnectedRevocations.settle(input, prepare)),
+      },
+    }),
   );
 
 export const coordinateOAuthConnectedRevocations = <N, A, E, R>(
@@ -244,11 +341,22 @@ export const makeOAuthRegistrationServices = <Registration, N>(
   OAuthUnavailable | PersistenceConfigurationError,
   Crypto.Crypto | LifecycleHooks | SqlClient.SqlClient
 > =>
-  using(mapping, (tables, value) =>
-    makeNativeOAuthRegistrationServices(
-      tables,
-      value as unknown as OAuthNativeRegistrationMapping<Registration>,
-    ),
+  using(
+    mapping,
+    (tables, value) =>
+      makeNativeOAuthRegistrationServices(
+        tables,
+        value as unknown as OAuthNativeRegistrationMapping<Registration>,
+      ),
+    (run) => ({
+      registrationAuthority: {
+        authentication: "first-confirmed-registration" as const,
+        read: (input) => run((s) => s.registrationAuthority.read(input)),
+        inspect: (input) => run((s) => s.registrationAuthority.inspect(input)),
+        register: (input, prepare) => run((s) => s.registrationAuthority.register(input, prepare)),
+        cleanup: (input, prepare) => run((s) => s.registrationAuthority.cleanup(input, prepare)),
+      },
+    }),
   );
 
 export const coordinateOAuthRegistration = <Id, Registration, N, A, E, R>(
