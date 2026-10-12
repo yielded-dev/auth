@@ -257,6 +257,12 @@ export interface TimestampOptions<Instant> {
   readonly codec: Schema.Codec<number, Instant>;
 }
 
+/** Physical validation is enabled by default. Skipping it requires an independently
+ * validated deployment schema and disables catalog-dependent query optimizations. */
+export interface PersistenceOptions {
+  readonly validation?: "check" | "skip";
+}
+
 export interface BoundPersistence<
   T extends object,
   R,
@@ -277,11 +283,12 @@ export interface BoundPersistence<
   readonly Provisioning: Context.Service<ProvisioningRequirement<A>, Provisioning<A>>;
   /** Stateful sessions and OAuth-only stateless sessions are supported. Other session
    * configurations fail acquisition with PersistenceConfigurationError.
-   * Capture dependencies at acquisition; validate SQL metadata and configure storage
-   * once on the first service operation. Initialization failures become that port's
-   * unavailable error until layer reacquisition. Canceling a caller leaves initialization
-   * running for other waiting callers; if initialization is interrupted, later operations
-   * remain unavailable until layer reacquisition.
+   * Capture dependencies at acquisition; configure storage once on the first operation.
+   * Request-local services remain visible during initialization. Physical metadata
+   * validation runs by default unless make receives `{ validation: "skip" }`.
+   * Initialization failures become that port's unavailable error until reacquisition.
+   * Canceling a caller leaves initialization running for other waiting callers;
+   * interrupted initialization requires layer reacquisition before operations resume.
    * Managed OAuth metadata/token-use authorizations bind policyRevision to the subject's
    * securityRevision; changes to application authorization policy must advance it.
    */
@@ -294,6 +301,14 @@ export interface BoundPersistence<
     | PasskeyRequirement<A>
     | SqlClient.SqlClient
     | R
+  >;
+  /** Validate physical columns and unique keys with the deployment/CI client.
+   * Always checks, even when runtime validation is skipped. Does not construct
+   * strategy services or require crypto; rerun after every schema change. */
+  readonly validate: Effect.Effect<
+    void,
+    PersistenceConfigurationError,
+    ConfigId<A["namespace"]> | SqlClient.SqlClient
   >;
   readonly managed: <N, Instant = number>(options: {
     readonly subjects: SubjectOptions<T, N>;
@@ -317,5 +332,6 @@ export interface PersistenceApi<T extends object, R = never> {
     const A extends Definition<C, Id>,
   >(
     auth: A & Definition<C, Id>,
+    options?: PersistenceOptions,
   ) => BoundPersistence<T, R, C, Id, A>;
 }

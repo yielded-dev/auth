@@ -12,7 +12,7 @@ import { reportAuthDiagnostic } from "@yielded/auth/Persistence";
 import { type Context, type Crypto, Effect, Predicate, Schema } from "effect";
 import { SqlClient } from "effect/sql";
 
-import { PersistenceConfigurationError } from "./internal/configuration";
+import { PersistenceConfigurationError, type PersistenceOptions } from "./internal/configuration";
 import { makeNativeSqlTables } from "./internal/native-sql-table";
 import {
   makeNativeOAuthAccountsServices,
@@ -50,7 +50,7 @@ import { validateSqlStorage } from "./internal/sql-storage-validation";
 import { Table } from "./internal/sql-table";
 import { requireStandalone } from "./internal/standalone";
 import type { StorageTable } from "./internal/storage-tables";
-import { withStorageValidation } from "./internal/storage-validation";
+import { withStorageValidationOptions } from "./internal/storage-validation";
 export * from "./internal/sql-oauth-model";
 export * from "./internal/sql-oauth-connected-model";
 export * from "./internal/oauth/native-layers";
@@ -93,6 +93,7 @@ const acquire = Effect.gen(function* () {
 const using = <M, A, E, R>(
   original: M,
   make: (tables: ReturnType<typeof makeNativeSqlTables>, mapping: M) => Effect.Effect<A, E, R>,
+  options?: PersistenceOptions,
 ) =>
   Effect.gen(function* () {
     const target = yield* acquire;
@@ -101,7 +102,22 @@ const using = <M, A, E, R>(
     yield* validateSqlStorage(mapping).pipe(Effect.mapError(() => OAuthUnavailable.make({})));
 
     return yield* make(target.tables, mapping);
-  }).pipe(withStorageValidation);
+  }).pipe((effect) => withStorageValidationOptions(effect, options));
+
+/** Validate explicit OAuth physical columns and unique keys in deploy/CI.
+ * Always reads fresh metadata, independent of runtime validation options. */
+export const validate = <N, Registration>(
+  mapping:
+    | OAuthSignInMapping<Table, Table, Table, Table, Table, N>
+    | OAuthAccountsMapping<Table, Table, Table, Table, Table, N>
+    | OAuthRegistrationIntentMapping<Table, Table, N>
+    | OAuthRegistrationMapping<Registration, Table, Table, Table, Table, Table, N>
+    | OAuthConnectedMapping<Table, Table, Table, Table, Table, N, Table>
+    | OAuthConnectedRevocationMapping<Table, Table, Table, N>,
+) =>
+  validateSqlStorage(mapping).pipe((effect) =>
+    withStorageValidationOptions(effect, { validation: "check" }),
+  );
 
 const coordinate = <S, A, E, R, ES, RS>(
   make: Effect.Effect<S, ES, RS>,
@@ -121,138 +137,172 @@ const coordinate = <S, A, E, R, ES, RS>(
 
 export const makeOAuthSignInServices = <N>(
   mapping: OAuthSignInMapping<Table, Table, Table, Table, Table, N>,
+  options?: PersistenceOptions,
 ): Effect.Effect<
   { readonly oauthSignInPersistence: OAuthSignInPersistence["Service"] },
   OAuthUnavailable | PersistenceConfigurationError,
   Crypto.Crypto | LifecycleHooks | SqlClient.SqlClient
 > =>
-  using(mapping, (tables, value) =>
-    makeNativeOAuthSignInServices(tables, value as unknown as OAuthNativeReadMapping),
+  using(
+    mapping,
+    (tables, value) =>
+      makeNativeOAuthSignInServices(tables, value as unknown as OAuthNativeReadMapping),
+    options,
   );
 
 export const coordinateOAuthSignIn = <N, A, E, R>(
-  options: { readonly mapping: OAuthSignInMapping<Table, Table, Table, Table, Table, N> },
+  options: PersistenceOptions & {
+    readonly mapping: OAuthSignInMapping<Table, Table, Table, Table, Table, N>;
+  },
   body: Effect.Effect<A, E, R>,
 ): Effect.Effect<
   A,
   E | OAuthUnavailable | PersistenceConfigurationError,
   Exclude<R, OAuthSignInPersistence> | Crypto.Crypto | LifecycleHooks | SqlClient.SqlClient
 > =>
-  coordinate(makeOAuthSignInServices(options.mapping), (services) =>
+  coordinate(makeOAuthSignInServices(options.mapping, options), (services) =>
     Effect.provideService(body, OAuthSignInPersistence, services.oauthSignInPersistence),
   );
 
 export const makeOAuthAccountsServices = <N>(
   mapping: OAuthAccountsMapping<Table, Table, Table, Table, Table, N>,
+  options?: PersistenceOptions,
 ): Effect.Effect<
   { readonly oauthAccountsPersistence: OAuthAccountsPersistence["Service"] },
   OAuthUnavailable | PersistenceConfigurationError,
   Crypto.Crypto | LifecycleHooks | SqlClient.SqlClient
 > =>
-  using(mapping, (tables, value) =>
-    makeNativeOAuthAccountsServices(tables, value as unknown as OAuthNativeAccountsMapping),
+  using(
+    mapping,
+    (tables, value) =>
+      makeNativeOAuthAccountsServices(tables, value as unknown as OAuthNativeAccountsMapping),
+    options,
   );
 
 export const coordinateOAuthAccounts = <N, A, E, R>(
-  options: { readonly mapping: OAuthAccountsMapping<Table, Table, Table, Table, Table, N> },
+  options: PersistenceOptions & {
+    readonly mapping: OAuthAccountsMapping<Table, Table, Table, Table, Table, N>;
+  },
   body: Effect.Effect<A, E, R>,
 ): Effect.Effect<
   A,
   E | OAuthUnavailable | PersistenceConfigurationError,
   Exclude<R, OAuthAccountsPersistence> | Crypto.Crypto | LifecycleHooks | SqlClient.SqlClient
 > =>
-  coordinate(makeOAuthAccountsServices(options.mapping), (services) =>
+  coordinate(makeOAuthAccountsServices(options.mapping, options), (services) =>
     Effect.provideService(body, OAuthAccountsPersistence, services.oauthAccountsPersistence),
   );
 
 export const makeOAuthRegistrationIntentServices = <N>(
   mapping: OAuthRegistrationIntentMapping<Table, Table, N>,
+  options?: PersistenceOptions,
 ): Effect.Effect<
   { readonly oauthRegistrationIntents: OAuthRegistrationIntents["Service"] },
   OAuthUnavailable | PersistenceConfigurationError,
   Crypto.Crypto | LifecycleHooks | SqlClient.SqlClient
 > =>
-  using(mapping, (tables, value) =>
-    makeNativeOAuthRegistrationIntentServices(
-      tables,
-      value as unknown as OAuthNativeRegistrationIntentMapping,
-    ),
+  using(
+    mapping,
+    (tables, value) =>
+      makeNativeOAuthRegistrationIntentServices(
+        tables,
+        value as unknown as OAuthNativeRegistrationIntentMapping,
+      ),
+    options,
   );
 
 export const coordinateOAuthRegistrationIntents = <N, A, E, R>(
-  options: { readonly mapping: OAuthRegistrationIntentMapping<Table, Table, N> },
+  options: PersistenceOptions & {
+    readonly mapping: OAuthRegistrationIntentMapping<Table, Table, N>;
+  },
   body: Effect.Effect<A, E, R>,
 ): Effect.Effect<
   A,
   E | OAuthUnavailable | PersistenceConfigurationError,
   Exclude<R, OAuthRegistrationIntents> | Crypto.Crypto | LifecycleHooks | SqlClient.SqlClient
 > =>
-  coordinate(makeOAuthRegistrationIntentServices(options.mapping), (services) =>
+  coordinate(makeOAuthRegistrationIntentServices(options.mapping, options), (services) =>
     Effect.provideService(body, OAuthRegistrationIntents, services.oauthRegistrationIntents),
   );
 
 export const makeOAuthConnectedServices = <N>(
   mapping: OAuthConnectedMapping<Table, Table, Table, Table, Table, N, Table>,
+  options?: PersistenceOptions,
 ): Effect.Effect<
   { readonly oauthConnectedPersistence: OAuthConnectedPersistence["Service"] },
   OAuthUnavailable | PersistenceConfigurationError,
   Crypto.Crypto | LifecycleHooks | SqlClient.SqlClient
 > =>
-  using(mapping, (tables, value) =>
-    makeNativeOAuthConnectedServices(tables, value as unknown as OAuthNativeConnectedMapping),
+  using(
+    mapping,
+    (tables, value) =>
+      makeNativeOAuthConnectedServices(tables, value as unknown as OAuthNativeConnectedMapping),
+    options,
   );
 
 export const coordinateOAuthConnected = <N, A, E, R>(
-  options: { readonly mapping: OAuthConnectedMapping<Table, Table, Table, Table, Table, N, Table> },
+  options: PersistenceOptions & {
+    readonly mapping: OAuthConnectedMapping<Table, Table, Table, Table, Table, N, Table>;
+  },
   body: Effect.Effect<A, E, R>,
 ): Effect.Effect<
   A,
   E | OAuthUnavailable | PersistenceConfigurationError,
   Exclude<R, OAuthConnectedPersistence> | Crypto.Crypto | LifecycleHooks | SqlClient.SqlClient
 > =>
-  coordinate(makeOAuthConnectedServices(options.mapping), (services) =>
+  coordinate(makeOAuthConnectedServices(options.mapping, options), (services) =>
     Effect.provideService(body, OAuthConnectedPersistence, services.oauthConnectedPersistence),
   );
 
 export const makeOAuthConnectedRevocationServices = <N>(
   mapping: OAuthConnectedRevocationMapping<Table, Table, Table, N>,
+  options?: PersistenceOptions,
 ): Effect.Effect<
   { readonly oauthConnectedRevocations: OAuthConnectedRevocations["Service"] },
   OAuthUnavailable | PersistenceConfigurationError,
   Crypto.Crypto | LifecycleHooks | SqlClient.SqlClient
 > =>
-  using(mapping, (tables, value) =>
-    makeNativeOAuthRevocationServices(tables, value as unknown as OAuthNativeRevocationMapping),
+  using(
+    mapping,
+    (tables, value) =>
+      makeNativeOAuthRevocationServices(tables, value as unknown as OAuthNativeRevocationMapping),
+    options,
   );
 
 export const coordinateOAuthConnectedRevocations = <N, A, E, R>(
-  options: { readonly mapping: OAuthConnectedRevocationMapping<Table, Table, Table, N> },
+  options: PersistenceOptions & {
+    readonly mapping: OAuthConnectedRevocationMapping<Table, Table, Table, N>;
+  },
   body: Effect.Effect<A, E, R>,
 ): Effect.Effect<
   A,
   E | OAuthUnavailable | PersistenceConfigurationError,
   Exclude<R, OAuthConnectedRevocations> | Crypto.Crypto | LifecycleHooks | SqlClient.SqlClient
 > =>
-  coordinate(makeOAuthConnectedRevocationServices(options.mapping), (services) =>
+  coordinate(makeOAuthConnectedRevocationServices(options.mapping, options), (services) =>
     Effect.provideService(body, OAuthConnectedRevocations, services.oauthConnectedRevocations),
   );
 
 export const makeOAuthRegistrationServices = <Registration, N>(
   mapping: OAuthRegistrationMapping<Registration, Table, Table, Table, Table, Table, N>,
+  options?: PersistenceOptions,
 ): Effect.Effect<
   { readonly registrationAuthority: OAuthRegistrationAuthority<Registration> },
   OAuthUnavailable | PersistenceConfigurationError,
   Crypto.Crypto | LifecycleHooks | SqlClient.SqlClient
 > =>
-  using(mapping, (tables, value) =>
-    makeNativeOAuthRegistrationServices(
-      tables,
-      value as unknown as OAuthNativeRegistrationMapping<Registration>,
-    ),
+  using(
+    mapping,
+    (tables, value) =>
+      makeNativeOAuthRegistrationServices(
+        tables,
+        value as unknown as OAuthNativeRegistrationMapping<Registration>,
+      ),
+    options,
   );
 
 export const coordinateOAuthRegistration = <Id, Registration, N, A, E, R>(
-  options: {
+  options: PersistenceOptions & {
     readonly mapping: OAuthRegistrationMapping<
       NoInfer<Registration>,
       Table,
@@ -270,7 +320,7 @@ export const coordinateOAuthRegistration = <Id, Registration, N, A, E, R>(
   E | OAuthUnavailable | PersistenceConfigurationError,
   Exclude<R, Id> | Crypto.Crypto | LifecycleHooks | SqlClient.SqlClient
 > =>
-  coordinate(makeOAuthRegistrationServices(options.mapping), (services) =>
+  coordinate(makeOAuthRegistrationServices(options.mapping, options), (services) =>
     Effect.provideService(body, options.target, services.registrationAuthority),
   );
 

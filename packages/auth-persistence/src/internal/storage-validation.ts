@@ -1,7 +1,7 @@
 import { Context, Effect, Schema } from "effect";
 import { SqlClient } from "effect/sql/SqlClient";
 
-import { PersistenceConfigurationError } from "./configuration";
+import { PersistenceConfigurationError, type PersistenceOptions } from "./configuration";
 import type { PhysicalTextColumn } from "./native-sql-table";
 import type { StorageTable } from "./storage-tables";
 
@@ -86,6 +86,7 @@ const validateKeys = Effect.fnUntraced(function* (
 
 interface MetadataCache {
   active: boolean;
+  readonly validation: "check" | "skip";
   readonly clients: Map<SqlClient, Map<string, typeof Metadata.Type>>;
 }
 
@@ -96,13 +97,19 @@ const CurrentMetadata = Context.Reference<MetadataCache | undefined>(
 
 /** Share metadata only while constructing one service graph. Captured contexts
  * cannot reuse it after acquisition succeeds, fails, or is interrupted. */
-export const withStorageValidation = Effect.fnUntraced(function* <A, E, R>(
+export const withStorageValidationOptions = Effect.fnUntraced(function* <A, E, R>(
   effect: Effect.Effect<A, E, R>,
+  options?: PersistenceOptions,
 ): Effect.fn.Return<A, E, R> {
   const parent = yield* CurrentMetadata;
 
-  if (parent?.active) return yield* effect;
-  const cache: MetadataCache = { active: true, clients: new Map() };
+  if (parent?.active && options === undefined) return yield* effect;
+
+  const cache: MetadataCache = {
+    active: true,
+    validation: options?.validation ?? "check",
+    clients: new Map(),
+  };
 
   return yield* effect.pipe(
     Effect.provideService(CurrentMetadata, cache),
@@ -114,6 +121,10 @@ export const withStorageValidation = Effect.fnUntraced(function* <A, E, R>(
     ),
   );
 });
+
+/** Unary so Effect.fn postprocessors cannot pass mapping arguments as options. */
+export const withStorageValidation = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+  withStorageValidationOptions(effect);
 
 /** Requirements checked against one physical catalog snapshot. */
 export interface StorageValidation {
@@ -293,7 +304,7 @@ export const validateStorageBatch = Effect.fnUntraced(function* (
   dialect: Dialect,
   requirements: ReadonlyArray<StorageValidation>,
 ) {
-  if (requirements.length === 0) return;
+  if (requirements.length === 0 || (yield* CurrentMetadata)?.validation === "skip") return;
 
   const byRelation = yield* readStorageMetadata(
     dialect,
@@ -319,6 +330,7 @@ export const validateStorageBatch = Effect.fnUntraced(function* (
 export const canJoinTextColumns = Effect.fnUntraced(function* (
   columns: ReadonlyArray<PhysicalTextColumn | undefined>,
 ) {
+  if ((yield* CurrentMetadata)?.validation === "skip") return false;
   const candidates = columns.filter((column) => column !== undefined);
 
   if (candidates.length !== columns.length || candidates.length === 0) return false;
@@ -372,6 +384,7 @@ export const hasManagedSqliteCleanupKey = Effect.fnUntraced(function* (
   table: PhysicalStorageTable,
   key: string,
 ) {
+  if ((yield* CurrentMetadata)?.validation === "skip") return false;
   if (table.schema !== undefined && table.schema !== "main") return false;
   const column = table.columns[key];
 

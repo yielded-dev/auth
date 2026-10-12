@@ -1,6 +1,6 @@
 import { EmailAddressPersistence, EmailUnavailable } from "@yielded/auth/Email";
 import type { LifecycleHooks } from "@yielded/auth/Hooks";
-import { hasCommitScope } from "@yielded/auth/Hooks";
+import { CurrentCommitJournal, hasCommitScope } from "@yielded/auth/Hooks";
 import {
   OAuthConnectedPersistence,
   OAuthConnectedRevocations,
@@ -37,6 +37,7 @@ import {
   type PasskeyFeature,
   type PasskeyRequirement,
   type OAuthFeature,
+  type PersistenceOptions,
 } from "./configuration";
 import { makeNativeEmailAddressServices } from "./email-native";
 import { PersistenceMappingError } from "./mapping-error";
@@ -56,7 +57,7 @@ import {
 import { makeNativePendingAuthenticationServices } from "./session-native-login";
 import { makeNativeStatefulSessionServices } from "./session-native-stateful";
 import { makeNativeSessionStepUpServices } from "./session-native-step-up";
-import { SqlBatchCommit } from "./sql-commit";
+import { CurrentSqlCommit, SqlBatchCommit, SqlNativeCommit } from "./sql-commit";
 import { requireStandalone } from "./standalone";
 import { makeMappings } from "./storage-mapping";
 import {
@@ -68,7 +69,7 @@ import {
 import {
   validateStorageBatch,
   hasManagedSqliteCleanupKey,
-  withStorageValidation,
+  withStorageValidationOptions,
   type StorageValidation,
 } from "./storage-validation";
 
@@ -112,6 +113,7 @@ export const createPersistence = <T extends object, R, Database extends object =
 ): PersistenceApi<T, R> => {
   const make = <C extends ClaimsCodec, const Id extends string, const A extends Definition<C, Id>>(
     auth: A & Definition<C, Id>,
+    options?: PersistenceOptions,
   ) => {
     const features = Object.values(auth.strategies).flatMap((strategy) =>
       strategy.persistence === undefined ? [] : [strategy.persistence],
@@ -282,53 +284,66 @@ export const createPersistence = <T extends object, R, Database extends object =
       return result;
     };
 
+    const configuration = Effect.gen(function* () {
+      const storage = yield* ConfigKey;
+      const client = yield* SqlClient.SqlClient;
+
+      const dialect = client.onDialectOrElse({
+        pg: () => "pg" as const,
+        sqlite: () => "sqlite" as const,
+        orElse: () => undefined,
+      });
+
+      if (dialect === undefined)
+        return yield* configError("Use an explicit adapter for this SQL dialect");
+      if (
+        features.some(
+          (feature) =>
+            ("lifecycle" in feature && feature.lifecycle) ||
+            (feature.kind === "email" && !feature.addresses),
+        )
+      )
+        return yield* configError(
+          "Use explicit services for strategies without composed persistence support",
+        );
+      if (storage.namespace !== auth.namespace)
+        return yield* configError(
+          "Persistence configuration belongs to a different Auth definition",
+        );
+      const validations: StorageValidation[] = [];
+
+      for (const role of roles) {
+        const table = (storage.schema as Partial<Record<StorageRole, T>>)[role];
+
+        if (table === undefined) return yield* configError(`Missing ${role} table`);
+        const description = backend.describe(table);
+        const columns = description.columns;
+
+        for (const name of Object.keys(storageTables[role].columns)) {
+          if (columns[name] === undefined)
+            return yield* configError(`Missing ${role}.${name} column`);
+        }
+        validations.push({ table: description, required: storageTables[role].unique });
+      }
+      validations.push({
+        table: backend.describe(storage.subjects.table as T),
+        required: [[storage.subjects.id]],
+      });
+
+      return { storage, dialect, validations };
+    });
+
+    const validate = Effect.gen(function* () {
+      const { dialect, validations } = yield* configuration;
+
+      yield* validateStorageBatch(dialect, validations);
+    }).pipe((effect) => withStorageValidationOptions(effect, { validation: "check" }));
+
     const services = Layer.effectContext(
       Effect.flatMap(backend.acquire, (database) =>
         Effect.gen(function* () {
-          const storage = yield* ConfigKey;
-          const client = yield* SqlClient.SqlClient;
+          const { storage, dialect, validations } = yield* configuration;
 
-          const dialect = client.onDialectOrElse({
-            pg: () => "pg" as const,
-            sqlite: () => "sqlite" as const,
-            orElse: () => undefined,
-          });
-
-          if (dialect === undefined)
-            return yield* configError("Use an explicit adapter for this SQL dialect");
-          if (
-            features.some(
-              (feature) =>
-                ("lifecycle" in feature && feature.lifecycle) ||
-                (feature.kind === "email" && !feature.addresses),
-            )
-          )
-            return yield* configError(
-              "Use explicit services for strategies without composed persistence support",
-            );
-          if (storage.namespace !== auth.namespace)
-            return yield* configError(
-              "Persistence configuration belongs to a different Auth definition",
-            );
-          const validations: StorageValidation[] = [];
-
-          for (const role of roles) {
-            const table = (storage.schema as Partial<Record<StorageRole, T>>)[role];
-
-            if (table === undefined) return yield* configError(`Missing ${role} table`);
-            const description = backend.describe(table);
-            const columns = description.columns;
-
-            for (const name of Object.keys(storageTables[role].columns)) {
-              if (columns[name] === undefined)
-                return yield* configError(`Missing ${role}.${name} column`);
-            }
-            validations.push({ table: description, required: storageTables[role].unique });
-          }
-          validations.push({
-            table: backend.describe(storage.subjects.table as T),
-            required: [[storage.subjects.id]],
-          });
           yield* validateStorageBatch(dialect, validations);
           const nativeTables = backend.nativeTables(database);
           const mappings = yield* makeMappings(storage, nativeTables);
@@ -503,7 +518,7 @@ export const createPersistence = <T extends object, R, Database extends object =
           // The checked capability metadata above determines exactly these service keys.
           return context as Context.Context<Ports<C, Id, A>>;
         }).pipe(Effect.provideService(SqlBatchCommit, backend.batch?.(database))),
-      ).pipe(withStorageValidation),
+      ).pipe((effect) => withStorageValidationOptions(effect, options)),
     ).pipe(Layer.provide(hooksLayer));
 
     const layer = Layer.effectContext(
@@ -523,16 +538,30 @@ export const createPersistence = <T extends object, R, Database extends object =
         const client = Context.get(captured, SqlClient.SqlClient);
         const started = yield* Ref.make(false);
 
-        // Construction uses the layer's exact environment and lifetime, never the
-        // first operation's SQL transaction, service overrides, or request scope.
-        // cached shares active waiters and completed failures, but discards interrupted
-        // runs. Claim the sole attempt before building so abandoning all waiters cannot
-        // restart partially completed setup, even while its finalizers are still running.
+        // Keep request-local connection providers visible, while configured services
+        // win over caller overrides. Setup owns the persistence scope and must never
+        // capture the first caller's transaction or commit journal.
+        // cached discards interrupted runs. Claim the sole attempt so abandoning all
+        // waiters cannot restart setup, even while its finalizers are still running.
         const initialize = yield* Effect.cached(
           Effect.flatMap(Ref.getAndSet(started, true), (alreadyStarted) =>
             alreadyStarted
               ? Effect.succeed(undefined)
-              : Layer.buildWithScope(services, scope).pipe(Effect.setContext(captured)),
+              : Layer.buildWithScope(services, scope).pipe(
+                  Effect.updateContext((current: Context.Context<never>) =>
+                    Context.merge(
+                      current.pipe(
+                        Context.omit(
+                          CurrentSqlCommit,
+                          CurrentCommitJournal,
+                          SqlNativeCommit,
+                          client.transactionService,
+                        ),
+                      ),
+                      captured,
+                    ),
+                  ),
+                ),
           ),
         );
 
@@ -847,6 +876,7 @@ export const createPersistence = <T extends object, R, Database extends object =
       Config,
       Provisioning: ProvisioningKey,
       layer,
+      validate,
       managed: <N, Instant = number>(options: {
         readonly subjects: SubjectOptions<T, N>;
         readonly tables?: Partial<Record<Roles<C, Id, A>, T>>;

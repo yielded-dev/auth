@@ -97,9 +97,15 @@ changes. SQLite WASM and D1 take a `migrations` map instead of a folder. Direct
 Effect SQL applications supply their own migration runner.
 
 The composed Layer validates mapped columns and unique keys on its first storage
-operation. Retain it at the composition root and rebuild it after schema changes
-or failed initialization. Canceling one caller leaves setup running for other waiting
-callers. Interrupted setup requires rebuilding the Layer before storage operations can
+operation. Run `Persistence.validate` with `Persistence.Config` and `SqlClient` in
+deploy or CI to check them independently; it needs no crypto or strategy services
+and reads fresh metadata on every run. `AuthPersistence.make(AppAuth, { validation: "skip" })`
+disables runtime catalog reads, including catalog-dependent query optimizations.
+Use it only after validating the deployed schema, and rerun validation for every
+schema change. Mapping, row, and authority checks still run.
+Retain the Layer at the composition root and rebuild it after schema changes or
+failed initialization. Canceling one caller leaves setup running for other waiting
+callers. Interrupted setup requires rebuilding the Layer before storage operations
 resume. Cookie-cached and anonymous session reads do not trigger initialization.
 
 Composition supports password sign-in, registration and management, email address
@@ -142,6 +148,76 @@ Standalone mutations reject ambient transactions. Use an explicit coordinator to
 combine auth and application writes under one owner. Credentials and lifecycle
 events are released only after that owner commits. An unknown outcome does not
 authorize repeating credential issuance or delivery.
+
+### Request-local SQL and Hyperdrive
+
+A shared persistence Layer can use an Effect SQL client whose connection acquirer
+resolves a provider from the invoking fiber. Composed initialization preserves
+request-local services while retaining its configured dependencies and lifetime.
+It does not retain the first request's connection or transaction. Use the same
+schema and SQL dialect for every request served by that Layer.
+
+On Workers, [create the physical client inside each request](https://developers.cloudflare.com/hyperdrive/concepts/connection-lifecycle/).
+This direct Effect SQL setup keeps only a logical client at the composition root:
+
+```ts title="apps/server/request-sql.ts"
+import * as PgClient from "@effect/sql-pg/PgClient";
+import { Context, Effect, Layer } from "effect";
+import { Reactivity } from "effect/reactivity";
+import { SqlClient } from "effect/sql";
+import { ConnectionError, SqlError } from "effect/sql/SqlError";
+
+export const RequestSqlClient = Context.Reference<SqlClient.SqlClient | undefined>(
+  "app/RequestSqlClient",
+  { defaultValue: () => undefined },
+);
+
+export const SqlLive = Layer.effect(
+  SqlClient.SqlClient,
+  SqlClient.make({
+    compiler: PgClient.makeCompiler(),
+    spanAttributes: [],
+    acquirer: Effect.gen(function* () {
+      const client = yield* RequestSqlClient;
+      if (client === undefined)
+        return yield* SqlError.make({
+          reason: ConnectionError.make({ cause: "No request SQL client" }),
+        });
+      return yield* client.reserve;
+    }),
+  }),
+).pipe(Layer.provide(Reactivity.layer));
+```
+
+Provide `SqlLive` to persistence instead of a global physical client. Build
+composed persistence with `{ validation: "skip" }`, and use the same option on
+explicit OAuth factories. Inside the request Effect, acquire
+`PgClient.makeClient({ url: Redacted.make(env.HYPERDRIVE.connectionString) })`, then
+provide that client as `RequestSqlClient` to the complete auth operation:
+
+```ts
+const response = Effect.scoped(
+  Effect.gen(function* () {
+    const client = yield* PgClient.makeClient({
+      url: Redacted.make(env.HYPERDRIVE.connectionString),
+    });
+    return yield* handleRequest.pipe(Effect.provideService(RequestSqlClient, client));
+  }),
+).pipe(Effect.provide(Reactivity.layer));
+```
+
+Enable Workers’ `nodejs_compat` flag for the PostgreSQL driver. Import `Redacted`
+from `effect`; `handleRequest` is your request handler Effect.
+Run `response` through the shared runtime and await it within the Worker handler.
+The request scope closes the physical client on success, failure, or interruption.
+The logical client's transactions reserve one connection through commit or rollback.
+Use that logical client for application SQL and explicit coordinators too; do not
+mix its transaction owner with the underlying request client's transaction owner.
+
+Configure the auth Hyperdrive binding with [query caching disabled](https://developers.cloudflare.com/hyperdrive/concepts/query-caching/)
+so session, credential, and authority reads observe current state. Run validation
+with a deployment connection before serving requests; skipping it does not verify
+that a new database has the required constraints.
 
 ### Mix composed and explicit services
 
@@ -410,6 +486,14 @@ Direct Effect SQL supports PostgreSQL and SQLite with interactive transactions,
 not MySQL or D1 batches. Drizzle applications use their driver entrypoints.
 The [Effect SQL consumer](https://github.com/yielded-dev/auth/tree/main/examples/persistence-sql)
 has no Drizzle dependency.
+
+Each direct `makeOAuth*Services(mapping, { validation: "skip" })` factory can skip
+physical catalog reads at construction. Run `OAuthPersistence.validate(mapping)`
+with the deployment `SqlClient` first; it checks physical columns and unique keys
+without crypto or hooks. Validation is enabled by default. Coordinators accept
+`{ mapping, validation: "skip" }` for the same runtime policy. Skip mode retains
+mapping validation and uses conservative queries instead of catalog-based joins.
+For a shared Worker Layer, use the [request-local SQL setup](#request-local-sql-and-hyperdrive).
 
 Describe tables with `OAuthPersistence.table` and map columns, row codecs, subject
 IDs, authority policy, and required unique keys. `OAuthPersistence.clock` supplies
