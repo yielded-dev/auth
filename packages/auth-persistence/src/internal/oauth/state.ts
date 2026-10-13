@@ -17,9 +17,7 @@ const decoder = new TextDecoder("utf-8", { fatal: true });
 
 export const unavailable = () => OAuthUnavailable.make({});
 
-export const invariant: (value: unknown) => asserts value = (value) => {
-  if (!value) throw unavailable();
-};
+export const invalidState = () => unavailable();
 
 export const nonce = randomId;
 
@@ -74,6 +72,7 @@ export const oauthIdentityKey = Effect.fnUntraced(function* (
     const value = encoder.encode(field);
 
     if (decoder.decode(value) !== field) return yield* unavailable();
+
     bytes.push(value);
   }
 

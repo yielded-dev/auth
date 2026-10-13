@@ -15,7 +15,7 @@ import type { TableModel } from "../table-model";
 import { IdentityImport, ImportedIdentity, IdentityImports } from "./identity-import";
 import { makeOAuthNativeMutation } from "./native-mutation";
 import { makeOAuthNativeState, type OAuthNativeReadMapping } from "./native-state";
-import { invariant, nonce, oauthIdentityKey, unavailable } from "./state";
+import { nonce, oauthIdentityKey, unavailable } from "./state";
 
 type ImportMapping = Omit<OAuthNativeReadMapping, "ownership" | "credential" | "authority"> & {
   readonly ownership: OAuthOwnershipTable<TableModel, unknown>;
@@ -53,7 +53,7 @@ export const makeNativeOAuthIdentityImports = Effect.fnUntraced(function* (
       const found =
         yield* sql`select 1 from ${credential.name} where ${exact(c.identityKey, key)} limit 2`;
 
-      invariant(found.length <= 1);
+      if (found.length > 1) return yield* unavailable();
       if (found.length !== 0) {
         const existing = yield* state.resolve(input.moduleId, input);
 
@@ -113,14 +113,18 @@ export const makeNativeOAuthIdentityImports = Effect.fnUntraced(function* (
         [a.revision]: credentialRevision,
       };
 
-      invariant(c.isActiveStatus(login[c.status]) && a.isActiveStatus(factor[a.status]));
-      invariant((yield* mutation.change(conditionalInsert(credential, login, before))) === 1);
-      invariant((yield* mutation.change(conditionalInsert(authority, factor, before))) === 1);
-      invariant(
+      if (!c.isActiveStatus(login[c.status]) || !a.isActiveStatus(factor[a.status]))
+        return yield* unavailable();
+      if ((yield* mutation.change(yield* conditionalInsert(credential, login, before))) !== 1)
+        return yield* unavailable();
+      if ((yield* mutation.change(yield* conditionalInsert(authority, factor, before))) !== 1)
+        return yield* unavailable();
+      if (
         (yield* mutation.change(
           sql`${subject.update({ [s.securityRevision]: securityRevision })} where ${subjectCondition}`,
-        )) === 1,
-      );
+        )) !== 1
+      )
+        return yield* unavailable();
 
       return yield* snapshotOAuth(ImportedIdentity, { credentialId, credentialRevision });
     }).pipe(Effect.provideService(Crypto.Crypto, crypto));

@@ -92,10 +92,9 @@ export const payloadEncryption = <C, P, S extends Envelope>(
 ) => {
   // Preserve the constructor-time detached snapshot, even if the caller changes
   // or wipes its configuration before building the Layer.
-  const captured = Result.try({
-    try: () => snapshotKeyringSchema.sync(keyring),
-    catch: () => OAuthConfigurationError.make({ reason: "keyring" }),
-  });
+  const captured = snapshotKeyringSchema
+    .result(keyring)
+    .pipe(Result.mapError(() => OAuthConfigurationError.make({ reason: "keyring" })));
 
   const codec = Schema.fromJsonString(options.plaintext);
   const snapshotContext = makeOAuthSnapshot(options.context);
@@ -107,6 +106,9 @@ export const payloadEncryption = <C, P, S extends Envelope>(
     const crypto = yield* Crypto.Crypto;
     const aead = yield* Aead;
     const scope = yield* Effect.scope;
+
+    if (!aead.supports("XChaCha20-Poly1305"))
+      return yield* OAuthConfigurationError.make({ reason: "crypto" });
 
     if (
       new Set(configuration.keys.map((entry) => entry.id)).size !== configuration.keys.length ||
