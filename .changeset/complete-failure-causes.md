@@ -11,4 +11,4 @@
 "@yielded/oauth": patch
 ---
 
-Preserve complete failure causes across authentication, persistence, provider, and native client boundaries, and report unexpected background and cleanup failures without exposing private data. Regenerate committed Drizzle compatibility patches to retain query failures and concurrent cleanup errors.
+Preserve complete failure causes across authentication, persistence, provider, and native client boundaries, and report unexpected background and cleanup failures without exposing private data.
