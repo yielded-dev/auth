@@ -12,6 +12,10 @@ Start with the [OAuth guide](../guide/oauth) for the flow and choice of API.
 for MCP clients, including static registrations and Client ID Metadata Documents
 (CIMD). Use the [OpenID profile](#shared-openid-sign-in) for shared browser sign-in.
 
+Declare scopes as a literal list (`as const` when stored in a variable). The server's
+`Scope` and `Access` schemas, required middleware scopes, and verified access retain
+that union.
+
 Provide these to `oauth.layer`:
 
 | Input            | Purpose                                                              |
@@ -88,8 +92,9 @@ authorization flow.
 ### Protecting MCP routes
 
 Provide `oauth.middleware(scopes).layer` to protected routes. It verifies the bearer
-grant and supplies `OAuthServer.CurrentAccess` for that request. Require a defined
-value and apply your application's account and operation permissions.
+grant and supplies `oauth.CurrentAccess` with the declared scope union for that request.
+The shared `OAuthServer.CurrentAccess` remains available with string scopes. Require
+a defined value and apply your application's account and operation permissions.
 
 Missing or invalid credentials return 401 with discovery information; insufficient
 scope returns 403; unavailable storage returns 503. Configure CORS for the MCP,
@@ -176,20 +181,27 @@ logout are unsupported. Retain public verification keys through token expiry.
 
 ### Application authorization and resource access
 
-Provide `OAuthServer.OpenIdAuthorization` to authorize application scopes. Its
+Provide the server's `Authorization` service to authorize application scopes. Its
 `authorize` Effect runs at code exchange and every refresh with the authentication,
 client ID, resource, requested scopes, and grant type. Return a subset of those
 scopes, including `openid`; an empty result denies issuance. The default service
 grants only the standard OpenID scopes, never application scopes.
 
 ```ts
-const authorization = Layer.succeed(OAuthServer.OpenIdAuthorization, {
+const scopes = ["documents:read", "documents:write"] as const;
+const server = OAuthServer.makeOpenId("identity", { scopes });
+
+const authorization = Layer.succeed(server.Authorization, {
   authorize: ({ authentication, clientId, resource, scopes, grantType }) =>
     accountPolicy.authorize({ authentication, clientId, resource, scopes, grantType }),
 });
 // accountPolicy returns { scopes: ["openid", "documents:read"],
 //   claims: { accountId: "application-account" } } after checking current access.
 ```
+
+The callback's input and output scopes use the declared literals plus `openid`,
+`profile`, and `email`; `Identity.profile` receives the same union. Unknown scopes
+are also rejected at runtime.
 
 Optional JSON `claims` are recomputed on each authorization and nested in the
 access token; they cannot override protocol fields. Decode them with the resource
@@ -204,6 +216,10 @@ resource, publicKeys })` with trusted keys from the issuer's JWKS and provide
 the `at+jwt` type, issuer, audience, expiry, and scope encoding, then returns
 `OAuthServer.Access` with the subject, client, grant, resource, scopes, and optional
 application claims. Refresh the trusted keys when the issuer rotates keys.
+
+Pass `scopes` as the full accepted literal list to narrow verified access. The verifier
+rejects a token if any scope is outside that list. Without this option, verified
+scopes remain strings.
 
 Offline verification observes permission changes and revocation at access-token
 expiry. Choose a short access lifetime, such as five minutes, and refresh through

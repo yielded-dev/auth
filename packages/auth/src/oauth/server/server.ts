@@ -11,6 +11,7 @@ import {
   Result,
   Schema,
   Stream,
+  type Types,
 } from "effect";
 import { Base64Url } from "effect/encoding";
 import { Cookies, HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
@@ -21,7 +22,7 @@ import { origin as Origin } from "../../internal/origin";
 import { SubjectId } from "../../Schema";
 import { makeSessionSigningCodec, type SessionSigningKeyring } from "../../sessions/crypto";
 import { makeAccessTokenVerifier } from "./access-token";
-import { OpenIdAuthorization, OpenIdAuthorizationResult } from "./authorization";
+import { makeAuthorization, standardOpenIdScopes } from "./authorization";
 import {
   makeClients,
   matchesRedirect,
@@ -30,7 +31,7 @@ import {
 } from "./clients";
 import { ConsentRenderer, OpenIdConsent, escapeHtml } from "./consent";
 import {
-  Access,
+  type Access,
   BearerToken,
   Authentication,
   OpenIdProfile,
@@ -48,9 +49,11 @@ import {
   Persistence,
   Random,
   ResourceMetadata,
-  Scopes,
   Text,
   TokenResponse,
+  makeAccessSchema,
+  makeScopeSchema,
+  makeScopesSchema,
   maximumClientAssertionLength,
   Unavailable,
   type Record,
@@ -193,11 +196,6 @@ const form = Effect.fnUntraced(function* (request: HttpServerRequest.HttpServerR
   return yield* parameters(new URLSearchParams(body.text + decoder.decode()));
 });
 
-const scopeList = (text: string) =>
-  Schema.decodeUnknownEffect(Scopes)([...new Set(text.split(" "))]).pipe(
-    Effect.mapError(() => reject("invalid_scope")),
-  );
-
 export interface Options {
   /** One authorization server per origin. HTTP is accepted only for loopback development. */
   readonly origin: string;
@@ -222,7 +220,7 @@ export interface OpenIdOptions extends Omit<Options, "resource" | "clientMetadat
   readonly refreshTokens?: boolean;
 }
 
-export interface OpenIdIdentity {
+export interface OpenIdIdentity<Scope extends string = string> {
   /** Verify the current browser session. Authentication time must be the actual sign-in time. */
   readonly current: Effect.Effect<
     Authentication | undefined,
@@ -232,11 +230,11 @@ export interface OpenIdIdentity {
   /** Check the same session and account authority at code redemption, refresh and UserInfo. */
   readonly active: (authentication: Authentication) => Effect.Effect<boolean, Unavailable>;
   readonly profile: (
-    input: Pick<Access, "subjectId" | "clientId" | "scopes">,
+    input: Pick<Access<Scope>, "subjectId" | "clientId" | "scopes">,
   ) => Effect.Effect<OpenIdProfile, Unavailable>;
 }
 
-interface ServerIdentity {
+interface ServerIdentity<Scope extends string = string> {
   readonly current: Effect.Effect<
     | {
         readonly subjectId: SubjectId;
@@ -246,16 +244,35 @@ interface ServerIdentity {
     Unavailable,
     HttpServerRequest.HttpServerRequest
   >;
-  readonly openId?: Omit<OpenIdIdentity, "current">;
+  readonly openId?: Omit<OpenIdIdentity<Scope>, "current">;
 }
 
 /** One grant state machine serves OAuth and opt-in OpenID authentication. */
-const makeServer = <const Id extends string, R>(
+const makeServer = <
+  const Id extends string,
+  const ScopeValues extends readonly [string, ...string[]],
+  R,
+>(
   id: Id,
-  input: { readonly scopes: readonly [string, ...string[]] },
-  identitySource: Effect.Effect<ServerIdentity, never, R>,
+  input: { readonly scopes: ScopeValues },
+  identitySource: Effect.Effect<ServerIdentity<ScopeValues[number]>, never, R>,
 ) => {
-  const scopes = [...input.scopes];
+  type Scope = ScopeValues[number];
+  const scopes: Array<Scope> = [...input.scopes];
+  const ScopeSchema = makeScopeSchema(scopes);
+  const ScopesSchema = makeScopesSchema(ScopeSchema);
+  const AccessSchema = makeAccessSchema(ScopeSchema);
+  const authorizationSource = makeAuthorization(id, ScopeSchema);
+
+  const ScopedCurrentAccess = Context.Reference<Access<Scope> | undefined>(
+    `effect-auth/OAuthServer/${id}/CurrentAccess/${JSON.stringify([...new Set(scopes)].sort())}`,
+    { defaultValue: () => undefined },
+  );
+
+  const scopeList = (text: string) =>
+    Schema.decodeUnknownEffect(ScopesSchema)([...new Set(text.split(" "))]).pipe(
+      Effect.mapError(() => reject("invalid_scope")),
+    );
 
   const paths = {
     authorize: `/oauth/${id}/authorize`,
@@ -268,12 +285,12 @@ const makeServer = <const Id extends string, R>(
   } as const;
 
   const Service = Context.Service<
-    { readonly server: Id; readonly kind: "server" },
+    { readonly server: Id; readonly kind: "server"; readonly scopes: Types.Invariant<Scope> },
     {
       readonly handle: (request: Request) => Effect.Effect<Response>;
       readonly verify: (
         token: Redacted.Redacted<string>,
-      ) => Effect.Effect<Access, InvalidToken | Unavailable>;
+      ) => Effect.Effect<Access<Scope>, InvalidToken | Unavailable>;
       /** Trusted application operation, e.g. disabling an account or connection. */
       readonly revoke: (grantId: string) => Effect.Effect<void, Unavailable>;
       readonly resource: string;
@@ -303,7 +320,7 @@ const makeServer = <const Id extends string, R>(
             clients: Schema.Array(Client),
             clientMetadata: Schema.optionalKey(MetadataConfiguration),
             loginPath: LoginPath,
-            scopes: Scopes,
+            scopes: ScopesSchema,
             accessTokenFormat: Schema.Literals(["opaque", "jwt"]),
             accessTokenLifetimeMillis: Schema.Int.check(
               Schema.isBetween({ minimum: 1000, maximum: 600000 }),
@@ -358,8 +375,8 @@ const makeServer = <const Id extends string, R>(
         );
 
         const authorization = Option.getOrElse(
-          yield* Effect.serviceOption(OpenIdAuthorization),
-          () => OpenIdAuthorization.default,
+          yield* Effect.serviceOption(authorizationSource.Service),
+          () => authorizationSource.default,
         );
 
         const identity = yield* identitySource;
@@ -378,12 +395,14 @@ const makeServer = <const Id extends string, R>(
                 issuer: config.origin,
                 resource: config.resource,
                 publicKeys: openId.jwks.keys,
+                scopes,
               })
             : undefined;
 
         if (
           openId !== undefined &&
-          (config.clientMetadata !== undefined || !config.scopes.includes("openid"))
+          (config.clientMetadata !== undefined ||
+            !config.scopes.some((scope) => scope === "openid"))
         )
           return yield* ConfigurationError.make({});
         const crypto = yield* Crypto.Crypto;
@@ -470,7 +489,7 @@ const makeServer = <const Id extends string, R>(
 
           return (
             matchesRedirect(client, record.authorization.redirectUri) &&
-            record.authorization.scopes.every((scope) => config.scopes.includes(scope)) &&
+            record.authorization.scopes.every(Schema.is(ScopeSchema)) &&
             (identity.openId === undefined ||
               (record.status !== "Code" && record.status !== "Active") ||
               (record.authentication !== undefined &&
@@ -563,14 +582,14 @@ const makeServer = <const Id extends string, R>(
           )
             return yield* InvalidToken.make({});
 
-          return Access.make({
+          return yield* Schema.decodeEffect(AccessSchema)({
             subjectId: record.subjectId,
             grantId: token.grantId,
             clientId: record.authorization.clientId,
             resource: config.resource,
             scopes: record.authorization.scopes,
             ...(record.claims === undefined ? {} : { claims: record.claims }),
-          });
+          }).pipe(Effect.mapError(() => InvalidToken.make({})));
         });
 
         const handle = Effect.fn("OAuthServer.handle")(
@@ -771,10 +790,7 @@ const makeServer = <const Id extends string, R>(
                     return yield* reject("unauthorized_client");
                   const requested = yield* scopeList(query.scope);
 
-                  if (
-                    (openId !== undefined && !requested.includes("openid")) ||
-                    !requested.every((scope) => config.scopes.includes(scope))
-                  )
+                  if (openId !== undefined && !requested.some((scope) => scope === "openid"))
                     return yield* reject("invalid_scope");
 
                   return { query, requested };
@@ -1099,7 +1115,7 @@ const makeServer = <const Id extends string, R>(
                           grantType: query.grant_type,
                         })
                         .pipe(
-                          Effect.flatMap(Schema.decodeEffect(OpenIdAuthorizationResult)),
+                          Effect.flatMap(Schema.decodeEffect(authorizationSource.Result)),
                           Effect.mapError(() => Unavailable.make({})),
                         );
 
@@ -1110,12 +1126,15 @@ const makeServer = <const Id extends string, R>(
                         return yield* Unavailable.make({});
                       const [first, ...remaining] = decision.scopes;
 
-                      if (first === undefined || !decision.scopes.includes("openid"))
+                      if (
+                        first === undefined ||
+                        !decision.scopes.some((scope) => scope === "openid")
+                      )
                         return yield* reject("access_denied");
 
                       return {
                         ...decision,
-                        scopes: [first, ...remaining] satisfies readonly [string, ...string[]],
+                        scopes: [first, ...remaining] satisfies readonly [Scope, ...Scope[]],
                       };
                     });
 
@@ -1351,7 +1370,7 @@ const makeServer = <const Id extends string, R>(
   /** Attach only to protected resource routes; metadata and consent stay public.
    * It does not install, wrap or reimplement an MCP protocol server.
    */
-  const middleware = (requiredScopes: readonly string[]) =>
+  const middleware = (requiredScopes: ReadonlyArray<Scope>) =>
     HttpRouter.middleware(
       Effect.gen(function* () {
         const server = yield* Service;
@@ -1383,7 +1402,10 @@ const makeServer = <const Id extends string, R>(
                 headers: { ...noStore, "www-authenticate": challenge("insufficient_scope") },
               });
 
-            return yield* Effect.provideService(httpEffect, CurrentAccess, access);
+            return yield* httpEffect.pipe(
+              Effect.provideService(CurrentAccess, access),
+              Effect.provideService(ScopedCurrentAccess, access),
+            );
           }).pipe(
             Effect.catchTag("OAuthServerInvalidToken", () =>
               Effect.succeed(
@@ -1400,13 +1422,25 @@ const makeServer = <const Id extends string, R>(
       }),
     );
 
-  return { Service, layer, routes, middleware, paths };
+  return {
+    Service,
+    layer,
+    routes,
+    middleware,
+    paths,
+    Scope: ScopeSchema,
+    Access: AccessSchema,
+    CurrentAccess: ScopedCurrentAccess,
+    Authorization: authorizationSource.Service,
+  };
 };
 
-/** Authorization-code server for MCP/resource authorization. */
-export const make = <const Id extends string>(
+/** Authorization-code server for MCP/resource authorization.
+ * Declared scope literals type middleware, verified access and request-local authority.
+ */
+export const make = <const Id extends string, const Scope extends string = string>(
   id: Id,
-  input: { readonly scopes: readonly [string, ...string[]] },
+  input: { readonly scopes: readonly [Scope, ...Scope[]] },
 ) => {
   const Identity = Context.Service<
     { readonly server: Id; readonly kind: "identity" },
@@ -1422,34 +1456,51 @@ export const make = <const Id extends string>(
   const server = makeServer(
     id,
     input,
-    Effect.map(Identity, (identity): ServerIdentity => ({
+    Effect.map(Identity, (identity): ServerIdentity<Scope> => ({
       current: Effect.map(identity.current, (subjectId) =>
         subjectId === undefined ? undefined : { subjectId },
       ),
     })),
   );
 
-  return { ...server, Identity, layer: (options: Options) => server.layer(options) };
+  return {
+    Service: server.Service,
+    Scope: server.Scope,
+    Access: server.Access,
+    CurrentAccess: server.CurrentAccess,
+    routes: server.routes,
+    middleware: server.middleware,
+    paths: server.paths,
+    Identity,
+    layer: (options: Options) => server.layer(options),
+  };
 };
 
 /** Registered-client OpenID Connect code flow with PKCE, RS256 and explicit consent.
+ * Declared scope literals plus openid/profile/email type Authorization and access.
  * Applications own authentication, current session validity and profile disclosure.
  * Resource JWTs and rotating refresh tokens are opt-in; dynamic registration and
  * front/back-channel logout are not enabled.
  */
-export const makeOpenId = <const Id extends string>(
+export const makeOpenId = <const Id extends string, const Scope extends string = never>(
   id: Id,
-  options: { readonly scopes?: ReadonlyArray<string> } = {},
+  options: { readonly scopes?: ReadonlyArray<Scope> } = {},
 ) => {
+  type OpenIdScope = Scope | (typeof standardOpenIdScopes)[number];
+
   const Identity = Context.Service<
-    { readonly server: Id; readonly kind: "openid-identity" },
-    OpenIdIdentity
+    {
+      readonly server: Id;
+      readonly kind: "openid-identity";
+      readonly scopes: Types.Invariant<OpenIdScope>;
+    },
+    OpenIdIdentity<OpenIdScope>
   >()(`effect-auth/OAuthServer/${id}/OpenIdIdentity`);
 
   const server = makeServer(
     id,
-    { scopes: ["openid", "profile", "email", ...(options.scopes ?? [])] },
-    Effect.map(Identity, (identity): ServerIdentity => ({
+    { scopes: [...standardOpenIdScopes, ...(options.scopes ?? [])] },
+    Effect.map(Identity, (identity): ServerIdentity<OpenIdScope> => ({
       current: Effect.map(identity.current, (authentication) =>
         authentication === undefined
           ? undefined

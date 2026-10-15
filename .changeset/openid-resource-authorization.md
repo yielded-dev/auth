@@ -2,6 +2,5 @@
 "@yielded/auth": minor
 ---
 
-Add opt-in OpenID application scopes, explicit resource audiences, signed JWT access tokens, and rotating refresh grants. Application authorization rechecks scopes and nested JSON claims at code exchange and refresh while preserving the original authentication time.
-
-Expose a resource-server verifier for access tokens using trusted public keys. Existing OpenID defaults keep opaque UserInfo access and disable refresh grants.
+Add opt-in OpenID application scopes, resource audiences, signed access tokens, and rotating refresh grants that recheck application authorization while preserving the original authentication time; existing defaults retain opaque UserInfo access without refresh grants.
+Expose public-key access verification and infer middleware, authorization, and verified access scopes from declared literals.

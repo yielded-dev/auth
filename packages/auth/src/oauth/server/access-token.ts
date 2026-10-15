@@ -5,13 +5,16 @@ import { Clock, Effect, Redacted, Schema } from "effect";
 import { origin } from "../../internal/origin";
 import { SubjectId } from "../../Schema";
 import {
-  Access,
   AccessClaims,
   BearerToken,
   ConfigurationError,
   InvalidToken,
   Random,
   Scopes,
+  Scope,
+  makeAccessSchema,
+  makeScopeSchema,
+  makeScopesSchema,
   Text,
   Unavailable,
   Url,
@@ -40,22 +43,24 @@ export interface AccessTokenVerifierOptions {
   readonly resource: string;
   /** Trusted keys from the issuer's JWKS; reacquire this verifier when keys rotate. */
   readonly publicKeys: ReadonlyArray<Jwk.PublicJwk>;
+  /** Declared resource scopes. Every token scope must belong to this set. */
+  readonly scopes?: ReadonlyArray<string>;
 }
 
-/** Verify offline with trusted public keys. Revocation and permission changes
- * take effect at token expiry; use short access lifetimes and renew through the issuer.
- * Retains only the signature service; verification uses the caller's clock and context.
- */
-export const makeAccessTokenVerifier = Effect.fnUntraced(function* (
+const makeVerifier = Effect.fnUntraced(function* <Scope extends string>(
   options: AccessTokenVerifierOptions,
+  scope: Schema.Codec<Scope>,
 ) {
   const signature = yield* Signature;
+  const ScopesSchema = makeScopesSchema(scope);
+  const AccessSchema = makeAccessSchema(scope);
 
   const config = yield* Schema.decodeUnknownEffect(
     Schema.Struct({
       issuer: origin,
       resource: Url,
       publicKeys: Schema.NonEmptyArray(Jwk.PublicJwk).check(Schema.isMaxLength(16)),
+      scopes: Schema.optionalKey(Scopes),
     }),
   )(options, { reportInput: false }).pipe(Effect.mapError(() => ConfigurationError.make({})));
 
@@ -92,7 +97,7 @@ export const makeAccessTokenVerifier = Effect.fnUntraced(function* (
     )
       return yield* InvalidToken.make({});
 
-    const scopes = yield* Schema.decodeUnknownEffect(Scopes)(claims.scope.split(" ")).pipe(
+    const scopes = yield* Schema.decodeUnknownEffect(ScopesSchema)(claims.scope.split(" ")).pipe(
       Effect.mapError(() => InvalidToken.make({})),
     );
 
@@ -100,7 +105,7 @@ export const makeAccessTokenVerifier = Effect.fnUntraced(function* (
 
     return {
       claims,
-      access: Access.make({
+      access: AccessSchema.make({
         subjectId: claims.sub,
         clientId: claims.client_id,
         grantId: claims.grant_id,
@@ -119,3 +124,23 @@ export const makeAccessTokenVerifier = Effect.fnUntraced(function* (
     decode,
   };
 });
+
+/** Verify offline with trusted public keys. Revocation and permission changes
+ * take effect at token expiry; use short access lifetimes and renew through the issuer.
+ * Retains only the signature service; verification uses the caller's clock and context.
+ * Configured literals narrow access only after every token scope passes validation.
+ */
+export function makeAccessTokenVerifier<const Scope extends string>(
+  options: AccessTokenVerifierOptions & { readonly scopes: ReadonlyArray<Scope> },
+): ReturnType<typeof makeVerifier<Scope>>;
+
+export function makeAccessTokenVerifier(
+  options: AccessTokenVerifierOptions,
+): ReturnType<typeof makeVerifier<string>>;
+
+export function makeAccessTokenVerifier(options: AccessTokenVerifierOptions) {
+  return makeVerifier(
+    options,
+    options.scopes === undefined ? Scope : makeScopeSchema(options.scopes),
+  );
+}
