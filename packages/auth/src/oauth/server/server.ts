@@ -22,7 +22,7 @@ import { origin as Origin } from "../../internal/origin";
 import { SubjectId } from "../../Schema";
 import { makeSessionSigningCodec, type SessionSigningKeyring } from "../../sessions/crypto";
 import { makeAccessTokenVerifier } from "./access-token";
-import { makeAuthorization, standardOpenIdScopes } from "./authorization";
+import { makeAuthorization, StandardOpenIdScope } from "./authorization";
 import {
   makeClients,
   matchesRedirect,
@@ -52,7 +52,6 @@ import {
   Text,
   TokenResponse,
   makeAccessSchema,
-  makeScopeSchema,
   makeScopesSchema,
   maximumClientAssertionLength,
   Unavailable,
@@ -248,24 +247,20 @@ interface ServerIdentity<Scope extends string = string> {
 }
 
 /** One grant state machine serves OAuth and opt-in OpenID authentication. */
-const makeServer = <
-  const Id extends string,
-  const ScopeValues extends readonly [string, ...string[]],
-  R,
->(
+const makeServer = <const Id extends string, const S extends Schema.Codec<string>, R>(
   id: Id,
-  input: { readonly scopes: ScopeValues },
-  identitySource: Effect.Effect<ServerIdentity<ScopeValues[number]>, never, R>,
+  input: { readonly scopes: S; readonly scopeValues: ReadonlyArray<string> },
+  identitySource: Effect.Effect<ServerIdentity<NoInfer<S["Type"]>>, never, R>,
 ) => {
-  type Scope = ScopeValues[number];
-  const scopes: Array<Scope> = [...input.scopes];
-  const ScopeSchema = makeScopeSchema(scopes);
-  const ScopesSchema = makeScopesSchema(ScopeSchema);
-  const AccessSchema = makeAccessSchema(ScopeSchema);
-  const authorizationSource = makeAuthorization(id, ScopeSchema);
+  type Scope = S["Type"];
+  const ScopeSchema = input.scopes;
+  const scopes = [...new Set(input.scopeValues)];
+  const ScopesSchema = makeScopesSchema<Scope>(ScopeSchema);
+  const AccessSchema = makeAccessSchema<Scope>(ScopeSchema);
+  const authorizationSource = makeAuthorization<Id, Scope>(id, ScopeSchema);
 
   const ScopedCurrentAccess = Context.Reference<Access<Scope> | undefined>(
-    `effect-auth/OAuthServer/${id}/CurrentAccess/${JSON.stringify([...new Set(scopes)].sort())}`,
+    `effect-auth/OAuthServer/${id}/CurrentAccess/${JSON.stringify([...scopes].sort())}`,
     { defaultValue: () => undefined },
   );
 
@@ -350,8 +345,7 @@ const makeServer = <
           resourceUrl.search ||
           (config.clients.length === 0 && config.clientMetadata === undefined) ||
           config.loginPath === paths.authorize ||
-          new Set(config.clients.map((client) => client.clientId)).size !== config.clients.length ||
-          new Set(scopes).size !== scopes.length
+          new Set(config.clients.map((client) => client.clientId)).size !== config.clients.length
         )
           return yield* ConfigurationError.make({});
 
@@ -395,7 +389,7 @@ const makeServer = <
                 issuer: config.origin,
                 resource: config.resource,
                 publicKeys: openId.jwks.keys,
-                scopes,
+                scopes: ScopeSchema,
               })
             : undefined;
 
@@ -1436,12 +1430,17 @@ const makeServer = <
 };
 
 /** Authorization-code server for MCP/resource authorization.
- * Declared scope literals type middleware, verified access and request-local authority.
+ * A native literal schema types and validates scopes throughout the server.
  */
-export const make = <const Id extends string, const Scope extends string = string>(
+export const make = <
+  const Id extends string,
+  const S extends Schema.Literals<ReadonlyArray<string>> = Schema.Literals<ReadonlyArray<string>>,
+>(
   id: Id,
-  input: { readonly scopes: readonly [Scope, ...Scope[]] },
+  input: { readonly scopes: S },
 ) => {
+  type Scope = S["Type"];
+
   const Identity = Context.Service<
     { readonly server: Id; readonly kind: "identity" },
     {
@@ -1455,7 +1454,7 @@ export const make = <const Id extends string, const Scope extends string = strin
 
   const server = makeServer(
     id,
-    input,
+    { scopes: input.scopes, scopeValues: input.scopes.literals },
     Effect.map(Identity, (identity): ServerIdentity<Scope> => ({
       current: Effect.map(identity.current, (subjectId) =>
         subjectId === undefined ? undefined : { subjectId },
@@ -1477,16 +1476,26 @@ export const make = <const Id extends string, const Scope extends string = strin
 };
 
 /** Registered-client OpenID Connect code flow with PKCE, RS256 and explicit consent.
- * Declared scope literals plus openid/profile/email type Authorization and access.
+ * The supplied literal schema retains its checks; missing standard scopes are added.
  * Applications own authentication, current session validity and profile disclosure.
  * Resource JWTs and rotating refresh tokens are opt-in; dynamic registration and
  * front/back-channel logout are not enabled.
  */
-export const makeOpenId = <const Id extends string, const Scope extends string = never>(
+export const makeOpenId = <
+  const Id extends string,
+  const S extends Schema.Literals<ReadonlyArray<string>> = Schema.Literals<readonly []>,
+>(
   id: Id,
-  options: { readonly scopes?: ReadonlyArray<Scope> } = {},
+  options: { readonly scopes?: S } = {},
 ) => {
-  type OpenIdScope = Scope | (typeof standardOpenIdScopes)[number];
+  type OpenIdScope = S["Type"] | typeof StandardOpenIdScope.Type;
+  const applicationScope = options.scopes ?? Schema.Literals([]);
+
+  const missingStandards = StandardOpenIdScope.literals.filter(
+    (scope) => !applicationScope.literals.some((declared) => declared === scope),
+  );
+
+  const scope = Schema.Union([applicationScope, Schema.Literals(missingStandards)]);
 
   const Identity = Context.Service<
     {
@@ -1499,7 +1508,10 @@ export const makeOpenId = <const Id extends string, const Scope extends string =
 
   const server = makeServer(
     id,
-    { scopes: [...standardOpenIdScopes, ...(options.scopes ?? [])] },
+    {
+      scopes: scope,
+      scopeValues: [...applicationScope.literals, ...missingStandards],
+    },
     Effect.map(Identity, (identity): ServerIdentity<OpenIdScope> => ({
       current: Effect.map(identity.current, (authentication) =>
         authentication === undefined

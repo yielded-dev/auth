@@ -20,11 +20,8 @@ export const Random = Schema.String.check(Schema.isPattern(/^[A-Za-z0-9_-]{43}$/
 export const Scope = Schema.String.check(Schema.isPattern(/^[\x21\x23-\x5B\x5D-\x7E]{1,128}$/));
 export const Scopes = Schema.NonEmptyArray(Scope).check(Schema.isMaxLength(32));
 
-export const makeScopeSchema = <Scope extends string>(values: ReadonlyArray<Scope>) =>
-  Schema.Literals(values).check(Schema.makeFilter(Schema.is(Scope)));
-
 export const makeScopesSchema = <Scope extends string>(scope: Schema.Codec<Scope>) =>
-  Schema.NonEmptyArray(scope).check(Schema.isMaxLength(32));
+  Schema.NonEmptyArray(scope).check(Schema.makeFilter(Schema.is(Scopes)));
 
 /** Application claims stay nested so they cannot replace protocol claims. */
 export const AccessClaims = Schema.Record(Schema.String, Schema.Json);

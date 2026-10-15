@@ -12,9 +12,9 @@ Start with the [OAuth guide](../guide/oauth) for the flow and choice of API.
 for MCP clients, including static registrations and Client ID Metadata Documents
 (CIMD). Use the [OpenID profile](#shared-openid-sign-in) for shared browser sign-in.
 
-Declare scopes as a literal list (`as const` when stored in a variable). The server's
-`Scope` and `Access` schemas, required middleware scopes, and verified access retain
-that union.
+Declare scopes with `Schema.Literals` and use `Scope.make(...)` for scope values.
+The server retains the schema's validation and infers middleware and verified access
+from its type. Every declared literal must pass the schema and protocol checks.
 
 Provide these to `oauth.layer`:
 
@@ -132,7 +132,8 @@ for a complete server composition.
 
 `OAuthServer.makeOpenId(id, { scopes })` adds discovery, authorization code with
 PKCE, RS256 ID tokens, JWKS, and UserInfo for registered applications. Optional
-`scopes` are application scopes in addition to `openid`, `profile`, and `email`.
+`scopes` is a `Schema.Literals` declaration. Missing `openid`, `profile`, and `email`
+scopes are added; explicitly declared standard scopes retain your schema's checks.
 
 Supply the server options above without `clientMetadata`; `resource` is optional.
 OpenID also requires:
@@ -188,14 +189,14 @@ scopes, including `openid`; an empty result denies issuance. The default service
 grants only the standard OpenID scopes, never application scopes.
 
 ```ts
-const scopes = ["documents:read", "documents:write"] as const;
-const server = OAuthServer.makeOpenId("identity", { scopes });
+const Scope = Schema.Literals(["documents:read", "documents:write"]);
+const server = OAuthServer.makeOpenId("identity", { scopes: Scope });
 
 const authorization = Layer.succeed(server.Authorization, {
   authorize: ({ authentication, clientId, resource, scopes, grantType }) =>
     accountPolicy.authorize({ authentication, clientId, resource, scopes, grantType }),
 });
-// accountPolicy returns { scopes: ["openid", "documents:read"],
+// accountPolicy returns { scopes: ["openid", Scope.make("documents:read")],
 //   claims: { accountId: "application-account" } } after checking current access.
 ```
 
@@ -217,9 +218,10 @@ the `at+jwt` type, issuer, audience, expiry, and scope encoding, then returns
 `OAuthServer.Access` with the subject, client, grant, resource, scopes, and optional
 application claims. Refresh the trusted keys when the issuer rotates keys.
 
-Pass `scopes` as the full accepted literal list to narrow verified access. The verifier
-rejects a token if any scope is outside that list. Without this option, verified
-scopes remain strings.
+Pass `scopes: Scope` to validate and narrow verified access with your schema,
+including every accepted standard scope. The verifier uses type-side validation;
+it never transforms signed scope values. Without this option, verified scopes
+remain strings.
 
 Offline verification observes permission changes and revocation at access-token
 expiry. Choose a short access lifetime, such as five minutes, and refresh through

@@ -11,7 +11,8 @@ import { SqlClient } from "effect/sql";
 import { CryptoLive } from "../../shared/crypto";
 import { makeExample } from "./oauth-application";
 
-const oauth = OAuthServer.make("mcp", { scopes: ["athlete:read"] });
+const Scope = Schema.Literals(["athlete:read"]);
+const oauth = OAuthServer.make("mcp", { scopes: Scope });
 
 const toolkit = Toolkit.make(
   Tool.make("connected_athlete", {
@@ -23,7 +24,7 @@ const toolkit = Toolkit.make(
 
 const handlers = toolkit.toLayer({
   connected_athlete: Effect.fn("StravaMcp.connectedAthlete")(function* () {
-    const access = yield* OAuthServer.CurrentAccess;
+    const access = yield* oauth.CurrentAccess;
 
     if (access === undefined) return yield* OAuthServer.InvalidToken.make({});
 
@@ -143,7 +144,7 @@ const runtime = Layer.unwrap(
           allowedOrigins: [new URL(mcpRedirectUri).origin],
         }),
       ),
-      Layer.provide(oauth.middleware(["athlete:read"]).layer),
+      Layer.provide(oauth.middleware([Scope.make("athlete:read")]).layer),
     );
 
     const cors = HttpMiddleware.cors({

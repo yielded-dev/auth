@@ -2,7 +2,7 @@ import { Context, Effect, Schema, type Types } from "effect";
 
 import { AccessClaims, type Authentication, Scope, type Unavailable } from "./models";
 
-export const standardOpenIdScopes = ["openid", "profile", "email"] as const;
+export const StandardOpenIdScope = Schema.Literals(["openid", "profile", "email"]);
 
 const makeResultSchema = <Scope extends string>(scope: Schema.Codec<Scope>) =>
   Schema.Struct({
@@ -47,7 +47,7 @@ export const makeAuthorization = <const Id extends string, Scope extends string>
       authorize: ({ scopes }) =>
         Effect.succeed({
           scopes: scopes.filter((scope) =>
-            standardOpenIdScopes.some((standard) => standard === scope),
+            StandardOpenIdScope.literals.some((standard) => standard === scope),
           ),
         }),
     }),

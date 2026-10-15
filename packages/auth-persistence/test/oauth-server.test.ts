@@ -22,7 +22,8 @@ import { expect } from "vite-plus/test";
 
 import { OAuthServerPersistence } from "../src/internal/oauth-server";
 
-const server = OAuthServer.make("mcp", { scopes: ["read", "write"] });
+const Scope = Schema.Literals(["read", "write"]);
+const server = OAuthServer.make("mcp", { scopes: Scope });
 const origin = "https://app.example.com";
 const resource = `${origin}/mcp`;
 const redirectUri = "https://client.example.com/callback";
@@ -332,7 +333,7 @@ it.effect(
             protocols: [McpProtocol.v2026_07_28],
           }),
         ),
-        Layer.provide(server.middleware(["read"]).layer),
+        Layer.provide(server.middleware([Scope.make("read")]).layer),
       );
 
       const routes = Layer.mergeAll(tools, server.routes).pipe(

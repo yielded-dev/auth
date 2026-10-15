@@ -10,10 +10,8 @@ import {
   ConfigurationError,
   InvalidToken,
   Random,
-  Scopes,
   Scope,
   makeAccessSchema,
-  makeScopeSchema,
   makeScopesSchema,
   Text,
   Unavailable,
@@ -43,8 +41,8 @@ export interface AccessTokenVerifierOptions {
   readonly resource: string;
   /** Trusted keys from the issuer's JWKS; reacquire this verifier when keys rotate. */
   readonly publicKeys: ReadonlyArray<Jwk.PublicJwk>;
-  /** Declared resource scopes. Every token scope must belong to this set. */
-  readonly scopes?: ReadonlyArray<string>;
+  /** Type-side validation for every scope; decoding transformations are not applied. */
+  readonly scopes?: Schema.Codec<string>;
 }
 
 const makeVerifier = Effect.fnUntraced(function* <Scope extends string>(
@@ -52,15 +50,15 @@ const makeVerifier = Effect.fnUntraced(function* <Scope extends string>(
   scope: Schema.Codec<Scope>,
 ) {
   const signature = yield* Signature;
-  const ScopesSchema = makeScopesSchema(scope);
-  const AccessSchema = makeAccessSchema(scope);
+  const ScopeSchema = Schema.toType(scope);
+  const ScopesSchema = makeScopesSchema(ScopeSchema);
+  const AccessSchema = makeAccessSchema(ScopeSchema);
 
   const config = yield* Schema.decodeUnknownEffect(
     Schema.Struct({
       issuer: origin,
       resource: Url,
       publicKeys: Schema.NonEmptyArray(Jwk.PublicJwk).check(Schema.isMaxLength(16)),
-      scopes: Schema.optionalKey(Scopes),
     }),
   )(options, { reportInput: false }).pipe(Effect.mapError(() => ConfigurationError.make({})));
 
@@ -128,19 +126,16 @@ const makeVerifier = Effect.fnUntraced(function* <Scope extends string>(
 /** Verify offline with trusted public keys. Revocation and permission changes
  * take effect at token expiry; use short access lifetimes and renew through the issuer.
  * Retains only the signature service; verification uses the caller's clock and context.
- * Configured literals narrow access only after every token scope passes validation.
+ * The configured schema narrows access only after every token scope passes validation.
  */
-export function makeAccessTokenVerifier<const Scope extends string>(
-  options: AccessTokenVerifierOptions & { readonly scopes: ReadonlyArray<Scope> },
-): ReturnType<typeof makeVerifier<Scope>>;
+export function makeAccessTokenVerifier<const S extends Schema.Codec<string>>(
+  options: AccessTokenVerifierOptions & { readonly scopes: S },
+): ReturnType<typeof makeVerifier<S["Type"]>>;
 
 export function makeAccessTokenVerifier(
   options: AccessTokenVerifierOptions,
 ): ReturnType<typeof makeVerifier<string>>;
 
 export function makeAccessTokenVerifier(options: AccessTokenVerifierOptions) {
-  return makeVerifier(
-    options,
-    options.scopes === undefined ? Scope : makeScopeSchema(options.scopes),
-  );
+  return makeVerifier(options, options.scopes ?? Scope);
 }
