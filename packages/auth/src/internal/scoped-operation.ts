@@ -1,46 +1,46 @@
-import { Cause, Effect, Exit, Fiber, type Scope } from "effect";
+import { Cause, Effect, Exit, Fiber } from "effect";
 
-/** Own work in the factory Scope and join it before returning to its caller.
+/** Capture the factory Scope once and join each operation before returning to its caller.
  * Caller cancellation must inspect the joined Exit as well as interrupt it. */
-export const scopedOperation = <A, E, R, Closed>(
-  scope: Scope.Scope,
-  work: Effect.Effect<A, E, R>,
-  unavailable: () => Closed,
-): Effect.Effect<A, E | Closed, R> =>
-  Effect.suspend(() => {
-    let delivered = false;
+export const makeScopedOperation = Effect.fnUntraced(function* <Closed>(unavailable: () => Closed) {
+  const scope = yield* Effect.scope;
 
-    return Effect.acquireUseRelease(
-      Effect.suspend(() =>
-        scope.state._tag === "Closed"
-          ? Effect.fail(unavailable())
-          : Effect.forkIn(work, scope, { uninterruptible: false }),
-      ),
-      (fiber) =>
-        Effect.uninterruptibleMask((restore) =>
-          Effect.gen(function* () {
-            const exit = yield* restore(Fiber.await(fiber));
+  return <A, E, R>(work: Effect.Effect<A, E, R>): Effect.Effect<A, E | Closed, R> =>
+    Effect.suspend(() => {
+      let delivered = false;
 
-            delivered = true;
-            // Owner closure is an unavailable service, but cannot hide a
-            // concurrent failure or cleanup defect from the joined operation.
-            if (
-              scope.state._tag === "Closed" &&
-              (Exit.isSuccess(exit) || Cause.hasInterruptsOnly(exit.cause))
-            )
-              return yield* Effect.fail(unavailable());
-            if (Exit.isFailure(exit)) return yield* exit;
-
-            return exit.value;
-          }),
+      return Effect.acquireUseRelease(
+        Effect.suspend(() =>
+          scope.state._tag === "Closed"
+            ? Effect.fail(unavailable())
+            : Effect.forkIn(work, scope, { uninterruptible: false }),
         ),
-      (fiber) =>
-        Effect.gen(function* () {
-          yield* Fiber.interrupt(fiber);
-          const exit = yield* Fiber.await(fiber);
+        (fiber) =>
+          Effect.uninterruptibleMask((restore) =>
+            Effect.gen(function* () {
+              const exit = yield* restore(Fiber.await(fiber));
 
-          if (!delivered && Exit.isFailure(exit) && !Cause.hasInterruptsOnly(exit.cause))
-            return yield* Effect.failCause(exit.cause);
-        }),
-    );
-  });
+              delivered = true;
+              // Owner closure is an unavailable service, but cannot hide a
+              // concurrent failure or cleanup defect from the joined operation.
+              if (
+                scope.state._tag === "Closed" &&
+                (Exit.isSuccess(exit) || Cause.hasInterruptsOnly(exit.cause))
+              )
+                return yield* Effect.fail(unavailable());
+              if (Exit.isFailure(exit)) return yield* exit;
+
+              return exit.value;
+            }),
+          ),
+        (fiber) =>
+          Effect.gen(function* () {
+            yield* Fiber.interrupt(fiber);
+            const exit = yield* Fiber.await(fiber);
+
+            if (!delivered && Exit.isFailure(exit) && !Cause.hasInterruptsOnly(exit.cause))
+              return yield* Effect.failCause(exit.cause);
+          }),
+      );
+    });
+});

@@ -2,7 +2,7 @@ import { Aead } from "@yielded/crypto/Aead";
 import { Cause, Crypto, Effect, Redacted, Result, Schema, type Scope } from "effect";
 import { Base64Url } from "effect/encoding";
 
-import { scopedOperation } from "../../internal/scoped-operation";
+import { makeScopedOperation } from "../../internal/scoped-operation";
 import { OAuthConfigurationError, OAuthUnavailable } from "../signInErrors";
 import { OAuthEncryptionKeyId } from "../signInModels";
 import { makeOAuthSnapshot } from "../signInSnapshot";
@@ -106,7 +106,7 @@ export const payloadEncryption = <C, P, S extends Envelope>(
     const configuration = yield* Effect.fromResult(captured);
     const crypto = yield* Crypto.Crypto;
     const aead = yield* Aead;
-    const scope = yield* Effect.scope;
+    const runOwned = yield* makeScopedOperation(fail);
 
     if (!aead.supports("XChaCha20-Poly1305"))
       return yield* OAuthConfigurationError.make({ reason: "crypto" });
@@ -137,7 +137,7 @@ export const payloadEncryption = <C, P, S extends Envelope>(
     // Teardown interrupts and joins active operations before retained keys are
     // wiped. Each operation also owns a copy, never a mutable keyring alias.
     const run = <A>(work: Effect.Effect<A, OAuthUnavailable, Scope.Scope>) =>
-      scopedOperation(scope, Effect.scoped(work), fail);
+      runOwned(Effect.scoped(work));
 
     return {
       seal: (context: C, value: P) =>

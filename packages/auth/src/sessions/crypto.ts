@@ -4,7 +4,11 @@ import { Base64Url } from "effect/encoding";
 
 import { AuthConfig } from "../auth/AuthConfig";
 import { defaultLayer } from "../auth/defaults";
-import { withoutObservability } from "../internal/diagnostics";
+import {
+  markAuthFailureReported,
+  reportAuthFailure,
+  withoutObservability,
+} from "../internal/diagnostics";
 import { TokenDigest } from "../Schema";
 import { SessionConfigurationError, SessionInvalid, SessionUnavailable } from "./errors";
 
@@ -57,18 +61,29 @@ const digestMessage = Schema.fromJsonString(
   }),
 );
 
+/** Observe backend failures once before translating them into the finite session port. */
+const sessionDiagnostics =
+  (stage: "session-crypto" | "session-cache") =>
+  <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+    effect.pipe(
+      Effect.catchCause((cause) =>
+        reportAuthFailure(stage, cause).pipe(
+          Effect.andThen(Effect.failCause(markAuthFailureReported(cause))),
+        ),
+      ),
+    );
+
 export const makeSessionSecrets = Effect.fn("makeSessionSecrets")(function* (moduleId: string) {
   const crypto = yield* Crypto.Crypto;
 
   return {
     generate: Effect.fn("SessionSecrets.generate")(function* () {
-      const bytes = yield* crypto
-        .randomBytes(32)
-        .pipe(
-          Effect.catchCause((cause) =>
-            Effect.failCause(Cause.map(cause, () => SessionUnavailable.make({}))),
-          ),
-        );
+      const bytes = yield* crypto.randomBytes(32).pipe(
+        sessionDiagnostics("session-crypto"),
+        Effect.catchCause((cause) =>
+          Effect.failCause(Cause.map(cause, () => SessionUnavailable.make({}))),
+        ),
+      );
 
       return Redacted.make(Base64Url.encode(bytes));
     }),
@@ -87,13 +102,12 @@ export const makeSessionSecrets = Effect.fn("makeSessionSecrets")(function* (mod
         secret: Redacted.value(token),
       }).pipe(Effect.orDie);
 
-      const digest = yield* crypto
-        .digest("SHA-256", textEncoder.encode(message))
-        .pipe(
-          Effect.catchCause((cause) =>
-            Effect.failCause(Cause.map(cause, () => SessionUnavailable.make({}))),
-          ),
-        );
+      const digest = yield* crypto.digest("SHA-256", textEncoder.encode(message)).pipe(
+        sessionDiagnostics("session-crypto"),
+        Effect.catchCause((cause) =>
+          Effect.failCause(Cause.map(cause, () => SessionUnavailable.make({}))),
+        ),
+      );
 
       return TokenDigest.make(Base64Url.encode(digest));
     }),
@@ -133,6 +147,7 @@ export const makeSessionSigningCodec = Effect.fn("makeSessionSigningCodec")(func
 
   const importKey = (material: Uint8Array) =>
     hmac.importKey({ algorithm: "SHA-256", key: Redacted.make(material) }).pipe(
+      sessionDiagnostics("session-crypto"),
       Effect.catchCause((cause) =>
         Effect.failCause(
           Cause.map(cause, () => SessionConfigurationError.make({ reason: "keyring" })),
@@ -157,6 +172,7 @@ export const makeSessionSigningCodec = Effect.fn("makeSessionSigningCodec")(func
     const key =
       purpose === "session-cache"
         ? yield* root.sign(textEncoder.encode("effect-auth/session-cache/key/v1")).pipe(
+            sessionDiagnostics("session-crypto"),
             Effect.catchCause((cause) =>
               Effect.failCause(
                 Cause.map(cause, () => SessionConfigurationError.make({ reason: "keyring" })),
@@ -180,6 +196,7 @@ export const makeSessionSigningCodec = Effect.fn("makeSessionSigningCodec")(func
     encode: Effect.fn("SessionSigningCodec.encode")(function* (claims: S["Type"]) {
       const json = yield* encode(claims).pipe(
         Effect.provide(services),
+        sessionDiagnostics(purpose === "session-cache" ? "session-cache" : "session-crypto"),
         Effect.catchCause((cause) =>
           Effect.failCause(Cause.map(cause, () => SessionUnavailable.make({}))),
         ),
@@ -187,17 +204,19 @@ export const makeSessionSigningCodec = Effect.fn("makeSessionSigningCodec")(func
 
       const message = `${version}.${activeKeyId}.${Base64Url.encode(json)}`;
 
-      const signature = yield* activeKey
-        .sign(textEncoder.encode(message))
-        .pipe(
-          Effect.catchCause((cause) =>
-            Effect.failCause(Cause.map(cause, () => SessionUnavailable.make({}))),
-          ),
-        );
+      const signature = yield* activeKey.sign(textEncoder.encode(message)).pipe(
+        sessionDiagnostics("session-crypto"),
+        Effect.catchCause((cause) =>
+          Effect.failCause(Cause.map(cause, () => SessionUnavailable.make({}))),
+        ),
+      );
 
       const token = `${message}.${Base64Url.encode(signature)}`;
 
-      if (token.length > maximumTokenBytes) return yield* SessionUnavailable.make({});
+      if (token.length > maximumTokenBytes)
+        return yield* SessionUnavailable.make({}).pipe(
+          sessionDiagnostics(purpose === "session-cache" ? "session-cache" : "session-crypto"),
+        );
 
       return Redacted.make(token);
     }),
@@ -220,6 +239,7 @@ export const makeSessionSigningCodec = Effect.fn("makeSessionSigningCodec")(func
       const valid = yield* key
         .verify(textEncoder.encode(`${version}.${keyId}.${payload}`), signature)
         .pipe(
+          sessionDiagnostics("session-crypto"),
           Effect.catchCause((cause) =>
             Effect.failCause(Cause.map(cause, () => SessionUnavailable.make({}))),
           ),

@@ -1,7 +1,7 @@
 import { Cause, type Crypto, Effect, Redacted, Result, Schema, type Scope, Tracer } from "effect";
 import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
 
-import { scopedOperation } from "../../internal/scoped-operation";
+import { makeScopedOperation } from "../../internal/scoped-operation";
 import { timeoutOrElseWithCause } from "../../internal/timeout";
 import { selectCallback } from "../callback";
 import { OAuthProtocol } from "../OAuthProtocol";
@@ -54,7 +54,7 @@ export const provider = (
         );
       const client = yield* HttpClient.HttpClient;
       const fetch = yield* FetchHttpClient.Fetch;
-      const scope = yield* Effect.scope;
+      const run = yield* makeScopedOperation(() => OAuthUnavailable.make({}));
       const { random, digest } = yield* secrets;
 
       const request = Effect.fnUntraced(
@@ -93,9 +93,6 @@ export const provider = (
         }),
         Effect.provideService(Tracer.DisablePropagation, true),
       );
-
-      const run = <A, E>(work: Effect.Effect<A, E>): Effect.Effect<A, E | OAuthUnavailable> =>
-        scopedOperation(scope, work, () => OAuthUnavailable.make({}));
 
       const prepareAuthorization: OAuthProtocol["Service"]["prepareAuthorization"] = (input) =>
         run(

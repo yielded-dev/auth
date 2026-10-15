@@ -4,7 +4,7 @@ import { Base64Url } from "effect/encoding";
 import { hasCommitScope, type PreparedCommit } from "../../hooks/commit";
 import { HookDenied } from "../../hooks/models";
 import { LoginIdentifier } from "../../identity/models";
-import { reportAuthFailure } from "../../internal/diagnostics";
+import { markAuthFailureReported, reportAuthFailure } from "../../internal/diagnostics";
 import { ProofInvalid, ProofIngressDenied, ProofCapabilityUnsupported } from "../../proofs/errors";
 import type { Email, SubjectId } from "../../Schema";
 import { TokenDigest } from "../../Schema";
@@ -81,21 +81,28 @@ const hashingInfrastructureFailure = Schema.is(
   Schema.Union([PasswordHashingUnavailable, PasswordKdfBusy]),
 );
 
+/** Report infrastructure failures before the password port projects their typed errors. */
+export const passwordHashingDiagnostics = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+  effect.pipe(
+    Effect.catchCause((cause) =>
+      reportAuthFailure(
+        "password-hashing",
+        Cause.fromReasons(
+          cause.reasons.filter(
+            (reason) => !Cause.isFailReason(reason) || hashingInfrastructureFailure(reason.error),
+          ),
+        ),
+      ).pipe(Effect.andThen(Effect.failCause(markAuthFailureReported(cause)))),
+    ),
+  );
+
 /** Denied attempts may consume ordinary dummy-work failures, never defects or cancellation. */
 const recoverDummy = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   effect.pipe(
     Effect.catchCause((cause) =>
       Cause.hasDies(cause) || Cause.hasInterrupts(cause)
         ? Effect.failCause(Cause.map(cause, () => PasswordUnavailable.make({})))
-        : reportAuthFailure(
-            "password-hashing",
-            Cause.fromReasons(
-              cause.reasons.filter(
-                (reason) =>
-                  Cause.isFailReason(reason) && hashingInfrastructureFailure(reason.error),
-              ),
-            ),
-          ).pipe(Effect.asVoid),
+        : Effect.void,
     ),
   );
 
@@ -221,7 +228,7 @@ export const makePasswordVerification = ({
     // All denied branches do one bounded dummy attempt too. Local admission can
     // reject it; no claim of exact network timing is made.
     if (admitted === undefined) {
-      yield* hasher.dummy(request.password).pipe(recoverDummy);
+      yield* hasher.dummy(request.password).pipe(passwordHashingDiagnostics, recoverDummy);
 
       return yield* PasswordRejected.make({});
     }
@@ -232,7 +239,7 @@ export const makePasswordVerification = ({
 
     return yield* Effect.gen(function* () {
       if (candidate === undefined) {
-        yield* hasher.dummy(request.password);
+        yield* hasher.dummy(request.password).pipe(passwordHashingDiagnostics);
 
         return yield* PasswordRejected.make({});
       }
@@ -252,35 +259,39 @@ export const makePasswordVerification = ({
         (subjectId !== undefined && candidate.revision.subjectId !== subjectId) ||
         candidate.identifier.value !== request.email
       ) {
-        yield* hasher.dummy(request.password);
+        yield* hasher.dummy(request.password).pipe(passwordHashingDiagnostics);
 
         return yield* PasswordRejected.make({});
       }
       const normalized = yield* checkedPassword(request.password, candidate).pipe(Effect.result);
 
       if (normalized._tag === "Failure") {
-        yield* hasher.dummy(request.password).pipe(recoverDummy);
+        yield* hasher.dummy(request.password).pipe(passwordHashingDiagnostics, recoverDummy);
 
         return yield* PasswordRejected.make({});
       }
       const password = normalized.success;
 
-      const verified = yield* hasher
-        .verify(password, candidate.verifier)
-        .pipe(
-          Effect.catchCause((cause) =>
-            cause.reasons.every(
-              (reason) =>
-                Cause.isFailReason(reason) && reason.error._tag === "PasswordVerifierInvalid",
-            )
-              ? hasher.dummy(password).pipe(Effect.andThen(Effect.fail(PasswordRejected.make({}))))
-              : Effect.failCause(
-                  Cause.map(cause, (error) =>
-                    error._tag === "PasswordVerifierInvalid" ? PasswordRejected.make({}) : error,
-                  ),
+      const verified = yield* hasher.verify(password, candidate.verifier).pipe(
+        passwordHashingDiagnostics,
+        Effect.catchCause((cause) =>
+          cause.reasons.every(
+            (reason) =>
+              Cause.isFailReason(reason) && reason.error._tag === "PasswordVerifierInvalid",
+          )
+            ? hasher
+                .dummy(password)
+                .pipe(
+                  passwordHashingDiagnostics,
+                  Effect.andThen(Effect.fail(PasswordRejected.make({}))),
+                )
+            : Effect.failCause(
+                Cause.map(cause, (error) =>
+                  error._tag === "PasswordVerifierInvalid" ? PasswordRejected.make({}) : error,
                 ),
-          ),
-        );
+              ),
+        ),
+      );
 
       if (!verified.matches) return yield* PasswordRejected.make({});
       const verifiedAt = yield* DateTime.now;
@@ -288,7 +299,7 @@ export const makePasswordVerification = ({
       if (action === "sign-in" && verified.needsRehash)
         yield* store.rehashIfCurrent({
           credential: candidate,
-          nextVerifier: yield* hasher.hash(password),
+          nextVerifier: yield* hasher.hash(password).pipe(passwordHashingDiagnostics),
         });
 
       const evidence: AuthenticationEvidence = {

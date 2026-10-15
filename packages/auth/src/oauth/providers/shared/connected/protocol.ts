@@ -4,7 +4,7 @@ import * as Pkce from "@yielded/oauth/Pkce";
 import { Cause, Crypto, DateTime, Effect, Redacted, Schema, type Scope } from "effect";
 
 import { reportAuthDiagnostic, withoutObservability } from "../../../../internal/diagnostics";
-import { scopedOperation } from "../../../../internal/scoped-operation";
+import { makeScopedOperation } from "../../../../internal/scoped-operation";
 import { timeoutOrElseWithCause } from "../../../../internal/timeout";
 import { RequestBindingFlowId } from "../../../../operations/requestBindingModels";
 import * as M from "../../../connectedModels";
@@ -150,17 +150,14 @@ export const makeConnectedProtocolWithCompatibility = Effect.fn(
   const crypto = yield* Crypto.Crypto;
   const clientSecrets = yield* PrivateKeyClientSecret;
   const providerRevocation = yield* ProviderRevocation;
-  const scope = yield* Effect.scope;
+  // Provider-owned revocation bypasses the generic OAuth client's transport.
+  // Own the entire operation, including provider callbacks, in this lifetime.
+  const run = yield* makeScopedOperation(unavailable);
 
   const requestSecret = (authentication: OpenIdConnectAuthentication) =>
     clientSecrets
       .mint(authentication)
       .pipe(Effect.catchCause((cause) => Effect.failCause(Cause.map(cause, unavailable))));
-
-  // Provider-owned revocation bypasses the generic OAuth client's transport.
-  // Own the entire operation, including provider callbacks, in this lifetime.
-  const run = <A, E>(work: Effect.Effect<A, E>): Effect.Effect<A, E | OAuthUnavailable> =>
-    scopedOperation(scope, work, unavailable);
 
   // Setup shares the protocol's containment for supplied platform services.
   const { installed, timeoutSeconds } = yield* installation;

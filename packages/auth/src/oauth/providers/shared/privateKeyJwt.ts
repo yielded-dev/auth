@@ -18,7 +18,7 @@ import {
 } from "effect";
 import { Base64 } from "effect/encoding";
 
-import { scopedOperation } from "../../../internal/scoped-operation";
+import { makeScopedOperation } from "../../../internal/scoped-operation";
 import {
   isPrivateKeyAuthentication,
   type OpenIdConnectAuthentication,
@@ -109,6 +109,10 @@ export class PrivateKeyClientSecret extends Context.Service<
         ),
     );
 
+    const run = yield* makeScopedOperation(() => Unavailable.make({})).pipe(
+      Effect.provideService(Scope.Scope, scope),
+    );
+
     const imports = yield* Semaphore.make(1);
 
     const mint = Effect.fnUntraced(
@@ -143,7 +147,7 @@ export class PrivateKeyClientSecret extends Context.Service<
       mint: (authentication) =>
         !isPrivateKeyAuthentication(authentication)
           ? Effect.succeed(undefined)
-          : scopedOperation(scope, mint(authentication.privateKeyJwt), () => Unavailable.make({})),
+          : run(mint(authentication.privateKeyJwt)),
     });
   });
 

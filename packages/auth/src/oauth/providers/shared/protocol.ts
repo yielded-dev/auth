@@ -2,7 +2,7 @@ import * as Pkce from "@yielded/oauth/Pkce";
 import { Cause, Crypto, DateTime, Effect, Redacted, Schema, type Scope } from "effect";
 
 import { reportAuthDiagnostic, withoutObservability } from "../../../internal/diagnostics";
-import { scopedOperation } from "../../../internal/scoped-operation";
+import { makeScopedOperation } from "../../../internal/scoped-operation";
 import { timeoutOrElseWithCause } from "../../../internal/timeout";
 import { RequestBindingFlowId } from "../../../operations/requestBindingModels";
 import { selectCallback } from "../../callback";
@@ -79,7 +79,8 @@ export const makeOpenIdConnectOAuthProtocol = Effect.fn("makeOpenIdConnectOAuthP
     const context = (yield* Effect.context<R>()).pipe(withoutObservability);
     const crypto = yield* Crypto.Crypto;
     const clientSecrets = yield* PrivateKeyClientSecret;
-    const scope = yield* Effect.scope;
+    // Own application decoding as well as the native client's individual requests.
+    const run = yield* makeScopedOperation(unavailable);
 
     const requestSecret = (authentication: OpenIdConnectAuthentication) =>
       clientSecrets
@@ -88,10 +89,6 @@ export const makeOpenIdConnectOAuthProtocol = Effect.fn("makeOpenIdConnectOAuthP
 
     // Setup shares the protocol's containment for supplied platform services.
     const { installed, timeoutSeconds } = yield* installation;
-
-    // Own application decoding as well as the native client's individual requests.
-    const run = <A, E>(work: Effect.Effect<A, E>): Effect.Effect<A, E | OAuthUnavailable> =>
-      scopedOperation(scope, work, unavailable);
 
     const prepareAuthorization: OAuthProtocol["Service"]["prepareAuthorization"] = Effect.fn(
       "OpenIdConnect.prepareAuthorization",

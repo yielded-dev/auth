@@ -13,7 +13,11 @@ import type { Email, SubjectId } from "../../Schema";
 import { NewPasswordCheck } from "../NewPasswordCheck";
 import { PasswordHashing } from "../PasswordHashing";
 import type { PasswordMethodPolicy } from "./policy";
-import { makePasswordVerification, passwordUnexpected as unexpected } from "./verification";
+import {
+  makePasswordVerification,
+  passwordHashingDiagnostics,
+  passwordUnexpected as unexpected,
+} from "./verification";
 
 /** Preserve the current-password proof instant before new-password hashing. */
 export const makePasswordPreparation = ({
@@ -39,7 +43,7 @@ export const makePasswordPreparation = ({
 
     return {
       normalization: checked.normalization,
-      verifier: yield* unexpected(hasher.hash(checked.password)),
+      verifier: yield* unexpected(hasher.hash(checked.password).pipe(passwordHashingDiagnostics)),
     };
   });
 
