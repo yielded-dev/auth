@@ -712,3 +712,117 @@ diff --git a/sqlite-core/effect/session.d.ts b/sqlite-core/effect/session.d.ts
  import { EffectLoggerShape } from "../../effect-core/logger.js";
  
  //#region src/sqlite-core/effect/session.d.ts
+diff --git a/pg-core/effect/session.js b/pg-core/effect/session.js
+--- a/pg-core/effect/session.js
++++ b/pg-core/effect/session.js
+@@ -62,12 +62,12 @@
+ 				return result;
+ 			}
+ 			assertUnreachable(cacheStrat);
+-		}).pipe(Effect.provideService(EffectCache, this.cache), Effect.catch((e) => {
+-			return Effect.fail(new EffectDrizzleQueryError({
++		}).pipe(Effect.provideService(EffectCache, this.cache), Effect.catchCause((cause) => {
++			return Effect.failCause(Cause.map(cause, (e) => new EffectDrizzleQueryError({
+ 				query: queryString,
+ 				params,
+ 				cause: Cause.fail(e)
+-			}));
++			})));
+ 		}));
+ 	}
+ };
+diff --git a/pg-core/effect/session.cjs b/pg-core/effect/session.cjs
+--- a/pg-core/effect/session.cjs
++++ b/pg-core/effect/session.cjs
+@@ -66,12 +66,12 @@
+ 				return result;
+ 			}
+ 			(0, __utils_ts.assertUnreachable)(cacheStrat);
+-		}).pipe(effect_Effect.provideService(__cache_core_cache_effect_ts.EffectCache, this.cache), effect_Effect.catch((e) => {
+-			return effect_Effect.fail(new __effect_core_errors_ts.EffectDrizzleQueryError({
++		}).pipe(effect_Effect.provideService(__cache_core_cache_effect_ts.EffectCache, this.cache), effect_Effect.catchCause((cause) => {
++			return effect_Effect.failCause(effect_Cause.map(cause, (e) => new __effect_core_errors_ts.EffectDrizzleQueryError({
+ 				query: queryString,
+ 				params,
+ 				cause: effect_Cause.fail(e)
+-			}));
++			})));
+ 		}));
+ 	}
+ };
+diff --git a/mysql-core/effect/session.js b/mysql-core/effect/session.js
+--- a/mysql-core/effect/session.js
++++ b/mysql-core/effect/session.js
+@@ -63,12 +63,12 @@
+ 				return result;
+ 			}
+ 			assertUnreachable(cacheStrat);
+-		}).pipe(Effect.provideService(EffectCache, this.cache), Effect.catch((e) => {
+-			return Effect.fail(new EffectDrizzleQueryError({
++		}).pipe(Effect.provideService(EffectCache, this.cache), Effect.catchCause((cause) => {
++			return Effect.failCause(Cause.map(cause, (e) => new EffectDrizzleQueryError({
+ 				query: queryString,
+ 				params,
+ 				cause: Cause.fail(e)
+-			}));
++			})));
+ 		}));
+ 	}
+ };
+diff --git a/mysql-core/effect/session.cjs b/mysql-core/effect/session.cjs
+--- a/mysql-core/effect/session.cjs
++++ b/mysql-core/effect/session.cjs
+@@ -67,12 +67,12 @@
+ 				return result;
+ 			}
+ 			(0, __utils_ts.assertUnreachable)(cacheStrat);
+-		}).pipe(effect_Effect.provideService(__cache_core_cache_effect_ts.EffectCache, this.cache), effect_Effect.catch((e) => {
+-			return effect_Effect.fail(new __effect_core_errors_ts.EffectDrizzleQueryError({
++		}).pipe(effect_Effect.provideService(__cache_core_cache_effect_ts.EffectCache, this.cache), effect_Effect.catchCause((cause) => {
++			return effect_Effect.failCause(effect_Cause.map(cause, (e) => new __effect_core_errors_ts.EffectDrizzleQueryError({
+ 				query: queryString,
+ 				params,
+ 				cause: effect_Cause.fail(e)
+-			}));
++			})));
+ 		}));
+ 	}
+ };
+diff --git a/sqlite-core/effect/session.js b/sqlite-core/effect/session.js
+--- a/sqlite-core/effect/session.js
++++ b/sqlite-core/effect/session.js
+@@ -92,12 +92,12 @@
+ 				return result;
+ 			}
+ 			assertUnreachable(cacheStrat);
+-		}).pipe(Effect.provideService(EffectCache, this.cache), Effect.catch((e) => {
+-			return Effect.fail(new EffectDrizzleQueryError({
++		}).pipe(Effect.provideService(EffectCache, this.cache), Effect.catchCause((cause) => {
++			return Effect.failCause(Cause.map(cause, (e) => new EffectDrizzleQueryError({
+ 				query: queryString,
+ 				params,
+ 				cause: Cause.fail(e)
+-			}));
++			})));
+ 		}));
+ 	}
+ };
+diff --git a/sqlite-core/effect/session.cjs b/sqlite-core/effect/session.cjs
+--- a/sqlite-core/effect/session.cjs
++++ b/sqlite-core/effect/session.cjs
+@@ -96,12 +96,12 @@
+ 				return result;
+ 			}
+ 			(0, __utils_ts.assertUnreachable)(cacheStrat);
+-		}).pipe(effect_Effect.provideService(__cache_core_cache_effect_ts.EffectCache, this.cache), effect_Effect.catch((e) => {
+-			return effect_Effect.fail(new __effect_core_errors_ts.EffectDrizzleQueryError({
++		}).pipe(effect_Effect.provideService(__cache_core_cache_effect_ts.EffectCache, this.cache), effect_Effect.catchCause((cause) => {
++			return effect_Effect.failCause(effect_Cause.map(cause, (e) => new __effect_core_errors_ts.EffectDrizzleQueryError({
+ 				query: queryString,
+ 				params,
+ 				cause: effect_Cause.fail(e)
+-			}));
++			})));
+ 		}));
+ 	}
+ };

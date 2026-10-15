@@ -1,6 +1,8 @@
-import { type Crypto, Effect, Fiber, Redacted, Result, Schema, type Scope, Tracer } from "effect";
+import { Cause, type Crypto, Effect, Redacted, Result, Schema, type Scope, Tracer } from "effect";
 import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
 
+import { scopedOperation } from "../../internal/scoped-operation";
+import { timeoutOrElseWithCause } from "../../internal/timeout";
 import { selectCallback } from "../callback";
 import { OAuthProtocol } from "../OAuthProtocol";
 import type { ProviderDefinition } from "../providerDefinition";
@@ -76,11 +78,13 @@ export const provider = (
             return yield* Unavailable.make({});
 
           return yield* readText(response.stream, 131072).pipe(
-            Effect.mapError(() => Unavailable.make({})),
+            Effect.catchCause((cause) =>
+              Effect.failCause(Cause.map(cause, () => Unavailable.make({}))),
+            ),
           );
         },
         Effect.scoped,
-        Effect.timeoutOrElse({ duration: 35_000, orElse: () => Unavailable.make({}) }),
+        timeoutOrElseWithCause({ duration: 35_000, orElse: () => Unavailable.make({}) }),
         Effect.provideService(FetchHttpClient.Fetch, fetch),
         Effect.provideService(FetchHttpClient.RequestInit, {
           redirect: "manual",
@@ -91,21 +95,7 @@ export const provider = (
       );
 
       const run = <A, E>(work: Effect.Effect<A, E>): Effect.Effect<A, E | OAuthUnavailable> =>
-        Effect.acquireUseRelease(
-          Effect.suspend(() =>
-            scope.state._tag === "Closed"
-              ? Effect.fail(OAuthUnavailable.make({}))
-              : Effect.forkIn(work, scope),
-          ),
-          Effect.fnUntraced(function* (fiber) {
-            const exit = yield* Fiber.await(fiber);
-
-            if (scope.state._tag === "Closed") return yield* OAuthUnavailable.make({});
-
-            return yield* exit;
-          }),
-          Fiber.interrupt,
-        );
+        scopedOperation(scope, work, () => OAuthUnavailable.make({}));
 
       const prepareAuthorization: OAuthProtocol["Service"]["prepareAuthorization"] = (input) =>
         run(
@@ -151,10 +141,14 @@ export const provider = (
               },
             };
           }).pipe(
-            Effect.mapError((error) =>
-              error._tag === "OAuthProxyRejected" || error._tag === "OAuthRejected"
-                ? OAuthRejected.make({})
-                : OAuthUnavailable.make({}),
+            Effect.catchCause((cause) =>
+              Effect.failCause(
+                Cause.map(cause, (error) =>
+                  error._tag === "OAuthProxyRejected" || error._tag === "OAuthRejected"
+                    ? OAuthRejected.make({})
+                    : OAuthUnavailable.make({}),
+                ),
+              ),
             ),
           ),
         );
@@ -201,10 +195,14 @@ export const provider = (
 
             return identity;
           }).pipe(
-            Effect.mapError((error) =>
-              error._tag === "OAuthProxyRejected" || error._tag === "OAuthProtocolRejected"
-                ? OAuthProtocolRejected.make({})
-                : OAuthUnavailable.make({}),
+            Effect.catchCause((cause) =>
+              Effect.failCause(
+                Cause.map(cause, (error) =>
+                  error._tag === "OAuthProxyRejected" || error._tag === "OAuthProtocolRejected"
+                    ? OAuthProtocolRejected.make({})
+                    : OAuthUnavailable.make({}),
+                ),
+              ),
             ),
           ),
         );
