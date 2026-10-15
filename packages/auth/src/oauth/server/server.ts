@@ -20,6 +20,8 @@ import { reportAuthFailure } from "../../internal/diagnostics";
 import { origin as Origin } from "../../internal/origin";
 import { SubjectId } from "../../Schema";
 import { makeSessionSigningCodec, type SessionSigningKeyring } from "../../sessions/crypto";
+import { makeAccessTokenVerifier } from "./access-token";
+import { OpenIdAuthorization, OpenIdAuthorizationResult } from "./authorization";
 import {
   makeClients,
   matchesRedirect,
@@ -29,6 +31,7 @@ import {
 import { ConsentRenderer, OpenIdConsent, escapeHtml } from "./consent";
 import {
   Access,
+  BearerToken,
   Authentication,
   OpenIdProfile,
   OpenIdMetadata,
@@ -112,7 +115,7 @@ const Decision = Schema.Struct({ csrf: Random, decision: Schema.Literals(["appro
 
 const Revocation = Schema.Struct({
   client_id: Text,
-  token: Text,
+  token: BearerToken,
   token_type_hint: Schema.optionalKey(Text),
 });
 
@@ -206,6 +209,14 @@ export interface Options {
 
 export interface OpenIdOptions extends Omit<Options, "resource" | "clientMetadata"> {
   readonly identityKeys: IdentitySigningKeys;
+  /** Explicit audience for application access. Defaults to this server's UserInfo endpoint. */
+  readonly resource?: string;
+  /** JWT access requires an explicit resource. Defaults to opaque access tokens. */
+  readonly accessTokenFormat?: "opaque" | "jwt";
+  /** Defaults to ten minutes; accepts one second through ten minutes. */
+  readonly accessTokenLifetimeMillis?: number;
+  /** Opt-in, and each client must also register the refresh_token grant type. */
+  readonly refreshTokens?: boolean;
 }
 
 export interface OpenIdIdentity {
@@ -215,7 +226,7 @@ export interface OpenIdIdentity {
     Unavailable,
     HttpServerRequest.HttpServerRequest
   >;
-  /** Check the same session and account authority at code redemption and UserInfo reads. */
+  /** Check the same session and account authority at code redemption, refresh and UserInfo. */
   readonly active: (authentication: Authentication) => Effect.Effect<boolean, Unavailable>;
   readonly profile: (
     input: Pick<Access, "subjectId" | "clientId" | "scopes">,
@@ -269,7 +280,15 @@ const makeServer = <const Id extends string, R>(
     }
   >()(`effect-auth/OAuthServer/${id}`);
 
-  const layer = (options: Options & { readonly identityKeys?: IdentitySigningKeys }) =>
+  const layer = (
+    options: Options &
+      Partial<
+        Pick<
+          OpenIdOptions,
+          "identityKeys" | "accessTokenFormat" | "accessTokenLifetimeMillis" | "refreshTokens"
+        >
+      >,
+  ) =>
     Layer.effect(
       Service,
       Effect.gen(function* () {
@@ -282,11 +301,19 @@ const makeServer = <const Id extends string, R>(
             clientMetadata: Schema.optionalKey(MetadataConfiguration),
             loginPath: LoginPath,
             scopes: Scopes,
+            accessTokenFormat: Schema.Literals(["opaque", "jwt"]),
+            accessTokenLifetimeMillis: Schema.Int.check(
+              Schema.isBetween({ minimum: 1000, maximum: 600000 }),
+            ),
+            refreshTokens: Schema.Boolean,
           }),
         )({
           ...options,
           id,
           scopes,
+          accessTokenFormat: options.accessTokenFormat ?? "opaque",
+          accessTokenLifetimeMillis: options.accessTokenLifetimeMillis ?? 600_000,
+          refreshTokens: options.refreshTokens ?? false,
           clients: options.clients.map((client) => ({
             ...client,
             redirectUris: [...client.redirectUris],
@@ -299,7 +326,7 @@ const makeServer = <const Id extends string, R>(
 
         if (
           (resourceUrl.pathname !== "/" && resourceUrl.href !== config.resource) ||
-          resourceUrl.origin !== config.origin ||
+          (options.identityKeys === undefined && resourceUrl.origin !== config.origin) ||
           resourceUrl.search ||
           (config.clients.length === 0 && config.clientMetadata === undefined) ||
           config.loginPath === paths.authorize ||
@@ -327,6 +354,11 @@ const makeServer = <const Id extends string, R>(
           () => OpenIdConsent.default,
         );
 
+        const authorization = Option.getOrElse(
+          yield* Effect.serviceOption(OpenIdAuthorization),
+          () => OpenIdAuthorization.default,
+        );
+
         const identity = yield* identitySource;
 
         if ((identity.openId === undefined) !== (options.identityKeys === undefined))
@@ -336,6 +368,15 @@ const makeServer = <const Id extends string, R>(
           options.identityKeys === undefined
             ? undefined
             : yield* makeIdentityTokens(options.identityKeys);
+
+        const jwtAccess =
+          openId !== undefined && config.accessTokenFormat === "jwt"
+            ? yield* makeAccessTokenVerifier({
+                issuer: config.origin,
+                resource: config.resource,
+                publicKeys: openId.jwks.keys,
+              })
+            : undefined;
 
         if (
           openId !== undefined &&
@@ -399,6 +440,22 @@ const makeServer = <const Id extends string, R>(
           if (value.expiresAtMillis <= (yield* now)) return yield* InvalidToken.make({});
 
           return value;
+        });
+
+        const decodeAccess = Effect.fnUntraced(function* (credential: Redacted.Redacted<string>) {
+          if (jwtAccess === undefined) return yield* decode(credential);
+          const { claims } = yield* jwtAccess.decode(credential);
+
+          return Envelope.make({
+            purpose: "oauth-server/v1",
+            issuer: config.origin,
+            server: id,
+            resource: config.resource,
+            kind: "access",
+            grantId: claims.grant_id,
+            version: claims.jti,
+            expiresAtMillis: claims.exp * 1000,
+          });
         });
 
         const clientFor = clients.resolve;
@@ -491,7 +548,7 @@ const makeServer = <const Id extends string, R>(
         const verify = Effect.fn("OAuthServer.verify")(function* (
           credential: Redacted.Redacted<string>,
         ) {
-          const token = yield* decode(credential);
+          const token = yield* decodeAccess(credential);
 
           if (token.kind !== "access") return yield* InvalidToken.make({});
           const record = yield* read(token);
@@ -509,6 +566,7 @@ const makeServer = <const Id extends string, R>(
             clientId: record.authorization.clientId,
             resource: config.resource,
             scopes: record.authorization.scopes,
+            ...(record.claims === undefined ? {} : { claims: record.claims }),
           });
         });
 
@@ -520,7 +578,7 @@ const makeServer = <const Id extends string, R>(
             const request = HttpServerRequest.fromWeb(web);
 
             if (openId !== undefined && web.method === "GET" && url.pathname === paths.jwks)
-              return json(openId.jwks);
+              return json({ keys: [...openId.jwks.keys] });
             if (
               openId !== undefined &&
               web.method === "GET" &&
@@ -531,12 +589,16 @@ const makeServer = <const Id extends string, R>(
                   issuer: config.origin,
                   authorization_endpoint: `${config.origin}${paths.authorize}`,
                   token_endpoint: `${config.origin}${paths.token}`,
-                  userinfo_endpoint: `${config.origin}${paths.userInfo}`,
+                  ...(config.resource === `${config.origin}${paths.userInfo}`
+                    ? { userinfo_endpoint: `${config.origin}${paths.userInfo}` }
+                    : {}),
                   jwks_uri: `${config.origin}${paths.jwks}`,
                   revocation_endpoint: `${config.origin}${paths.revoke}`,
                   response_types_supported: ["code"],
                   response_modes_supported: ["query"],
-                  grant_types_supported: ["authorization_code"],
+                  grant_types_supported: config.refreshTokens
+                    ? ["authorization_code", "refresh_token"]
+                    : ["authorization_code"],
                   subject_types_supported: ["public"],
                   id_token_signing_alg_values_supported: ["RS256"],
                   token_endpoint_auth_methods_supported: [
@@ -573,7 +635,11 @@ const makeServer = <const Id extends string, R>(
             ) {
               const authorization = web.headers.get("authorization");
 
-              if (authorization === null || !/^Bearer /i.test(authorization))
+              if (
+                config.resource !== `${config.origin}${paths.userInfo}` ||
+                authorization === null ||
+                !/^Bearer /i.test(authorization)
+              )
                 return new Response(null, {
                   status: 401,
                   headers: { ...noStore, "www-authenticate": 'Bearer realm="userinfo"' },
@@ -614,7 +680,7 @@ const makeServer = <const Id extends string, R>(
                   revocation_endpoint: `${config.origin}${paths.revoke}`,
                   response_types_supported: ["code"],
                   grant_types_supported:
-                    openId === undefined
+                    openId === undefined || config.refreshTokens
                       ? ["authorization_code", "refresh_token"]
                       : ["authorization_code"],
                   token_endpoint_auth_methods_supported: [
@@ -939,7 +1005,9 @@ const makeServer = <const Id extends string, R>(
               );
 
               if (
-                (openId !== undefined && body.grant_type !== "authorization_code") ||
+                (openId !== undefined &&
+                  !config.refreshTokens &&
+                  body.grant_type !== "authorization_code") ||
                 (body.grant_type !== "authorization_code" && body.grant_type !== "refresh_token")
               )
                 return yield* reject("unsupported_grant_type");
@@ -950,6 +1018,12 @@ const makeServer = <const Id extends string, R>(
               }).pipe(Effect.mapError(() => reject()));
 
               if (client.grantTypes !== undefined && !client.grantTypes.includes(query.grant_type))
+                return yield* reject("unauthorized_client");
+              if (
+                openId !== undefined &&
+                query.grant_type === "refresh_token" &&
+                !client.grantTypes?.includes("refresh_token")
+              )
                 return yield* reject("unauthorized_client");
               if (
                 (query.resource ?? (openId === undefined ? undefined : config.resource)) !==
@@ -1005,33 +1079,104 @@ const makeServer = <const Id extends string, R>(
 
               if (!requested.every((scope) => record.authorization.scopes.includes(scope)))
                 return yield* reject("invalid_scope");
+
+              const authorized =
+                openId === undefined
+                  ? { scopes: requested }
+                  : yield* Effect.gen(function* () {
+                      if (record.authentication === undefined)
+                        return yield* reject("invalid_grant");
+
+                      const decision = yield* authorization
+                        .authorize({
+                          authentication: record.authentication,
+                          clientId: record.authorization.clientId,
+                          resource: config.resource,
+                          scopes: requested,
+                          grantType: query.grant_type,
+                        })
+                        .pipe(
+                          Effect.flatMap(Schema.decodeEffect(OpenIdAuthorizationResult)),
+                          Effect.mapError(() => Unavailable.make({})),
+                        );
+
+                      if (
+                        new Set(decision.scopes).size !== decision.scopes.length ||
+                        !decision.scopes.every((scope) => requested.includes(scope))
+                      )
+                        return yield* Unavailable.make({});
+                      const [first, ...remaining] = decision.scopes;
+
+                      if (first === undefined || !decision.scopes.includes("openid"))
+                        return yield* reject("access_denied");
+
+                      return {
+                        ...decision,
+                        scopes: [first, ...remaining] satisfies readonly [string, ...string[]],
+                      };
+                    });
+
+              const granted = authorized.scopes;
               const time = yield* now;
 
+              const refreshEnabled =
+                openId === undefined ||
+                (config.refreshTokens && client.grantTypes?.includes("refresh_token") === true);
+
               const next: Record = {
-                ...record,
                 status: "Active",
                 version: yield* random,
-                authorization: { ...record.authorization, scopes: requested },
+                authorization: { ...record.authorization, scopes: granted },
+                subjectId: record.subjectId,
+                ...(record.authentication === undefined
+                  ? {}
+                  : { authentication: record.authentication }),
+                ...("claims" in authorized && authorized.claims !== undefined
+                  ? { claims: authorized.claims }
+                  : {}),
                 expiresAtMillis:
-                  openId !== undefined
-                    ? time + 600_000
-                    : expected === "code"
-                      ? time + 30 * 86400_000
-                      : record.expiresAtMillis,
+                  expected === "code"
+                    ? Math.min(
+                        time + (refreshEnabled ? 30 * 86400_000 : config.accessTokenLifetimeMillis),
+                        record.authentication?.expiresAtMillis ?? Infinity,
+                      )
+                    : record.expiresAtMillis,
               };
 
               const accessExpiry = Math.min(
-                time + 600_000,
+                time + config.accessTokenLifetimeMillis,
                 next.expiresAtMillis,
                 record.authentication?.expiresAtMillis ?? Infinity,
               );
 
-              const access = yield* encode("access", token.grantId, next.version, accessExpiry);
+              if (accessExpiry <= time) return yield* reject("invalid_grant");
 
-              const refresh =
-                openId === undefined
-                  ? yield* encode("refresh", token.grantId, next.version, next.expiresAtMillis)
-                  : undefined;
+              const access =
+                openId !== undefined &&
+                jwtAccess !== undefined &&
+                record.authentication !== undefined
+                  ? yield* openId.issueAccess({
+                      iss: config.origin,
+                      sub: record.subjectId,
+                      aud: config.resource,
+                      iat: Math.floor(time / 1000),
+                      exp: Math.floor(accessExpiry / 1000),
+                      jti: next.version,
+                      grant_id: token.grantId,
+                      client_id: record.authorization.clientId,
+                      scope: granted.join(" "),
+                      auth_time: Math.floor(record.authentication.authenticatedAtMillis / 1000),
+                      sid: record.authentication.sessionId,
+                      ...(next.claims === undefined ? {} : { claims: next.claims }),
+                    })
+                  : yield* encode("access", token.grantId, next.version, accessExpiry);
+
+              if (!Schema.is(BearerToken)(Redacted.value(access)))
+                return yield* Unavailable.make({});
+
+              const refresh = refreshEnabled
+                ? yield* encode("refresh", token.grantId, next.version, next.expiresAtMillis)
+                : undefined;
 
               let idToken: Redacted.Redacted<string> | undefined;
 
@@ -1041,7 +1186,7 @@ const makeServer = <const Id extends string, R>(
                 const profile = yield* identity.openId.profile({
                   subjectId: record.subjectId,
                   clientId: record.authorization.clientId,
-                  scopes: requested,
+                  scopes: granted,
                 });
 
                 idToken = yield* openId.issue({
@@ -1052,7 +1197,7 @@ const makeServer = <const Id extends string, R>(
                     ? {}
                     : { nonce: record.authorization.nonce }),
                   profile,
-                  scopes: requested,
+                  scopes: granted,
                   nowMillis: time,
                 });
               }
@@ -1071,7 +1216,7 @@ const makeServer = <const Id extends string, R>(
                   expires_in: Math.floor((accessExpiry - time) / 1000),
                   ...(refresh === undefined ? {} : { refresh_token: Redacted.value(refresh) }),
                   ...(idToken === undefined ? {} : { id_token: Redacted.value(idToken) }),
-                  scope: requested.join(" "),
+                  scope: granted.join(" "),
                 }),
               );
             }
@@ -1090,6 +1235,9 @@ const makeServer = <const Id extends string, R>(
               }).pipe(Effect.mapError(() => reject()));
 
               const token = yield* decode(Redacted.make(query.token)).pipe(
+                Effect.catchTag("OAuthServerInvalidToken", () =>
+                  decodeAccess(Redacted.make(query.token)),
+                ),
                 Effect.catchTag("OAuthServerInvalidToken", () => Effect.succeed(undefined)),
               );
 
@@ -1259,9 +1407,13 @@ export const make = <const Id extends string>(
 
 /** Registered-client OpenID Connect code flow with PKCE, RS256 and explicit consent.
  * Applications own authentication, current session validity and profile disclosure.
- * Refresh tokens, dynamic registration and front/back-channel logout are not enabled.
+ * Resource JWTs and rotating refresh tokens are opt-in; dynamic registration and
+ * front/back-channel logout are not enabled.
  */
-export const makeOpenId = <const Id extends string>(id: Id) => {
+export const makeOpenId = <const Id extends string>(
+  id: Id,
+  options: { readonly scopes?: ReadonlyArray<string> } = {},
+) => {
   const Identity = Context.Service<
     { readonly server: Id; readonly kind: "openid-identity" },
     OpenIdIdentity
@@ -1269,7 +1421,7 @@ export const makeOpenId = <const Id extends string>(id: Id) => {
 
   const server = makeServer(
     id,
-    { scopes: ["openid", "profile", "email"] },
+    { scopes: ["openid", "profile", "email", ...(options.scopes ?? [])] },
     Effect.map(Identity, (identity): ServerIdentity => ({
       current: Effect.map(identity.current, (authentication) =>
         authentication === undefined
@@ -1284,6 +1436,11 @@ export const makeOpenId = <const Id extends string>(id: Id) => {
     ...server,
     Identity,
     layer: (options: OpenIdOptions) =>
-      server.layer({ ...options, resource: `${options.origin}${server.paths.userInfo}` }),
+      options.accessTokenFormat === "jwt" && options.resource === undefined
+        ? Layer.effect(server.Service, Effect.fail(ConfigurationError.make({})))
+        : server.layer({
+            ...options,
+            resource: options.resource ?? `${options.origin}${server.paths.userInfo}`,
+          }),
   };
 };

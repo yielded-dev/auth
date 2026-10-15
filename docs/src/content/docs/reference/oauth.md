@@ -125,11 +125,12 @@ for a complete server composition.
 
 ## Shared OpenID sign-in
 
-`OAuthServer.makeOpenId(id)` adds discovery, authorization code with PKCE, RS256 ID
-tokens, JWKS, and UserInfo for registered applications. Each application verifies
-the exchange and creates its own session.
+`OAuthServer.makeOpenId(id, { scopes })` adds discovery, authorization code with
+PKCE, RS256 ID tokens, JWKS, and UserInfo for registered applications. Optional
+`scopes` are application scopes in addition to `openid`, `profile`, and `email`.
 
-Supply the server options above, replacing `resource` and `clientMetadata` with:
+Supply the server options above without `clientMetadata`; `resource` is optional.
+OpenID also requires:
 
 | Input              | Purpose                                                       |
 | ------------------ | ------------------------------------------------------------- |
@@ -138,17 +139,26 @@ Supply the server options above, replacing `resource` and `clientMetadata` with:
 | `Identity.active`  | Recheck current session authority                             |
 | `Identity.profile` | Authorize disclosure of profile and email claims              |
 
+Optional OpenID server options are:
+
+| Input                       | Default                    | Purpose                                                                                |
+| --------------------------- | -------------------------- | -------------------------------------------------------------------------------------- |
+| `resource`                  | This server's UserInfo URL | Exact audience for access tokens, including a separate HTTPS resource server           |
+| `accessTokenFormat`         | `"opaque"`                 | Set `"jwt"` with an explicit `resource` for public-key verification                    |
+| `accessTokenLifetimeMillis` | `600_000`                  | Access lifetime between one second and ten minutes                                     |
+| `refreshTokens`             | `false`                    | Issue rotating refresh tokens to clients whose `grantTypes` includes `"refresh_token"` |
+
 `Authentication` carries the subject, session, security revision, original
 `authenticatedAtMillis`, and expiry. Viewing consent does not refresh authentication.
 
-| Route, for ID `identity`                | Purpose                    |
-| --------------------------------------- | -------------------------- |
-| `GET /.well-known/openid-configuration` | Issuer metadata            |
-| `GET /oauth/identity/jwks`              | Public verification keys   |
-| `GET/POST /oauth/identity/authorize`    | Authentication and consent |
-| `POST /oauth/identity/token`            | Code redemption            |
-| `GET/POST /oauth/identity/userinfo`     | Scoped claims              |
-| `POST /oauth/identity/revoke`           | Grant revocation           |
+| Route, for ID `identity`                | Purpose                              |
+| --------------------------------------- | ------------------------------------ |
+| `GET /.well-known/openid-configuration` | Issuer metadata                      |
+| `GET /oauth/identity/jwks`              | Public verification keys             |
+| `GET/POST /oauth/identity/authorize`    | Authentication and consent           |
+| `POST /oauth/identity/token`            | Code redemption and optional refresh |
+| `GET/POST /oauth/identity/userinfo`     | Scoped claims                        |
+| `POST /oauth/identity/revoke`           | Grant revocation                     |
 
 Request `openid`, optionally `profile` and `email`. Supported prompts are `login`,
 `select_account`, `consent`, and `none`; `max_age` requires recent authentication.
@@ -156,9 +166,48 @@ The default consent policy requires interaction. Supply `OAuthServer.OpenIdConse
 to recognize application-approved clients, callbacks, and claims.
 
 ID tokens last at most five minutes and access tokens at most ten, bounded by the
-originating session. Applications own local logout; revocation cannot retract an
-already accepted ID token. Refresh, dynamic clients, and coordinated browser logout
-are unsupported. Retain public verification keys through token expiry.
+originating session. An enabled refresh grant lasts at most thirty days, bounded
+by the original session expiry. Refresh checks `Identity.active` and application
+authorization without reading a browser session or contacting its upstream
+provider. It retains the original `auth_time`, rotates the refresh token, and can
+only retain or reduce granted scopes. Reusing a consumed refresh token revokes
+its grant. Applications own local logout; dynamic clients and coordinated browser
+logout are unsupported. Retain public verification keys through token expiry.
+
+### Application authorization and resource access
+
+Provide `OAuthServer.OpenIdAuthorization` to authorize application scopes. Its
+`authorize` Effect runs at code exchange and every refresh with the authentication,
+client ID, resource, requested scopes, and grant type. Return a subset of those
+scopes, including `openid`; an empty result denies issuance. The default service
+grants only the standard OpenID scopes, never application scopes.
+
+```ts
+const authorization = Layer.succeed(OAuthServer.OpenIdAuthorization, {
+  authorize: ({ authentication, clientId, resource, scopes, grantType }) =>
+    accountPolicy.authorize({ authentication, clientId, resource, scopes, grantType }),
+});
+// accountPolicy returns { scopes: ["openid", "documents:read"],
+//   claims: { accountId: "application-account" } } after checking current access.
+```
+
+Optional JSON `claims` are recomputed on each authorization and nested in the
+access token; they cannot override protocol fields. Decode them with the resource
+server's application schema. ID tokens retain the client audience and identity
+claims only. When `resource` differs from UserInfo, discovery omits UserInfo and
+the UserInfo route rejects those access tokens.
+
+For a resource server, construct `OAuthServer.makeAccessTokenVerifier({ issuer,
+resource, publicKeys })` with trusted keys from the issuer's JWKS and provide
+`@yielded/crypto/Signature`. Its `verify(Redacted.make(token))` Effect checks RS256,
+the `at+jwt` type, issuer, audience, expiry, and scope encoding, then returns
+`OAuthServer.Access` with the subject, client, grant, resource, scopes, and optional
+application claims. Refresh the trusted keys when the issuer rotates keys.
+
+Offline verification observes permission changes and revocation at access-token
+expiry. Choose a short access lifetime, such as five minutes, and refresh through
+the issuer to recheck current access. The issuer's `Service.verify` additionally
+checks current session authority and the durable grant version.
 
 Both server profiles accept `OAuthServer.ConsentRenderer`. A custom renderer must
 escape displayed values and preserve the supplied POST action, CSRF field, and
