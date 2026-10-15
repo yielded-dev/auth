@@ -22,6 +22,7 @@ export const Scopes = Schema.NonEmptyArray(Scope).check(Schema.isMaxLength(32));
 /** Application claims stay nested so they cannot replace protocol claims. */
 export const AccessClaims = Schema.Record(Schema.String, Schema.Json);
 export const BearerToken = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(16384));
+export const maximumClientAssertionLength = 8192;
 
 export class Rejected extends Schema.TaggedError<Rejected>()("OAuthServerRejected", {
   error: Schema.Literals([

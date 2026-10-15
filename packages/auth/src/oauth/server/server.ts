@@ -51,6 +51,7 @@ import {
   Scopes,
   Text,
   TokenResponse,
+  maximumClientAssertionLength,
   Unavailable,
   type Record,
 } from "./models";
@@ -165,6 +166,8 @@ const parameters = Effect.fnUntraced(function* (params: URLSearchParams) {
   return entries;
 });
 
+const maximumFormBytes = 16384;
+
 const form = Effect.fnUntraced(function* (request: HttpServerRequest.HttpServerRequest) {
   if (
     request.headers["content-type"]?.split(";")[0].trim().toLowerCase() !==
@@ -177,7 +180,7 @@ const form = Effect.fnUntraced(function* (request: HttpServerRequest.HttpServerR
     Stream.runFoldEffect(
       () => ({ text: "", bytes: 0 }),
       (body, chunk) =>
-        body.bytes + chunk.length > 16384
+        body.bytes + chunk.length > maximumFormBytes
           ? Effect.fail(reject())
           : Effect.succeed({
               text: body.text + decoder.decode(chunk, { stream: true }),
@@ -191,7 +194,7 @@ const form = Effect.fnUntraced(function* (request: HttpServerRequest.HttpServerR
 });
 
 const scopeList = (text: string) =>
-  Schema.decodeUnknownEffect(Scopes)(text.split(" ")).pipe(
+  Schema.decodeUnknownEffect(Scopes)([...new Set(text.split(" "))]).pipe(
     Effect.mapError(() => reject("invalid_scope")),
   );
 
@@ -1075,7 +1078,7 @@ const makeServer = <const Id extends string, R>(
               const requested =
                 query.grant_type === "refresh_token" && query.scope !== undefined
                   ? yield* scopeList(query.scope)
-                  : record.authorization.scopes;
+                  : yield* scopeList(record.authorization.scopes.join(" "));
 
               if (!requested.every((scope) => record.authorization.scopes.includes(scope)))
                 return yield* reject("invalid_scope");
@@ -1172,6 +1175,30 @@ const makeServer = <const Id extends string, R>(
                   : yield* encode("access", token.grantId, next.version, accessExpiry);
 
               if (!Schema.is(BearerToken)(Redacted.value(access)))
+                return yield* Unavailable.make({});
+
+              // Reserve client authentication and a standard hint for revocation.
+              // Fresh assertions may differ from the exchange's assertion in size.
+              const revocation = new URLSearchParams({
+                token: Redacted.value(access),
+                token_type_hint: "access_token",
+              });
+
+              for (const name of [
+                "client_id",
+                "client_secret",
+                "client_assertion",
+                "client_assertion_type",
+              ]) {
+                const value = body[name];
+
+                if (value !== undefined)
+                  revocation.set(
+                    name,
+                    name === "client_assertion" ? "x".repeat(maximumClientAssertionLength) : value,
+                  );
+              }
+              if (revocation.toString().length > maximumFormBytes)
                 return yield* Unavailable.make({});
 
               const refresh = refreshEnabled

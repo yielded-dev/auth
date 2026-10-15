@@ -193,7 +193,8 @@ const authorization = Layer.succeed(OAuthServer.OpenIdAuthorization, {
 
 Optional JSON `claims` are recomputed on each authorization and nested in the
 access token; they cannot override protocol fields. Decode them with the resource
-server's application schema. ID tokens retain the client audience and identity
+server's application schema. Issuance rejects claims that make the token or its
+authenticated revocation form exceed their size limits. ID tokens retain the client audience and identity
 claims only. When `resource` differs from UserInfo, discovery omits UserInfo and
 the UserInfo route rejects those access tokens.
 
