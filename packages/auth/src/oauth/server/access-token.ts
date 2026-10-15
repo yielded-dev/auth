@@ -1,4 +1,4 @@
-import type { Signature } from "@yielded/crypto/Signature";
+import { Signature } from "@yielded/crypto/Signature";
 import { Jwk, Jwks, Jwt } from "@yielded/jose";
 import { Clock, Effect, Redacted, Schema } from "effect";
 
@@ -44,11 +44,12 @@ export interface AccessTokenVerifierOptions {
 
 /** Verify offline with trusted public keys. Revocation and permission changes
  * take effect at token expiry; use short access lifetimes and renew through the issuer.
+ * Retains only the signature service; verification uses the caller's clock and context.
  */
 export const makeAccessTokenVerifier = Effect.fnUntraced(function* (
   options: AccessTokenVerifierOptions,
 ) {
-  const services = yield* Effect.context<Signature>();
+  const signature = yield* Signature;
 
   const config = yield* Schema.decodeUnknownEffect(
     Schema.Struct({
@@ -74,7 +75,7 @@ export const makeAccessTokenVerifier = Effect.fnUntraced(function* (
       requiredClaims: ["iss", "sub", "aud", "iat", "exp", "jti"],
     }).pipe(
       Effect.provideService(Jwks.Jwks, keys),
-      Effect.provideContext(services),
+      Effect.provideService(Signature, signature),
       Effect.mapError((error) =>
         error._tag === "CryptoUnavailable" ? Unavailable.make({}) : InvalidToken.make({}),
       ),
