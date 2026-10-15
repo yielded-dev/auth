@@ -1,6 +1,6 @@
 import { Context, Effect, Schema, type Types } from "effect";
 
-import * as OAuthScope from "../../Scope";
+import * as OAuthScope from "../../OAuthScope";
 import { AccessClaims, type Authentication, Scope, type Unavailable } from "./models";
 
 export const standardOpenIdScopes = [
@@ -11,7 +11,9 @@ export const standardOpenIdScopes = [
 
 const isStandardOpenIdScope = Schema.is(Schema.Literals(standardOpenIdScopes));
 
-const makeResultSchema = <Scope extends OAuthScope.Scope>(scope: Schema.Codec<Scope, string>) =>
+const makeResultSchema = <Scope extends OAuthScope.OAuthScope>(
+  scope: Schema.Codec<Scope, string>,
+) =>
   Schema.Struct({
     scopes: Schema.Array(scope).check(Schema.isMaxLength(32)),
     claims: Schema.optionalKey(AccessClaims),
@@ -19,10 +21,10 @@ const makeResultSchema = <Scope extends OAuthScope.Scope>(scope: Schema.Codec<Sc
 
 export const OpenIdAuthorizationResult = makeResultSchema(Scope);
 
-export type OpenIdAuthorizationResult<Scope extends OAuthScope.Scope = OAuthScope.Scope> =
+export type OpenIdAuthorizationResult<Scope extends OAuthScope.OAuthScope = OAuthScope.OAuthScope> =
   ReturnType<typeof makeResultSchema<Scope>>["Type"];
 
-export const makeAuthorization = <const Id extends string, Scope extends OAuthScope.Scope>(
+export const makeAuthorization = <const Id extends string, Scope extends OAuthScope.OAuthScope>(
   id: Id,
   scope: Schema.Codec<Scope, string>,
 ) => {

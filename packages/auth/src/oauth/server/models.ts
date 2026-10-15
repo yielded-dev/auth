@@ -1,8 +1,8 @@
 import { Jwk, Jwks } from "@yielded/jose";
 import { Context, type Effect, Schema } from "effect";
 
+import * as OAuthScope from "../../OAuthScope";
 import { SubjectId } from "../../Schema";
-import * as OAuthScope from "../../Scope";
 
 export class Unavailable extends Schema.TaggedError<Unavailable>()("OAuthServerUnavailable", {}) {}
 
@@ -18,10 +18,10 @@ export class ConfigurationError extends Schema.TaggedError<ConfigurationError>()
 
 export const Text = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(2048));
 export const Random = Schema.String.check(Schema.isPattern(/^[A-Za-z0-9_-]{43}$/));
-export const Scope = OAuthScope.Scope;
+export const Scope = OAuthScope.OAuthScope;
 export const Scopes = Schema.NonEmptyArray(Scope).check(Schema.isMaxLength(32));
 
-export const makeScopesSchema = <Scope extends OAuthScope.Scope>(
+export const makeScopesSchema = <Scope extends OAuthScope.OAuthScope>(
   scope: Schema.Codec<Scope, string>,
 ) => Schema.NonEmptyArray(scope).check(Schema.makeFilter(Schema.is(Scopes)));
 
@@ -220,7 +220,7 @@ export const Record = Schema.Struct({
 
 export type Record = typeof Record.Type;
 
-export const makeAccessSchema = <Scope extends OAuthScope.Scope>(
+export const makeAccessSchema = <Scope extends OAuthScope.OAuthScope>(
   scope: Schema.Codec<Scope, string>,
 ) =>
   Schema.Struct({
@@ -234,7 +234,7 @@ export const makeAccessSchema = <Scope extends OAuthScope.Scope>(
 
 export const Access = makeAccessSchema(Scope);
 
-export type Access<Scope extends OAuthScope.Scope = OAuthScope.Scope> = ReturnType<
+export type Access<Scope extends OAuthScope.OAuthScope = OAuthScope.OAuthScope> = ReturnType<
   typeof makeAccessSchema<Scope>
 >["Type"];
 

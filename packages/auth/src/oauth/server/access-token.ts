@@ -3,8 +3,8 @@ import { Jwk, Jwks, Jwt } from "@yielded/jose";
 import { Clock, Effect, Redacted, Schema } from "effect";
 
 import { origin } from "../../internal/origin";
+import type * as OAuthScope from "../../OAuthScope";
 import { SubjectId } from "../../Schema";
-import type * as OAuthScope from "../../Scope";
 import {
   AccessClaims,
   BearerToken,
@@ -43,10 +43,10 @@ export interface AccessTokenVerifierOptions {
   /** Trusted keys from the issuer's JWKS; reacquire this verifier when keys rotate. */
   readonly publicKeys: ReadonlyArray<Jwk.PublicJwk>;
   /** Only these declared scopes are accepted when supplied. */
-  readonly scopes?: ReadonlyArray<OAuthScope.Scope>;
+  readonly scopes?: ReadonlyArray<OAuthScope.OAuthScope>;
 }
 
-const makeVerifier = Effect.fnUntraced(function* <Scope extends OAuthScope.Scope>(
+const makeVerifier = Effect.fnUntraced(function* <Scope extends OAuthScope.OAuthScope>(
   options: AccessTokenVerifierOptions,
   scope: Schema.Codec<Scope, string>,
 ) {
@@ -129,13 +129,13 @@ const makeVerifier = Effect.fnUntraced(function* <Scope extends OAuthScope.Scope
  * Retains only the signature service; verification uses the caller's clock and context.
  * Declared scopes narrow access only after every token scope passes validation.
  */
-export function makeAccessTokenVerifier<const S extends ReadonlyArray<OAuthScope.Scope>>(
+export function makeAccessTokenVerifier<const S extends ReadonlyArray<OAuthScope.OAuthScope>>(
   options: AccessTokenVerifierOptions & { readonly scopes: S },
 ): ReturnType<typeof makeVerifier<S[number]>>;
 
 export function makeAccessTokenVerifier(
   options: AccessTokenVerifierOptions,
-): ReturnType<typeof makeVerifier<OAuthScope.Scope>>;
+): ReturnType<typeof makeVerifier<OAuthScope.OAuthScope>>;
 
 export function makeAccessTokenVerifier(options: AccessTokenVerifierOptions) {
   return makeVerifier(

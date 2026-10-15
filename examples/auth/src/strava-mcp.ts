@@ -1,6 +1,6 @@
 import { BunHttpServer, BunRuntime, BunServices } from "@effect/platform-bun";
 import * as SqliteClient from "@effect/sql-sqlite-bun/SqliteClient";
-import { OAuthServer, Scope } from "@yielded/auth";
+import { OAuthScope, OAuthServer } from "@yielded/auth";
 import { OAuthServerPersistence } from "@yielded/auth-persistence";
 import * as Strava from "@yielded/auth/Strava";
 import { Config, Effect, Layer, Redacted, Schema } from "effect";
@@ -11,7 +11,7 @@ import { SqlClient } from "effect/sql";
 import { CryptoLive } from "../../shared/crypto";
 import { makeExample } from "./oauth-application";
 
-const ReadAthlete = Scope.make("athlete:read");
+const ReadAthlete = OAuthScope.make("athlete:read");
 const oauth = OAuthServer.make("mcp", { scopes: [ReadAthlete] });
 
 const toolkit = Toolkit.make(

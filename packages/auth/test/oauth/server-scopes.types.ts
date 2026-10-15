@@ -1,4 +1,4 @@
-import { OAuthServer, Scope } from "@yielded/auth";
+import { OAuthScope, OAuthServer } from "@yielded/auth";
 import type { Layer } from "effect";
 import { Effect, Redacted } from "effect";
 import { expectTypeOf } from "vite-plus/test";
@@ -6,11 +6,11 @@ import { expectTypeOf } from "vite-plus/test";
 // Compile-only contract for literal scope inference. Runtime proofs
 // cannot detect a typo accepted by the TypeScript API.
 export const literalScopes = () => {
-  const read = Scope.make("documents:read");
-  const write = Scope.make("documents:write");
+  const read = OAuthScope.make("documents:read");
+  const write = OAuthScope.make("documents:write");
   const scopes = [read, write];
 
-  expectTypeOf(read).toEqualTypeOf<Scope.Scope<"documents:read">>();
+  expectTypeOf(read).toEqualTypeOf<OAuthScope.OAuthScope<"documents:read">>();
   // @ts-expect-error A plain string is not a branded scope.
   const unbranded: typeof read = "documents:read";
 
@@ -32,32 +32,32 @@ export const literalScopes = () => {
   OAuthServer.makeOpenId("unbranded-openid", { scopes: ["read"] });
 
   expectTypeOf<typeof resource.Scope.Type>().toEqualTypeOf<
-    Scope.Scope<"documents:read" | "documents:write">
+    OAuthScope.OAuthScope<"documents:read" | "documents:write">
   >();
   expectTypeOf<typeof identity.Scope.Type>().toEqualTypeOf<
-    Scope.Scope<"openid" | "profile" | "email" | "documents:read" | "documents:write">
+    OAuthScope.OAuthScope<"openid" | "profile" | "email" | "documents:read" | "documents:write">
   >();
   expectTypeOf<typeof defaults.Scope.Type>().toEqualTypeOf<
-    Scope.Scope<"openid" | "profile" | "email">
+    OAuthScope.OAuthScope<"openid" | "profile" | "email">
   >();
   expectTypeOf<(typeof identity.Access.Type.scopes)[number]>().toEqualTypeOf<
-    Scope.Scope<"openid" | "profile" | "email" | "documents:read" | "documents:write">
+    OAuthScope.OAuthScope<"openid" | "profile" | "email" | "documents:read" | "documents:write">
   >();
 
   resource.middleware([read]);
-  // @ts-expect-error A supported spelling still needs the Scope brand.
+  // @ts-expect-error A supported spelling still needs the OAuthScope brand.
   resource.middleware(["documents:read"]);
-  identity.middleware([Scope.make("openid"), read]);
+  identity.middleware([OAuthScope.make("openid"), read]);
   // @ts-expect-error The resource did not declare this scope.
-  resource.middleware([Scope.make("documents:raed")]);
+  resource.middleware([OAuthScope.make("documents:raed")]);
   // @ts-expect-error OpenID adds its standard scopes, not arbitrary strings.
-  identity.middleware([Scope.make("documents:raed")]);
+  identity.middleware([OAuthScope.make("documents:raed")]);
   // @ts-expect-error The default OpenID server has no application scopes.
   defaults.middleware([read]);
 
   identity.Authorization.of({
     // @ts-expect-error Authorization cannot grant an undeclared scope.
-    authorize: () => Effect.succeed({ scopes: [Scope.make("documents:raed")] }),
+    authorize: () => Effect.succeed({ scopes: [OAuthScope.make("documents:raed")] }),
   });
 
   identity.Identity.of({
@@ -65,7 +65,7 @@ export const literalScopes = () => {
     active: () => Effect.succeed(true),
     profile: ({ scopes }) => {
       expectTypeOf(scopes[0]).toEqualTypeOf<
-        Scope.Scope<"openid" | "profile" | "email" | "documents:read" | "documents:write">
+        OAuthScope.OAuthScope<"openid" | "profile" | "email" | "documents:read" | "documents:write">
       >();
 
       return Effect.succeed({});
@@ -75,7 +75,7 @@ export const literalScopes = () => {
   identity.Authorization.of({
     authorize: ({ scopes }) => {
       expectTypeOf(scopes[0]).toEqualTypeOf<
-        Scope.Scope<"openid" | "profile" | "email" | "documents:read" | "documents:write">
+        OAuthScope.OAuthScope<"openid" | "profile" | "email" | "documents:read" | "documents:write">
       >();
 
       return Effect.succeed({ scopes });
@@ -87,33 +87,33 @@ export const literalScopes = () => {
     const access = yield* resourceService.verify(Redacted.make("credential"));
 
     expectTypeOf(access.scopes[0]).toEqualTypeOf<
-      Scope.Scope<"documents:read" | "documents:write">
+      OAuthScope.OAuthScope<"documents:read" | "documents:write">
     >();
 
     const identityService = yield* identity.Service;
     const identityAccess = yield* identityService.verify(Redacted.make("credential"));
 
     expectTypeOf(identityAccess.scopes[0]).toEqualTypeOf<
-      Scope.Scope<"openid" | "profile" | "email" | "documents:read" | "documents:write">
+      OAuthScope.OAuthScope<"openid" | "profile" | "email" | "documents:read" | "documents:write">
     >();
     const current = yield* identity.CurrentAccess;
 
     if (current !== undefined)
       expectTypeOf(current.scopes[0]).toEqualTypeOf<
-        Scope.Scope<"openid" | "profile" | "email" | "documents:read" | "documents:write">
+        OAuthScope.OAuthScope<"openid" | "profile" | "email" | "documents:read" | "documents:write">
       >();
 
     const configured = yield* OAuthServer.makeAccessTokenVerifier({
       issuer: "https://identity.example.com",
       resource: "https://resource.example.com",
       publicKeys: [],
-      scopes: [read, Scope.make("openid")],
+      scopes: [read, OAuthScope.make("openid")],
     });
 
     const configuredAccess = yield* configured.verify(Redacted.make("credential"));
 
     expectTypeOf(configuredAccess.scopes[0]).toEqualTypeOf<
-      Scope.Scope<"documents:read" | "openid">
+      OAuthScope.OAuthScope<"documents:read" | "openid">
     >();
 
     const unconfigured = yield* OAuthServer.makeAccessTokenVerifier({
@@ -124,15 +124,15 @@ export const literalScopes = () => {
 
     const unconfiguredAccess = yield* unconfigured.verify(Redacted.make("credential"));
 
-    expectTypeOf(unconfiguredAccess.scopes[0]).toEqualTypeOf<Scope.Scope>();
+    expectTypeOf(unconfiguredAccess.scopes[0]).toEqualTypeOf<OAuthScope.OAuthScope>();
   });
 };
 
 export const serviceScopes = () => {
-  const narrow = OAuthServer.makeOpenId("same-id", { scopes: [Scope.make("read")] });
+  const narrow = OAuthServer.makeOpenId("same-id", { scopes: [OAuthScope.make("read")] });
 
   const broad = OAuthServer.makeOpenId("same-id", {
-    scopes: [Scope.make("read"), Scope.make("write")],
+    scopes: [OAuthScope.make("read"), OAuthScope.make("write")],
   });
 
   return (layers: {

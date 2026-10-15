@@ -52,7 +52,7 @@ export default defineConfig({
       "src/Strava.ts",
       "src/Operations.ts",
       "src/Schema.ts",
-      "src/Scope.ts",
+      "src/OAuthScope.ts",
       "src/WebCrypto.ts",
       "src/WorkerdServices.ts",
       "src/WorkerdPasswordlessServices.ts",

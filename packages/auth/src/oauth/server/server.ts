@@ -19,8 +19,8 @@ import { HttpApiBuilder, HttpApiSecurity } from "effect/http-api";
 
 import { reportAuthFailure } from "../../internal/diagnostics";
 import { origin as Origin } from "../../internal/origin";
+import type * as OAuthScope from "../../OAuthScope";
 import { SubjectId } from "../../Schema";
-import type * as OAuthScope from "../../Scope";
 import { makeSessionSigningCodec, type SessionSigningKeyring } from "../../sessions/crypto";
 import { makeAccessTokenVerifier } from "./access-token";
 import { makeAuthorization, standardOpenIdScopes } from "./authorization";
@@ -220,7 +220,7 @@ export interface OpenIdOptions extends Omit<Options, "resource" | "clientMetadat
   readonly refreshTokens?: boolean;
 }
 
-export interface OpenIdIdentity<Scope extends OAuthScope.Scope = OAuthScope.Scope> {
+export interface OpenIdIdentity<Scope extends OAuthScope.OAuthScope = OAuthScope.OAuthScope> {
   /** Verify the current browser session. Authentication time must be the actual sign-in time. */
   readonly current: Effect.Effect<
     Authentication | undefined,
@@ -234,7 +234,7 @@ export interface OpenIdIdentity<Scope extends OAuthScope.Scope = OAuthScope.Scop
   ) => Effect.Effect<OpenIdProfile, Unavailable>;
 }
 
-interface ServerIdentity<Scope extends OAuthScope.Scope = OAuthScope.Scope> {
+interface ServerIdentity<Scope extends OAuthScope.OAuthScope = OAuthScope.OAuthScope> {
   readonly current: Effect.Effect<
     | {
         readonly subjectId: SubjectId;
@@ -248,7 +248,11 @@ interface ServerIdentity<Scope extends OAuthScope.Scope = OAuthScope.Scope> {
 }
 
 /** One grant state machine serves OAuth and opt-in OpenID authentication. */
-const makeServer = <const Id extends string, const S extends ReadonlyArray<OAuthScope.Scope>, R>(
+const makeServer = <
+  const Id extends string,
+  const S extends ReadonlyArray<OAuthScope.OAuthScope>,
+  R,
+>(
   id: Id,
   input: { readonly scopes: S },
   identitySource: Effect.Effect<ServerIdentity<NoInfer<S[number]>>, never, R>,
@@ -1433,7 +1437,7 @@ const makeServer = <const Id extends string, const S extends ReadonlyArray<OAuth
 /** Authorization-code server for MCP/resource authorization.
  * Declared scopes retain their branded literal types throughout the server.
  */
-export const make = <const Id extends string, const S extends ReadonlyArray<OAuthScope.Scope>>(
+export const make = <const Id extends string, const S extends ReadonlyArray<OAuthScope.OAuthScope>>(
   id: Id,
   input: { readonly scopes: S },
 ) => {
@@ -1481,7 +1485,7 @@ export const make = <const Id extends string, const S extends ReadonlyArray<OAut
  */
 export const makeOpenId = <
   const Id extends string,
-  const S extends ReadonlyArray<OAuthScope.Scope> = readonly [],
+  const S extends ReadonlyArray<OAuthScope.OAuthScope> = readonly [],
 >(
   id: Id,
   options: { readonly scopes?: S } = {},
