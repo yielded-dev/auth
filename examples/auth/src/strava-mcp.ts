@@ -1,7 +1,7 @@
 import { BunHttpServer, BunRuntime, BunServices } from "@effect/platform-bun";
 import * as SqliteClient from "@effect/sql-sqlite-bun/SqliteClient";
+import { OAuthServer, Scope } from "@yielded/auth";
 import { OAuthServerPersistence } from "@yielded/auth-persistence";
-import * as OAuthServer from "@yielded/auth/OAuthServer";
 import * as Strava from "@yielded/auth/Strava";
 import { Config, Effect, Layer, Redacted, Schema } from "effect";
 import { McpProtocol, McpServer, Tool, Toolkit } from "effect/ai";
@@ -11,8 +11,8 @@ import { SqlClient } from "effect/sql";
 import { CryptoLive } from "../../shared/crypto";
 import { makeExample } from "./oauth-application";
 
-const Scope = Schema.Literals(["athlete:read"]);
-const oauth = OAuthServer.make("mcp", { scopes: Scope });
+const ReadAthlete = Scope.make("athlete:read");
+const oauth = OAuthServer.make("mcp", { scopes: [ReadAthlete] });
 
 const toolkit = Toolkit.make(
   Tool.make("connected_athlete", {
@@ -144,7 +144,7 @@ const runtime = Layer.unwrap(
           allowedOrigins: [new URL(mcpRedirectUri).origin],
         }),
       ),
-      Layer.provide(oauth.middleware([Scope.make("athlete:read")]).layer),
+      Layer.provide(oauth.middleware([ReadAthlete]).layer),
     );
 
     const cors = HttpMiddleware.cors({

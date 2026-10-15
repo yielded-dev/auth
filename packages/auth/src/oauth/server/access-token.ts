@@ -4,6 +4,7 @@ import { Clock, Effect, Redacted, Schema } from "effect";
 
 import { origin } from "../../internal/origin";
 import { SubjectId } from "../../Schema";
+import type * as OAuthScope from "../../Scope";
 import {
   AccessClaims,
   BearerToken,
@@ -41,13 +42,13 @@ export interface AccessTokenVerifierOptions {
   readonly resource: string;
   /** Trusted keys from the issuer's JWKS; reacquire this verifier when keys rotate. */
   readonly publicKeys: ReadonlyArray<Jwk.PublicJwk>;
-  /** Type-side validation for every scope; decoding transformations are not applied. */
-  readonly scopes?: Schema.Codec<string>;
+  /** Only these declared scopes are accepted when supplied. */
+  readonly scopes?: ReadonlyArray<OAuthScope.Scope>;
 }
 
-const makeVerifier = Effect.fnUntraced(function* <Scope extends string>(
+const makeVerifier = Effect.fnUntraced(function* <Scope extends OAuthScope.Scope>(
   options: AccessTokenVerifierOptions,
-  scope: Schema.Codec<Scope>,
+  scope: Schema.Codec<Scope, string>,
 ) {
   const signature = yield* Signature;
   const ScopeSchema = Schema.toType(scope);
@@ -126,16 +127,19 @@ const makeVerifier = Effect.fnUntraced(function* <Scope extends string>(
 /** Verify offline with trusted public keys. Revocation and permission changes
  * take effect at token expiry; use short access lifetimes and renew through the issuer.
  * Retains only the signature service; verification uses the caller's clock and context.
- * The configured schema narrows access only after every token scope passes validation.
+ * Declared scopes narrow access only after every token scope passes validation.
  */
-export function makeAccessTokenVerifier<const S extends Schema.Codec<string>>(
+export function makeAccessTokenVerifier<const S extends ReadonlyArray<OAuthScope.Scope>>(
   options: AccessTokenVerifierOptions & { readonly scopes: S },
-): ReturnType<typeof makeVerifier<S["Type"]>>;
+): ReturnType<typeof makeVerifier<S[number]>>;
 
 export function makeAccessTokenVerifier(
   options: AccessTokenVerifierOptions,
-): ReturnType<typeof makeVerifier<string>>;
+): ReturnType<typeof makeVerifier<OAuthScope.Scope>>;
 
 export function makeAccessTokenVerifier(options: AccessTokenVerifierOptions) {
-  return makeVerifier(options, options.scopes ?? Scope);
+  return makeVerifier(
+    options,
+    options.scopes === undefined ? Scope : Schema.Literals(options.scopes),
+  );
 }

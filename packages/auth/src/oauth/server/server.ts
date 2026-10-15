@@ -20,9 +20,10 @@ import { HttpApiBuilder, HttpApiSecurity } from "effect/http-api";
 import { reportAuthFailure } from "../../internal/diagnostics";
 import { origin as Origin } from "../../internal/origin";
 import { SubjectId } from "../../Schema";
+import type * as OAuthScope from "../../Scope";
 import { makeSessionSigningCodec, type SessionSigningKeyring } from "../../sessions/crypto";
 import { makeAccessTokenVerifier } from "./access-token";
-import { makeAuthorization, StandardOpenIdScope } from "./authorization";
+import { makeAuthorization, standardOpenIdScopes } from "./authorization";
 import {
   makeClients,
   matchesRedirect,
@@ -219,7 +220,7 @@ export interface OpenIdOptions extends Omit<Options, "resource" | "clientMetadat
   readonly refreshTokens?: boolean;
 }
 
-export interface OpenIdIdentity<Scope extends string = string> {
+export interface OpenIdIdentity<Scope extends OAuthScope.Scope = OAuthScope.Scope> {
   /** Verify the current browser session. Authentication time must be the actual sign-in time. */
   readonly current: Effect.Effect<
     Authentication | undefined,
@@ -233,7 +234,7 @@ export interface OpenIdIdentity<Scope extends string = string> {
   ) => Effect.Effect<OpenIdProfile, Unavailable>;
 }
 
-interface ServerIdentity<Scope extends string = string> {
+interface ServerIdentity<Scope extends OAuthScope.Scope = OAuthScope.Scope> {
   readonly current: Effect.Effect<
     | {
         readonly subjectId: SubjectId;
@@ -247,14 +248,14 @@ interface ServerIdentity<Scope extends string = string> {
 }
 
 /** One grant state machine serves OAuth and opt-in OpenID authentication. */
-const makeServer = <const Id extends string, const S extends Schema.Codec<string>, R>(
+const makeServer = <const Id extends string, const S extends ReadonlyArray<OAuthScope.Scope>, R>(
   id: Id,
-  input: { readonly scopes: S; readonly scopeValues: ReadonlyArray<string> },
-  identitySource: Effect.Effect<ServerIdentity<NoInfer<S["Type"]>>, never, R>,
+  input: { readonly scopes: S },
+  identitySource: Effect.Effect<ServerIdentity<NoInfer<S[number]>>, never, R>,
 ) => {
-  type Scope = S["Type"];
-  const ScopeSchema = input.scopes;
-  const scopes = [...new Set(input.scopeValues)];
+  type Scope = S[number];
+  const scopes = [...new Set<Scope>(input.scopes)];
+  const ScopeSchema = Schema.Literals(scopes);
   const ScopesSchema = makeScopesSchema<Scope>(ScopeSchema);
   const AccessSchema = makeAccessSchema<Scope>(ScopeSchema);
   const authorizationSource = makeAuthorization<Id, Scope>(id, ScopeSchema);
@@ -389,7 +390,7 @@ const makeServer = <const Id extends string, const S extends Schema.Codec<string
                 issuer: config.origin,
                 resource: config.resource,
                 publicKeys: openId.jwks.keys,
-                scopes: ScopeSchema,
+                scopes,
               })
             : undefined;
 
@@ -1430,16 +1431,13 @@ const makeServer = <const Id extends string, const S extends Schema.Codec<string
 };
 
 /** Authorization-code server for MCP/resource authorization.
- * A native literal schema types and validates scopes throughout the server.
+ * Declared scopes retain their branded literal types throughout the server.
  */
-export const make = <
-  const Id extends string,
-  const S extends Schema.Literals<ReadonlyArray<string>> = Schema.Literals<ReadonlyArray<string>>,
->(
+export const make = <const Id extends string, const S extends ReadonlyArray<OAuthScope.Scope>>(
   id: Id,
   input: { readonly scopes: S },
 ) => {
-  type Scope = S["Type"];
+  type Scope = S[number];
 
   const Identity = Context.Service<
     { readonly server: Id; readonly kind: "identity" },
@@ -1454,7 +1452,7 @@ export const make = <
 
   const server = makeServer(
     id,
-    { scopes: input.scopes, scopeValues: input.scopes.literals },
+    input,
     Effect.map(Identity, (identity): ServerIdentity<Scope> => ({
       current: Effect.map(identity.current, (subjectId) =>
         subjectId === undefined ? undefined : { subjectId },
@@ -1476,26 +1474,20 @@ export const make = <
 };
 
 /** Registered-client OpenID Connect code flow with PKCE, RS256 and explicit consent.
- * The supplied literal schema retains its checks; missing standard scopes are added.
+ * Standard OpenID scopes are included alongside application scopes.
  * Applications own authentication, current session validity and profile disclosure.
  * Resource JWTs and rotating refresh tokens are opt-in; dynamic registration and
  * front/back-channel logout are not enabled.
  */
 export const makeOpenId = <
   const Id extends string,
-  const S extends Schema.Literals<ReadonlyArray<string>> = Schema.Literals<readonly []>,
+  const S extends ReadonlyArray<OAuthScope.Scope> = readonly [],
 >(
   id: Id,
   options: { readonly scopes?: S } = {},
 ) => {
-  type OpenIdScope = S["Type"] | typeof StandardOpenIdScope.Type;
-  const applicationScope = options.scopes ?? Schema.Literals([]);
-
-  const missingStandards = StandardOpenIdScope.literals.filter(
-    (scope) => !applicationScope.literals.some((declared) => declared === scope),
-  );
-
-  const scope = Schema.Union([applicationScope, Schema.Literals(missingStandards)]);
+  type OpenIdScope = S[number] | (typeof standardOpenIdScopes)[number];
+  const scopes = [...(options.scopes ?? []), ...standardOpenIdScopes];
 
   const Identity = Context.Service<
     {
@@ -1508,10 +1500,7 @@ export const makeOpenId = <
 
   const server = makeServer(
     id,
-    {
-      scopes: scope,
-      scopeValues: [...applicationScope.literals, ...missingStandards],
-    },
+    { scopes },
     Effect.map(Identity, (identity): ServerIdentity<OpenIdScope> => ({
       current: Effect.map(identity.current, (authentication) =>
         authentication === undefined

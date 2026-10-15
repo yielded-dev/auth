@@ -21,6 +21,7 @@ export * as Persistence from "./Persistence.ts";
 export * as PhoneOtp from "./PhoneOtp.ts";
 export * as Proofs from "./Proofs.ts";
 export * as Schema from "./Schema.ts";
+export * as Scope from "./Scope.ts";
 export * as SessionContract from "./SessionContract.ts";
 export * as Sessions from "./Sessions.ts";
 export * as SmsDelivery from "./SmsDelivery.ts";

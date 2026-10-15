@@ -231,8 +231,10 @@ access to your application. Your app session identifies the user, the MCP grant
 authorizes the client, and any upstream provider grant stays on your server.
 
 ```ts
-const Scope = Schema.Literals(["athlete:read"]);
-const oauth = OAuthServer.make("mcp", { scopes: Scope });
+import { OAuthServer, Scope } from "@yielded/auth";
+
+const ReadAthlete = Scope.make("athlete:read");
+const oauth = OAuthServer.make("mcp", { scopes: [ReadAthlete] });
 
 const protectedMcp = McpServer.toolkit(toolkit).pipe(
   Layer.provide(handlers),
@@ -244,7 +246,7 @@ const protectedMcp = McpServer.toolkit(toolkit).pipe(
       protocols: [McpProtocol.v2026_07_28],
     }),
   ),
-  Layer.provide(oauth.middleware([Scope.make("athlete:read")]).layer),
+  Layer.provide(oauth.middleware([ReadAthlete]).layer),
 );
 ```
 

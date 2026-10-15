@@ -2,6 +2,7 @@ import { Jwk, Jwks } from "@yielded/jose";
 import { Context, type Effect, Schema } from "effect";
 
 import { SubjectId } from "../../Schema";
+import * as OAuthScope from "../../Scope";
 
 export class Unavailable extends Schema.TaggedError<Unavailable>()("OAuthServerUnavailable", {}) {}
 
@@ -17,11 +18,12 @@ export class ConfigurationError extends Schema.TaggedError<ConfigurationError>()
 
 export const Text = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(2048));
 export const Random = Schema.String.check(Schema.isPattern(/^[A-Za-z0-9_-]{43}$/));
-export const Scope = Schema.String.check(Schema.isPattern(/^[\x21\x23-\x5B\x5D-\x7E]{1,128}$/));
+export const Scope = OAuthScope.Scope;
 export const Scopes = Schema.NonEmptyArray(Scope).check(Schema.isMaxLength(32));
 
-export const makeScopesSchema = <Scope extends string>(scope: Schema.Codec<Scope>) =>
-  Schema.NonEmptyArray(scope).check(Schema.makeFilter(Schema.is(Scopes)));
+export const makeScopesSchema = <Scope extends OAuthScope.Scope>(
+  scope: Schema.Codec<Scope, string>,
+) => Schema.NonEmptyArray(scope).check(Schema.makeFilter(Schema.is(Scopes)));
 
 /** Application claims stay nested so they cannot replace protocol claims. */
 export const AccessClaims = Schema.Record(Schema.String, Schema.Json);
@@ -218,7 +220,9 @@ export const Record = Schema.Struct({
 
 export type Record = typeof Record.Type;
 
-export const makeAccessSchema = <Scope extends string>(scope: Schema.Codec<Scope>) =>
+export const makeAccessSchema = <Scope extends OAuthScope.Scope>(
+  scope: Schema.Codec<Scope, string>,
+) =>
   Schema.Struct({
     subjectId: SubjectId,
     grantId: Random,
@@ -230,7 +234,7 @@ export const makeAccessSchema = <Scope extends string>(scope: Schema.Codec<Scope
 
 export const Access = makeAccessSchema(Scope);
 
-export type Access<Scope extends string = string> = ReturnType<
+export type Access<Scope extends OAuthScope.Scope = OAuthScope.Scope> = ReturnType<
   typeof makeAccessSchema<Scope>
 >["Type"];
 

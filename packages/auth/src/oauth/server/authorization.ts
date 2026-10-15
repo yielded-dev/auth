@@ -1,10 +1,17 @@
 import { Context, Effect, Schema, type Types } from "effect";
 
+import * as OAuthScope from "../../Scope";
 import { AccessClaims, type Authentication, Scope, type Unavailable } from "./models";
 
-export const StandardOpenIdScope = Schema.Literals(["openid", "profile", "email"]);
+export const standardOpenIdScopes = [
+  OAuthScope.make("openid"),
+  OAuthScope.make("profile"),
+  OAuthScope.make("email"),
+];
 
-const makeResultSchema = <Scope extends string>(scope: Schema.Codec<Scope>) =>
+const isStandardOpenIdScope = Schema.is(Schema.Literals(standardOpenIdScopes));
+
+const makeResultSchema = <Scope extends OAuthScope.Scope>(scope: Schema.Codec<Scope, string>) =>
   Schema.Struct({
     scopes: Schema.Array(scope).check(Schema.isMaxLength(32)),
     claims: Schema.optionalKey(AccessClaims),
@@ -12,13 +19,12 @@ const makeResultSchema = <Scope extends string>(scope: Schema.Codec<Scope>) =>
 
 export const OpenIdAuthorizationResult = makeResultSchema(Scope);
 
-export type OpenIdAuthorizationResult<Scope extends string = string> = ReturnType<
-  typeof makeResultSchema<Scope>
->["Type"];
+export type OpenIdAuthorizationResult<Scope extends OAuthScope.Scope = OAuthScope.Scope> =
+  ReturnType<typeof makeResultSchema<Scope>>["Type"];
 
-export const makeAuthorization = <const Id extends string, Scope extends string>(
+export const makeAuthorization = <const Id extends string, Scope extends OAuthScope.Scope>(
   id: Id,
-  scope: Schema.Codec<Scope>,
+  scope: Schema.Codec<Scope, string>,
 ) => {
   /** Recheck permission at code exchange and refresh. Return only requested
    * scopes; an empty result denies issuance. Claims never enter an ID token.
@@ -46,9 +52,7 @@ export const makeAuthorization = <const Id extends string, Scope extends string>
     default: Service.of({
       authorize: ({ scopes }) =>
         Effect.succeed({
-          scopes: scopes.filter((scope) =>
-            StandardOpenIdScope.literals.some((standard) => standard === scope),
-          ),
+          scopes: scopes.filter(isStandardOpenIdScope),
         }),
     }),
   };
