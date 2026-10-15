@@ -94,7 +94,9 @@ export const makeIdentityTokens = Effect.fnUntraced(function* (options: Identity
         typ: "at+jwt",
       }).pipe(
         Effect.provideContext(services),
-        Effect.mapError(() => Unavailable.make({})),
+        Effect.catchCause((cause) =>
+          Effect.failCause(Cause.map(cause, () => Unavailable.make({}))),
+        ),
       ),
     issue: Effect.fnUntraced(function* (input: {
       readonly issuer: string;

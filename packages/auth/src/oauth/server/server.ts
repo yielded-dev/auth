@@ -1149,7 +1149,9 @@ const makeServer = <
                         })
                         .pipe(
                           Effect.flatMap(Schema.decodeEffect(authorizationSource.Result)),
-                          Effect.mapError(() => Unavailable.make({})),
+                          Effect.catchCause((cause) =>
+                            Effect.failCause(Cause.map(cause, () => Unavailable.make({}))),
+                          ),
                         );
 
                       if (
