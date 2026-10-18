@@ -2,7 +2,6 @@ import { Signature } from "@yielded/crypto/Signature";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
-import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
@@ -182,7 +181,8 @@ interface Snapshot {
 }
 
 interface Pending {
-  readonly result: Deferred.Deferred<Exit.Exit<Snapshot, JwksUnavailable>>;
+  readonly result: Promise<Exit.Exit<Snapshot, JwksUnavailable>>;
+  readonly complete: (exit: Exit.Exit<Snapshot, JwksUnavailable>) => void;
   // Waiter ownership changes under the remote state lock. The starting waiter
   // cannot release its ownership until the scoped fiber has been registered.
   waiters: number;
@@ -216,6 +216,8 @@ type Admission =
  * receive busy until that cleanup finishes; cancellation never starts a retry.
  * Owner closure releases lookups as unavailable; unexpected refresh cleanup
  * failures propagate through the owning Scope with their complete Cause.
+ * The host must retain the initiating request's I/O lifetime during shared work;
+ * on Workers, use waitUntil with bounded verification at the request boundary.
  */
 export const layerRemote = (
   input: RemoteOptions,
@@ -257,10 +259,7 @@ export const layerRemote = (
           // A scoped fiber can be interrupted before its first instruction, so
           // its onExit handler alone cannot release pending lookup waiters.
           if (previous._tag === "Open" && previous.pending !== undefined)
-            yield* Deferred.succeed(
-              previous.pending.result,
-              Exit.fail(JwksUnavailable.make({ reason: "closed" })),
-            );
+            previous.pending.complete(Exit.fail(JwksUnavailable.make({ reason: "closed" })));
           yield* Scope.close(scope, Exit.void);
           // Scope finalizers cannot fail in E. Preserve the whole unexpected
           // cleanup Cause as a defect, including when all waiters cancelled.
@@ -356,7 +355,13 @@ export const layerRemote = (
 
             return yield* Effect.acquireUseRelease(
               Effect.gen(function* () {
-                const result = yield* Deferred.make<Exit.Exit<Snapshot, JwksUnavailable>>();
+                // A native shared promise lets request-isolated runtimes track
+                // the dependency and resume each waiter in its own I/O context.
+                let complete!: Pending["complete"];
+
+                const result = new Promise<Exit.Exit<Snapshot, JwksUnavailable>>((resolve) => {
+                  complete = resolve;
+                });
 
                 // Recheck cache, ownership and waiter admission together. A missing
                 // key bypasses only the snapshot that failed selection.
@@ -383,6 +388,7 @@ export const layerRemote = (
 
                     const pending: Pending = {
                       result,
+                      complete,
                       waiters: 1,
                       stopping: false,
                       fiber: undefined,
@@ -410,7 +416,7 @@ export const layerRemote = (
 
                               return current;
                             })
-                          : Deferred.succeed(result, exit).pipe(
+                          : Effect.sync(() => pending.complete(exit)).pipe(
                               // A stopping generation remains registered until
                               // its last waiter has joined the complete child Exit.
                               Effect.as({
@@ -436,7 +442,7 @@ export const layerRemote = (
                 if (admission._tag === "Cached") return Effect.succeed(admission.snapshot);
 
                 return Effect.gen(function* () {
-                  const exit = yield* restore(Deferred.await(admission.pending.result));
+                  const exit = yield* restore(Effect.promise(() => admission.pending.result));
 
                   delivered = true;
 
