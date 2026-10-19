@@ -3,7 +3,13 @@
 Client-local iOS passkeys and browser login for `@yielded/auth`. Applications own
 authentication workflows, HTTP, sessions, and native application configuration.
 Core has no React Native dependency. Passkeys require iOS 16+; browser login's
-minimum depends on the chosen Expo SDK. Android is unsupported.
+minimum depends on the chosen Expo SDK. Passkeys and browser login do not support Android.
+
+For foreground session maintenance on iOS or Android, import `activity` from
+`@yielded/auth-react-native/SessionActivity` and pass
+`sessionRenewal: { activity }` to `AuthAtom.make`. Keep `auth.session` mounted in
+your app shell. The adapter follows AppState and releases its subscription with
+the session atom; it needs no passkey or Expo dependencies.
 
 Import the package root for passkeys, or `@yielded/auth-react-native/BrowserLogin`
 for browser login. Install only the optional native peers for the entrypoint you

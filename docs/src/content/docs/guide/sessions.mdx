@@ -118,11 +118,18 @@ Its result distinguishes `revoked`, `already-invalid`, `client-only`, and
 
 ## Renew a session
 
+The standard [Atom client](./client#read-a-session-and-sign-out) maintains sessions
+while `auth.session` is mounted and the application is foregrounded. Ordinary
+server and standalone client reads stay read-only. For explicit renewal:
+
 ```ts
 const session = yield* auth.renewSession();
 ```
 
-Renewal delivers a replacement credential through the request boundary.
+Renewal delivers a replacement credential through the request boundary. It extends
+idle expiry within the original absolute lifetime and does not refresh authentication
+assurance. Session reads return `renewAfterMillis` when renewal can extend the session;
+this delay comes from server policy and is recomputed even for cookie snapshots.
 For Electron and iOS, [browser sign-in](./browser-login) establishes a distinct
 native session after hosted authentication and account confirmation.
 

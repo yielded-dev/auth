@@ -90,6 +90,17 @@ export const makeSessionApi = <
     const strategy = yield* sessions.SessionStrategy;
     const clockPolicy = yield* AuthenticationClock;
 
+    const withRenewalTiming = Effect.fnUntraced(function* (session: typeof sessions.Session.Type) {
+      const now = DateTime.toEpochMillis(yield* DateTime.now);
+      const due = DateTime.toEpochMillis(session.issuedAt) + strategy.policy.renewalIntervalMillis;
+      const expires = DateTime.toEpochMillis(session.expiresAt);
+      const { renewAfterMillis: _, ...value } = session;
+
+      return due < expires && expires < DateTime.toEpochMillis(session.absoluteExpiresAt)
+        ? { ...value, renewAfterMillis: Math.max(0, due - now) }
+        : value;
+    });
+
     const cache = yield* Effect.serviceOption(
       sessionCookieCache<Id, typeof sessions.Session.Type>(sessions.moduleId),
     );
@@ -144,6 +155,7 @@ export const makeSessionApi = <
             error._tag === "SessionInvalid" ? "rejected" : "unavailable",
           ),
         ),
+        Effect.flatMap(withRenewalTiming),
       );
     });
 
@@ -187,7 +199,7 @@ export const makeSessionApi = <
           .read(credential, cached, generation)
           .pipe(cacheFallback(null));
 
-        if (snapshot !== null) return snapshot;
+        if (snapshot !== null) return yield* withRenewalTiming(snapshot);
       }
 
       // Anchor cache freshness before storage: a delayed response must not start
@@ -230,7 +242,7 @@ export const makeSessionApi = <
         }
       }
 
-      return session;
+      return session === null ? null : yield* withRenewalTiming(session);
     });
 
     const requireSession = Effect.fn("Auth.requireSession")(function* () {
@@ -274,6 +286,7 @@ export const makeSessionApi = <
       }).pipe(
         Effect.provide(services),
         Effect.provideService(AuthCredentialCommandCollector, request.credentialCommandSink),
+        Effect.flatMap(withRenewalTiming),
       );
     });
 

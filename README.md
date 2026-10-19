@@ -116,7 +116,9 @@ export const auth = AuthAtom.make(AppClient);
 
 Use `auth.session`, `auth.signIn`, and `auth.signOut` with ordinary
 `@effect/atom-react` hooks. Auth mutations refresh auth queries automatically;
-React renders and dispatches. Compose your own queries through the same client:
+React renders and dispatches. While mounted, `auth.session` maintains renewable
+sessions in the foreground using server-provided timing. Compose your own queries
+through the same client:
 
 <!-- #region auth-query -->
 

@@ -91,16 +91,38 @@ payloads. Define object-input queries outside React renders or use stable
 Effect `Equal`/`Hash` keys. Queries expose `AsyncResult`, including setup failures.
 Write an input to execute a mutation; refreshing its result does not repeat it.
 
-`auth.session` is the default `auth.getSession()` atom. Use
+`auth.session` wraps the default `auth.getSession()` query with foreground session
+maintenance. Use
 `auth.getSession({ fresh: true })` to bypass the server cookie cache on each fetch.
-Custom contracts must expose a `getSession` query accepting no input; `session`,
-`runtime`, and `client` are reserved aliases.
+Custom contracts must expose a `getSession` query accepting no input and a
+`renewSession` mutation. Automatic maintenance also requires the standard
+`{ fresh: true }` input. `session`, `sessionRenewal`, `runtime`, and `client` are
+reserved aliases.
 
 - **`runtime`**: Application runtime factory for shared Layers and invalidation; defaults to `Atom.runtime`.
 - **`reactivityKeys`**: Additional keys invalidated by each successful named mutation.
 - **`services`**: Decoder service Layer; required by the types when response codecs need services.
 - **`layer`**: Client service Layer with its dependencies provided; required for configured stores, otherwise defaults to `AppClient.layerFetch`.
 - **`initialSession`**: Encoded public session for request-local server rendering.
+- **`sessionRenewal`**: Automatic while `auth.session` is mounted; defaults to browser visibility/focus. Set `false` to opt out, or `{ activity: Stream<boolean> }` for another host. The stream emits its initial foreground state and subsequent changes and needs no services.
+
+`auth.sessionRenewal` exposes the maintenance `AsyncResult<void, ...>` with typed
+read/renewal failures and their complete Cause. A failed rotation suspends automatic
+renewal for that credential, including across remounts. Failed reads can be retried
+on a later foreground signal. Reauthenticate or explicitly
+reconcile the failure; a timeout may hide a completed credential rotation. There
+is no automatic retry loop. Successful renewal invalidates auth queries through
+the same client as named mutations. Direct client calls and option-bearing session
+queries do not install maintenance.
+
+Mounting `auth.sessionRenewal` also keeps maintenance active. The worker uses
+`renewAfterMillis` from session reads, then makes one authoritative
+read before renewing. It waits in the background and refreshes on foreground
+signals; declaration and server rendering install no browser work. One registry
+shares one worker across session subscribers. Keep one client/registry per app;
+independent tabs or client instances can race and do not provide cross-tab locking.
+Expired sessions require authentication again, and a closed or suspended app cannot
+keep a session alive.
 
 ## Account lifetime
 

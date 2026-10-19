@@ -1,13 +1,16 @@
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import type * as HttpClient from "effect/http/HttpClient";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 
 import type { AnyAuthAction, AuthActions } from "../operations/actions";
+import { RenewalSession, renewalKey } from "../sessions/renewal";
 import {
   Client,
   makeAuthenticationCompletion,
@@ -60,10 +63,17 @@ export interface AuthClientController<Actions extends AuthActions> {
   ) => Effect.Effect<void, never, Scope.Scope>;
   readonly replaceSubject: (subject: string | null) => Effect.Effect<void>;
   readonly completeAuthentication: OperationAuthenticationCompletion;
+  readonly lastRenewalAttempt: Effect.Effect<string | undefined>;
+  /** Anchored when the response arrived, so retained atoms do not restart its delay. */
+  readonly renewalDeadline: (session: unknown) => number | undefined;
   readonly call: <Name extends keyof Actions>(
     name: Name,
     input: RouteInput<Actions[Name]["route"]>,
-    options?: { readonly notifyMutation?: boolean; readonly origin?: object },
+    options?: {
+      readonly notifyMutation?: boolean;
+      readonly origin?: object;
+      readonly automaticRenewal?: { readonly key: string; readonly generation: number };
+    },
   ) => Effect.Effect<
     RouteSuccess<Actions[Name]["route"]>,
     RouteFailure<Actions[Name]["route"]> | OperationHttpError,
@@ -102,9 +112,13 @@ const acquire = Effect.fn("Client.make")(function* <Actions extends AuthActions,
   });
 
   const gate = yield* Semaphore.make(1);
+  const clock = yield* Clock.Clock;
   const listeners = new Set<(event: AuthClientEvent) => Effect.Effect<void>>();
   let state: AuthClientState = { subject: null, generation: 0 };
   let closed = false;
+  let observedSession: string | undefined;
+  let observedDeadline: number | undefined;
+  let lastRenewalAttempt: string | undefined;
 
   const notify = (event: AuthClientEvent) =>
     Effect.forEach([...listeners], (listener) => listener(event), {
@@ -118,6 +132,9 @@ const acquire = Effect.fn("Client.make")(function* <Actions extends AuthActions,
     origin?: object,
   ) {
     state = { subject, generation: state.generation + 1 };
+    observedSession = undefined;
+    observedDeadline = undefined;
+    lastRenewalAttempt = undefined;
     yield* notify({
       _tag: "Transition",
       state,
@@ -141,16 +158,24 @@ const acquire = Effect.fn("Client.make")(function* <Actions extends AuthActions,
     );
   });
 
-  const call: AuthClientController<Actions>["call"] = Effect.fn("Client.call")(function* <
+  const callOnce: AuthClientController<Actions>["call"] = Effect.fn("Client.call")(function* <
     Name extends keyof Actions,
   >(
     name: Name,
     input: RouteInput<Actions[Name]["route"]>,
-    callOptions?: { readonly notifyMutation?: boolean; readonly origin?: object },
+    callOptions?: Parameters<AuthClientController<Actions>["call"]>[2],
   ) {
     if (closed) return yield* OperationHttpError.make({ reason: "stale-response" });
 
     const action = contract.actions[name];
+    const automatic = callOptions?.automaticRenewal;
+
+    if (
+      automatic !== undefined &&
+      (state.generation !== automatic.generation || lastRenewalAttempt === automatic.key)
+    )
+      return yield* OperationHttpError.make({ reason: "stale-response" });
+    if (name === "renewSession") lastRenewalAttempt = automatic?.key ?? observedSession;
     const project = action.subject;
     const started = yield* transport.generation;
     let transitioned = false;
@@ -205,16 +230,34 @@ const acquire = Effect.fn("Client.make")(function* <Actions extends AuthActions,
 
     const value = yield* execute;
 
+    if ((name === "getSession" || name === "renewSession") && Schema.is(RenewalSession)(value)) {
+      observedSession = renewalKey(value);
+      observedDeadline =
+        value.renewAfterMillis === undefined
+          ? undefined
+          : clock.currentTimeMillisUnsafe() + value.renewAfterMillis;
+    }
+
     if (action.mode === "mutation" && !transitioned && callOptions?.notifyMutation !== false)
       yield* notify({ _tag: "Mutation", name: String(name) });
 
     return value;
   });
 
+  const call: AuthClientController<Actions>["call"] = (name, input, options) =>
+    name === "renewSession"
+      ? gate.withPermits(1)(callOnce(name, input, options))
+      : callOnce(name, input, options);
+
   const controller: AuthClientController<Actions> = {
     actions: contract.actions,
     transport,
     state: Effect.sync(() => state),
+    lastRenewalAttempt: Effect.sync(() => lastRenewalAttempt),
+    renewalDeadline: (session) =>
+      Schema.is(RenewalSession)(session) && renewalKey(session) === observedSession
+        ? observedDeadline
+        : undefined,
     call,
     replaceSubject,
     completeAuthentication,

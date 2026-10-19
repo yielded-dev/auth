@@ -5,6 +5,7 @@ import { AuthApi } from "./auth-contract";
 
 // Both constructors are inert. A registry or application Layer owns acquisition.
 export const AppClient = Client.make(AuthApi, { baseUrl: "https://app.example.com" });
+// Mount auth.session in the application shell to maintain sessions while foregrounded.
 export const auth = AuthAtom.make(AppClient);
 
 export const currentMember = Effect.fn("example.remoteMember")(function* () {

@@ -145,6 +145,7 @@ const bindAction = <
       "constructor",
       "prototype",
       "session",
+      "sessionRenewal",
       "lifetime",
       "runtime",
       "client",
