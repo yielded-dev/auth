@@ -33,12 +33,7 @@ export const makeSessionContract = <
     Claims["EncodingServices"]
   > = claims;
 
-  const Session = Schema.Struct({
-    ...SessionMetadata.fields,
-    claims: ClaimsCodec,
-    /** Server-derived delay from this read. Absent when renewal cannot extend the session. */
-    renewAfterMillis: Schema.optionalKey(Schema.Natural),
-  });
+  const Session = Schema.Struct({ ...SessionMetadata.fields, claims: ClaimsCodec });
 
   const Completed = Schema.TaggedStruct("Authenticated", { session: Session });
 

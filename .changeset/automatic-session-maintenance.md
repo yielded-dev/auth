@@ -1,6 +1,6 @@
 ---
 "@yielded/auth": patch
-"@yielded/auth-react-native": patch
+"@yielded/auth-persistence": patch
 ---
 
-Maintain renewable sessions automatically while the standard session atom is mounted in the foreground, using server-provided timing and an opt-out. Supply a scoped React Native AppState adapter and expose renewal failures without automatically retrying uncertain credential rotations.
+Maintain session idle expiry automatically through authenticated HTTP requests while preserving stateful credentials, authentication age, and absolute expiry. Implement `refresh` in custom session strategies and stateful persistence services; keep `renewSession` for explicit credential rotation.

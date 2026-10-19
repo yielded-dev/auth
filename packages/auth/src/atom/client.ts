@@ -8,7 +8,6 @@ import * as AtomRegistry from "effect/reactivity/AtomRegistry";
 import * as Reactivity from "effect/reactivity/Reactivity";
 import * as Schema from "effect/Schema";
 import * as SchemaAST from "effect/SchemaAST";
-import type * as Stream from "effect/Stream";
 
 import {
   type ActionDecodeServices,
@@ -28,11 +27,9 @@ import { AuthAtomLifetime, type AuthSubjectLifetime } from "./AuthAtomLifetime";
 import { reportAtomDefects } from "./failures";
 import type { ReactivityKeys } from "./operations";
 import { type AccountBinding, makeScopedRuntime } from "./scoped-runtime";
-import { browserActivity, maintainSession } from "./session-renewal";
 
 type ActionsWithSession = AuthActions & {
   readonly getSession: AnyAuthAction;
-  readonly renewSession: AnyAuthAction;
 };
 type DecoderServices<Actions extends AuthActions> = ActionDecodeServices<Actions[keyof Actions]>;
 
@@ -55,9 +52,6 @@ export interface AuthAtomOptions<
   readonly initialSession?: unknown;
   /** Required when action result codecs depend on services. */
   readonly services?: Layer.Layer<DecoderServices<Actions>, E>;
-  /** Defaults to foreground browser maintenance while session is mounted.
-   * Native hosts supply an activity stream; false preserves manual renewal. */
-  readonly sessionRenewal?: false | { readonly activity: Stream.Stream<boolean> };
 }
 
 type QueryAtom<Action extends AnyAuthAction, E = never> = Atom.Atom<
@@ -91,16 +85,6 @@ export type AuthAtoms<
 } & {
   /** Default getSession query, including any initial display data. */
   readonly session: QueryAtom<Actions["getSession"], E>;
-  /** Status of automatic maintenance, including the complete failure Cause. */
-  readonly sessionRenewal: Atom.Atom<
-    AsyncResult.AsyncResult<
-      void,
-      | RouteFailure<Actions["getSession"]["route"]>
-      | RouteFailure<Actions["renewSession"]["route"]>
-      | OperationHttpError
-      | E
-    >
-  >;
   readonly client: ClientDefinition<Id, Actions, R>;
   /** Account-scoped queries, effects, state and workflows. Named auth mutations
    * and subject-discovering queries use the host lifetime so their own account
@@ -167,9 +151,7 @@ export const make = <
       !Schema.is(Schema.toEncoded(actions.getSession.route.operation.rpc.payloadSchema))(
         undefined,
       ) ||
-      ["session", "sessionRenewal", "runtime", "client"].some((name) =>
-        Object.hasOwn(actions, name),
-      ) ||
+      ["session", "runtime", "client"].some((name) => Object.hasOwn(actions, name)) ||
       Object.values(actions).some(
         ({ mode, route }) =>
           mode === "query" &&
@@ -497,78 +479,9 @@ export const make = <
     }),
   );
 
-  // These entries are produced by the schema-directed table above.
-  const session = atoms.session as QueryAtom<Actions["getSession"], E>;
-
-  type RenewalError =
-    | RouteFailure<Actions["getSession"]["route"]>
-    | RouteFailure<Actions["renewSession"]["route"]>
-    | OperationHttpError
-    | E;
-
-  const status = Atom.make<AsyncResult.AsyncResult<void, RenewalError>>(
-    AsyncResult.success(undefined),
-  ).pipe(Atom.keepAlive);
-
-  const input = <Name extends keyof Actions>(name: Name, value: unknown) =>
-    Schema.decodeUnknownEffect(
-      // Restore the payload relationship lost by the heterogeneous action table.
-      Schema.toEncoded(actions[name].route.operation.rpc.payloadSchema) as Schema.Codec<
-        RouteInput<Actions[Name]["route"]>,
-        RouteInput<Actions[Name]["route"]>,
-        never,
-        never
-      >,
-    )(value).pipe(Effect.mapError(() => OperationHttpError.make({ reason: "request" })));
-
-  const renewal = host
-    .atom((get) =>
-      Effect.gen(function* () {
-        if (options.sessionRenewal === false) return;
-        const controller = (yield* client).auth[AuthClientTypeId];
-        const fresh = yield* input("getSession", { fresh: true });
-        const renew = yield* input("renewSession", undefined);
-
-        return yield* maintainSession({
-          session,
-          activity: options.sessionRenewal?.activity ?? browserActivity,
-          read: controller.call("getSession", fresh),
-          renew: (key, generation) =>
-            controller.call("renewSession", renew, {
-              automaticRenewal: { key, generation },
-            }),
-          generation: Effect.map(controller.state, (state) => state.generation),
-          lastAttempt: controller.lastRenewalAttempt,
-          deadline: controller.renewalDeadline,
-          publish: (result) => get.set(status, result),
-        });
-      }).pipe(reportAtomDefects),
-    )
-    .pipe(Atom.withServerValueInitial);
-
-  const sessionRenewal = Atom.readable((get) => {
-    const running = get(renewal);
-
-    return AsyncResult.isFailure(running) ? running : get(status);
-  }).pipe(Atom.withServerValueInitial);
-
-  const maintainedSession =
-    options.sessionRenewal === false
-      ? session
-      : Atom.readable(
-          (get) => {
-            get(sessionRenewal);
-
-            return get(session);
-          },
-          (refresh) => refresh(session),
-        ).pipe(Atom.withServerValue((get) => get(session)));
-
   // Action mode and encoded payload choose each named atom's exact public form.
   return Object.freeze({
     ...atoms,
-    session: maintainedSession,
-    sessionRenewal,
     client,
     runtime,
   }) as AuthAtoms<Id, Actions, E>;

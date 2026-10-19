@@ -20,8 +20,7 @@
   "sideEffects": [],
   "exports": {
     ".": "./src/index.ts",
-    "./BrowserLogin": "./src/BrowserLogin.ts",
-    "./SessionActivity": "./src/SessionActivity.ts"
+    "./BrowserLogin": "./src/BrowserLogin.ts"
   },
   "publishConfig": {
     "access": "public"

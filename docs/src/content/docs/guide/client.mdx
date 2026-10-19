@@ -92,33 +92,9 @@ export function App() {
 ```
 
 Reuse an existing provider if you have one. Successful auth mutations refresh
-`auth.session` automatically.
-
-Keep `auth.session` mounted in your application shell. It automatically renews
-eligible sessions while the page is visible and checks again on focus or resume.
-The server supplies the timing; the client verifies current authority before
-issuing the explicit renewal request. Renewal preserves the absolute expiry and
-original authentication freshness. Unmounting the session or disposing its
-registry releases the timer and event subscriptions.
-
-Use `{ sessionRenewal: false }` in `AuthAtom.make` to manage renewal yourself.
-Standalone `client.auth.getSession()` and `auth.getSession(...)` queries remain
-read-only. Observe `auth.sessionRenewal` for maintenance failures; a failed
-rotation is not automatically retried for the same session credential.
-
-React Native supplies foreground state through the platform adapter:
-
-```ts
-import * as SessionActivity from "@yielded/auth-react-native/SessionActivity";
-
-export const auth = AuthAtom.make(AppClient, {
-  layer: ClientLive,
-  sessionRenewal: { activity: SessionActivity.activity },
-});
-```
-
-`ClientLive` supplies your native credential store and transport. Other hosts can
-provide a `Stream<boolean>` emitting their initial foreground state and changes.
+`auth.session` automatically. Normal authenticated HTTP requests also maintain
+session expiry on the server. You do not need to call `renewSession()` or mount
+a timer; a page with no requests can still reach its idle timeout.
 
 When the server enables [cookie caching](./sessions#cache-ordinary-session-reads),
 use `auth.getSession({ fresh: true })` to bypass it. Define this atom outside React
@@ -215,7 +191,7 @@ keys refresh them but do not make them account-scoped. See the
 
 ## Server rendering and hydration
 
-Default atoms render `Initial` on the server without fetching or starting renewal. For session-aware
+Default atoms render `Initial` on the server without fetching. For session-aware
 rendering, use request-local atoms and registries; serialize only public session
 data. Follow the [hydration reference](../reference/client#server-rendering) and
 [SSR example](https://github.com/yielded-dev/auth/blob/main/examples/auth/src/auth-ssr.ts).
