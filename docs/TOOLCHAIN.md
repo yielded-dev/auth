@@ -10,7 +10,7 @@ Run `vp run ready` before handoff.
 
 `vp check` runs formatting and linting. `vp run check` also runs TypeScript and
 Effect diagnostics through `effect-tsrs` across workspaces and scripts. Its bundled
-tsrs compiler checks both in one command; `--strict` makes warnings fail the check.
+tsrs compiler checks both with `--type-check`; `--strict` makes warnings fail the check.
 Keep optional dependencies enabled for its platform binaries. Include
 `vp env doctor` output when reporting toolchain failures.
 

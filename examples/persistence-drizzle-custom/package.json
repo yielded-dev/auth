@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "build": "vp build",
-    "check": "effect-tsrs diagnostics --project tsconfig.json --strict"
+    "check": "effect-tsrs diagnostics --project tsconfig.json --type-check --strict"
   },
   "dependencies": {
     "@effect/atom-react": "catalog:",
