@@ -1,10 +1,11 @@
-import { CurrentCommitJournal } from "@yielded/auth/Hooks";
+import { CurrentCommitJournal, type LifecycleHooks } from "@yielded/auth/Hooks";
 import { AuthenticationClock } from "@yielded/auth/Operations";
 import * as M from "@yielded/auth/Passkey";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import type * as SqlClient from "effect/sql/SqlClient";
 import * as SqlError from "effect/sql/SqlError";
 
 import { sqlBatchAssertion } from "./d1-planning";
@@ -294,10 +295,7 @@ const makePasskeyNativeCredentialService = (
   ) => Effect.Effect<
     A,
     M.PasskeyUnavailable,
-    Exclude<
-      Exclude<Exclude<R, Crypto.Crypto>, import("effect/sql/SqlClient").SqlClient>,
-      import("@yielded/auth/Hooks").LifecycleHooks
-    >
+    Exclude<Exclude<Exclude<R, Crypto.Crypto>, SqlClient.SqlClient>, LifecycleHooks>
   >,
 ) => {
   const { sql, joinedSubject: subject, joinedFactor: factor, joinedCredential: credential } = state;

@@ -25,6 +25,7 @@ import { wipeConnectedMaterial } from "./grantTokens";
 import { OAuthConnectedPersistence } from "./OAuthConnectedPersistence";
 import { OAuthConnectedProtocol } from "./OAuthConnectedProtocol";
 import { OAuthConnectedTokenProtector } from "./OAuthConnectedTokenProtector";
+import type { OAuthProtocol } from "./OAuthProtocol";
 import { OAuthConfigurationError, OAuthRejected, OAuthUnavailable } from "./signInErrors";
 import {
   OAuthCallbackId,
@@ -69,30 +70,31 @@ const make = Effect.fnUntraced(function* (
     }),
   );
 
-  const prepare: import("./OAuthProtocol").OAuthProtocol["Service"]["prepareAuthorization"] =
-    Effect.fn("OAuth.access.prepare")(function* (input) {
-      if (input.provider !== profile.provider || profile.issuance !== "active")
-        return yield* OAuthRejected.make({});
+  const prepare: OAuthProtocol["Service"]["prepareAuthorization"] = Effect.fn(
+    "OAuth.access.prepare",
+  )(function* (input) {
+    if (input.provider !== profile.provider || profile.issuance !== "active")
+      return yield* OAuthRejected.make({});
 
-      const prepared = yield* protocol
-        .prepareAuthorization({
-          profile,
-          callbackId: input.callbackId ?? OAuthCallbackId.make(input.provider),
-          flowId: input.flowId,
-          ...(input.prompt === undefined ? {} : { prompt: input.prompt }),
-          ...(input.loginHint === undefined ? {} : { loginHint: input.loginHint }),
-        })
-        .pipe(
-          Effect.mapError((error) =>
-            error._tag === "OAuthProtocolRejected" ? OAuthRejected.make({}) : error,
-          ),
-        );
+    const prepared = yield* protocol
+      .prepareAuthorization({
+        profile,
+        callbackId: input.callbackId ?? OAuthCallbackId.make(input.provider),
+        flowId: input.flowId,
+        ...(input.prompt === undefined ? {} : { prompt: input.prompt }),
+        ...(input.loginHint === undefined ? {} : { loginHint: input.loginHint }),
+      })
+      .pipe(
+        Effect.mapError((error) =>
+          error._tag === "OAuthProtocolRejected" ? OAuthRejected.make({}) : error,
+        ),
+      );
 
-      if (!connectedSame(OAuthConnectedProfile, prepared.configuration.profile, profile))
-        return yield* OAuthUnavailable.make({});
+    if (!connectedSame(OAuthConnectedProfile, prepared.configuration.profile, profile))
+      return yield* OAuthUnavailable.make({});
 
-      return prepared;
-    });
+    return prepared;
+  });
 
   const configurationFor = Effect.fn("OAuth.access.configuration")(function* (
     flow: OAuthSignInFlow,

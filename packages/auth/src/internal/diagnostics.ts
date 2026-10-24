@@ -214,7 +214,7 @@ export const reportAuthFailure = Effect.fn("AuthDiagnostics.reportFailure")(func
     }
   });
 
-  if (unreported.length === 0 || unreported.every(Cause.isInterruptReason)) return;
+  if (unreported.every(Cause.isInterruptReason)) return;
 
   const diagnostic = Cause.fromReasons(
     unreported.map((reason) => {

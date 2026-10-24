@@ -172,7 +172,7 @@ export const makeNativeTotpServices = Effect.fnUntraced(function* (
       if (value[c.id] === null || value[c.id] === undefined) continue;
       if (!(mapping.subjectIds.toSubject(value[c.subjectId]) === subjectId))
         return yield* invalidState();
-      if (!!credentials.some((entry) => entry.credentialId === value[c.id]))
+      if (credentials.some((entry) => entry.credentialId === value[c.id]))
         return yield* invalidState();
       credentials.push({ credentialId: value[c.id], revision: value[c.revision] });
     }
