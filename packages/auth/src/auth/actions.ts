@@ -260,7 +260,8 @@ export const makeActionApi = Effect.fn("Auth.makeActionApi")(function* <
     entries.push([
       name,
       Effect.isEffect(method) &&
-      SchemaAST.isVoid(Schema.toEncoded(action.route.operation.rpc.payloadSchema).ast)
+      (SchemaAST.isVoid(Schema.toEncoded(action.route.operation.rpc.payloadSchema).ast) ||
+        SchemaAST.isUndefined(Schema.toEncoded(action.route.operation.rpc.payloadSchema).ast))
         ? invoke(undefined)
         : invoke,
     ]);
