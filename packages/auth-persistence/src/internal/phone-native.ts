@@ -117,17 +117,16 @@ export const makeNativePhoneServices = Effect.fnUntraced(function* (
     }
   });
 
-  const prepare = <A>(
+  const prepare = Effect.fnUntraced(function* <A>(
     decision: P.PhoneMutationDecision,
     project: (decision: P.PhoneMutationDecision, journal: CommitJournal) => PreparedCommit<A>,
-  ) =>
-    Effect.gen(function* () {
-      const result = project(decision, yield* CurrentCommitJournal);
+  ) {
+    const result = project(decision, yield* CurrentCommitJournal);
 
-      yield* registerSqlCommitReceipt(result);
+    yield* registerSqlCommitReceipt(result);
 
-      return result;
-    });
+    return result;
+  });
 
   const capture = Effect.fnUntraced(function* (
     input: Parameters<P.PhonePersistence["Service"]["target"]>[0],

@@ -200,15 +200,12 @@ export const makeNativePendingAuthenticationServices = Effect.fnUntraced(functio
         }),
       ),
     read: ({ digest }) =>
-      executor
-        .read(read(digest))
-        .pipe(
-          Effect.flatMap((result) =>
-            result === undefined
-              ? Effect.fail(PendingAuthenticationInvalid.make({}))
-              : Effect.succeed(result),
-          ),
+      executor.read(read(digest)).pipe(
+        Effect.filterOrFail(
+          (result) => !(result === undefined),
+          () => PendingAuthenticationInvalid.make({}),
         ),
+      ),
     reject: ({ digest }, project) =>
       native(
         Effect.gen(function* () {

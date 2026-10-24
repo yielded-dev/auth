@@ -37,21 +37,20 @@ import {
 
 const unavailable = () => M.PasskeyUnavailable.make({});
 
-export const preparePasskeyNative = <Value, A>(
+export const preparePasskeyNative = Effect.fnUntraced(function* <Value, A>(
   value: Value,
   prepare: M.PreparePasskeyCommit<Value, A>,
-) =>
-  Effect.gen(function* () {
-    const journal = yield* CurrentCommitJournal;
+) {
+  const journal = yield* CurrentCommitJournal;
 
-    const receipt = prepare(value, journal);
+  const receipt = prepare(value, journal);
 
-    if (!(receipt?._tag === "PreparedCommit" && Effect.isEffect(receipt.read)))
-      return yield* invalidPasskeyState();
-    yield* registerSqlCommitReceipt(receipt);
+  if (!(receipt?._tag === "PreparedCommit" && Effect.isEffect(receipt.read)))
+    return yield* invalidPasskeyState();
+  yield* registerSqlCommitReceipt(receipt);
 
-    return receipt;
-  });
+  return receipt;
+});
 
 const services = Effect.fnUntraced(function* (
   tables: NativeSqlTables,

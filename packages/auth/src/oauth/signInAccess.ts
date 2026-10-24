@@ -225,9 +225,7 @@ export const signInAccess = <Access extends OAuthConnectedProfile | undefined>(
 > =>
   // AccessServices is acquired only when the profile is present, matching the conditional public requirement.
   // @effect-diagnostics-next-line unsafeEffectTypeAssertion:off
-  (profile === undefined
-    ? Effect.succeed(undefined)
-    : make(moduleId, policy, profile)) as Effect.Effect<
+  (profile === undefined ? Effect.void : make(moduleId, policy, profile)) as Effect.Effect<
     SignInAccess | undefined,
     OAuthConfigurationError,
     Access extends OAuthConnectedProfile ? AccessServices : never
