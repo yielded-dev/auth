@@ -21,6 +21,7 @@
         "@yielded/auth-persistence-drizzle": "workspace:*",
         "@yielded/auth-simplewebauthn": "workspace:*",
         "@yielded/crypto": "workspace:*",
+        "@yielded/effect-tsrs": "catalog:",
         "@yielded/jose": "workspace:*",
         "@yielded/oauth": "workspace:*",
         "alchemy": "catalog:",
@@ -514,6 +515,7 @@
     "@types/node": "26.1.2",
     "@types/react": "19.3.0",
     "@types/react-dom": "19.2.4",
+    "@yielded/effect-tsrs": "0.2.1",
     "@yielded/starlight-theme": "0.2.2",
     "alchemy": "2.0.0-beta.80",
     "astro": "7.3.5",
@@ -1801,6 +1803,18 @@
     "@yielded/auth-simplewebauthn": ["@yielded/auth-simplewebauthn@workspace:packages/auth-simplewebauthn"],
 
     "@yielded/crypto": ["@yielded/crypto@workspace:packages/crypto"],
+
+    "@yielded/effect-tsrs": ["@yielded/effect-tsrs@0.2.1", "", { "optionalDependencies": { "@yielded/effect-tsrs-darwin-arm64": "0.2.1", "@yielded/effect-tsrs-darwin-x64": "0.2.1", "@yielded/effect-tsrs-linux-arm64": "0.2.1", "@yielded/effect-tsrs-linux-x64": "0.2.1", "@yielded/effect-tsrs-win32-x64": "0.2.1" }, "bin": { "effect-tsrs": "bin/effect-tsrs.js" } }, "sha512-M+KHjG8HvJ+pXRwkNLUIKTXveVpzgavrQ2LMja5ftZKAqe2hIF7oo6JcJ34LArKQmILwhjE7GeVjpeU4KWKXZw=="],
+
+    "@yielded/effect-tsrs-darwin-arm64": ["@yielded/effect-tsrs-darwin-arm64@0.2.1", "", { "os": "darwin", "cpu": "arm64" }, "sha512-rEF1qldjN1lMr93cFu8wRO1G8nj8XYdCgM2hz/T7C5tRNHEkvSjSZpnWFQIF27EctLFr/IAjhCu+if5eh6nrZQ=="],
+
+    "@yielded/effect-tsrs-darwin-x64": ["@yielded/effect-tsrs-darwin-x64@0.2.1", "", { "os": "darwin", "cpu": "x64" }, "sha512-gzBoo8vN9dVYMNB/s03i5ltZC/BOKcieAozS4cj6xz0x3VEAKaPhx3PkmNtqaMvOleXt57BUCpmqBuysxE8vJg=="],
+
+    "@yielded/effect-tsrs-linux-arm64": ["@yielded/effect-tsrs-linux-arm64@0.2.1", "", { "os": "linux", "cpu": "arm64" }, "sha512-fEe9cAB0FYSWIrYV0tOtAbzRX6MMDcRnpE4fc+M4MvDixL6F5O/uJKvwvc7wX0hyTI8aN3IbhyrpjQhOaPH/qQ=="],
+
+    "@yielded/effect-tsrs-linux-x64": ["@yielded/effect-tsrs-linux-x64@0.2.1", "", { "os": "linux", "cpu": "x64" }, "sha512-1AVhN0KIzXfFgtY0/qYGpIqMAZHQaoAJx1CHFPbxE3y9gfJKH9O/jVM5yqSAzNl6yiiF9cPCh+J4R31RqQ2PIw=="],
+
+    "@yielded/effect-tsrs-win32-x64": ["@yielded/effect-tsrs-win32-x64@0.2.1", "", { "os": "win32", "cpu": "x64" }, "sha512-GIbV2cANmFCHT5NC5Lz0Z2ktXmGxOwcWyIrVag/pketkE6qAUSaGDKODWPqaUYF4aUbNQ7qE5p1mtepKzOl9lA=="],
 
     "@yielded/example-auth": ["@yielded/example-auth@workspace:examples/auth"],
 
