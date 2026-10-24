@@ -47,7 +47,7 @@ import {
   AuthCredentialCommandCollector,
   AuthRevealCommandCollectorService,
 } from "../operations/credentials";
-import { OperationOutputError } from "../operations/errors";
+import { InvalidOperationInput, OperationOutputError } from "../operations/errors";
 import type { RequestBindingConfigurationError } from "../operations/requestBinding";
 import type { RequestBindingConfig } from "../operations/RequestBindingConfig";
 import { ProofUnavailable } from "../proofs/errors";
@@ -708,7 +708,11 @@ export const make = <
               >;
               const invoke = api[name as keyof Api] as Returned | ((input: unknown) => Returned);
 
-              return yield* typeof invoke === "function" ? invoke(input) : invoke;
+              if (typeof invoke === "function") return yield* invoke(input);
+              if (!Schema.is(Schema.toEncoded(action.route.operation.rpc.payloadSchema))(input))
+                return yield* InvalidOperationInput.make({});
+
+              return yield* invoke;
             }),
           },
         },
