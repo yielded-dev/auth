@@ -17,6 +17,9 @@ Keep optional dependencies enabled for its platform binaries. Include
 TypeScript and `@effect/tsgo` remain available for editor features and the Effect
 configuration schema; typecheck tasks do not patch or invoke them.
 
+The shared Effect policy makes correctness, composition, and Schema diagnostics
+errors. Exact severities and scoped exceptions live in `tsconfig.base.json`.
+
 Within `packages/`, Effect diagnostics require namespace imports for `effect`
 and `@effect/*`, such as `import * as Effect from "effect/Effect"`. Examples,
 documentation, and repository scripts can use named imports.
