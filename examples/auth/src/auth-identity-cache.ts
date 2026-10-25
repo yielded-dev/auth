@@ -1,4 +1,5 @@
 import { Atom as AuthAtom } from "@yielded/auth";
+import type { SubjectId } from "@yielded/auth/Schema";
 import { Effect } from "effect";
 import { KeyValueStore } from "effect/persistence";
 
@@ -12,14 +13,14 @@ export const auth = AuthAtom.make(AppClient, {
   },
 });
 
-// Remembered and Verified carry subject + snapshot. Use subject to select local data.
+// Remembered and Verified carry subjectId + snapshot. Use subjectId to select local data.
 export const identity = auth.identity;
 
 // Compose this check before sending an account's queued work. Each server request
 // must still authorize the operation, even after this verification succeeds.
-export const verifyAccount = auth.runtime.fn<string>()(
-  Effect.fn("example.verifyAccount")(function* (expectedSubject, get) {
-    return yield* get.result(auth.verifiedSession(expectedSubject), {
+export const verifyAccount = auth.runtime.fn<SubjectId>()(
+  Effect.fn("example.verifyAccount")(function* (expectedSubjectId, get) {
+    return yield* get.result(auth.verifiedSession(expectedSubjectId), {
       suspendOnWaiting: true,
     });
   }),

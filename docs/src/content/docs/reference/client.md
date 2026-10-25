@@ -107,11 +107,14 @@ Custom contracts must expose a `getSession` query accepting no input; `session`,
 
 `identityCache` accepts these options:
 
-| Option     | Requirement                                                                                                                                                   |
-| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `key`      | Storage key scoped to one application and auth server. One account is remembered per key; include an application version if needed.                           |
-| `storage`  | Fully provided `KeyValueStore` Layer, such as `KeyValueStore.layerStorage(() => localStorage)` from `effect/persistence`. Native apps supply their own Layer. |
-| `services` | Encoding service Layer, required when the public `getSession` schema needs services to encode. `options.services` supplies decoding services.                 |
+| Option    | Requirement                                                                                                                                                                                                |
+| --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `key`     | Storage key scoped to one application and auth server. One account is remembered per key; include an application version if needed.                                                                        |
+| `storage` | Fully provided Layer for `KeyValueStore` and any public session encoding services, such as `KeyValueStore.layerStorage(() => localStorage)` from `effect/persistence`. Native apps supply their own Layer. |
+
+When encoding requires services, compose them into `storage` with
+`Layer.mergeAll(StorageLive, SessionEncodingLive)`. `options.services` supplies
+decoding services.
 
 Caching requires a `getSession` action with a `subject.fromSuccess` projection,
 as supplied by `AuthContract.make`. It stores the complete public result through
@@ -126,20 +129,21 @@ focus and reconnect refresh, without automatic retries.
 
 `auth.identity` is an `Atom<AuthIdentity<Session>>`:
 
-| State        | Meaning                                                                          |
-| ------------ | -------------------------------------------------------------------------------- |
-| `Unknown`    | No known identity, including failed verification without a remembered snapshot.  |
-| `Remembered` | Unverified `subject` and public session `snapshot`, usable to select local data. |
-| `Verified`   | `subject` and `snapshot` confirmed by the live session read.                     |
-| `SignedOut`  | Server-confirmed absence of a session.                                           |
+| State        | Meaning                                                                            |
+| ------------ | ---------------------------------------------------------------------------------- |
+| `Unknown`    | No known identity, including failed verification without a remembered snapshot.    |
+| `Remembered` | Unverified `subjectId` and public session `snapshot`, usable to select local data. |
+| `Verified`   | `subjectId` and `snapshot` confirmed by the live session read.                     |
+| `SignedOut`  | Server-confirmed absence of a session.                                             |
 
 Neither remembered snapshots nor SSR seeds authorize requests. Read session errors
 from `auth.session`. Offline failures retain a remembered snapshot; same-subject
 confirmation preserves local work, while account replacement or confirmed sign-out
 retires it under the [account lifetime](#account-lifetime).
 
-`auth.verifiedSession(expectedSubject)` returns an `AsyncResult` query atom backed
-by the shared live session read, including when composed through `auth.runtime`.
+`auth.verifiedSession(subjectId)` accepts a branded `SubjectId` from
+`@yielded/auth/Schema` and returns an `AsyncResult` query atom backed by the shared
+live session read, including when composed through `auth.runtime`.
 It excludes remembered snapshots and SSR seeds. Await it in workflows with
 `get.result(atom, { suspendOnWaiting: true })` so a pending refresh settles first.
 It fails with `IdentityNotVerified` for `signed-out`, `subject-mismatch`, or
@@ -158,6 +162,10 @@ and custom queries with a subject projection, survive their own account transiti
 without repeating the request. Unrelated account changes clear their results and
 start a new read. Explicit refreshes request the session again, including when an
 SSR seed was supplied.
+
+Custom subject projections and lifetime inputs use `SubjectId`; validate identifiers
+with the `SubjectId` schema or the application's identity codec. This brand identifies
+an account and does not prove authentication.
 
 Named auth mutations survive their own sign-in or sign-out until the result
 settles. Unrelated account changes interrupt pending mutations and clear previous

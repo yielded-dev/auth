@@ -192,6 +192,7 @@ cache. Use a key scoped to this application and auth server:
 
 ```ts title="apps/web/auth-client.ts"
 import { Atom as AuthAtom, Client } from "@yielded/auth";
+import type { SubjectId } from "@yielded/auth/Schema";
 import { Effect } from "effect";
 import { KeyValueStore } from "effect/persistence";
 
@@ -205,9 +206,9 @@ export const auth = AuthAtom.make(AppClient, {
   },
 });
 
-export const verifyAccount = auth.runtime.fn<string>()(
-  Effect.fn("app.verifyAccount")(function* (expectedSubject, get) {
-    return yield* get.result(auth.verifiedSession(expectedSubject), {
+export const verifyAccount = auth.runtime.fn<SubjectId>()(
+  Effect.fn("app.verifyAccount")(function* (expectedSubjectId, get) {
+    return yield* get.result(auth.verifiedSession(expectedSubjectId), {
       suspendOnWaiting: true,
     });
   }),
@@ -215,12 +216,12 @@ export const verifyAccount = auth.runtime.fn<string>()(
 ```
 
 Read `auth.identity` with `useAtomValue`: `Unknown` has no known identity,
-`Remembered` and `Verified` carry `subject` and the public session `snapshot`, and
+`Remembered` and `Verified` carry `subjectId` and the public session `snapshot`, and
 `SignedOut` records a confirmed sign-out. A remembered identity selects local data;
 it grants no authority. The cache stores one public snapshot, never credentials or
 the Atom registry. Your application owns IndexedDB and other business data.
 
-Compose `auth.verifiedSession(expectedSubject)` into an Effect workflow before
+Compose `auth.verifiedSession(expectedSubjectId)` into an Effect workflow before
 sending that account's queued work. It waits for the shared live session read and
 rejects a different or signed-out account; the server must still authorize each
 request. Check `auth.session` for network errors. A failed verification preserves
