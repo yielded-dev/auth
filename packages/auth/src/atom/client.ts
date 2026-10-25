@@ -2,12 +2,15 @@ import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as KeyValueStore from "effect/persistence/KeyValueStore";
 import * as AsyncResult from "effect/reactivity/AsyncResult";
 import * as Atom from "effect/reactivity/Atom";
 import * as AtomRegistry from "effect/reactivity/AtomRegistry";
 import * as Reactivity from "effect/reactivity/Reactivity";
 import * as Schema from "effect/Schema";
 import * as SchemaAST from "effect/SchemaAST";
+import * as Semaphore from "effect/Semaphore";
 
 import {
   type ActionDecodeServices,
@@ -25,6 +28,7 @@ import {
 import type { AnyAuthAction, AuthActions } from "../operations/actions";
 import { AuthAtomLifetime, type AuthSubjectLifetime } from "./AuthAtomLifetime";
 import { reportAtomDefects } from "./failures";
+import { type AuthIdentity, type IdentityCacheOptions, IdentityNotVerified } from "./identity";
 import type { ReactivityKeys } from "./operations";
 import { type AccountBinding, makeScopedRuntime } from "./scoped-runtime";
 
@@ -32,6 +36,18 @@ type ActionsWithSession = AuthActions & {
   readonly getSession: AnyAuthAction;
 };
 type DecoderServices<Actions extends AuthActions> = ActionDecodeServices<Actions[keyof Actions]>;
+type SessionSchema<Actions extends AuthActions> =
+  Actions["getSession"]["route"]["operation"]["rpc"]["successSchema"];
+
+const cacheResult = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+  effect.pipe(
+    Effect.map(Option.some),
+    Effect.catchCause((cause) =>
+      Cause.hasInterrupts(cause)
+        ? Effect.interrupt
+        : reportAuthFailure("session-cache", cause).pipe(Effect.as(Option.none<A>())),
+    ),
+  );
 
 export interface AuthAtomOptions<
   Actions extends AuthActions,
@@ -50,6 +66,8 @@ export interface AuthAtomOptions<
   }>;
   /** Encoded initial display data. Define a separate binding for each SSR request. */
   readonly initialSession?: unknown;
+  /** Optional local display snapshot. Never supplies authentication authority. */
+  readonly identityCache?: IdentityCacheOptions<SessionSchema<Actions>, E>;
   /** Required when action result codecs depend on services. */
   readonly services?: Layer.Layer<DecoderServices<Actions>, E>;
 }
@@ -85,6 +103,12 @@ export type AuthAtoms<
 } & {
   /** Default getSession query, including any initial display data. */
   readonly session: QueryAtom<Actions["getSession"], E>;
+  /** Local display identity, with live verification distinguished from remembered data. */
+  readonly identity: Atom.Atom<AuthIdentity<RouteSuccess<Actions["getSession"]["route"]>>>;
+  /** Observe the shared live session read for an expected subject, excluding display seeds. */
+  readonly verifiedSession: (
+    subject: string,
+  ) => QueryAtom<Actions["getSession"], E | IdentityNotVerified>;
   readonly client: ClientDefinition<Id, Actions, R>;
   /** Account-scoped queries, effects, state and workflows. Named auth mutations
    * and subject-discovering queries use the host lifetime so their own account
@@ -96,13 +120,8 @@ export type AuthAtoms<
 };
 
 interface Binding extends AccountBinding {
-  readonly seed: unknown;
   seedAvailable: boolean;
 }
-
-class AuthAtomBinding extends Context.Service<AuthAtomBinding, Binding>()(
-  "effect-auth/Atom/Binding",
-) {}
 
 /** Define importable atoms without acquiring a client. The host registry owns
  * one client Scope; private account registries are replaced internally. Supply
@@ -133,6 +152,19 @@ export const make = <
   const actions = client.contract.actions;
   const queryKeys = [Symbol("effect-auth/client/queries")];
 
+  type Session = RouteSuccess<Actions["getSession"]["route"]>;
+  type SessionError = RouteFailure<Actions["getSession"]["route"]> | OperationHttpError;
+
+  class AuthAtomBinding extends Context.Service<
+    AuthAtomBinding,
+    Binding & {
+      readonly seed: Option.Option<Session>;
+      readonly session: Atom.Atom<AsyncResult.AsyncResult<Session, SessionError>>;
+      readonly identity: Atom.Atom<AuthIdentity<Session>>;
+      readonly snapshot: Atom.Atom<AuthIdentity<Session>>;
+    }
+  >()("effect-auth/Atom/Binding") {}
+
   const extraKeys = options.reactivityKeys as
     | Readonly<Record<string, ReactivityKeys | undefined>>
     | undefined;
@@ -146,12 +178,20 @@ export const make = <
     const parent = yield* AtomRegistry.AtomRegistry;
     const codecServices = yield* Effect.context<DecoderServices<Actions>>();
 
+    // The action's decoder requirements are included in the full contract union.
+    const sessionServices = codecServices as Context.Context<
+      ActionDecodeServices<Actions["getSession"]>
+    >;
+
     if (
       actions.getSession.mode !== "query" ||
       !Schema.is(Schema.toEncoded(actions.getSession.route.operation.rpc.payloadSchema))(
         undefined,
       ) ||
-      ["session", "runtime", "client"].some((name) => Object.hasOwn(actions, name)) ||
+      ["session", "runtime", "client", "identity", "verifiedSession"].some((name) =>
+        Object.hasOwn(actions, name),
+      ) ||
+      (options.identityCache !== undefined && actions.getSession.subject === undefined) ||
       Object.values(actions).some(
         ({ mode, route }) =>
           mode === "query" &&
@@ -171,27 +211,36 @@ export const make = <
     const sessionSchema: Actions["getSession"]["route"]["operation"]["rpc"]["successSchema"] =
       actions.getSession.route.operation.rpc.successSchema;
 
+    const sessionPayload: Actions["getSession"]["route"]["operation"]["rpc"]["payloadSchema"] =
+      actions.getSession.route.operation.rpc.payloadSchema;
+
+    const sessionInput = yield* Schema.decodeEffect(Schema.toEncoded(sessionPayload))(
+      undefined,
+    ).pipe(Effect.mapError(() => OperationHttpError.make({ reason: "request" })));
+
     const seed = hasSeed
-      ? yield* Effect.uninterruptibleMask((restore) =>
-          restore(
-            Schema.decodeUnknownEffect(sessionSchema)(options.initialSession).pipe(
-              Effect.provide(codecServices),
-            ),
-          ).pipe(
-            Effect.catchCause((cause) =>
-              reportAuthFailure("client-workflow", cause).pipe(
-                Effect.andThen(
-                  Effect.failCause(
-                    markAuthFailureReported(
-                      Cause.fromReasons(
-                        cause.reasons.map((reason) =>
-                          Cause.isInterruptReason(reason)
-                            ? reason
-                            : Cause.isDieReason(reason)
-                              ? Cause.makeDieReason(ReportedOperationDefect.make({}))
-                              : Cause.makeFailReason(
-                                  OperationHttpError.make({ reason: "response" }),
-                                ),
+      ? Option.some(
+          yield* Effect.uninterruptibleMask((restore) =>
+            restore(
+              Schema.decodeUnknownEffect(sessionSchema)(options.initialSession).pipe(
+                Effect.provide(codecServices),
+              ),
+            ).pipe(
+              Effect.catchCause((cause) =>
+                reportAuthFailure("client-workflow", cause).pipe(
+                  Effect.andThen(
+                    Effect.failCause(
+                      markAuthFailureReported(
+                        Cause.fromReasons(
+                          cause.reasons.map((reason) =>
+                            Cause.isInterruptReason(reason)
+                              ? reason
+                              : Cause.isDieReason(reason)
+                                ? Cause.makeDieReason(ReportedOperationDefect.make({}))
+                                : Cause.makeFailReason(
+                                    OperationHttpError.make({ reason: "response" }),
+                                  ),
+                          ),
                         ),
                       ),
                     ),
@@ -201,11 +250,87 @@ export const make = <
             ),
           ),
         )
+      : Option.none<Session>();
+
+    const seedSubject = Option.isSome(seed)
+      ? yield* Effect.sync(() => actions.getSession.subject?.fromSuccess(seed.value))
       : undefined;
 
-    const seedSubject = hasSeed
-      ? yield* Effect.sync(() => actions.getSession.subject?.fromSuccess(seed))
-      : undefined;
+    const cacheOptions = options.identityCache;
+
+    const cache =
+      cacheOptions === undefined
+        ? Option.none()
+        : yield* cacheResult(
+            Effect.gen(function* () {
+              // Cache-only encoder services must not become requirements for uncached clients.
+              const encoders = (cacheOptions.services ?? Layer.empty) as Layer.Layer<
+                SessionSchema<Actions>["EncodingServices"],
+                E
+              >;
+
+              const context = yield* Layer.build(
+                cacheOptions.storage.pipe(Layer.provideMerge(encoders)),
+              );
+
+              const store = KeyValueStore.toSchemaStore(
+                Context.get(context, KeyValueStore.KeyValueStore),
+                sessionSchema,
+              );
+
+              const gate = yield* Semaphore.make(1);
+
+              return {
+                read: store.get(cacheOptions.key).pipe(Effect.provide(codecServices)),
+                write: (value: Session | undefined, generation: number) =>
+                  gate
+                    .withPermits(1)(
+                      Effect.uninterruptible(
+                        Effect.gen(function* () {
+                          if ((yield* controller.state).generation !== generation) return;
+                          yield* value === undefined
+                            ? store.remove(cacheOptions.key)
+                            : store.set(cacheOptions.key, value).pipe(Effect.provide(context));
+                        }),
+                      ),
+                    )
+                    .pipe(cacheResult, Effect.asVoid),
+              };
+            }),
+          );
+
+    let remembered: AuthIdentity<Session> =
+      Option.isSome(seed) && typeof seedSubject === "string"
+        ? { _tag: "Remembered", subject: seedSubject, snapshot: seed.value }
+        : { _tag: "Unknown" };
+
+    if (Option.isSome(cache) && initial.generation === 0) {
+      const saved = hasSeed ? Option.some(seed) : yield* cacheResult(cache.value.read);
+
+      if (Option.isSome(saved) && Option.isSome(saved.value)) {
+        const value = saved.value.value;
+
+        const subject = yield* cacheResult(
+          Effect.sync(() => actions.getSession.subject?.fromSuccess(value)),
+        );
+
+        if (
+          Option.isSome(subject) &&
+          typeof subject.value === "string" &&
+          (yield* controller.restoreSubject(subject.value, initial.generation))
+        ) {
+          remembered = { _tag: "Remembered", subject: subject.value, snapshot: value };
+        }
+      }
+    }
+
+    const acquired = yield* controller.state;
+
+    if (
+      acquired.generation !== initial.generation &&
+      acquired.subject !== (remembered._tag === "Remembered" ? remembered.subject : undefined)
+    )
+      remembered = { _tag: "Unknown" };
 
     const memoMap = Atom.isAtom(factory.memoMap) ? parent.get(factory.memoMap) : factory.memoMap;
 
@@ -217,8 +342,9 @@ export const make = <
       });
 
     const controlRegistry = AtomRegistry.make();
-    let current: AuthSubjectLifetime = { ...initial, registry: newRegistry() };
+    let current: AuthSubjectLifetime = { ...acquired, registry: newRegistry() };
     const state = Atom.make(current).pipe(Atom.keepAlive);
+    const snapshot = Atom.make<AuthIdentity<Session>>(remembered).pipe(Atom.keepAlive);
     const listeners = new Set<(event: { readonly origin?: object }) => void>();
     let closed = false;
 
@@ -235,7 +361,57 @@ export const make = <
       completeAuthentication: controller.completeAuthentication,
     };
 
-    const binding: Binding = {
+    const session = Atom.make((get) =>
+      Effect.gen(function* () {
+        const origin = {};
+
+        get.addFinalizer(
+          binding.subscribe((event) => {
+            get.setSelf(AsyncResult.initial(true));
+            if (event.origin !== origin) get.refreshSelf();
+          }),
+        );
+
+        const value = yield* controller
+          .call("getSession", sessionInput, { origin })
+          .pipe(Effect.provide(sessionServices));
+
+        const generation = current.generation;
+
+        const subject = yield* Effect.try({
+          try: () => actions.getSession.subject?.fromSuccess(value),
+          catch: () => OperationHttpError.make({ reason: "response" }),
+        });
+
+        controlRegistry.set(
+          snapshot,
+          typeof subject === "string"
+            ? { _tag: "Remembered", subject, snapshot: value }
+            : subject === null
+              ? { _tag: "SignedOut" }
+              : { _tag: "Unknown" },
+        );
+        if (Option.isSome(cache))
+          yield* cache.value.write(typeof subject === "string" ? value : undefined, generation);
+
+        return value;
+      }).pipe(reportAtomDefects),
+    );
+
+    const identity = Atom.make((get): AuthIdentity<Session> => {
+      const result = get(session);
+      const saved = get(snapshot);
+
+      if (AsyncResult.isSuccess(result) && !result.waiting) {
+        if (saved._tag === "Remembered") return { ...saved, _tag: "Verified" };
+
+        return saved;
+      }
+
+      return saved._tag === "Remembered" ? saved : { _tag: "Unknown" };
+    });
+
+    const binding: AuthAtomBinding["Service"] = {
       lifetime,
       current: () => current,
       subscribe: (listener) => {
@@ -247,12 +423,16 @@ export const make = <
       },
       seed,
       seedAvailable: hasSeed,
+      session,
+      identity,
+      snapshot,
     };
 
     yield* controller.subscribe((event) =>
       Effect.gen(function* () {
         if (closed) return;
         if (event._tag === "Mutation") {
+          controlRegistry.refresh(session);
           yield* reactivity.invalidate(queryKeys);
           const keys = extraKeys?.[event.name];
 
@@ -268,17 +448,35 @@ export const make = <
           current.generation === 0 &&
           event.action === "getSession" &&
           event.state.subject === seedSubject;
+        if (!binding.seedAvailable) controlRegistry.set(snapshot, { _tag: "Unknown" });
         // Retire public views and settle pending dispatch observers before disposal.
         for (const listener of [...listeners]) listener(event);
         current.registry.dispose();
         current = { ...event.state, registry: newRegistry() };
         controlRegistry.set(state, current);
+        if (Option.isSome(cache)) yield* cache.value.write(undefined, current.generation);
         // Account-owned workflows may be interrupted during this transition.
         const keys = event.action === undefined ? undefined : extraKeys?.[event.action];
 
         if (keys !== undefined) yield* reactivity.invalidate(keys);
       }),
     );
+
+    if (cacheOptions !== undefined && typeof window !== "undefined") {
+      const refresh = () => controlRegistry.refresh(session);
+
+      yield* Effect.acquireRelease(
+        Effect.sync(() => {
+          window.addEventListener("online", refresh);
+          window.addEventListener("focus", refresh);
+        }),
+        () =>
+          Effect.sync(() => {
+            window.removeEventListener("online", refresh);
+            window.removeEventListener("focus", refresh);
+          }),
+      );
+    }
 
     yield* Effect.addFinalizer(() =>
       Effect.sync(() => {
@@ -314,6 +512,116 @@ export const make = <
   ).pipe(Atom.keepAlive);
 
   const runtime = makeScopedRuntime(host, (context) => Context.get(context, AuthAtomBinding));
+
+  // Read the one host-owned source even from an account registry. Refreshes are
+  // forwarded to that source rather than acquiring another client or session read.
+  const hostView = <A>(
+    select: (binding: AuthAtomBinding["Service"]) => Atom.Atom<A>,
+    unavailable: (context: Atom.Type<typeof runtime>) => A,
+  ) => {
+    const refreshSignal = Atom.make(() => ({}));
+    const observed = Atom.make((): { token?: object } => ({}));
+
+    return Atom.readable(
+      (get) => {
+        const token = get(refreshSignal);
+        const previous = get(observed);
+        const context = get(runtime);
+
+        if (!AsyncResult.isSuccess(context)) return unavailable(context);
+        const binding = Context.get(context.value, AuthAtomBinding);
+
+        if (previous.token !== undefined && previous.token !== token)
+          binding.lifetime.controlRegistry.refresh(binding.session);
+        previous.token = token;
+        const source = select(binding);
+
+        get.addFinalizer(
+          binding.lifetime.controlRegistry.subscribe(source, (value) => get.setSelf(value)),
+        );
+
+        return binding.lifetime.controlRegistry.get(source);
+      },
+      (refresh) => refresh(refreshSignal),
+    );
+  };
+
+  const liveSession = hostView(
+    (binding) => binding.session,
+    (context): AsyncResult.AsyncResult<Session, SessionError | E> =>
+      AsyncResult.isFailure(context)
+        ? AsyncResult.failure(context.cause)
+        : AsyncResult.initial(true),
+  ).pipe(Atom.withServerValueInitial);
+
+  const session = Atom.readable(
+    (get) => {
+      const result = get(liveSession);
+      const context = get(runtime);
+
+      if (!AsyncResult.isSuccess(context)) return result;
+      const binding = Context.get(context.value, AuthAtomBinding);
+
+      if (!AsyncResult.isInitial(result)) binding.seedAvailable = false;
+
+      return binding.seedAvailable && Option.isSome(binding.seed)
+        ? AsyncResult.success(binding.seed.value, { waiting: true })
+        : result;
+    },
+    (refresh) => refresh(liveSession),
+  ).pipe(
+    Atom.withServerValue((get) => {
+      const context = get(runtime);
+
+      if (!AsyncResult.isSuccess(context))
+        return AsyncResult.initial<Session, SessionError | E>(true);
+      const binding = Context.get(context.value, AuthAtomBinding);
+
+      return binding.seedAvailable && Option.isSome(binding.seed)
+        ? AsyncResult.success(binding.seed.value, { waiting: true })
+        : AsyncResult.initial<Session, SessionError | E>(true);
+    }),
+  );
+
+  const identity = hostView(
+    (binding) => binding.identity,
+    (): AuthIdentity<Session> => ({ _tag: "Unknown" }),
+  ).pipe(
+    Atom.withServerValue((get) => {
+      const context = get(runtime);
+
+      if (!AsyncResult.isSuccess(context)) return { _tag: "Unknown" } as const;
+      const binding = Context.get(context.value, AuthAtomBinding);
+
+      return binding.lifetime.controlRegistry.get(binding.snapshot);
+    }),
+  );
+
+  const verifiedSession = Atom.family((subject: string) =>
+    Atom.readable(
+      (get): AsyncResult.AsyncResult<Session, SessionError | E | IdentityNotVerified> => {
+        const result = get(liveSession);
+
+        if (!AsyncResult.isSuccess(result)) return result;
+        if (result.waiting) return AsyncResult.initial(true);
+        const value = get(identity);
+
+        if (value._tag === "Verified" && value.subject === subject) return result;
+
+        return AsyncResult.fail(
+          IdentityNotVerified.make({
+            reason:
+              value._tag === "SignedOut"
+                ? "signed-out"
+                : value._tag === "Verified"
+                  ? "subject-mismatch"
+                  : "unavailable",
+          }),
+        );
+      },
+      (refresh) => refresh(liveSession),
+    ).pipe(Atom.withServerValueInitial),
+  );
 
   const call = Effect.fn("AuthAtom.call")(function* <Name extends keyof Actions>(
     name: Name,
@@ -389,6 +697,8 @@ export const make = <
       if (action.mode === "mutation") return [[name, mutation(name)]];
 
       const query = Atom.family((input: RouteInput<Actions[string]["route"]>) => {
+        if (name === "getSession" && input === undefined) return session;
+
         // A subject-discovering read must outlive the account registry it retires.
         // Other transitions still clear its result and restart the request.
         const source =
@@ -411,42 +721,7 @@ export const make = <
               )
             : runtime.atom(call(name, input));
 
-        const session = source.pipe(factory.withReactivity(queryKeys), Atom.withServerValueInitial);
-
-        if (
-          name !== "getSession" ||
-          input !== undefined ||
-          !Object.hasOwn(options, "initialSession")
-        )
-          return session;
-
-        return Atom.readable(
-          (get) => {
-            const result = get(session);
-            const context = get(host);
-
-            if (!AsyncResult.isSuccess(context)) return result;
-            const binding = Context.get(context.value, AuthAtomBinding);
-
-            if (!AsyncResult.isInitial(result)) binding.seedAvailable = false;
-
-            return binding.seedAvailable
-              ? AsyncResult.success(binding.seed, { waiting: true })
-              : result;
-          },
-          (refresh) => refresh(session),
-        ).pipe(
-          Atom.withServerValue((get) => {
-            const context = get(host);
-
-            if (!AsyncResult.isSuccess(context)) return AsyncResult.initial(true);
-            const binding = Context.get(context.value, AuthAtomBinding);
-
-            return binding.seedAvailable
-              ? AsyncResult.success(binding.seed, { waiting: true })
-              : AsyncResult.initial(true);
-          }),
-        );
+        return source.pipe(factory.withReactivity(queryKeys), Atom.withServerValueInitial);
       });
 
       // Restore the encoded payload relationship while inspecting heterogeneous actions.
@@ -484,5 +759,7 @@ export const make = <
     ...atoms,
     client,
     runtime,
+    identity,
+    verifiedSession,
   }) as AuthAtoms<Id, Actions, E>;
 };

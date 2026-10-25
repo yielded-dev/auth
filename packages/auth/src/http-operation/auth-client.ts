@@ -59,6 +59,8 @@ export interface AuthClientController<Actions extends AuthActions> {
     listener: (event: AuthClientEvent) => Effect.Effect<void>,
   ) => Effect.Effect<void, never, Scope.Scope>;
   readonly replaceSubject: (subject: string | null) => Effect.Effect<void>;
+  /** Restore local display ownership only while the captured client is unchanged. */
+  readonly restoreSubject: (subject: string, generation: number) => Effect.Effect<boolean>;
   readonly completeAuthentication: OperationAuthenticationCompletion;
   readonly call: <Name extends keyof Actions>(
     name: Name,
@@ -141,6 +143,20 @@ const acquire = Effect.fn("Client.make")(function* <Actions extends AuthActions,
     );
   });
 
+  const restoreSubject = Effect.fnUntraced(function* (subject: string, generation: number) {
+    return yield* gate.withPermits(1)(
+      Effect.uninterruptible(
+        Effect.gen(function* () {
+          if (closed || state.generation !== generation) return false;
+          yield* transport.transition;
+          yield* publish(subject);
+
+          return true;
+        }),
+      ),
+    );
+  });
+
   const call: AuthClientController<Actions>["call"] = Effect.fn("Client.call")(function* <
     Name extends keyof Actions,
   >(
@@ -217,6 +233,7 @@ const acquire = Effect.fn("Client.make")(function* <Actions extends AuthActions,
     state: Effect.sync(() => state),
     call,
     replaceSubject,
+    restoreSubject,
     completeAuthentication,
     subscribe: (listener) =>
       Effect.acquireRelease(
