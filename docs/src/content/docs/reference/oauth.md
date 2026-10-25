@@ -67,7 +67,7 @@ clients from your registration endpoint. `get(clientId)` returns exactly the sta
 client fields for that ID, omitting absent fields, or `undefined`, including for IDs
 your storage cannot represent. Store only `clientSecretDigest`, the unpadded base64url
 SHA-256 of a generated secret with at least 256 random bits. Stored `private_key_jwt`
-clients use inline `jwks`. Lookups are not cached, so edits and deletion apply to the
+clients use inline `jwks`. Registrations reload on each request, so edits and deletion apply to the
 next request. Stored callbacks are untrusted: authorization errors show a confirmation
 page and `prompt=none` is refused.
 

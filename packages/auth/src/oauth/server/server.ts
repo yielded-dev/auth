@@ -552,17 +552,7 @@ const makeServer = <
 
         const clientFor = clients.resolve;
 
-        const validGrant = Effect.fnUntraced(function* (record: Record) {
-          const client = yield* clientFor(record.authorization.clientId).pipe(
-            Effect.catchCause((cause) =>
-              Effect.failCause(
-                Cause.map(cause, (error) =>
-                  error._tag === "OAuthServerRejected" ? InvalidToken.make({}) : error,
-                ),
-              ),
-            ),
-          );
-
+        const validGrant = Effect.fnUntraced(function* (record: Record, client: Client) {
           return (
             matchesRedirect(client, record.authorization.redirectUri) &&
             record.authorization.scopes.every(Schema.is(ScopeSchema)) &&
@@ -574,18 +564,34 @@ const makeServer = <
           );
         });
 
-        const read = Effect.fnUntraced(function* (token: Envelope) {
+        const read = Effect.fnUntraced(function* (token: Envelope, authenticatedClient?: Client) {
           const record = yield* store.get(namespace, token.grantId);
 
           if (
             !record ||
             record.status === "Revoked" ||
             record.expiresAtMillis <= (yield* now) ||
-            !(yield* validGrant(record))
+            (authenticatedClient !== undefined &&
+              authenticatedClient.clientId !== record.authorization.clientId)
           )
             return yield* InvalidToken.make({});
 
-          return record;
+          // Reuse only this request's exact client; later requests resolve it again.
+          const client =
+            authenticatedClient ??
+            (yield* clientFor(record.authorization.clientId).pipe(
+              Effect.catchCause((cause) =>
+                Effect.failCause(
+                  Cause.map(cause, (error) =>
+                    error._tag === "OAuthServerRejected" ? InvalidToken.make({}) : error,
+                  ),
+                ),
+              ),
+            ));
+
+          if (!(yield* validGrant(record, client))) return yield* InvalidToken.make({});
+
+          return { record, client };
         });
 
         const commit = Effect.fnUntraced(function* (
@@ -649,7 +655,7 @@ const makeServer = <
           const token = yield* decodeAccess(credential);
 
           if (token.kind !== "access") return yield* InvalidToken.make({});
-          const record = yield* read(token);
+          const { record } = yield* read(token);
 
           if (
             record.status !== "Active" ||
@@ -957,7 +963,8 @@ const makeServer = <
 
               if (credential === undefined) return yield* reject();
               const token = yield* decode(Redacted.make(credential));
-              let record = yield* read(token);
+              const resolved = yield* read(token);
+              let record = resolved.record;
 
               if (
                 token.kind !== "consent" ||
@@ -1048,7 +1055,7 @@ const makeServer = <
                   yield* commit(token.grantId, record, next);
                   record = next;
                 }
-                const client = yield* clientFor(record.authorization.clientId);
+                const client = resolved.client;
 
                 return new Response(
                   yield* consentRenderer.render({
@@ -1146,13 +1153,9 @@ const makeServer = <
               const expected = query.grant_type === "authorization_code" ? "code" : "refresh";
 
               if (token.kind !== expected) return yield* reject("invalid_grant");
-              const record = yield* read(token);
+              const { record } = yield* read(token, client);
 
-              if (
-                record.authorization.clientId !== query.client_id ||
-                record.subjectId === undefined
-              )
-                return yield* reject("invalid_grant");
+              if (record.subjectId === undefined) return yield* reject("invalid_grant");
               if (query.grant_type === "authorization_code") {
                 const digest = yield* crypto
                   .digest("SHA-256", new TextEncoder().encode(query.code_verifier))

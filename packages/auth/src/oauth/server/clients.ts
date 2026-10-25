@@ -205,8 +205,8 @@ export const makeClientStore = <const Id extends string>(id: Id) =>
       /** Return the current registration for exactly this server-minted ID, or
        * undefined, including for IDs your storage cannot represent. Called with
        * untrusted IDs on every authorization, token, revocation and protected
-       * request; nothing is cached. Map rows explicitly, omitting absent fields;
-       * unknown keys, undefined values and plaintext clientSecret are reported and
+       * request; reuse is limited to that request. Map rows explicitly, omitting
+       * absent fields; unknown keys, undefined values and plaintext clientSecret are reported and
        * fail as Unavailable. Keep only clientSecretDigest; omitting it makes the
        * client public. Stored private_key_jwt clients use inline jwks.
        */
