@@ -80,6 +80,10 @@ export const makeNativePhoneServices = Effect.fnUntraced(function* (
     i = mapping.identifier,
     c = mapping.credential;
 
+  const registration =
+    s.prepareInsert !== undefined ||
+    (mapping.subjectIds.allocate !== undefined && s.encodeInsert !== undefined);
+
   const subject = tables(s.table),
     identifier = tables(i.table),
     credential = tables(c.table);
@@ -246,7 +250,7 @@ export const makeNativePhoneServices = Effect.fnUntraced(function* (
 
     const eligible =
       input.action === "register"
-        ? destination === undefined
+        ? registration && destination === undefined
         : revision !== null &&
           input.subjectId === subjectId &&
           (destination === undefined ||
@@ -331,11 +335,7 @@ export const makeNativePhoneServices = Effect.fnUntraced(function* (
           const rejected = () => prepare({ _tag: "Rejected" }, project);
 
           if (!(input.moduleId === mapping.moduleId)) return yield* invalidState();
-          if (
-            input.action === "register" &&
-            (mapping.subjectIds.allocate === undefined || s.encodeInsert === undefined)
-          )
-            return yield* rejected();
+          if (input.action === "register" && !registration) return yield* rejected();
           const policy = yield* Schema.decodeEffect(P.PhoneLifecyclePolicy)(input.policy);
 
           if (
@@ -470,10 +470,22 @@ export const makeNativePhoneServices = Effect.fnUntraced(function* (
           if (result.decision !== "redeemed") return yield* rejected();
           freshness.push(result.validUntil);
 
+          const preparedSubject =
+            input.action === "register" && s.prepareInsert !== undefined
+              ? yield* s.prepareInsert({
+                  requestId: `phone-registration:${mapping.moduleId}:${redemption.proofId}`,
+                  phoneNumber: target.phoneNumber,
+                })
+              : undefined;
+
           const subjectId =
             input.action === "register"
               ? yield* resolve(
-                  mapping.subjectIds.toSubject(yield* resolve(mapping.subjectIds.allocate!())),
+                  mapping.subjectIds.toSubject(
+                    preparedSubject === undefined
+                      ? yield* resolve(mapping.subjectIds.allocate!())
+                      : preparedSubject[s.id],
+                  ),
                 )
               : target.revision!.subjectId;
 
@@ -482,7 +494,12 @@ export const makeNativePhoneServices = Effect.fnUntraced(function* (
           if (!((yield* resolve(mapping.subjectIds.toSubject(native))) === subjectId))
             return yield* invalidState();
 
-          const securityRevision = SecurityRevision.make(yield* randomId),
+          const securityRevision =
+              preparedSubject === undefined
+                ? SecurityRevision.make(yield* randomId)
+                : yield* Schema.decodeUnknownEffect(SecurityRevision)(
+                    preparedSubject[s.securityRevision],
+                  ),
             credentialRevision = SecurityRevision.make(yield* randomId),
             custodyRevision = SecurityRevision.make(yield* randomId);
 
@@ -511,11 +528,13 @@ export const makeNativePhoneServices = Effect.fnUntraced(function* (
           let subjectRow = captured.subjectRow;
 
           if (input.action === "register") {
-            const inserted = s.encodeInsert!({
-              id: native,
-              securityRevision,
-              phoneNumber: target.phoneNumber,
-            });
+            const inserted =
+              preparedSubject ??
+              s.encodeInsert!({
+                id: native,
+                securityRevision,
+                phoneNumber: target.phoneNumber,
+              });
 
             yield* stage(subject.insert(inserted));
             // Native provisioning decodes database defaults in the final guarded
