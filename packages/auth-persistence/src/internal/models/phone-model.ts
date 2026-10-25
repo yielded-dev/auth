@@ -1,8 +1,4 @@
-import type {
-  PhoneLifecyclePolicy,
-  PhoneNumber,
-  PhoneOtpUnavailable,
-} from "@yielded/auth/PhoneOtp";
+import type { PhoneLifecyclePolicy, PhoneNumber } from "@yielded/auth/PhoneOtp";
 import type { SubjectId } from "@yielded/auth/Schema";
 import type { AuthenticationRequirement } from "@yielded/auth/Sessions";
 import type * as Effect from "effect/Effect";
@@ -19,8 +15,7 @@ export const requiredPhoneConstraints = {
   credential: "unique(credentialId)",
 } as const;
 
-/** Consumer-owned schema; encoders, allocators and subject preparation must not write
- * to storage or perform external side effects.
+/** Consumer-owned schema; encoders and allocators are synchronous and side-effect free.
  * Identifiers store permanent number custody. Never delete retired rows to make a recycled number eligible. A consumer's
  * explicit recovery workflow may resolve custody only after independent authentication.
  * Subject defaults own account provisioning; no email/profile schema is prescribed. */
@@ -58,13 +53,6 @@ export interface PhoneMapping<
     ) =>
       | AuthenticationRequirement
       | Effect.Effect<AuthenticationRequirement, PersistenceMappingError>;
-    /** Prepare a complete subject row after proof redemption, including its native
-     * ID and initial security revision. The phone owner inserts it atomically.
-     * Takes precedence over allocate/encodeInsert when supplied. */
-    readonly prepareInsert?: (input: {
-      readonly requestId: string;
-      readonly phoneNumber: PhoneNumber;
-    }) => Effect.Effect<S["insert"], PhoneOtpUnavailable | PersistenceMappingError>;
     readonly encodeInsert?: (input: {
       readonly id: N;
       readonly securityRevision: string;

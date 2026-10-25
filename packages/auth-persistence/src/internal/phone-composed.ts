@@ -1,7 +1,7 @@
 import { PhonePersistence, PhoneSignInTargets, PhoneOtpUnavailable } from "@yielded/auth/PhoneOtp";
 import type * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
-import * as Schema from "effect/Schema";
+import * as Option from "effect/Option";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import {
@@ -14,9 +14,7 @@ import type { AnyPhoneMapping } from "./models/phone-model";
 import { requiredPhoneConstraints } from "./models/phone-model";
 import type { AnyProofPersistenceMapping } from "./models/proof-model";
 import type { NativeSqlTables } from "./native-sql-table";
-import { makeNativePhoneServices } from "./phone-native";
-
-const SubjectValues = Schema.Record(Schema.String, Schema.Unknown);
+import { makeNativePhoneServices, PhoneRegistrationValues } from "./phone-native";
 
 /** Reuse the phone commit owner with application-supplied subject values. */
 export const makeComposedPhoneServices = Effect.fnUntraced(function* <R>(
@@ -36,7 +34,7 @@ export const makeComposedPhoneServices = Effect.fnUntraced(function* <R>(
 
   for (const { name, feature } of modules) {
     const { moduleId } = feature;
-    let prepareInsert: AnyPhoneMapping["subject"]["prepareInsert"];
+    let values: Option.Option<PhoneSubjectProvisioning> = Option.none();
 
     if (feature.lifecycle) {
       if (feature.lifecyclePolicy === undefined)
@@ -52,16 +50,7 @@ export const makeComposedPhoneServices = Effect.fnUntraced(function* <R>(
           reason: `Phone subject provisioning for ${name} requires { values }`,
         });
 
-      prepareInsert = ({ requestId, phoneNumber }) =>
-        creator
-          .values({
-            requestId,
-            identifier: { namespace: "phone", value: phoneNumber },
-          })
-          .pipe(
-            Effect.flatMap(Schema.decodeUnknownEffect(SubjectValues)),
-            Effect.mapError(() => PhoneOtpUnavailable.make({})),
-          );
+      values = Option.some(creator);
     }
 
     const mapping: AnyPhoneMapping = {
@@ -80,7 +69,6 @@ export const makeComposedPhoneServices = Effect.fnUntraced(function* <R>(
         activeCondition: sql`${subject.column(s.status)} = ${subject.value(s.status, s.activeValue)}`,
         decodeRequirement: s.requirements,
         decodeActionRequirement: s.actionRequirements,
-        ...(prepareInsert === undefined ? {} : { prepareInsert }),
       },
       identifier: {
         table: storage.tables.identifiers!,
@@ -119,7 +107,9 @@ export const makeComposedPhoneServices = Effect.fnUntraced(function* <R>(
       engineNowMillis: proofs.clock.engineNowMillis,
     };
 
-    const services = yield* makeNativePhoneServices(tables, mapping);
+    const services = yield* makeNativePhoneServices(tables, mapping).pipe(
+      Effect.provideService(PhoneRegistrationValues, values),
+    );
 
     targets.set(moduleId, services.phoneSignInTargets);
     if (feature.lifecycle) lifecycles.set(moduleId, services.phonePersistence);
