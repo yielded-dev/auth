@@ -656,8 +656,9 @@ the provider configuration and are independent of sign-in scopes.
 
 Keep S256 PKCE and issuer-response validation enabled for providers that support
 them. `pkceS256: false` and `responseIssuerMode: "unsupported"` are explicit provider
-configuration choices. `userInfo: "merge"` fills missing ID-token claims from non-null
-UserInfo values after checking the same subject; ID-token claims take precedence. Discovery accepts a
+configuration choices. `userInfo: "merge"` fills missing ID-token claims after checking
+the same subject; ID-token claims take precedence. Null standard profile claims are
+omitted; custom claims are preserved for `profileSchema`. Discovery accepts a
 `{tenantid}` path segment when it matches the configured authority; verification
 substitutes the signed `tid` and checks the selected signing key's issuer. A
 concrete GUID authority discovered from that template keeps its own issuer, and

@@ -111,10 +111,14 @@ export const OidcUserProfile = Schema.Struct({
 
 export type OidcUserProfile = typeof OidcUserProfile.Type;
 
-/** Fill missing ID-token claims from UserInfo. OIDC omits unavailable claims;
- * Discord sends null for an unset display name or email, so null means absent. */
+/** Fill missing ID-token claims from UserInfo. Omit null standard profile claims
+ * such as Discord's unset display name or email; leave custom claims to the host schema. */
 export const mergeUserInfo = (userInfo: Schema.JsonObject, claims: Schema.JsonObject) => ({
-  ...Object.fromEntries(Object.entries(userInfo).filter(([, value]) => value !== null)),
+  ...Object.fromEntries(
+    Object.entries(userInfo).filter(
+      ([key, value]) => value !== null || !Object.hasOwn(OidcStandardUserProfile.fields, key),
+    ),
+  ),
   ...claims,
 });
 
