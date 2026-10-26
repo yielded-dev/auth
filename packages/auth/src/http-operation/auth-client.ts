@@ -7,6 +7,7 @@ import * as Option from "effect/Option";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 
+import { reportAuthFailure } from "../internal/diagnostics";
 import type { AnyAuthAction, AuthActions } from "../operations/actions";
 import type { SubjectId } from "../Schema";
 import {
@@ -48,7 +49,12 @@ export type AuthClientEvent =
       readonly action?: string;
       readonly origin?: object;
     }
-  | { readonly _tag: "Mutation"; readonly name: string };
+  | { readonly _tag: "Mutation"; readonly name: string }
+  | {
+      readonly _tag: "Authentication";
+      readonly state: AuthClientState;
+      readonly session: unknown;
+    };
 
 /** Internal bridge shared with Atom. Subscriptions belong to their host Scope;
  * transition listeners only dispose and publish state, never call the client. */
@@ -184,8 +190,20 @@ const acquire = Effect.fn("Client.make")(function* <Actions extends AuthActions,
 
         // Notify within credential settlement: disposing an account registry can
         // interrupt the atom that dispatched this call before a later success tap.
-        const complete = yield* makeAuthenticationCompletion(gate, (subject) =>
-          publish(subject, String(name), callOptions?.origin),
+        const complete = yield* makeAuthenticationCompletion(
+          gate,
+          (subject) => publish(subject, String(name), callOptions?.origin),
+          (value) =>
+            Effect.matchCauseEffect(
+              Effect.sync(() => project.sessionFromSuccess?.(value)),
+              {
+                onFailure: (cause) =>
+                  reportAuthFailure("client-workflow", cause).pipe(
+                    Effect.andThen(notify({ _tag: "Authentication", state, session: undefined })),
+                  ),
+                onSuccess: (session) => notify({ _tag: "Authentication", state, session }),
+              },
+            ),
         ).pipe(Effect.provideService(Client, transport));
 
         const value = yield* complete<Actions[Name]["route"]>(

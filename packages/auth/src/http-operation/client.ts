@@ -120,6 +120,7 @@ export interface OperationAuthenticationCompletion {
 export const makeAuthenticationCompletion = Effect.fnUntraced(function* (
   gate: Semaphore.Semaphore,
   publishSubject: (subject: SubjectId | null) => Effect.Effect<void>,
+  onSuccess?: (value: unknown) => Effect.Effect<void>,
 ) {
   const client = yield* Client;
 
@@ -145,7 +146,7 @@ export const makeAuthenticationCompletion = Effect.fnUntraced(function* (
           Effect.gen(function* () {
             let nextSubject: SubjectId | null | undefined;
 
-            return yield* client.call(route, input, {
+            const value = yield* client.call(route, input, {
               replaceSubject: (value) => {
                 nextSubject = fromSuccess(value);
 
@@ -159,6 +160,12 @@ export const makeAuthenticationCompletion = Effect.fnUntraced(function* (
                     ),
               ),
             });
+
+            // Publish public authentication data only after credentials, private
+            // output and response cleanup settle, before releasing the lifetime gate.
+            if (nextSubject !== undefined && onSuccess !== undefined) yield* onSuccess(value);
+
+            return value;
           }).pipe(
             // A failed response can follow a cookie already accepted by the
             // browser. Remove the old account state without replaying the call.
