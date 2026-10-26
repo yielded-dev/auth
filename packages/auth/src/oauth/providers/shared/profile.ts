@@ -111,6 +111,13 @@ export const OidcUserProfile = Schema.Struct({
 
 export type OidcUserProfile = typeof OidcUserProfile.Type;
 
+/** Fill missing ID-token claims from UserInfo. OIDC omits unavailable claims;
+ * Discord sends null for an unset display name or email, so null means absent. */
+export const mergeUserInfo = (userInfo: Schema.JsonObject, claims: Schema.JsonObject) => ({
+  ...Object.fromEntries(Object.entries(userInfo).filter(([, value]) => value !== null)),
+  ...claims,
+});
+
 const standardFlags = ["email_verified", "phone_number_verified"] as const;
 
 /** Keep every standard claim, and replace only flags the host codec normalized. */
@@ -152,7 +159,10 @@ export const decodeOidcProfile = Effect.fn("OpenIdConnect.decodeProfile")(functi
   );
 
   if (Object.keys(profile).length === 0) return undefined;
-  const displayName = display.name?.trim() || display.preferred_username;
+
+  // The casual nickname, such as Discord's display name, reads better than a username.
+  const displayName =
+    display.name?.trim() || display.nickname?.trim() || display.preferred_username;
 
   return {
     ...(displayName === undefined ? {} : { displayName }),
