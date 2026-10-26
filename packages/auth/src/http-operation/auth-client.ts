@@ -12,13 +12,13 @@ import type { AnyAuthAction, AuthActions } from "../operations/actions";
 import type { SubjectId } from "../Schema";
 import {
   Client,
-  makeAuthenticationCompletion,
+  makeAuthenticationSettlement,
   make as makeTransport,
   type OperationAuthenticationCompletion,
   type OperationFetchClient,
   type OperationFetchOptions,
 } from "./client";
-import type { RouteFailure, RouteInput, RouteSuccess } from "./contract";
+import type { AnyRoute, RouteFailure, RouteInput, RouteSuccess } from "./contract";
 import { OperationHttpError } from "./errors";
 
 export type ClientOptions<R = never, RNative = never> = Omit<
@@ -138,9 +138,29 @@ const acquire = Effect.fn("Client.make")(function* <Actions extends AuthActions,
     });
   });
 
-  const completeAuthentication = yield* makeAuthenticationCompletion(gate, publish).pipe(
+  const settleAuthentication = yield* makeAuthenticationSettlement(publish).pipe(
     Effect.provideService(Client, transport),
   );
+
+  const completeAuthentication: OperationAuthenticationCompletion = Effect.fn(
+    "OperationHttpClient.completeAuthentication",
+  )(function* <Route extends AnyRoute>(
+    route: Route,
+    input: RouteInput<Route>,
+    fromSuccess: (success: RouteSuccess<Route>) => SubjectId | null | undefined,
+    options?: {
+      readonly onTransition?: Effect.Effect<void>;
+      readonly expectedGeneration?: number;
+    },
+  ) {
+    const expectedGeneration = options?.expectedGeneration ?? (yield* transport.generation);
+
+    return yield* gate.withPermits(1)(
+      Effect.uninterruptible(
+        settleAuthentication(route, input, fromSuccess, { ...options, expectedGeneration }),
+      ),
+    );
+  });
 
   const replaceSubject = Effect.fn("Client.replaceSubject")(function* (subject: SubjectId | null) {
     yield* gate.withPermits(1)(
@@ -188,34 +208,55 @@ const acquire = Effect.fn("Client.make")(function* <Actions extends AuthActions,
       if (project !== undefined && action.mode === "mutation") {
         const generation = state.generation;
 
-        // Notify within credential settlement: disposing an account registry can
-        // interrupt the atom that dispatched this call before a later success tap.
-        const complete = yield* makeAuthenticationCompletion(
-          gate,
-          (subject) => publish(subject, String(name), callOptions?.origin),
-          (value) =>
-            Effect.matchCauseEffect(
-              Effect.sync(() => project.sessionFromSuccess?.(value)),
-              {
-                onFailure: (cause) =>
-                  reportAuthFailure("client-workflow", cause).pipe(
-                    Effect.andThen(notify({ _tag: "Authentication", state, session: undefined })),
-                  ),
-                onSuccess: (session) => notify({ _tag: "Authentication", state, session }),
-              },
-            ),
+        const settle = yield* makeAuthenticationSettlement((subject) =>
+          publish(subject, String(name), callOptions?.origin),
         ).pipe(Effect.provideService(Client, transport));
 
-        const value = yield* complete<Actions[Name]["route"]>(
-          action.route,
-          input,
-          (success) => project.fromSuccess(success),
-          { expectedGeneration: started },
-        );
+        // Account disposal can interrupt the calling workflow. Hold admission
+        // through settlement and publication so the new session still reaches Atom.
+        return yield* gate
+          .withPermits(1)(
+            Effect.uninterruptible(
+              Effect.gen(function* () {
+                const value = yield* settle<Actions[Name]["route"]>(
+                  action.route,
+                  input,
+                  (success) => project.fromSuccess(success),
+                  { expectedGeneration: started },
+                );
 
-        transitioned = state.generation !== generation;
+                transitioned = state.generation !== generation;
 
-        return value;
+                if (transitioned) {
+                  yield* Effect.matchCauseEffect(
+                    Effect.sync(() => project.sessionFromSuccess?.(value)),
+                    {
+                      onFailure: (cause) =>
+                        reportAuthFailure("client-workflow", cause).pipe(
+                          Effect.andThen(
+                            notify({ _tag: "Authentication", state, session: undefined }),
+                          ),
+                        ),
+                      onSuccess: (session) => notify({ _tag: "Authentication", state, session }),
+                    },
+                  ).pipe(
+                    Effect.onError(() =>
+                      Effect.gen(function* () {
+                        yield* transport.transition;
+                        yield* publish(null, String(name), callOptions?.origin);
+                      }),
+                    ),
+                  );
+                }
+
+                return value;
+              }),
+            ),
+          )
+          .pipe(
+            // Keep the completion entry span outside admission, including its wait.
+            Effect.withSpan("OperationHttpClient.completeAuthentication"),
+          );
       }
 
       const value = yield* transport.call<Actions[Name]["route"]>(action.route, input);
