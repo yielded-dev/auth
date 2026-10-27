@@ -21,8 +21,10 @@ Auth owns credential settlement, CSRF, and bounded envelope decoding. A plain
 
 Supplied transports must disable retries, redirect following, and status filtering.
 Auth decodes expected failures from their response envelopes. Writes settle in
-order within one client instance; reads can run concurrently. Account changes
-wait for admitted writes, including requests delayed by middleware.
+order within one client instance; reads can run concurrently. Credential-changing
+calls also wait for pending session-maintenance responses. Local account changes
+wait for admitted writes, including requests delayed by middleware. Requests outside
+that client, including other tabs, need host coordination around account changes.
 
 ### Fetch defaults
 
@@ -45,7 +47,9 @@ export const ClientLive = AppClient.layerFetch.pipe(
 An application-supplied HttpClient owns its own credential and redirect settings.
 Native exchanges disable standard HTTP tracing and automatic trace-header
 propagation to keep custom credential headers private; application redaction
-settings remain intact.
+settings remain intact. If an optional session-maintenance credential expires while
+the response body is consumed, the client discards it and preserves the successful
+operation result.
 
 ## Client options
 

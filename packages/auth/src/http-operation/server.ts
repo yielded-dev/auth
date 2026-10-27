@@ -40,7 +40,7 @@ import type { HttpCredentials, OperationHttpConfiguration } from "./models";
 import { OperationHttpInvocation } from "./OperationHttpInvocation";
 import { OperationHttpServerConfig } from "./OperationHttpServerConfig";
 import { CredentialWire, RevealWire, credentialWire, revealWire } from "./private";
-import { requestSecurity } from "./security";
+import { allowsSessionRefresh, requestSecurity } from "./security";
 import { rotationCookies, snapshotCookie } from "./session-cache-cookie";
 
 const responseSchema = Schema.Union([
@@ -319,10 +319,23 @@ const applyCommands = Effect.fnUntraced(function* (
   config: OperationHttpConfiguration,
   native: boolean,
   cacheEnabled: boolean,
+  refreshCommands: ReadonlyArray<AuthCredentialCommand> = [],
 ) {
   const now = DateTime.toEpochMillis(yield* DateTime.now);
 
-  for (const command of commands) {
+  // A delayed maintenance response must not turn its old expiry into a deletion.
+  // Browser Max-Age rounds down to seconds; explicit mutations retain precedence.
+  const delivery = commands.some((command) => command.slot === "session")
+    ? commands
+    : [
+        ...commands,
+        ...refreshCommands.filter(
+          (command) =>
+            command._tag === "Issue" && command.expiresAtMillis - now >= (native ? 1 : 1_000),
+        ),
+      ];
+
+  for (const command of delivery) {
     if (command.slot === "session-cache") {
       if (native || !cacheEnabled) continue;
       const cookie = yield* snapshotCookie(config.cookies["session-cache"], command, now);
@@ -508,6 +521,7 @@ export const make = Effect.fnUntraced(function* <
 
       const commands: AuthCredentialCommand[] = [];
 
+      const refreshCommands: AuthCredentialCommand[] = [];
       const reveals: AuthRevealCommand[] = [];
 
       const sink = (values: ReadonlyArray<AuthCredentialCommand>) =>
@@ -581,6 +595,14 @@ export const make = Effect.fnUntraced(function* <
               : invalidateCache.pipe(
                   Effect.mapError(() => HookDenied.make({ reason: "unavailable" })),
                 ),
+          ...(route.sessionRefresh && allowsSessionRefresh(request, config, security.native)
+            ? {
+                sessionRefresh: (values: ReadonlyArray<AuthCredentialCommand>) =>
+                  Effect.sync(() => {
+                    refreshCommands.splice(0, refreshCommands.length, ...values);
+                  }),
+              }
+            : {}),
           credentialCommandSink: sink,
           revealCommandCollector: collector,
         }),
@@ -656,6 +678,7 @@ export const make = Effect.fnUntraced(function* <
           config,
           security.native,
           cacheTransport !== undefined,
+          refreshCommands,
         );
       if (callback !== undefined) {
         if (callback.respond !== undefined) {
@@ -680,6 +703,7 @@ export const make = Effect.fnUntraced(function* <
             config,
             security.native,
             cacheTransport !== undefined,
+            refreshCommands,
           );
 
           const customHeaders = new Headers(response.headers);
