@@ -1,7 +1,13 @@
 ---
 "@yielded/auth": patch
-"@yielded/auth-platform-workerd": minor
+"@yielded/auth-electron": patch
 "@yielded/auth-persistence": patch
+"@yielded/auth-persistence-drizzle": patch
+"@yielded/auth-platform-workerd": minor
+"@yielded/auth-react-native": patch
+"@yielded/auth-simplewebauthn": patch
+"@yielded/jose": patch
+"@yielded/oauth": patch
 ---
 
-Move Workers crypto services and WASM Argon2id into `@yielded/auth-platform-workerd`, and provide one portable `WebCrypto.layer` preset. BEHAVIOR CHANGE: replace Auth's Workers subpaths with this package, use `WebCrypto.layer` in place of `layerCryptoWeb` or `layerWebCrypto`, supply HTTP separately, and provide an Effect Kdf Layer to `Testing.services()`.
+Use Effect crypto and one `WebCrypto.layer` preset, and move Workers password hashing to `@yielded/auth-platform-workerd`. BEHAVIOR CHANGE: require Effect 4.1 and matching SQL drivers; replace `@yielded/crypto` and Auth's Workers subpaths with Effect crypto Layers or the Workers package, supply HTTP and the Kdf for `Testing.services()` separately, and use `Password.KdfAdmission.layer()`, optional `PasswordScrypt.layer`, and opaque Effect keys for JOSE.
