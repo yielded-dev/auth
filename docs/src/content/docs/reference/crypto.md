@@ -6,8 +6,8 @@ description: Supply Effect crypto services and bounded password-derivation backe
 Auth and JOSE use `effect/crypto` for secure randomness, digests, message
 authentication, authenticated encryption, signatures, and key formats. Applications
 own keys, nonce uniqueness, accepted algorithms, and credential policy.
-`@yielded/crypto` supplies password derivation with shared resource limits,
-including portable Argon2id and native scrypt.
+Password hashing uses Effect Kdf. Auth supplies portable Argon2id and a separate
+scrypt adapter, with password cost limits and shared admission.
 
 ## Compose a backend
 
@@ -76,64 +76,57 @@ keys, delivery, and protocol adapters remain application-owned. Direct callers o
 the construction Scope open while using their operations. Auth Layers own that
 scope when constructing them.
 
-For manual password composition:
+For manual password composition on Node:
 
 ```ts
-import * as WebCrypto from "@yielded/auth/WebCrypto";
-import * as KdfAdmission from "@yielded/crypto/KdfAdmission";
-import * as Portable from "@yielded/crypto/Portable";
+import { NodeCrypto } from "@effect/platform-node";
+import { Password } from "@yielded/auth";
+import * as PasswordScrypt from "@yielded/auth/PasswordScrypt";
 import { Layer } from "effect";
 
-const Admission = KdfAdmission.layer();
-export const CryptoLive = Layer.merge(
-  WebCrypto.layerWebCrypto,
-  Portable.layer(globalThis.crypto.subtle).pipe(Layer.provideMerge(Admission)),
+export const CryptoLive = Layer.mergeAll(
+  NodeCrypto.layer,
+  PasswordScrypt.layer,
+  Password.KdfAdmission.layer(),
+);
+
+export const PasswordLive = Password.PasswordHashing.layer().pipe(
+  Layer.provide(CryptoLive),
 );
 ```
 
-Provide `CryptoLive` to `Password.PasswordHashing.layer()` and the Auth Layer.
-TOTP additionally requires `TotpSecretKeys`; OAuth protector Layers take an
-application keyring. Provider Layers also need `HttpClient`.
+Use `BunCrypto.layer` on Bun. `Password.layerKdf` supplies portable Argon2id and
+Effect WebCrypto KDFs when native Argon2id is unavailable. It can be combined with
+`WebCrypto.layerWebCrypto` and `Password.KdfAdmission.layer()`.
+Scrypt is optional: without `PasswordScrypt.layer`, attempts to derive or verify
+scrypt fail with `PasswordHashingUnavailable`. Other password formats still work.
 
-## Backends and resource limits
+## Password resource limits
 
-`@yielded/crypto` exposes `Kdf` and `KdfAdmission`. Its Layers provide bounded
-password operations, not general encryption or signing services:
+`PasswordHashingConfig` owns password strength, verification cost ceilings, input
+length, and rehash policy. Limits apply before derivation, including for stored
+verifiers. Argon2id uses version 19 and memory in KiB. Scrypt uses `cost` (N),
+`blockSize` (r), and `parallelism` (p); memory includes scratch buffers, and
+`N*r*p/8` must fit `maximumMemoryPasses`. Legacy PBKDF2 uses SHA-256.
+An unavailable algorithm fails without downgrading. Passwords are not normalized
+by the hasher.
 
-| Backend                                                       | Argon2id                | Scrypt         | PBKDF2-SHA256    |
-| ------------------------------------------------------------- | ----------------------- | -------------- | ---------------- |
-| `Portable.layer(subtle, limits?)`                             | Portable implementation | Unsupported    | Effect WebCrypto |
-| `platform-node.layer(limits?)`, `platform-bun.layer(limits?)` | Native runtime          | Native runtime | Effect WebCrypto |
-| `platform-workerd.layer(subtle, limits?)`                     | Bundled Wasm            | Native runtime | Effect WebCrypto |
+Share one `Password.KdfAdmission.layer()` across password hashers in each runtime.
+Its `concurrency`, `maxQueued`, and `maxWaitMilliseconds` options default to one
+running operation, sixteen queued operations, and five seconds to acquire capacity.
+The permit covers preparation, derivation, and cleanup. Waiting is interruptible;
+noncancelable native work retains its permit until completion. Portable Argon2id
+yields between batches on the calling thread.
 
-The native Argon2id backend requires runtime support for `crypto.argon2`.
-Workers require `nodejs_compat` for scrypt. Wrangler bundles the supplied Wasm;
-consumers need no C compiler. An unavailable algorithm fails with
-`CryptoUnsupportedAlgorithm`; it never silently changes password algorithms.
+Retain the built Layer for the application's lifetime to share these limits.
+They do not coordinate isolates or replace a distributed rate limiter.
+`WorkerdServices.layerWith` accepts `passwordHashing` and `kdfAdmission` options.
+Calling Effect Kdf directly bypasses Auth's password policy and admission.
 
-`Kdf.defaultLimits` sets per-operation input, output, memory, and work ceilings.
-These bound resource use; Auth's password configuration owns strength and
-rehash policy. Argon2id uses version 19, memory in KiB, and byte lengths.
-Scrypt uses `cost` (N), `blockSize` (r), and `parallelism` (p). Its allocation
-must fit `maximumMemoryKiB`, including scratch buffers, and `N*r*p/8` must fit
-`maximumMemoryPasses`. PBKDF2 uses SHA-256 and a positive signed 32-bit iteration
-count. Inputs are bytes; the backend does not normalize passwords.
-
-Share one `KdfAdmission.layer()` between password hashing and its backend.
-Defaults permit one running derivation, sixteen queued operations, and five
-seconds to acquire capacity. Waiting is interruptible; native operations retain
-their permit through completion and cleanup. Portable Argon2id yields between
-batches on the calling thread. Nested operations in the same fiber share a
-permit; child fibers acquire independently. Retain the built Layer for the
-application's lifetime to share these limits. They do not coordinate isolates
-or replace a distributed rate limiter.
-
-Password backend errors contain fixed classifications without native causes:
-`CryptoInvalidInput`, `CryptoUnsupportedAlgorithm`, `CryptoUnavailable`, and
-`CryptoKdfBusy`. Secret-bearing KDF schemas reject JSON encoding. Owned copies
-are cleared after work; JavaScript and native engines cannot guarantee erasure
-of every copy.
+Password failures expose fixed classifications without native causes. Owned
+password and output buffers are cleared after work; JavaScript and native engines
+cannot guarantee erasure of every copy.
 
 See the [password guide](../guide/passwords.md) and the
-[shipped notices](https://github.com/yielded-dev/auth/blob/main/packages/crypto/THIRD_PARTY_NOTICES.md)
+[shipped notices](https://github.com/yielded-dev/auth/blob/main/packages/auth/THIRD_PARTY_NOTICES.md)
 for the retained Argon2 implementation's attribution.

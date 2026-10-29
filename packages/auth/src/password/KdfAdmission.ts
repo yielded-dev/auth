@@ -4,7 +4,7 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 
-import { InvalidInput, KdfBusy } from "./Errors";
+import { PasswordConfigurationError, PasswordKdfBusy } from "./errors";
 
 export interface Options {
   readonly concurrency?: number;
@@ -12,13 +12,17 @@ export interface Options {
   readonly maxWaitMilliseconds?: number;
 }
 
-/** Share one Layer across all backend instances to bound actual KDF work. */
+/** Share one Layer across password hashers to bound concurrent password work. */
 export class KdfAdmission extends Context.Service<
   KdfAdmission,
   {
-    readonly run: <A, E, R>(work: Effect.Effect<A, E, R>) => Effect.Effect<A, E | KdfBusy, R>;
+    readonly run: <A, E, R>(
+      work: Effect.Effect<A, E, R>,
+    ) => Effect.Effect<A, E | PasswordKdfBusy, R>;
   }
->()("@yielded/crypto/KdfAdmission") {}
+>()("effect-auth/PasswordKdfAdmission") {
+  static readonly layer = (options: Options = {}) => layer(options);
+}
 
 const Configuration = Schema.Struct({
   concurrency: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 32 })),
@@ -30,11 +34,12 @@ const Configuration = Schema.Struct({
  * Waiting is interruptible and bounded. The permit covers work and its cleanup;
  * backends protect nonabortable native calls until actual completion. Owned
  * interruptible work can stop and release its resources without finishing a KDF.
- * Nested work in the same fiber shares its permit through scoped cleanup; forked
- * fibers must acquire their own. This covers preparation and cleanup around a KDF.
+ * One permit covers the complete password operation, including scoped cleanup.
  * Defaults: one running derivation, sixteen waiting, five-second acquisition wait.
  */
-export const layer = (options: Options = {}): Layer.Layer<KdfAdmission, InvalidInput> => {
+export const layer = (
+  options: Options = {},
+): Layer.Layer<KdfAdmission, PasswordConfigurationError> => {
   const snapshot = {
     concurrency: options.concurrency ?? 1,
     maxQueued: options.maxQueued ?? 16,
@@ -45,40 +50,32 @@ export const layer = (options: Options = {}): Layer.Layer<KdfAdmission, InvalidI
     KdfAdmission,
     Effect.gen(function* () {
       const config = yield* Schema.decodeEffect(Configuration)(snapshot).pipe(
-        Effect.mapError(() => InvalidInput.make({ reason: "parameters" })),
+        Effect.mapError(() => PasswordConfigurationError.make({ component: "hashing" })),
       );
 
       const capacity = yield* Schema.decodeEffect(Schema.Int)(
         config.concurrency + config.maxQueued,
-      ).pipe(Effect.mapError(() => InvalidInput.make({ reason: "parameters" })));
+      ).pipe(Effect.mapError(() => PasswordConfigurationError.make({ component: "hashing" })));
 
       const active = yield* Semaphore.make(config.concurrency);
       const admitted = yield* Semaphore.make(capacity);
-      const owners = new Set<number>();
 
       const acquire = Effect.acquireRelease(active.take(1), () => active.release(1), {
         interruptible: true,
       }).pipe(
         Effect.timeoutOrElse({
           duration: config.maxWaitMilliseconds,
-          orElse: () => Effect.fail(KdfBusy.make({})),
+          orElse: () => Effect.fail(PasswordKdfBusy.make({})),
         }),
       );
 
       return KdfAdmission.of({
         run: <A, E, R>(work: Effect.Effect<A, E, R>) =>
-          Effect.withFiber((fiber) => {
-            if (owners.has(fiber.id)) return work;
-
-            const owned = Effect.acquireRelease(
-              Effect.sync(() => owners.add(fiber.id)),
-              () => Effect.sync(() => owners.delete(fiber.id)),
-            ).pipe(Effect.andThen(work));
-
-            return admitted
-              .withPermitsIfAvailable(1)(Effect.scoped(Effect.andThen(acquire, owned)))
-              .pipe(Effect.flatMap((result) => Effect.fromOption(result, () => KdfBusy.make({}))));
-          }),
+          admitted
+            .withPermitsIfAvailable(1)(Effect.scoped(Effect.andThen(acquire, work)))
+            .pipe(
+              Effect.flatMap((result) => Effect.fromOption(result, () => PasswordKdfBusy.make({}))),
+            ),
       });
     }),
   );

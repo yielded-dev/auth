@@ -86,3 +86,7 @@ export {
   snapshotPasswordRequirement,
   snapshotPasswordRevision,
 } from "./password/methods/snapshot";
+
+export { KdfAdmission } from "./password/KdfAdmission";
+export { Scrypt } from "./password/Scrypt";
+export { layerKdf } from "./password/crypto/kdf";

@@ -1,10 +1,9 @@
 import { it } from "@effect/vitest";
 import * as OAuth from "@yielded/auth/OAuth";
 import * as Password from "@yielded/auth/Password";
+import { KdfAdmission, layerKdf } from "@yielded/auth/Password";
 import * as Totp from "@yielded/auth/Totp";
 import { layerWebCrypto as layerCryptoWeb } from "@yielded/auth/WebCrypto";
-import * as KdfAdmission from "@yielded/crypto/KdfAdmission";
-import * as Portable from "@yielded/crypto/Portable";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
@@ -17,7 +16,7 @@ import { expect } from "vite-plus/test";
 import fixtures from "./crypto-fixtures";
 
 const admission = KdfAdmission.layer({ maxQueued: 0 });
-const backend = Portable.layer(globalThis.crypto.subtle).pipe(Layer.provideMerge(admission));
+const backend = layerKdf.pipe(Layer.provideMerge(admission));
 const runtime = Layer.merge(backend, layerCryptoWeb);
 
 it.effect(

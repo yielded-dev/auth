@@ -110,8 +110,7 @@ you use.
 - **`@yielded/auth/adapters/Twilio`**: SMS delivery through Effect HTTP; requires `TwilioConfig`.
 
 Auth owns schemas, workflows, and direct password, TOTP, and OAuth implementations.
-Its runtime dependencies are Effect and the first-party `@yielded/crypto`,
-`@yielded/jose`, and `@yielded/oauth` packages.
+Its runtime dependencies are Effect and the first-party `@yielded/jose` and `@yielded/oauth` packages.
 `OpenIdConnect` and `GitHub` configure native providers without a provider SDK.
 Optional SDK adapters depend on Auth's public contracts; Auth never imports or
 re-exports them. Applications supply storage, policy, delivery authority, and

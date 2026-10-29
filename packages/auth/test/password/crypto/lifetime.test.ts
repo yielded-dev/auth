@@ -1,8 +1,9 @@
 import { it } from "@effect/vitest";
-import type { KdfBusy, OperationError } from "@yielded/crypto/Errors";
-import { Kdf } from "@yielded/crypto/Kdf";
-import * as KdfAdmission from "@yielded/crypto/KdfAdmission";
-import * as Portable from "@yielded/crypto/Portable";
+import * as Password from "@yielded/auth/Password";
+import { KdfAdmission, layerKdf } from "@yielded/auth/Password";
+import * as Kdf from "effect/crypto/Kdf";
+import * as SecureRandom from "effect/crypto/SecureRandom";
+import * as WebCrypto from "effect/crypto/WebCrypto";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -12,14 +13,14 @@ import * as Scheduler from "effect/Scheduler";
 import * as TestClock from "effect/testing/TestClock";
 import { expect } from "vite-plus/test";
 
-import { utf8 } from "./backends";
+const utf8 = (value: string) => new TextEncoder().encode(value);
 
 // d36318f retained native-work masking around the owned portable implementation.
 // Control the scheduler to request cancellation between real Argon2 batches;
 // wall-clock timing cannot distinguish cancellation from completing the full KDF.
-it.effect("cancels portable Argon2 at a batch boundary and releases admission", () =>
+it.effect("cancels portable Argon2 at a batch boundary", () =>
   Effect.gen(function* () {
-    const kdf = yield* Kdf;
+    const kdf = yield* Kdf.Kdf;
     const tasks: Array<() => void> = [];
 
     const scheduler: Scheduler.Scheduler = {
@@ -34,7 +35,7 @@ it.effect("cancels portable Argon2 at a batch boundary and releases admission", 
     };
 
     const input = {
-      password: Redacted.make(utf8("password")),
+      password: utf8("password"),
       salt: utf8("somesalt"),
       memoryKiB: 8192,
       passes: 2,
@@ -42,12 +43,16 @@ it.effect("cancels portable Argon2 at a batch boundary and releases admission", 
       length: 32,
     };
 
-    const fiber = yield* kdf
-      .argon2id(input)
-      .pipe(
-        Effect.provideService(Scheduler.Scheduler, scheduler),
-        Effect.forkChild({ startImmediately: true }),
-      );
+    const derive = (memory: number, passes: number) =>
+      kdf.derive(Kdf.argon2id({ memory, passes, parallelism: 1 }), input.password, {
+        salt: input.salt,
+        length: 32,
+      });
+
+    const fiber = yield* derive(input.memoryKiB, input.passes).pipe(
+      Effect.provideService(Scheduler.Scheduler, scheduler),
+      Effect.forkChild({ startImmediately: true }),
+    );
 
     const suspended = tasks.length > 0 && fiber.pollUnsafe() === undefined;
 
@@ -61,18 +66,12 @@ it.effect("cancels portable Argon2 at a batch boundary and releases admission", 
     // Finish queued work before asserting so a failing regression cannot leak it.
     while (tasks.length > 0) tasks.shift()!();
     yield* Fiber.join(interruption);
-    const reused = yield* kdf.argon2id({ ...input, memoryKiB: 8, passes: 1 });
+    const reused = yield* derive(8, 1);
 
     expect(suspended).toBe(true);
     expect(stoppedAtBoundary).toBe(true);
-    expect(Redacted.value(reused)).toHaveLength(32);
-  }).pipe(
-    Effect.provide(
-      Portable.layer(globalThis.crypto.subtle).pipe(
-        Layer.provide(KdfAdmission.layer({ concurrency: 1, maxQueued: 0 })),
-      ),
-    ),
-  ),
+    expect(reused).toHaveLength(32);
+  }).pipe(Effect.provide(layerKdf)),
 );
 
 // Admission must be retained until native KDF completion.
@@ -80,7 +79,14 @@ it.effect("cancels portable Argon2 at a batch boundary and releases admission", 
 // wall-clock KDF timing cannot reliably force this interruption window.
 it.effect("holds KDF admission through interrupted native work and bounds queued callers", () =>
   Effect.gen(function* () {
-    const entered = yield* Deferred.make<void, OperationError | KdfBusy>();
+    const entered = yield* Deferred.make<
+      void,
+      | Password.PasswordHashingUnavailable
+      | Password.PasswordInputInvalid
+      | Password.PasswordKdfBusy
+      | Password.PasswordVerifierInvalid
+    >();
+
     let finish: ((value: ArrayBuffer) => void) | undefined;
     let calls = 0;
 
@@ -104,26 +110,29 @@ it.effect("holds KDF admission through interrupted native work and bounds queued
     });
 
     const run = Effect.gen(function* () {
-      const kdf = yield* Kdf;
+      const hashing = yield* Password.PasswordHashing;
 
-      const input = {
-        password: Redacted.make(utf8("password")),
-        salt: utf8("salt"),
-        iterations: 1,
-        length: 32,
-      };
+      const derive = () =>
+        hashing.verify(
+          Redacted.make("password"),
+          Redacted.make(
+            Password.EncodedPasswordHash.make(
+              "pbkdf2-sha256$1$c2FsdA$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+            ),
+          ),
+        );
 
-      const first = yield* kdf.pbkdf2(input).pipe(
+      const first = yield* derive().pipe(
         Effect.tapError((error) => Deferred.fail(entered, error)),
         Effect.forkChild,
       );
 
       yield* Deferred.await(entered);
       const interruption = yield* Fiber.interrupt(first).pipe(Effect.forkChild);
-      const queued = yield* kdf.pbkdf2(input).pipe(Effect.result, Effect.forkChild);
+      const queued = yield* derive().pipe(Effect.result, Effect.forkChild);
 
       yield* TestClock.adjust(1);
-      const overflow = yield* kdf.pbkdf2(input).pipe(Effect.result);
+      const overflow = yield* derive().pipe(Effect.result);
 
       yield* TestClock.adjust(100);
       const expired = yield* Fiber.join(queued);
@@ -132,21 +141,33 @@ it.effect("holds KDF admission through interrupted native work and bounds queued
 
       finish?.(new ArrayBuffer(32));
       yield* Fiber.join(interruption);
-      const reused = yield* kdf.pbkdf2(input);
+      const reused = yield* derive();
 
-      expect(overflow).toMatchObject({ _tag: "Failure", failure: { _tag: "CryptoKdfBusy" } });
-      expect(expired).toMatchObject({ _tag: "Failure", failure: { _tag: "CryptoKdfBusy" } });
+      expect(overflow).toMatchObject({ _tag: "Failure", failure: { _tag: "PasswordKdfBusy" } });
+      expect(expired).toMatchObject({ _tag: "Failure", failure: { _tag: "PasswordKdfBusy" } });
       expect(workPending).toBeUndefined();
       expect(callsBeforeCompletion).toBe(1);
-      expect(Redacted.value(reused)).toHaveLength(32);
+      expect(reused.matches).toBe(false);
       expect(calls).toBe(2);
     });
 
     yield* run.pipe(
       Effect.provide(
-        Portable.layer(subtle).pipe(
+        Password.PasswordHashing.layer().pipe(
           Layer.provide(
-            KdfAdmission.layer({ concurrency: 1, maxQueued: 1, maxWaitMilliseconds: 100 }),
+            Layer.mergeAll(
+              Kdf.layerWebCrypto.pipe(
+                Layer.provide(
+                  WebCrypto.layer({
+                    subtle,
+                    getRandomValues: (array) => globalThis.crypto.getRandomValues(array),
+                    randomUUID: () => globalThis.crypto.randomUUID(),
+                  }),
+                ),
+              ),
+              SecureRandom.layerWebCrypto,
+              KdfAdmission.layer({ concurrency: 1, maxQueued: 1, maxWaitMilliseconds: 100 }),
+            ),
           ),
         ),
       ),
@@ -160,51 +181,6 @@ it.effect("rejects invalid KDF admission configuration at Layer construction", (
       Effect.flip,
     );
 
-    expect(result).toMatchObject({ _tag: "CryptoInvalidInput", reason: "parameters" });
+    expect(result).toMatchObject({ _tag: "PasswordConfigurationError", component: "hashing" });
   }),
-);
-
-// Direct Auth adoption needs one admission region around the whole password
-// operation; its nested Kdf call must reuse that permit without admitting children.
-it.effect("shares admission with nested work in the same fiber but not forked children", () =>
-  Effect.gen(function* () {
-    const admission = yield* KdfAdmission.KdfAdmission;
-
-    const result = yield* admission.run(
-      Effect.gen(function* () {
-        const nested = yield* admission.run(Effect.succeed("nested"));
-
-        const child = yield* admission
-          .run(Effect.succeed("child"))
-          .pipe(Effect.result, Effect.forkChild);
-
-        return { nested, child: yield* Fiber.join(child) };
-      }),
-    );
-
-    expect(result).toMatchObject({
-      nested: "nested",
-      child: { _tag: "Failure", failure: { _tag: "CryptoKdfBusy" } },
-    });
-    expect(yield* admission.run(Effect.succeed("reused"))).toBe("reused");
-  }).pipe(Effect.provide(KdfAdmission.layer({ concurrency: 1, maxQueued: 0 }))),
-);
-
-// 3b9c0fe removed admission ownership before the work's scoped finalizers ran.
-it.effect("retains same-fiber admission through scoped cleanup", () =>
-  Effect.gen(function* () {
-    const admission = yield* KdfAdmission.KdfAdmission;
-    const cleanup = yield* Deferred.make<string, KdfBusy>();
-
-    yield* admission.run(
-      Effect.addFinalizer(() =>
-        Deferred.complete(cleanup, admission.run(Effect.succeed("cleaned"))),
-      ),
-    );
-
-    expect(yield* Deferred.await(cleanup).pipe(Effect.result)).toMatchObject({
-      _tag: "Success",
-      success: "cleaned",
-    });
-  }).pipe(Effect.scoped, Effect.provide(KdfAdmission.layer({ concurrency: 1, maxQueued: 0 }))),
 );

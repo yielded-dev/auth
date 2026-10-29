@@ -1,5 +1,5 @@
+import type { Argon2Parameters } from "./argon2";
 import { Blake2b } from "./blake2b";
-import type { Argon2Parameters } from "./kdf";
 /**
  * Adapted from noble-hashes, Copyright (c) 2022 Paul Miller.
  * MIT; source revision 8060cc83bbab6681d23c9eed071db3f3a6b442da.
@@ -319,7 +319,7 @@ export interface State {
   readonly segmentLength: number;
 }
 
-// Allocate before absorbing secrets. Kdf has already applied Schema/resource limits.
+// Allocate before absorbing secrets. The caller has validated parameters and applied password resource limits.
 export const allocate = (
   input: Argon2Parameters,
   backing?: { readonly buffer: ArrayBuffer; readonly byteOffset: number },

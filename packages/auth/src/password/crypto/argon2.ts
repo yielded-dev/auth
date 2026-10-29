@@ -1,4 +1,5 @@
 import * as Clock from "effect/Clock";
+import type * as CryptoError from "effect/crypto/CryptoError";
 import * as Effect from "effect/Effect";
 
 import {
@@ -10,7 +11,21 @@ import {
   output,
   type State,
 } from "./argon2-core";
-import type { Argon2, Argon2Parameters } from "./kdf";
+
+export interface Argon2Parameters {
+  readonly password: Uint8Array;
+  readonly salt: Uint8Array;
+  readonly memoryKiB: number;
+  readonly passes: number;
+  readonly parallelism: number;
+  readonly length: number;
+  readonly secret?: Uint8Array;
+  readonly associatedData: Uint8Array;
+}
+
+export type Argon2 = (
+  input: Argon2Parameters,
+) => Effect.Effect<Uint8Array, CryptoError.CryptoError>;
 
 export const derive = Effect.fnUntraced(function* (
   input: Argon2Parameters,

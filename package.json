@@ -42,7 +42,6 @@
     "@yielded/auth-persistence": "workspace:*",
     "@yielded/auth-persistence-drizzle": "workspace:*",
     "@yielded/auth-simplewebauthn": "workspace:*",
-    "@yielded/crypto": "workspace:*",
     "@yielded/effect-tsrs": "catalog:",
     "@yielded/jose": "workspace:*",
     "@yielded/oauth": "workspace:*",

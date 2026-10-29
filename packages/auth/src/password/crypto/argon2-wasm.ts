@@ -1,9 +1,9 @@
+import * as CryptoError from "effect/crypto/CryptoError";
 import * as Effect from "effect/Effect";
 
 import { derive } from "./argon2";
+import type { Argon2 } from "./argon2";
 import { allocate, type fill } from "./argon2-core";
-import { nativeError } from "./common";
-import type { Argon2 } from "./kdf";
 
 /** ABI of the package's owned argon2.wasm, built from argon2-block.c. */
 interface Exports extends WebAssembly.Exports {
@@ -50,10 +50,17 @@ export const makeArgon2 =
 
           return { memory, state, compress };
         },
-        catch: nativeError,
+        catch: () =>
+          new CryptoError.CryptoError({
+            module: "Kdf",
+            method: "derive",
+            reason: new CryptoError.Unsupported({
+              description: "Argon2id WebAssembly is unavailable",
+            }),
+          }),
       }),
       ({ state, compress }) => derive(input, state, compress),
       // Clear the entire linear memory, including any compiler stack spills,
-      // before Kdf releases admission on completion, failure or interruption.
+      // before PasswordHashing releases admission on completion, failure or interruption.
       ({ memory }) => Effect.sync(() => new Uint8Array(memory.buffer).fill(0)),
     );

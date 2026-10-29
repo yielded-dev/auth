@@ -16,7 +16,6 @@
       "@yielded/auth-persistence-drizzle",
       "@yielded/auth-react-native",
       "@yielded/auth-simplewebauthn",
-      "@yielded/crypto",
       "@yielded/jose",
       "@yielded/oauth"
     ]

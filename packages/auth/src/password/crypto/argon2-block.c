@@ -2,7 +2,7 @@
 #include <wasm_simd128.h>
 
 /* Argon2id v19 block compression; see ../../THIRD_PARTY_NOTICES.md.
- * Build with vp run @yielded/crypto#build:wasm. Imports only linear memory.
+ * Build with vp run @yielded/auth#build:wasm. Imports only linear memory.
  */
 #define INLINE static inline __attribute__((always_inline))
 

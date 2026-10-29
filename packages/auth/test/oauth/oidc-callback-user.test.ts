@@ -8,8 +8,6 @@ import {
 import * as OpenIdConnect from "@yielded/auth/OpenIdConnect";
 import { RequestBindingFlowId } from "@yielded/auth/Operations";
 import { layerWebCrypto } from "@yielded/auth/WebCrypto";
-import * as Admission from "@yielded/crypto/KdfAdmission";
-import * as Portable from "@yielded/crypto/Portable";
 import { Jwk, Jwt } from "@yielded/jose";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -27,11 +25,7 @@ const seconds = 1_700_000_000;
 
 const json = (body: unknown) => Response.json(body);
 
-const platform = Layer.mergeAll(
-  FetchHttpClient.layer,
-  layerWebCrypto,
-  Portable.layer(globalThis.crypto.subtle).pipe(Layer.provide(Admission.layer())),
-);
+const platform = Layer.mergeAll(FetchHttpClient.layer, layerWebCrypto);
 
 const IdToken = Schema.Struct({
   iss: Schema.String,

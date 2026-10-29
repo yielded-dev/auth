@@ -5,15 +5,15 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Result from "effect/Result";
 
-import { CryptoUnavailable, UnsupportedAlgorithm } from "../Errors";
-import { ScryptBackend, type ScryptParameters } from "./scrypt-backend";
+import { PasswordHashingUnavailable } from "./password/errors";
+import { Scrypt } from "./password/Scrypt";
 
-const derive = Effect.fnUntraced(function* (input: ScryptParameters) {
-  if (typeof crypto.scrypt !== "function") return yield* UnsupportedAlgorithm.make({});
+const derive = Effect.fnUntraced(function* (input: Parameters<Scrypt["Service"]["derive"]>[0]) {
+  if (typeof crypto.scrypt !== "function") return yield* PasswordHashingUnavailable.make({});
 
   // Native work cannot be cancelled. Keep admission and borrowed buffers until
   // its callback finishes, including when the caller requests interruption.
-  return yield* Effect.callback<Uint8Array, CryptoUnavailable>((resume) => {
+  return yield* Effect.callback<Uint8Array, PasswordHashingUnavailable>((resume) => {
     const registration = Result.try({
       try: () =>
         crypto.scrypt(
@@ -28,13 +28,13 @@ const derive = Effect.fnUntraced(function* (input: ScryptParameters) {
           },
           // Bun supplies undefined on success; Node supplies null.
           (error, key) =>
-            resume(error ? Effect.fail(CryptoUnavailable.make({})) : Effect.succeed(key)),
+            resume(error ? Effect.fail(PasswordHashingUnavailable.make({})) : Effect.succeed(key)),
         ),
-      catch: () => CryptoUnavailable.make({}),
+      catch: () => PasswordHashingUnavailable.make({}),
     });
 
     if (Result.isFailure(registration)) resume(Effect.fail(registration.failure));
   }).pipe(Effect.uninterruptible);
 });
 
-export const layer = Layer.succeed(ScryptBackend, { derive });
+export const layer = Layer.succeed(Scrypt, { derive });

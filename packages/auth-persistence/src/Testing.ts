@@ -16,6 +16,8 @@ import {
   snapshotPasswordCredential,
   snapshotPasswordRequirement,
   snapshotPasswordRevision,
+  KdfAdmission,
+  layerKdf,
 } from "@yielded/auth/Password";
 import { hooksLayer, reportPersistenceFailure } from "@yielded/auth/Persistence";
 import { Email, SubjectId, TokenDigest } from "@yielded/auth/Schema";
@@ -39,8 +41,6 @@ import {
   type StatefulSessionPersistence,
 } from "@yielded/auth/Sessions";
 import { layerWebCrypto as layerCryptoWeb } from "@yielded/auth/WebCrypto";
-import * as KdfAdmission from "@yielded/crypto/KdfAdmission";
-import * as Portable from "@yielded/crypto/Portable";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -118,7 +118,7 @@ export const services = (options: ServicesOptions = {}) => {
               }),
             ).pipe(Layer.provideMerge(Digest.layerWebCrypto));
 
-      const backend = Portable.layer(subtle).pipe(Layer.provideMerge(KdfAdmission.layer()));
+      const backend = layerKdf.pipe(Layer.provideMerge(KdfAdmission.layer()));
 
       return PasswordHashing.layer().pipe(Layer.provide(backend), Layer.provideMerge(entropy));
     }),

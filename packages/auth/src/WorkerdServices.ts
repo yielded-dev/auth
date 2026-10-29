@@ -1,12 +1,15 @@
-import type { InvalidInput } from "@yielded/crypto/Errors";
-import type { Kdf, Limits } from "@yielded/crypto/Kdf";
-import * as KdfAdmission from "@yielded/crypto/KdfAdmission";
-import * as WorkerdCrypto from "@yielded/crypto/platform-workerd";
+import type * as Kdf from "effect/crypto/Kdf";
 import * as Layer from "effect/Layer";
 
 import type { PasswordHashingConfig } from "./password/configuration";
+import { makeArgon2 } from "./password/crypto/argon2-wasm";
+import module from "./password/crypto/argon2.wasm";
+import { makeLayer } from "./password/crypto/kdf";
 import type { PasswordConfigurationError } from "./password/errors";
+import * as KdfAdmission from "./password/KdfAdmission";
 import { PasswordHashing } from "./password/PasswordHashing";
+import type { Scrypt } from "./password/Scrypt";
+import * as PasswordScrypt from "./PasswordScrypt";
 import * as WorkerdPasswordlessServices from "./WorkerdPasswordlessServices";
 
 /** Runtime services for Auth on Cloudflare Workers. Application-owned storage,
@@ -14,26 +17,27 @@ import * as WorkerdPasswordlessServices from "./WorkerdPasswordlessServices";
  */
 export type WorkerdServices =
   | WorkerdPasswordlessServices.WorkerdPasswordlessServices
-  | Kdf
+  | Kdf.Kdf
+  | Scrypt
   | KdfAdmission.KdfAdmission
   | PasswordHashing;
 
 export interface Options {
   readonly passwordHashing?: PasswordHashingConfig;
-  readonly kdfLimits?: Partial<Limits>;
   readonly kdfAdmission?: KdfAdmission.Options;
 }
 
-/** Configure password hashing and KDF resource bounds. The backend and hasher
- * share admission through password preparation, derivation, and cleanup.
+/** Configure password costs and shared admission through preparation, derivation, and cleanup.
  */
 export const layerWith = (
   options: Options,
-): Layer.Layer<WorkerdServices, InvalidInput | PasswordConfigurationError> => {
+): Layer.Layer<WorkerdServices, PasswordConfigurationError> => {
   const platform = Layer.merge(
     WorkerdPasswordlessServices.layer,
-    WorkerdCrypto.layer(globalThis.crypto.subtle, options.kdfLimits).pipe(
-      Layer.provideMerge(KdfAdmission.layer(options.kdfAdmission)),
+    Layer.mergeAll(
+      makeLayer(makeArgon2(module)),
+      PasswordScrypt.layer,
+      KdfAdmission.layer(options.kdfAdmission),
     ),
   );
 
@@ -51,5 +55,4 @@ export const layerWith = (
  * them to request-scoped auth/database Layers; rebuilding per request creates
  * independent admission services. This is not a distributed rate limiter.
  */
-export const layer: Layer.Layer<WorkerdServices, InvalidInput | PasswordConfigurationError> =
-  layerWith({});
+export const layer: Layer.Layer<WorkerdServices, PasswordConfigurationError> = layerWith({});
