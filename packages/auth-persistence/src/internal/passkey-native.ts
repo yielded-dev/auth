@@ -1,4 +1,4 @@
-import { CurrentCommitJournal } from "@yielded/auth/Hooks";
+import { CurrentCommitJournal, type LifecycleHooks } from "@yielded/auth/Hooks";
 import { AuthenticationClock } from "@yielded/auth/Operations";
 import * as M from "@yielded/auth/Passkey";
 import * as Digest from "effect/crypto/Digest";
@@ -6,6 +6,7 @@ import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import type * as SqlClient from "effect/sql/SqlClient";
 import * as SqlError from "effect/sql/SqlError";
 
 import { sqlBatchAssertion } from "./d1-planning";
@@ -38,21 +39,20 @@ import {
 
 const unavailable = () => M.PasskeyUnavailable.make({});
 
-export const preparePasskeyNative = <Value, A>(
+export const preparePasskeyNative = Effect.fnUntraced(function* <Value, A>(
   value: Value,
   prepare: M.PreparePasskeyCommit<Value, A>,
-) =>
-  Effect.gen(function* () {
-    const journal = yield* CurrentCommitJournal;
+) {
+  const journal = yield* CurrentCommitJournal;
 
-    const receipt = prepare(value, journal);
+  const receipt = prepare(value, journal);
 
-    if (!(receipt?._tag === "PreparedCommit" && Effect.isEffect(receipt.read)))
-      return yield* invalidPasskeyState();
-    yield* registerSqlCommitReceipt(receipt);
+  if (!(receipt?._tag === "PreparedCommit" && Effect.isEffect(receipt.read)))
+    return yield* invalidPasskeyState();
+  yield* registerSqlCommitReceipt(receipt);
 
-    return receipt;
-  });
+  return receipt;
+});
 
 const services = Effect.fnUntraced(function* (
   tables: NativeSqlTables,
@@ -300,11 +300,8 @@ const makePasskeyNativeCredentialService = (
     A,
     M.PasskeyUnavailable,
     Exclude<
-      Exclude<
-        Exclude<Exclude<R, SecureRandom.SecureRandom>, Digest.Digest>,
-        import("effect/sql/SqlClient").SqlClient
-      >,
-      import("@yielded/auth/Hooks").LifecycleHooks
+      Exclude<Exclude<Exclude<R, SecureRandom.SecureRandom>, Digest.Digest>, SqlClient.SqlClient>,
+      LifecycleHooks
     >
   >,
 ) => {

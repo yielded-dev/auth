@@ -1477,7 +1477,7 @@ export const makeSessionModule = <
       captured,
       captured === undefined
         ? Effect.serviceOption(PendingAuthentication)
-        : Effect.map(PendingAuthentication, Option.some),
+        : Effect.asSome(PendingAuthentication),
     );
   }
 

@@ -21,7 +21,10 @@ export class ConfigurationError extends Schema.TaggedError<ConfigurationError>()
 export const Text = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(2048));
 export const Random = Schema.String.check(Schema.isPattern(/^[A-Za-z0-9_-]{43}$/));
 export const Scope = OAuthScope.OAuthScope;
-export const Scopes = Schema.NonEmptyArray(Scope).check(Schema.isMaxLength(32));
+export const maximumScopes = 1024;
+export const Scopes = Schema.NonEmptyArray(Scope).check(Schema.isMaxLength(maximumScopes));
+/** Space-separated scopes. Declared scopes must fit, so a client can request all of them. */
+export const ScopeText = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(8192));
 
 export const makeScopesSchema = <Scope extends OAuthScope.OAuthScope>(
   scope: Schema.Codec<Scope, string>,
@@ -93,6 +96,11 @@ export const Client = Schema.Struct({
   applicationType: Schema.optionalKey(Schema.Literals(["web", "native"])),
   /** Pre-registered confidential clients authenticate using Basic or form credentials. */
   clientSecret: Schema.optionalKey(Schema.Redacted(Text, { disallowJsonEncode: true })),
+  /** Unpadded base64url SHA-256 of a confidential client's secret, used instead of
+   * clientSecret when only the digest is kept. Only for generated secrets with at
+   * least 256 random bits; never digest a password.
+   */
+  clientSecretDigest: Schema.optionalKey(Random),
   /** Authenticate with private_key_jwt instead of a shared secret. */
   clientAssertion: Schema.optionalKey(ClientAssertion),
   grantTypes: Schema.optionalKey(
@@ -100,7 +108,10 @@ export const Client = Schema.Struct({
   ),
 }).check(
   Schema.makeFilter(
-    (value) => value.clientSecret === undefined || value.clientAssertion === undefined,
+    (value) =>
+      [value.clientSecret, value.clientSecretDigest, value.clientAssertion].filter(
+        (method) => method !== undefined,
+      ).length <= 1,
   ),
 );
 
@@ -115,7 +126,7 @@ export const TokenResponse = Schema.Struct({
   id_token: Schema.optionalKey(
     Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(16384)),
   ),
-  scope: Text,
+  scope: ScopeText,
 });
 
 export const AuthorizationMetadata = Schema.Struct({

@@ -355,7 +355,7 @@ const makePasswordWithManagement = <
             Effect.flatMap((value) =>
               Option.isNone(value)
                 ? Effect.succeed(Option.none<PasswordCredentialSnapshot>())
-                : snapshotPasswordCredential(value.value).pipe(Effect.map(Option.some)),
+                : snapshotPasswordCredential(value.value).pipe(Effect.asSome),
             ),
           );
 

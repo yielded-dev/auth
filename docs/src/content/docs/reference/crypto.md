@@ -6,8 +6,7 @@ description: Compose independent Effect crypto services with explicit runtime ba
 `@yielded/crypto` provides byte operations independently of Auth, with Effect as its
 only runtime package dependency. Its services own
 cryptographic execution; your application owns keys, nonce uniqueness, password
-policy, trusted algorithms and envelope formats. Use Effect `SecureRandom` and `Digest` for entropy
-and SHA digests. Auth directly supplies the domain services for
+policy, trusted algorithms and envelope formats. Use Effect `SecureRandom` for entropy and `Digest` for SHA digests. Auth directly supplies the domain services for
 [passwords](../guide/passwords.md), [TOTP](../guide/totp.mdx) and
 [OAuth](../guide/oauth.mdx).
 
@@ -75,7 +74,7 @@ PBKDF2 uses the supplied WebCrypto and remains subject to the host's iteration
 limit, which can be lower than the library's configured ceiling. Stored PBKDF2
 credentials require a host that accepts their iteration counts.
 
-For sessions and proofs, `WebCrypto.layerWebCrypto` supplies Effect `SecureRandom` and `Digest` and
+For sessions and proofs, `WebCrypto.layerWebCrypto` supplies Effect `SecureRandom`, `Digest`, and
 `Hmac` from the runtime's global WebCrypto. Its components are `layerCryptoWeb`
 (entropy and SHA digests) and `layerHmacWeb`. To supply HMAC from an explicit host
 capability, use `layerHmac(subtle)`. These focused Layers need no `KdfAdmission`.

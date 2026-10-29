@@ -64,15 +64,12 @@ export const encrypt = Effect.fnUntraced(function* (
   if (protectedPart.length > 4096) return yield* InvalidToken.make({ reason: "header" });
   const random = yield* SecureRandom.SecureRandom;
 
-  const nonce = yield* random
-    .randomBytes(12)
-    .pipe(
-      Effect.catchCause((cause) =>
-        cause.reasons.length === 1 && cause.reasons.every(Cause.isDieReason)
-          ? CryptoUnavailable.make({})
-          : Effect.failCause(cause),
-      ),
-    );
+  const nonce = yield* random.randomBytes(12).pipe(
+    Effect.catchCauseIf(
+      (cause) => cause.reasons.length === 1 && cause.reasons.every(Cause.isDieReason),
+      () => CryptoUnavailable.make({}),
+    ),
+  );
 
   const aead = yield* Aead;
 

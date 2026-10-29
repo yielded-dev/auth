@@ -47,7 +47,7 @@ approximate policy; it is not a general-purpose Effect limiter.
 ```ts title="apps/server/rate-limits.ts"
 import * as Cloudflare from "alchemy/Cloudflare";
 import { RuntimeContext } from "alchemy/RuntimeContext";
-import { Duration, Effect, Layer} from "effect";
+import { Duration, Effect, Layer } from "effect";
 import { Digest } from "effect/crypto";
 import { Base64Url } from "effect/encoding";
 import { RateLimiter } from "effect/persistence";
@@ -174,7 +174,7 @@ export default Cloudflare.Worker(
 
 The relative imports are your application's existing Auth definition and services.
 `AuthDependencies` includes password hashing, persistence, claims, session services,
-and `SecureRandom.SecureRandom` plus `Digest.Digest`; see [service composition](../reference/adapters#compose-the-application-layer).
+`SecureRandom.SecureRandom`, and `Digest.Digest`; see [service composition](../reference/adapters#compose-the-application-layer).
 Build the default-exported Worker from your Alchemy stack. The `env` declaration
 attaches the binding, and `RateLimitBinding` supplies its Effect implementation.
 Keep the default export: Alchemy's runtime entrypoint imports it from `main`.

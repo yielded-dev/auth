@@ -1,5 +1,30 @@
 # @yielded/auth-persistence
 
+## 0.1.0-beta.46
+
+### Patch Changes
+
+- Updated dependencies [[`c38c0f0`](https://github.com/yielded-dev/auth/commit/c38c0f0a3298f53938d18289d12e9d510ef6b525), [`6d219e8`](https://github.com/yielded-dev/auth/commit/6d219e89989e72793ba627e37b3a349745cd9f72)]:
+  - @yielded/auth@0.1.0-beta.46
+  - @yielded/crypto@0.1.0-beta.46
+
+## 0.1.0-beta.45
+
+### Patch Changes
+
+- [#272](https://github.com/yielded-dev/auth/pull/272) [`267b2f4`](https://github.com/yielded-dev/auth/commit/267b2f4118de57829f98421e64e210a5df927db3) Thanks [@danieljvdm](https://github.com/danieljvdm)! - Enable managed and mapped phone registration through `Persistence.Provisioning`, using application-supplied account values and the existing phone lifecycle.
+- Updated dependencies [[`267b2f4`](https://github.com/yielded-dev/auth/commit/267b2f4118de57829f98421e64e210a5df927db3), [`3f063b5`](https://github.com/yielded-dev/auth/commit/3f063b51533c64b118ee3325efd7795c26e66ddc), [`12c4b81`](https://github.com/yielded-dev/auth/commit/12c4b812aa09f2898573da0d41fae8af886055b8)]:
+  - @yielded/auth@0.1.0-beta.45
+  - @yielded/crypto@0.1.0-beta.45
+
+## 0.1.0-beta.44
+
+### Patch Changes
+
+- Updated dependencies [[`11e04fb`](https://github.com/yielded-dev/auth/commit/11e04fb14edbc0d409b88540cd1538fbddf2ab74), [`81d27d1`](https://github.com/yielded-dev/auth/commit/81d27d14918acdd48ac2e51c5f34a6af246ea983)]:
+  - @yielded/auth@0.1.0-beta.44
+  - @yielded/crypto@0.1.0-beta.44
+
 ## 0.1.0-beta.43
 
 ### Patch Changes

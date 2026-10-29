@@ -22,6 +22,7 @@ import {
 import { timeoutOrElseWithCause } from "../internal/timeout";
 import type { AuthCredentialCommand, CredentialSlot } from "../operations/credentials";
 import { snapshotRevealCommands, type AuthRevealCommandCollector } from "../operations/reveals";
+import type { SubjectId } from "../Schema";
 import { headerName } from "./configuration-schema";
 import {
   type AnyRoute,
@@ -100,7 +101,7 @@ export interface OperationAuthenticationCompletion {
   <R extends AnyRoute>(
     route: R,
     input: RouteInput<R>,
-    fromSuccess: (success: RouteSuccess<R>) => string | null | undefined,
+    fromSuccess: (success: RouteSuccess<R>) => SubjectId | null | undefined,
     options?: {
       readonly onTransition?: Effect.Effect<void>;
       /** Transport generation captured by the caller, checked under the admission gate. */
@@ -114,20 +115,20 @@ export interface OperationAuthenticationCompletion {
   >;
 }
 
-/** The caller owns the lifecycle gate and publisher. Publishers must not call
- * the transport: they run under credential admission, before reveal acceptance. */
-export const makeAuthenticationCompletion = Effect.fnUntraced(function* (
-  gate: Semaphore.Semaphore,
-  publishSubject: (subject: string | null) => Effect.Effect<void>,
+/** The caller holds its lifecycle gate and masks interruption through settlement
+ * and any subsequent publication. Subject publication precedes reveal acceptance
+ * and must not call the transport. */
+export const makeAuthenticationSettlement = Effect.fnUntraced(function* (
+  publishSubject: (subject: SubjectId | null) => Effect.Effect<void>,
 ) {
   const client = yield* Client;
 
-  const complete: OperationAuthenticationCompletion = Effect.fn(
-    "OperationHttpClient.completeAuthentication",
-  )(function* <R extends AnyRoute>(
+  const complete: OperationAuthenticationCompletion = Effect.fnUntraced(function* <
+    R extends AnyRoute,
+  >(
     route: R,
     input: RouteInput<R>,
-    fromSuccess: (success: RouteSuccess<R>) => string | null | undefined,
+    fromSuccess: (success: RouteSuccess<R>) => SubjectId | null | undefined,
     options?: {
       readonly onTransition?: Effect.Effect<void>;
       readonly expectedGeneration?: number;
@@ -135,42 +136,36 @@ export const makeAuthenticationCompletion = Effect.fnUntraced(function* (
   ) {
     const started = options?.expectedGeneration ?? (yield* client.generation);
 
-    return yield* gate.withPermits(1)(
-      Effect.gen(function* () {
-        if ((yield* client.generation) !== started)
-          return yield* OperationHttpError.make({ reason: "stale-response" });
+    if ((yield* client.generation) !== started)
+      return yield* OperationHttpError.make({ reason: "stale-response" });
 
-        return yield* Effect.uninterruptible(
-          Effect.gen(function* () {
-            let nextSubject: string | null | undefined;
+    return yield* Effect.gen(function* () {
+      let nextSubject: SubjectId | null | undefined;
 
-            return yield* client.call(route, input, {
-              replaceSubject: (value) => {
-                nextSubject = fromSuccess(value);
+      return yield* client.call(route, input, {
+        replaceSubject: (value) => {
+          nextSubject = fromSuccess(value);
 
-                return nextSubject !== undefined;
-              },
-              onTransition: Effect.suspend(() =>
-                nextSubject === undefined
-                  ? Effect.void
-                  : publishSubject(nextSubject).pipe(
-                      Effect.andThen(options?.onTransition ?? Effect.void),
-                    ),
+          return nextSubject !== undefined;
+        },
+        onTransition: Effect.suspend(() =>
+          nextSubject === undefined
+            ? Effect.void
+            : publishSubject(nextSubject).pipe(
+                Effect.andThen(options?.onTransition ?? Effect.void),
               ),
-            });
-          }).pipe(
-            // A failed response can follow a cookie already accepted by the
-            // browser. Remove the old account state without replaying the call.
-            Effect.onError(() =>
-              Effect.gen(function* () {
-                yield* client.transition;
-                yield* publishSubject(null);
-                yield* options?.onTransition ?? Effect.void;
-              }),
-            ),
-          ),
-        );
-      }),
+        ),
+      });
+    }).pipe(
+      // A failed response can follow a cookie already accepted by the
+      // browser. Remove the old account state without replaying the call.
+      Effect.onError(() =>
+        Effect.gen(function* () {
+          yield* client.transition;
+          yield* publishSubject(null);
+          yield* options?.onTransition ?? Effect.void;
+        }),
+      ),
     );
   });
 

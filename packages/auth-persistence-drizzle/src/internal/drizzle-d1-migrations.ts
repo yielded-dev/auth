@@ -9,7 +9,6 @@ import { drizzle } from "drizzle-orm/d1";
 import { formatToMillis, getMigrationsToRun } from "drizzle-orm/migrator.utils";
 import * as Cause from "effect/Cause";
 import * as Digest from "effect/crypto/Digest";
-import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -48,7 +47,6 @@ export const d1MigrationsLayer = (options: {
     Effect.gen(function* () {
       const files = yield* Schema.decodeEffect(MigrationFiles)(options.migrations);
       const client = yield* D1Client.D1Client;
-      const crypto = yield* SecureRandom.SecureRandom;
       const digests = yield* Digest.Digest;
       const appliedAt = DateTime.formatIso(yield* DateTime.now);
 
@@ -73,7 +71,7 @@ export const d1MigrationsLayer = (options: {
         }),
       );
 
-      yield* Effect.gen(function* () {
+      yield* (function* () {
         const db = drizzle(client.config.db);
         const name = options.migrationsTable ?? "__drizzle_migrations";
         const table = sql.identifier(name);
@@ -165,7 +163,7 @@ export const d1MigrationsLayer = (options: {
             try: () => db.batch([first, ...rest]),
             catch: migrationFailure,
           });
-      });
+      })();
     }).pipe(
       (effect) =>
         reportPersistenceFailure(effect, Schema.is(PersistenceConfigurationError), {

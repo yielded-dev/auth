@@ -24,7 +24,7 @@ password and session persistence in tests. See the
 - **`auth`**: One sign-in-only `Password.make()` strategy and `Sessions.stateful()`. Other configurations fail acquisition with `PersistenceConfigurationError`.
 - **`subjects`**: Each seed has `subjectId`, `email`, a redacted `password`, and optional `active` (default `true`). Duplicate IDs or normalized emails fail acquisition. Emails remain unverified.
 - **`requirement`**: Required application `AuthenticationRequirement`; no test default.
-- **`PasswordHashing`**: Required Layer dependency. Hashes seed passwords without text normalization. `Testing.services()` supplies this and Effect `SecureRandom` and `Digest`; claims remain application-owned.
+- **`PasswordHashing`**: Required Layer dependency. Hashes seed passwords without text normalization. `Testing.services()` supplies this plus Effect `SecureRandom` and `Digest`; claims remain application-owned.
 - **Clock**: Uses the caller's clock. Effect's `TestClock` controls expiry.
 
 Supported session operations are issuance, verification, renewal, listing,
@@ -40,7 +40,7 @@ production adapter to verify database concurrency or recovery.
 
 ### Test services
 
-`Testing.services(options?)` supplies Effect `SecureRandom` and `Digest` and `PasswordHashing` with
+`Testing.services(options?)` supplies `PasswordHashing` plus Effect `SecureRandom` and `Digest`, using
 portable Argon2id at the default password cost. Provide it to both Auth and
 `Testing.layer`.
 
@@ -105,38 +105,44 @@ running for other waiting callers. Interrupted setup requires rebuilding the Lay
 before storage operations resume. Cookie-cached and anonymous session reads do
 not trigger initialization.
 
-Composition supports password sign-in, registration and management, email address
-verification and changes, phone sign-in, passkey sign-in and management, OAuth
-sign-in and connected grants, and stateful sessions on PostgreSQL and SQLite.
-OAuth-only definitions also support `Sessions.stateless()`: flows, grants, and
-issuance authority remain durable; session verification uses signed credentials.
+Composition supports password sign-in, registration and management, email codes,
+magic links and address management, phone sign-in and enabled lifecycle operations,
+passkey sign-in and management, OAuth sign-in and connected grants, and stateful
+sessions on PostgreSQL and SQLite.
+OAuth and email sign-in also support `Sessions.stateless()`: proofs, flows, grants,
+and issuance authority remain durable; session verification uses signed credentials.
 Stateless sessions retain their configured lifetime after authority changes.
 State-assisted sessions and other stateless strategy combinations use explicit
 storage Layers.
 
-Email storage permits one verified address per subject and email module.
+Composed email address management permits one verified address per subject and email module.
 Composed tables use canonical logical column names and text auth IDs; subject ID
 codecs and order-preserving timestamp codecs remain application-owned.
 
-For password registration, supply `Persistence.Provisioning` under the strategy's
-name:
+For password or phone registration, supply `Persistence.Provisioning` under each
+strategy's name:
 
 ```ts
 const ProvisioningLive = Layer.succeed(Persistence.Provisioning, {
   password: { values: customerValues },
+  phone: { values: phoneCustomerValues },
 });
 const PersistenceLive = Persistence.layer.pipe(Layer.provide(ProvisioningLive));
 ```
 
-`customerValues({ requestId, registration, identifier })` returns subject insert
-values, including the allocated ID, active status, and initial security revision.
-Use logical column names. Preparing values must not write to the database or perform
-external side effects. The library commits the subject and credentials together;
-an occupied identifier never overwrites a password. `requestId` is stable for the
-application operation.
+`customerValues({ requestId, registration, identifier })` prepares password signup;
+`phoneCustomerValues({ requestId, identifier })` prepares phone signup after number
+verification. The phone identifier is `{ namespace: "phone", value: phoneNumber }`;
+there is no registration payload. Both return subject insert values, including
+the allocated native ID, active status, initial security revision, and fields
+required by account policy. Use logical column names. Preparing values must not
+write to the database or perform external side effects. The library commits the
+subject and credentials together; an occupied identifier never overwrites a
+password. `requestId` is stable for the application operation.
 
 Interactive drivers also accept `password: createCustomer`, which inserts through
 the owning Effect SQL client and returns the subject ID. D1 requires `{ values }`.
+Phone provisioning requires `{ values }` on every driver.
 See the [managed wiring](https://github.com/yielded-dev/auth/blob/main/examples/persistence-drizzle-managed/src/live.ts).
 `subjects.actionRequirements` defaults to `subjects.requirements`; override it for
 a distinct recovery or credential-change policy.
@@ -206,7 +212,7 @@ Import `AuthPersistence` from `@yielded/auth-persistence-drizzle/D1` and supply
 passkeys. Use the original D1 database binding, not a
 [D1 read-replica session](https://developers.cloudflare.com/d1/best-practices/read-replication/).
 The same composed API uses atomic batches rather than interactive transactions;
-password provisioning must return subject values as described above.
+password and phone provisioning must return subject values as described above.
 
 Export the managed tables for Drizzle Kit. Bundle generated SQL and apply it before
 serving auth, or use your D1 migration runner:
@@ -218,7 +224,7 @@ const MigrationsLive = AuthPersistence.migrationsLayer({
 ```
 
 Each key is the generated migration directory name; each value is SQL text including
-Drizzle's statement breakpoints. Supply `D1Client` and Effect `SecureRandom` and `Digest` to this Layer.
+Drizzle's statement breakpoints. Supply `D1Client` and Effect `Digest` to this Layer.
 It needs no filesystem. Run one migration owner at a time.
 
 ## Connect password storage
@@ -251,7 +257,7 @@ export const PasswordPersistenceLive = Layer.effect(
 `passwordMapping` is a `PasswordPersistenceMapping` from
 `@yielded/auth-persistence-drizzle`. Supply `LifecycleHooks`, Effect `SecureRandom` and `Digest`, and
 your account/session Layers at the composition root. Driver factories and
-coordinators need `Database` and `Crypto` at acquisition; provide crypto to both
+coordinators need `Database`, `SecureRandom`, and `Digest` at acquisition; provide crypto to both
 persistence and Auth.
 
 A replacement `PasswordPersistence.findCredential` returns an optional coherent
@@ -339,7 +345,7 @@ for poolers that cannot retain prepared statements.
 
 Adapter authors can supply typed mappings or implement `NativeSqlTables` through
 `@yielded/auth-persistence/Adapter`. `yield* makeStorageMappings(storage)` from that
-module supplies shared row codecs for explicit mappings and requires Effect `SecureRandom` and `Digest`.
+module supplies shared row codecs for explicit mappings and requires Effect `SecureRandom`.
 Include every role table the requested mappings use.
 
 ## SQL session verification
@@ -400,8 +406,12 @@ are permanent and are never removed by cleanup.
 
 ## Email
 
-`makeEmailSignInServices` supplies lookup. `makeEmailRegistrationServices` and
-`makeEmailAddressServices` supply account creation and address changes. For explicit
+`Email.makeCode()` and `Email.makeLink()` use `AuthPersistence` for verified-email
+lookup and proof storage. Applications supply existing email identities, claims,
+keys, and delivery. Guest registration uses explicit services.
+
+For explicit composition, `makeEmailSignInServices` supplies lookup.
+`makeEmailRegistrationServices` and `makeEmailAddressServices` supply account creation and address changes. For explicit
 mappings over an existing layout, use `.emails()` and `.proofs()` from
 `yield* makeStorageMappings(storage)`.
 
@@ -539,8 +549,14 @@ revision and existing sessions.
 
 ## Phone
 
-The composed Layer supplies phone sign-in and proof services. For number lifecycle
-operations or specialized mappings, use the explicit services:
+The composed Layer supplies phone sign-in and proof services. With
+`PhoneOtp.make({ lifecycle: true })` or a lifecycle policy object, it also supplies
+`PhonePersistence` for registration, verification, and number changes using the
+existing tables. Supply phone provisioning as described above; delivery, claims,
+and `PhoneActionEvidence` for verification and changes remain application-owned.
+See the [phone guide](../guide/phone).
+
+For specialized mappings, use the explicit services:
 
 <!-- #region phone-layers -->
 

@@ -1,5 +1,49 @@
 # @yielded/auth
 
+## 0.1.0-beta.46
+
+### Patch Changes
+
+- [#276](https://github.com/yielded-dev/auth/pull/276) [`c38c0f0`](https://github.com/yielded-dev/auth/commit/c38c0f0a3298f53938d18289d12e9d510ef6b525) Thanks [@danieljvdm](https://github.com/danieljvdm)! - Prevent pending authentication responses from populating the public session and identity cache during concurrent account changes.
+
+- [#274](https://github.com/yielded-dev/auth/pull/274) [`6d219e8`](https://github.com/yielded-dev/auth/commit/6d219e89989e72793ba627e37b3a349745cd9f72) Thanks [@danieljvdm](https://github.com/danieljvdm)! - Preserve confirmed signed-out identity during pending or failed session refreshes. Adopt the public session returned by declared authentication completions after credential settlement, including password sign-in, OAuth completion, and authenticating registration.
+- Updated dependencies []:
+  - @yielded/crypto@0.1.0-beta.46
+  - @yielded/jose@0.1.0-beta.46
+  - @yielded/oauth@0.1.0-beta.46
+
+## 0.1.0-beta.45
+
+### Minor Changes
+
+- [#271](https://github.com/yielded-dev/auth/pull/271) [`3f063b5`](https://github.com/yielded-dev/auth/commit/3f063b51533c64b118ee3325efd7795c26e66ddc) Thanks [@leonitousconforti](https://github.com/leonitousconforti)! - Protect `HttpApi` groups and endpoints with `OAuthScope.Required` scope requirements, the browser-safe `OAuthScope.RequireAccess` middleware, and an authorization server's `securityLayer(api)`. List described scopes for consent and scope pages with `OAuthScope.catalog(api)`.
+
+- [#270](https://github.com/yielded-dev/auth/pull/270) [`12c4b81`](https://github.com/yielded-dev/auth/commit/12c4b812aa09f2898573da0d41fae8af886055b8) Thanks [@leonitousconforti](https://github.com/leonitousconforti)! - Resolve OAuth and OpenID server clients from application storage with the optional per-server `Clients` service. Clients can authenticate with a `clientSecretDigest` instead of a stored plaintext secret.
+
+### Patch Changes
+
+- [#272](https://github.com/yielded-dev/auth/pull/272) [`267b2f4`](https://github.com/yielded-dev/auth/commit/267b2f4118de57829f98421e64e210a5df927db3) Thanks [@danieljvdm](https://github.com/danieljvdm)! - Enable managed and mapped phone registration through `Persistence.Provisioning`, using application-supplied account values and the existing phone lifecycle.
+- Updated dependencies []:
+  - @yielded/crypto@0.1.0-beta.45
+  - @yielded/jose@0.1.0-beta.45
+  - @yielded/oauth@0.1.0-beta.45
+
+## 0.1.0-beta.44
+
+### Minor Changes
+
+- [#269](https://github.com/yielded-dev/auth/pull/269) [`81d27d1`](https://github.com/yielded-dev/auth/commit/81d27d14918acdd48ac2e51c5f34a6af246ea983) Thanks [@danieljvdm](https://github.com/danieljvdm)! - Remember a public session snapshot in application-supplied local storage and expose its verification state through `auth.identity`. Gate account-owned workflows with `auth.verifiedSession(subjectId)` while preserving remembered local work through offline session failures.
+
+  BEHAVIOR CHANGE: Rename custom actions called `identity` or `verifiedSession`, and use `SubjectId` values from `Schema.SubjectId` or an existing identity codec for custom action projections and lifetime inputs; wire values are unchanged.
+
+### Patch Changes
+
+- [#268](https://github.com/yielded-dev/auth/pull/268) [`11e04fb`](https://github.com/yielded-dev/auth/commit/11e04fb14edbc0d409b88540cd1538fbddf2ab74) Thanks [@danieljvdm](https://github.com/danieljvdm)! - Expose no-argument session actions, TOTP entropy operations, and React Native passkey construction as reusable Effects. BEHAVIOR CHANGE: yield `auth.requireSession`, `auth.signOut`, `auth.renewSession`, `TotpCryptography.randomId`, `TotpCryptography.generateSecret`, and `ReactNativePasskey.make` instead of calling them; HTTP client methods keep their existing call signatures.
+- Updated dependencies []:
+  - @yielded/crypto@0.1.0-beta.44
+  - @yielded/jose@0.1.0-beta.44
+  - @yielded/oauth@0.1.0-beta.44
+
 ## 0.1.0-beta.43
 
 ### Minor Changes

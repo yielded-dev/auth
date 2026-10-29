@@ -36,7 +36,7 @@ import {
   type OpenIdConnectConfigurationError,
 } from "../models";
 import { PrivateKeyClientSecret } from "../privateKeyJwt";
-import { decodeOidcProfile } from "../profile";
+import { decodeOidcProfile, mergeUserInfo } from "../profile";
 import { ProviderRevocation } from "../ProviderRevocation";
 import { tokens } from "../receipt";
 import { subjectInTenant } from "../tenantSubject";
@@ -544,7 +544,7 @@ export const makeConnectedProtocolWithCompatibility = Effect.fn(
 
           const claims =
             provider.userInfo === "merge"
-              ? yield* Effect.gen(function* () {
+              ? yield* (function* () {
                   const userInfo = yield* entry.client
                     .fetchProfile(grant.accessToken)
                     .pipe(
@@ -557,8 +557,8 @@ export const makeConnectedProtocolWithCompatibility = Effect.fn(
 
                   if (subject.sub !== verified.subject) return yield* unavailable();
 
-                  return { ...userInfo, ...Redacted.value(verified.claims) };
-                })
+                  return mergeUserInfo(userInfo, Redacted.value(verified.claims));
+                })()
               : undefined;
 
           return yield* oidcIdentity(
