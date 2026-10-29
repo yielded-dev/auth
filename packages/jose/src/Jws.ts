@@ -168,11 +168,9 @@ export const verify = Effect.fnUntraced(function* (
   if (algorithm !== "HS256") return yield* InvalidKey.make({});
   const hmac = yield* Mac.Mac;
 
-  const valid = yield* hmac.verify(
-    yield* reveal(key.material),
-    parsed.signature,
-    parsed.signingInput,
-  );
+  const valid = yield* hmac
+    .verify(yield* reveal(key.material), parsed.signature, parsed.signingInput)
+    .pipe(Effect.mapError(sanitizeCryptoError));
 
   if (!valid) return yield* SignatureVerificationFailed.make({});
 
