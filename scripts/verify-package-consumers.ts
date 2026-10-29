@@ -201,7 +201,10 @@ console.log("Packaged JWS/JWT, JWE and native OAuth passed with only Effect and 
   }
 });
 
-const checkAuthOperations = Effect.fn("packageConsumers.authOperations")(function* (stage: string) {
+const checkAuthOperations = Effect.fn("packageConsumers.authOperations")(function* (
+  stage: string,
+  repositoryRoot: string,
+) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
 
@@ -213,7 +216,8 @@ import { Password, Totp, OAuth } from "@yielded/auth";
 import { layerWebCrypto } from "@yielded/auth/WebCrypto";
 const fixtures = ${JSON.stringify(authCryptoFixtures)};
 const admission = Password.KdfAdmission.layer({ maxQueued: 0 });
-const runtime = Layer.merge(layerWebCrypto, Password.layerKdf.pipe(Layer.provideMerge(admission)));
+const { layerKdf } = await import(process.argv[2]);
+const runtime = Layer.mergeAll(layerWebCrypto, layerKdf, admission);
 const key = Redacted.make(Schema.decodeUnknownSync(Schema.Uint8ArrayFromBase64Url)(fixtures.totp.key));
 const keys = Layer.succeed(Totp.TotpSecretKeys, { current: Effect.succeed({ keyId: "key1", key }), get: () => Effect.succeed(key) });
 const keyring = { activeKeyId: "key1", keys: [{ id: "key1", material: Redacted.make(fixtures.oauth.key) }] };
@@ -247,12 +251,19 @@ await Effect.runPromise(Effect.gen(function* () {
     assert.deepEqual(Schema.encodeSync(plainSchema)(plain), fixture.plain);
   }
 }).pipe(Effect.provide(services)));
-console.log("Published Auth verifies stored passwords, TOTP/recovery and all four OAuth envelopes without third-party runtime packages.");`,
+console.log("Published Auth verifies stored passwords, TOTP/recovery and all four OAuth envelopes with an explicit Effect platform Kdf.");`,
   );
   for (const runtime of ["node", "bun"] as const) {
     const child = yield* ChildProcess.make(
       runtime,
-      [...(runtime === "bun" ? ["--no-install"] : []), "fixtures/auth-operations.mjs"],
+      [
+        ...(runtime === "bun" ? ["--no-install"] : []),
+        "fixtures/auth-operations.mjs",
+        path.join(
+          repositoryRoot,
+          `node_modules/@effect/platform-${runtime}/dist/${runtime === "bun" ? "Bun" : "Node"}Crypto.js`,
+        ),
+      ],
       { cwd: stage, stdout: "pipe", stderr: "pipe" },
     );
 
@@ -750,7 +761,7 @@ export const verifyPackageConsumers = Effect.fn("verifyPackageConsumers")(functi
         [
           "--input-type=module",
           "--eval",
-          `for (const name of ${JSON.stringify(coreExports.filter((name) => name !== "@yielded/auth/WorkerdServices"))}) await import(name);`,
+          `for (const name of ${JSON.stringify(coreExports)}) await import(name);`,
         ],
         { cwd: stage, stdout: "pipe", stderr: "pipe" },
       );
@@ -765,9 +776,26 @@ export const verifyPackageConsumers = Effect.fn("verifyPackageConsumers")(functi
           message: `Core consumer with only Effect and first-party packages exited ${code}: ${stderr}`,
         });
       yield* Console.log(
-        `All ${coreExports.length} published core exports type-check with only Effect and first-party packages installed; Node loading excludes WorkerdServices.`,
+        `All ${coreExports.length} published core exports type-check and load in Node with only Effect and first-party packages installed.`,
       );
-      yield* checkAuthOperations(stage);
+      yield* checkAuthOperations(stage, repositoryRoot);
+    }),
+  );
+
+  const workerd = yield* stagePackage(repositoryRoot, stage, "auth-platform-workerd");
+
+  yield* withPublishManifests(stage, () =>
+    Effect.gen(function* () {
+      const declarations = path.join(stage, "fixtures/workerd-exports.ts");
+
+      yield* fs.writeFileString(
+        declarations,
+        `export * as Workerd from "@yielded/auth-platform-workerd";
+export * as Passwordless from "@yielded/auth-platform-workerd/Passwordless";`,
+      );
+      yield* checkDeclarations(stage, [declarations]);
+      yield* checkReusableBuild(workerd.destination);
+      yield* Console.log("Workers package exports type-check separately from Auth.");
     }),
   );
 

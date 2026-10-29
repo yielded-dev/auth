@@ -4,7 +4,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
-import { argon2, type Argon2 } from "./argon2";
+import type { Argon2 } from "./argon2";
 
 const uint32 = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 0xffffffff }));
 const bytes = Schema.Uint8Array.check(Schema.isMaxLength(0xffffffff));
@@ -65,7 +65,3 @@ export const makeLayer = (argon2: Argon2) =>
       });
     }),
   ).pipe(Layer.provide(Kdf.layerWebCrypto));
-
-/** Portable Argon2id and Effect WebCrypto KDFs. PasswordHashing applies resource
- * limits and admission. Prefer Effect platform KDFs on Node and Bun. */
-export const layerKdf = makeLayer(argon2);

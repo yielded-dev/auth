@@ -1,6 +1,6 @@
 # Third-party notices
 
-`@yielded/auth` includes a portable Argon2id implementation adapted from the sources below.
+`@yielded/auth-platform-workerd` includes a portable Argon2id implementation adapted from the sources below.
 The Effect services, validation, admission, scheduling and backend integration are
 Yielded code; the portable arithmetic retains its upstream attribution.
 
@@ -10,20 +10,20 @@ Paul Miller and contributors, [noble-hashes](https://github.com/paulmillr/noble-
 
 - noble-hashes 2.3.0, revision `8060cc83bbab6681d23c9eed071db3f3a6b442da`:
   All nine Argon2id v19 known answers from `test/argon2.test.ts` are adapted in
-  `test/password/crypto/argon2.test.ts` and `test/password/crypto/fixtures/argon2-vectors.ts`;
+  `test/argon2.test.ts` and `test/fixtures/argon2-vectors.ts`;
   Argon2d, Argon2i and version 16 are outside the supported API.
   `src/argon2.ts`, `src/blake2.ts`, `src/_blake.ts`, and `src/_u64.ts` are adapted
-  into `src/password/crypto/argon2-core.ts`, `blake2b.ts`, and `word64.ts`. The port retains
+  into `src/internal/argon2-core.ts`, `blake2b.ts`, and `word64.ts`. The port retains
   Argon2id v19 and its unkeyed BLAKE2b machinery, with per-derivation work buffers,
-  explicit little-endian encoding, and an Effect driver in `src/password/crypto/argon2.ts`.
-  `src/password/crypto/argon2-block.c` expresses the same block compression with Wasm SIMD;
-  `src/password/crypto/argon2.wasm` is its compiled artifact. The workerd backend shares
+  explicit little-endian encoding, and an Effect driver in `src/internal/argon2.ts`.
+  `src/internal/argon2-block.c` expresses the same block compression with Wasm SIMD;
+  `src/internal/argon2.wasm` is its compiled artifact. The workerd backend shares
   the portable initialization, indexing, finalization and Effect scheduling.
 
 ## Standards and independent results
 
-Selected numerical vectors are reproduced in `test/password/crypto/vectors.ts` and exercised
-through the portable implementation in `test/password/crypto/primitives.test.ts`:
+Selected numerical vectors are reproduced in `test/vectors.ts` and exercised
+through the portable implementation in `test/primitives.test.ts`:
 
 - RFC 9106 §5.3 (A. Biryukov, D. Dinu, D. Khovratovich, S. Josefsson),
   Argon2id v19. Also cross-referenced by Noble to the Argon2 reference vector at
@@ -38,7 +38,7 @@ The extracted numerical vectors are reformatted as TypeScript data; no RFC prose
 or implementation pseudocode is copied. IETF Code Component terms are retained below.
 
 Source URLs are retained beside each vector. Binary-input, rounded-memory and variable-output Argon2id
-fixtures in `test/password/crypto/fixtures/argon2-vectors.ts` were independently calculated with
+fixtures in `test/fixtures/argon2-vectors.ts` were independently calculated with
 Node's native `crypto.argon2Sync` before the portable implementation was adapted.
 These attributions do not imply an upstream endorsement or transfer an upstream
 security audit to the adapted implementation.

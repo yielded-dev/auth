@@ -89,4 +89,3 @@ export {
 
 export { KdfAdmission } from "./password/KdfAdmission";
 export { Scrypt } from "./password/Scrypt";
-export { layerKdf } from "./password/crypto/kdf";

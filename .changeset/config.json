@@ -14,6 +14,7 @@
       "@yielded/auth-electron",
       "@yielded/auth-persistence",
       "@yielded/auth-persistence-drizzle",
+      "@yielded/auth-platform-workerd",
       "@yielded/auth-react-native",
       "@yielded/auth-simplewebauthn",
       "@yielded/jose",

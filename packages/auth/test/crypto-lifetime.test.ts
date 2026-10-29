@@ -1,7 +1,8 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { it } from "@effect/vitest";
 import * as OAuth from "@yielded/auth/OAuth";
 import * as Password from "@yielded/auth/Password";
-import { KdfAdmission, layerKdf } from "@yielded/auth/Password";
+import { KdfAdmission } from "@yielded/auth/Password";
 import * as Totp from "@yielded/auth/Totp";
 import { layerWebCrypto as layerCryptoWeb } from "@yielded/auth/WebCrypto";
 import * as Context from "effect/Context";
@@ -23,7 +24,7 @@ import fixtures from "./crypto-fixtures";
 
 const runtime = Layer.merge(
   layerCryptoWeb,
-  layerKdf.pipe(Layer.provideMerge(KdfAdmission.layer())),
+  NodeCrypto.layerKdf.pipe(Layer.provideMerge(KdfAdmission.layer())),
 );
 
 // At 5199d99, payload.ts seal borrowed keyring bytes before waiting for entropy;

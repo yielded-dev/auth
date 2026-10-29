@@ -1,4 +1,4 @@
-import * as WorkerdServices from "@yielded/auth/WorkerdServices";
+import * as WorkerdServices from "@yielded/auth-platform-workerd";
 import { Layer } from "effect";
 
 import { AuthRoutes } from "./auth-server";

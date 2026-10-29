@@ -41,10 +41,10 @@ Optional adapters are direct imports, for example `@yielded/auth-persistence-dri
 `@yielded/auth/adapters/Twilio`. Install only the peers
 required by the selected adapters.
 
-For Cloudflare Workers, import `@yielded/auth/WorkerdPasswordlessServices` directly
-for runtime crypto and HTTP without Wasm. Use `@yielded/auth/WorkerdServices` when
+For Cloudflare Workers, import `@yielded/auth-platform-workerd/Passwordless` directly
+for runtime crypto and HTTP without Wasm. Use `@yielded/auth-platform-workerd` when
 the application also hashes passwords. Provide the selected `layer` once to your
-application. These modules are absent from the package root; see
+application. Auth does not depend on this companion package; see
 [runtime setup](./crypto#use-with-auth).
 
 ## Application composition
@@ -100,6 +100,7 @@ See [HTTP integration](../guide/http-and-client) for contract sharing,
 SDK integrations live in companion packages. Import the platform entrypoint
 you use.
 
+- **`@yielded/auth-platform-workerd`**: Workers runtime Layers with WASM password hashing; `/Passwordless` supplies crypto and HTTP without WASM or `nodejs_compat`.
 - **`@yielded/auth-simplewebauthn/Browser`**: Browser WebAuthn ceremonies through `make()` or `layer`.
 - **`@yielded/auth-simplewebauthn/Server`**: Server verification through `make(options)` or `layer`.
 - **`@yielded/auth-react-native`**: iOS passkey ceremonies through `make()` or `layer`; import only in the native entrypoint.

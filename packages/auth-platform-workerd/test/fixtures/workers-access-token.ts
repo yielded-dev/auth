@@ -1,5 +1,5 @@
 import { OAuthScope, OAuthServer } from "@yielded/auth";
-import * as Platform from "@yielded/auth/WorkerdPasswordlessServices";
+import * as Platform from "@yielded/auth-platform-workerd/Passwordless";
 import { Jwks } from "@yielded/jose";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";

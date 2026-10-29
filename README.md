@@ -171,4 +171,4 @@ package exports, dependency purity, tests, and builds use Vite+.
 [MIT](LICENSE)
 
 See [third-party notices](THIRD_PARTY_NOTICES.md) for open-source credits and
-licenses accompanying the reusable crypto and JOSE packages.
+licenses accompanying the Workers and JOSE packages.

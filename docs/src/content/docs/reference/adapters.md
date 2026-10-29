@@ -41,8 +41,9 @@ production adapter to verify database concurrency or recovery.
 ### Test services
 
 `Testing.services(options?)` supplies `PasswordHashing` plus Effect `SecureRandom` and `Digest`, using
-portable Argon2id at the default password cost. Provide it to both Auth and
-`Testing.layer`.
+the default password cost. Supply an Effect Kdf Layer with Argon2id support,
+such as `NodeCrypto.layerKdf`, then provide the resulting services to both Auth
+and `Testing.layer`.
 
 | Option or requirement | Behavior                                                                                                                                                                 |
 | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |

@@ -6,8 +6,9 @@ description: Supply Effect crypto services and bounded password-derivation backe
 Auth and JOSE use `effect/crypto` for secure randomness, digests, message
 authentication, authenticated encryption, signatures, and key formats. Applications
 own keys, nonce uniqueness, accepted algorithms, and credential policy.
-Password hashing uses Effect Kdf. Auth supplies portable Argon2id and a separate
-scrypt adapter, with password cost limits and shared admission.
+Password hashing uses Effect Kdf. Auth owns password cost limits, shared admission,
+and a separate scrypt adapter. `@yielded/auth-platform-workerd` owns the Workers
+runtime layers and WASM Argon2id implementation.
 
 ## Compose a backend
 
@@ -64,9 +65,9 @@ Effect's WebCrypto AEAD Layer supplies both. Existing application configuration
 continues to use redacted key bytes or base64url keyring material.
 
 For Cloudflare Workers, provide `WorkerdPasswordlessServices.layer` from
-`@yielded/auth/WorkerdPasswordlessServices`. It includes these crypto services
+`@yielded/auth-platform-workerd/Passwordless`. It includes these crypto services
 and a Fetch `HttpClient`, with no Wasm or Node.js compatibility requirement.
-Use `WorkerdServices.layer` from `@yielded/auth/WorkerdServices` for passwords;
+Use `WorkerdServices.layer` from `@yielded/auth-platform-workerd` for passwords;
 that Layer also supplies password hashing, Wasm Argon2id, native scrypt, and
 bounded admission. Enable `nodejs_compat` and bundle with Wrangler.
 
@@ -95,9 +96,8 @@ export const PasswordLive = Password.PasswordHashing.layer().pipe(
 );
 ```
 
-Use `BunCrypto.layer` on Bun. `Password.layerKdf` supplies portable Argon2id and
-Effect WebCrypto KDFs when native Argon2id is unavailable. It can be combined with
-`WebCrypto.layerWebCrypto` and `Password.KdfAdmission.layer()`.
+Use `BunCrypto.layer` on Bun. Native Argon2id requires runtime support; other hosts
+can supply their own Effect Kdf implementation.
 Scrypt is optional: without `PasswordScrypt.layer`, attempts to derive or verify
 scrypt fail with `PasswordHashingUnavailable`. Other password formats still work.
 
@@ -128,5 +128,5 @@ password and output buffers are cleared after work; JavaScript and native engine
 cannot guarantee erasure of every copy.
 
 See the [password guide](../guide/passwords.md) and the
-[shipped notices](https://github.com/yielded-dev/auth/blob/main/packages/auth/THIRD_PARTY_NOTICES.md)
+[shipped notices](https://github.com/yielded-dev/auth/blob/main/packages/auth-platform-workerd/THIRD_PARTY_NOTICES.md)
 for the retained Argon2 implementation's attribution.

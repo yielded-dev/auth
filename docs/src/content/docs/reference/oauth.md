@@ -282,7 +282,7 @@ On Workers, register the bounded verification's `runPromiseExit` promise with
 Do not abort that retained verification on client disconnect: other requests may
 still need its refresh. Keep the refresh deadline within the platform's lifetime
 extension; the default is five seconds. The
-[minimal Worker fixture](https://github.com/yielded-dev/auth/blob/main/packages/auth/test/fixtures/workers-access-token.ts)
+[minimal Worker fixture](https://github.com/yielded-dev/auth/blob/main/packages/auth-platform-workerd/test/fixtures/workers-access-token.ts)
 shows the composition. Cookies, application claims and permissions stay with the host.
 
 For preloaded keys, `OAuthServer.makeAccessTokenVerifier({ issuer, resource,
@@ -459,7 +459,7 @@ supplies those application Layers. Native providers require HTTP and crypto serv
 OpenID Connect also requires Effect `Signature`. Protectors require Effect
 `Aead` and `SecureRandom`; Effect supplies XChaCha20-Poly1305. On Workers,
 provide `WorkerdPasswordlessServices.layer` from
-`@yielded/auth/WorkerdPasswordlessServices` for HTTP and crypto without Wasm.
+`@yielded/auth-platform-workerd/Passwordless` for HTTP and crypto without Wasm.
 Use `WorkerdServices` when the application also hashes passwords; see
 [runtime composition](./crypto.md#use-with-auth).
 Keep the resulting Layer alive for the application's lifetime.

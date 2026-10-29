@@ -22,8 +22,7 @@
   },
   "files": [
     "dist",
-    "src",
-    "THIRD_PARTY_NOTICES.md"
+    "src"
   ],
   "type": "module",
   "sideEffects": [],
@@ -71,8 +70,6 @@
     "./Schema": "./src/Schema.ts",
     "./OAuthScope": "./src/OAuthScope.ts",
     "./WebCrypto": "./src/WebCrypto.ts",
-    "./WorkerdServices": "./src/WorkerdServices.ts",
-    "./WorkerdPasswordlessServices": "./src/WorkerdPasswordlessServices.ts",
     "./Sessions": "./src/Sessions.ts",
     "./SessionContract": "./src/SessionContract.ts",
     "./Proofs": "./src/Proofs.ts",
@@ -101,8 +98,7 @@
   "scripts": {
     "build": "vp pack",
     "check": "effect-tsrs diagnostics --project tsconfig.json --type-check --strict",
-    "test": "vp test --passWithNoTests",
-    "build:wasm": "clang --target=wasm32 -O3 -msimd128 -ffreestanding -fno-builtin -nostdlib -Wl,--no-entry -Wl,--import-memory -Wl,--export=argon2_block -Wl,--export=__heap_base -Wl,--strip-all src/password/crypto/argon2-block.c -o src/password/crypto/argon2.wasm"
+    "test": "vp test --passWithNoTests"
   },
   "dependencies": {
     "@yielded/jose": "workspace:*",

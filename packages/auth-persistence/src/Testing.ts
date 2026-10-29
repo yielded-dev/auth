@@ -17,7 +17,6 @@ import {
   snapshotPasswordRequirement,
   snapshotPasswordRevision,
   KdfAdmission,
-  layerKdf,
 } from "@yielded/auth/Password";
 import { hooksLayer, reportPersistenceFailure } from "@yielded/auth/Persistence";
 import { Email, SubjectId, TokenDigest } from "@yielded/auth/Schema";
@@ -88,8 +87,9 @@ export interface ServicesOptions {
   readonly seed?: string | number;
 }
 
-/** Portable password hashing and Effect secure randomness and digests for tests. Requires global WebCrypto
- * at acquisition; uses the default password cost and one shared KDF admission owner.
+/** Password hashing and Effect secure randomness and digests for tests. Supply an
+ * Effect Kdf Layer with Argon2id support; requires global WebCrypto at acquisition.
+ * Uses the default password cost and one shared KDF admission owner.
  * A seed restarts its private random sequence on each acquisition; it never changes
  * the caller's Random or Clock services. Seeded credentials are only suitable for tests.
  * Provide this after composing Auth with Testing.layer and application claims.
@@ -118,9 +118,10 @@ export const services = (options: ServicesOptions = {}) => {
               }),
             ).pipe(Layer.provideMerge(Digest.layerWebCrypto));
 
-      const backend = layerKdf.pipe(Layer.provideMerge(KdfAdmission.layer()));
-
-      return PasswordHashing.layer().pipe(Layer.provide(backend), Layer.provideMerge(entropy));
+      return PasswordHashing.layer().pipe(
+        Layer.provide(KdfAdmission.layer()),
+        Layer.provideMerge(entropy),
+      );
     }),
   );
 };

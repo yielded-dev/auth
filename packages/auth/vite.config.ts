@@ -55,8 +55,6 @@ export default defineConfig({
       "src/Schema.ts",
       "src/OAuthScope.ts",
       "src/WebCrypto.ts",
-      "src/WorkerdServices.ts",
-      "src/WorkerdPasswordlessServices.ts",
       "src/Sessions.ts",
       "src/SessionContract.ts",
       "src/Proofs.ts",
@@ -72,8 +70,6 @@ export default defineConfig({
       "src/PasskeyContract.ts",
       "src/TotpContract.ts",
     ],
-    deps: { neverBundle: [/\.wasm$/] },
-    copy: [{ from: "src/password/crypto/argon2.wasm", to: "dist/password/crypto" }],
     dts: true,
     // Preserve implementation boundaries so consumers can discard unused modules.
     unbundle: true,

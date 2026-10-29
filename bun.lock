@@ -19,6 +19,7 @@
         "@yielded/auth": "workspace:*",
         "@yielded/auth-persistence": "workspace:*",
         "@yielded/auth-persistence-drizzle": "workspace:*",
+        "@yielded/auth-platform-workerd": "workspace:*",
         "@yielded/auth-simplewebauthn": "workspace:*",
         "@yielded/effect-tsrs": "catalog:",
         "@yielded/jose": "workspace:*",
@@ -61,6 +62,7 @@
         "@yielded/auth": "workspace:*",
         "@yielded/auth-persistence": "workspace:*",
         "@yielded/auth-persistence-drizzle": "workspace:*",
+        "@yielded/auth-platform-workerd": "workspace:*",
         "@yielded/auth-simplewebauthn": "workspace:*",
         "drizzle-orm": "catalog:",
         "effect": "catalog:",
@@ -326,6 +328,26 @@
         "@effect/sql-sqlite-node",
         "@effect/sql-sqlite-wasm",
       ],
+    },
+    "packages/auth-platform-workerd": {
+      "name": "@yielded/auth-platform-workerd",
+      "version": "0.1.0-beta.46",
+      "dependencies": {
+        "@yielded/auth": "workspace:*",
+      },
+      "devDependencies": {
+        "@effect/vitest": "catalog:",
+        "@types/node": "catalog:",
+        "@yielded/jose": "workspace:*",
+        "effect": "catalog:",
+        "typescript": "catalog:",
+        "vite": "catalog:",
+        "vite-plus": "catalog:",
+        "vitest": "catalog:",
+      },
+      "peerDependencies": {
+        "effect": "^4.1.0",
+      },
     },
     "packages/auth-react-native": {
       "name": "@yielded/auth-react-native",
@@ -1771,6 +1793,8 @@
     "@yielded/auth-persistence": ["@yielded/auth-persistence@workspace:packages/auth-persistence"],
 
     "@yielded/auth-persistence-drizzle": ["@yielded/auth-persistence-drizzle@workspace:packages/auth-persistence-drizzle"],
+
+    "@yielded/auth-platform-workerd": ["@yielded/auth-platform-workerd@workspace:packages/auth-platform-workerd"],
 
     "@yielded/auth-react-native": ["@yielded/auth-react-native@workspace:packages/auth-react-native"],
 

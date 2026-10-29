@@ -4,7 +4,7 @@ import * as Hex from "effect/encoding/Hex";
 import * as Schema from "effect/Schema";
 import { expect } from "vite-plus/test";
 
-import { argon2 } from "../../../src/password/crypto/argon2";
+import { argon2 } from "../src/internal/argon2";
 import { argon2Vectors, nativeArgon2Vectors } from "./fixtures/argon2-vectors";
 
 const bytes = Schema.decodeSync(Schema.Uint8ArrayFromHex);
