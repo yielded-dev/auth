@@ -54,6 +54,7 @@ export default defineConfig({
       "src/Operations.ts",
       "src/Schema.ts",
       "src/OAuthScope.ts",
+      "src/WebCrypto.ts",
       "src/Sessions.ts",
       "src/SessionContract.ts",
       "src/Proofs.ts",

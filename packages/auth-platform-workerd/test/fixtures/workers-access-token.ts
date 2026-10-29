@@ -1,8 +1,7 @@
 import { OAuthScope, OAuthServer } from "@yielded/auth";
+import * as WebCrypto from "@yielded/auth/WebCrypto";
 import { Jwks } from "@yielded/jose";
 import * as Cause from "effect/Cause";
-import * as SecureRandom from "effect/crypto/SecureRandom";
-import * as Signature from "effect/crypto/Signature";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
@@ -20,11 +19,7 @@ export const makeWorker = (authority: {
 }) => {
   const runtime = ManagedRuntime.make(
     Jwks.layerRemote({ url: authority.jwksUrl, maxKeys: 16 }).pipe(
-      Layer.provideMerge(
-        Layer.merge(Signature.layerWebCrypto, FetchHttpClient.layer).pipe(
-          Layer.provideMerge(SecureRandom.layerWebCrypto),
-        ),
-      ),
+      Layer.provideMerge(Layer.merge(WebCrypto.layer, FetchHttpClient.layer)),
     ),
   );
 

@@ -16,7 +16,7 @@ import { Auth, AuthContract, Client, Http, Password, Sessions } from "@yielded/a
 
 Contracts, strategies, and client helpers use the same root import. Distinct
 names such as `PasskeyContract` and `Passkey` keep their roles clear.
-Lower-level modules such as `OperationHttp` and `Strava` are
+Lower-level modules such as `OperationHttp`, `Strava`, and `WebCrypto` are
 also root namespaces. Access individual exports through the module, for example
 `Proofs.ProofKeys` or `Password.KdfAdmission.layer()`.
 
@@ -42,8 +42,8 @@ Optional adapters are direct imports, for example `@yielded/auth-persistence-dri
 required by the selected adapters.
 
 For Cloudflare Workers with password hashing, use `@yielded/auth-platform-workerd`
-and provide its `layer` once to your application. Otherwise, compose Effect's crypto
-and HTTP Layers directly. Auth does not depend on this companion package; see
+and provide its `layer` once to your application. Use `WebCrypto.layer` for portable
+crypto without password hashing; provide an HTTP client separately. Auth does not depend on this companion package; see
 [runtime setup](./crypto#use-with-auth).
 
 ## Application composition

@@ -12,10 +12,11 @@ runtime layers and WASM Argon2id implementation.
 
 ## Compose a backend
 
-Use the Effect platform Layer for your runtime:
+`WebCrypto.layer` provides secure randomness, digests, HMAC, authenticated encryption,
+and signatures through Effect:
 
 ```ts
-import { NodeCrypto } from "@effect/platform-node";
+import { WebCrypto } from "@yielded/auth";
 import { Effect } from "effect";
 import { Aead, SecureRandom } from "effect/crypto";
 
@@ -33,14 +34,15 @@ const protect = Effect.gen(function* () {
     { nonce, aad: new TextEncoder().encode("application/purpose/v1") },
   );
   return { nonce, ciphertext };
-}).pipe(Effect.provide(NodeCrypto.layer));
+}).pipe(Effect.provide(WebCrypto.layer));
 ```
 
 Never reuse a nonce with the same key.
-Use `BunCrypto` from `@effect/platform-bun` on Bun. For browsers and Workers,
-compose the required `effect/crypto` modules' `layerWebCrypto` Layers directly.
-`Mac`, `Aead`, and `Signature` require `SecureRandom`; supply
-`SecureRandom.layerWebCrypto` through `Layer.provideMerge`.
+The preset is also available directly from `@yielded/auth/WebCrypto`. Use
+`NodeCrypto.layer` from `@effect/platform-node` or `BunCrypto.layer` from
+`@effect/platform-bun` for native crypto, including Argon2id.
+Consumers needing a single capability can supply its `effect/crypto` Layer directly.
+HTTP is separate: provide `FetchHttpClient.layer` or your configured client when needed.
 
 Effect keys are opaque snapshots. `Mac.key` and `Aead.key` import raw bytes;
 `KeyFormat` imports and exports asymmetric keys as JWK, PKCS8, or SPKI.
@@ -65,10 +67,10 @@ Effect's WebCrypto AEAD Layer supplies both. Existing application configuration
 continues to use redacted key bytes or base64url keyring material.
 
 On Cloudflare Workers, `WorkerdServices.layer` from `@yielded/auth-platform-workerd`
-supplies crypto, a Fetch `HttpClient`, password hashing, Wasm Argon2id, native scrypt,
-and bounded admission. Enable `nodejs_compat` and bundle with Wrangler. Without
-password hashing, compose Effect's WebCrypto Layers and `FetchHttpClient.layer`
-directly; these need neither Wasm nor Node.js compatibility.
+combines `WebCrypto.layer` with password hashing, Wasm Argon2id, native scrypt,
+and bounded admission. Enable `nodejs_compat` and bundle with Wrangler. Supply
+HTTP separately, as in the [Workers example](https://github.com/yielded-dev/auth/blob/main/examples/auth/src/workerd-services.ts).
+`WebCrypto.layer` alone needs neither Wasm nor Node.js compatibility.
 
 Provide the selected Layer to the application once. Storage, account policy,
 keys, delivery, and protocol adapters remain application-owned. Direct callers of
