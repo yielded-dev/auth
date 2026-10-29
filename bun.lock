@@ -487,6 +487,9 @@
     "@effect/tsgo-darwin-x64",
     "@typescript/typescript-darwin-arm64",
   ],
+  "patchedDependencies": {
+    "alchemy@2.0.0-beta.80": "patches/alchemy@2.0.0-beta.80.patch",
+  },
   "overrides": {
     "vitest": "catalog:",
   },
