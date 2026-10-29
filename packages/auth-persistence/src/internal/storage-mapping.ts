@@ -16,7 +16,8 @@ import {
   type StatefulSessionRecord,
 } from "@yielded/auth/Sessions";
 import * as Cause from "effect/Cause";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
@@ -50,7 +51,7 @@ const decode = <S extends Schema.Codec<unknown, unknown>>(schema: S, value: unkn
 const string = (value: unknown) => Schema.decodeUnknownSync(Schema.String)(value);
 
 /** Derive shared row mappings from a managed or custom storage layout.
- * Acquire Effect Crypto once; the returned allocators retain that implementation.
+ * Acquire Effect SecureRandom once; the returned allocators retain that implementation.
  * Each factory returns an Effect that fails with PersistenceMappingError when
  * its role tables are missing. Supplying native tables derives
  * batch commit predicates and subject policy columns. Adapter authors may refine
@@ -60,11 +61,13 @@ export const makeMappings = Effect.fnUntraced(function* (
   input: MappingInput,
   tables?: NativeSqlTables,
 ) {
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
+  const digests = yield* Digest.Digest;
   const sql = (yield* SqlClient.SqlClient).withoutTransforms();
 
   const allocate = randomId.pipe(
-    Effect.provideService(Crypto.Crypto, crypto),
+    Effect.provideService(SecureRandom.SecureRandom, crypto),
+    Effect.provideService(Digest.Digest, digests),
     Effect.catchCause((cause) => Effect.failCause(Cause.map(cause, failure))),
   );
 

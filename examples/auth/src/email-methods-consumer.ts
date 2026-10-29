@@ -7,7 +7,9 @@ import {
   Schema as AuthSchema,
   Sessions,
 } from "@yielded/auth";
-import { Crypto, DateTime, Effect, Layer, Option, Schema, Redacted } from "effect";
+import { DateTime, Effect, Layer, Option, Schema, Redacted } from "effect";
+import { SecureRandom } from "effect/crypto";
+import * as Digest from "effect/crypto/Digest";
 import { Base64Url } from "effect/encoding";
 
 import {
@@ -131,7 +133,8 @@ const clone = (s: State): State => ({
  */
 export const makeEmailConsumer = Effect.gen(function* () {
   const hooks = yield* Hooks.LifecycleHooks;
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
+  const digests = yield* Digest.Digest;
 
   let state: State = {
     subjects: new Map(),
@@ -424,8 +427,8 @@ export const makeEmailConsumer = Effect.gen(function* () {
         Effect.mapError(() => Email.EmailUnavailable.make({})),
       );
 
-      const digest = yield* crypto
-        .digest("SHA-256", new TextEncoder().encode(text))
+      const digest = yield* digests
+        .digest(Digest.sha256, new TextEncoder().encode(text))
         .pipe(Effect.mapError(() => Email.EmailUnavailable.make({})));
 
       return {

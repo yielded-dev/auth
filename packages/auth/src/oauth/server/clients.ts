@@ -3,7 +3,8 @@ import { Signature } from "@yielded/crypto/Signature";
 import { Jwk, Jwks, Jwt } from "@yielded/jose";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Base64 from "effect/encoding/Base64";
 import * as Base64Url from "effect/encoding/Base64Url";
@@ -207,7 +208,8 @@ export const makeClients = Effect.fnUntraced(function* (
   const cache = new Map<string, Cached<Client>>();
   const keyCache = new Map<string, Cached<Jwks.Jwks["Service"]>>();
   const localResolvers = new WeakMap<Jwks.KeySet, Jwks.Jwks["Service"]>();
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
+  const digests = yield* Digest.Digest;
 
   const key = yield* hmac
     .importKey({
@@ -439,8 +441,11 @@ export const makeClients = Effect.fnUntraced(function* (
     )
       return yield* reject("invalid_client");
 
-    const receiptId = yield* crypto
-      .digest("SHA-256", new TextEncoder().encode(JSON.stringify([client.clientId, claims.jti])))
+    const receiptId = yield* digests
+      .digest(
+        Digest.sha256,
+        new TextEncoder().encode(JSON.stringify([client.clientId, claims.jti])),
+      )
       .pipe(
         Effect.map(Base64Url.encode),
         Effect.catchCause((cause) =>
