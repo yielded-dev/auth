@@ -37,10 +37,10 @@ const protect = Effect.gen(function* () {
 ```
 
 Never reuse a nonce with the same key.
-Use `BunCrypto` from `@effect/platform-bun` on Bun. For WebCrypto hosts,
-`@yielded/auth/WebCrypto` exports `layerWebCrypto`, supplying `SecureRandom`,
-`Digest`, `Mac`, `Aead`, and `Signature`. Its `layerCryptoWeb` supplies only
-`SecureRandom` and `Digest`.
+Use `BunCrypto` from `@effect/platform-bun` on Bun. For browsers and Workers,
+compose the required `effect/crypto` modules' `layerWebCrypto` Layers directly.
+`Mac`, `Aead`, and `Signature` require `SecureRandom`; supply
+`SecureRandom.layerWebCrypto` through `Layer.provideMerge`.
 
 Effect keys are opaque snapshots. `Mac.key` and `Aead.key` import raw bytes;
 `KeyFormat` imports and exports asymmetric keys as JWK, PKCS8, or SPKI.
@@ -64,12 +64,11 @@ context. Its OAuth protectors use XChaCha20-Poly1305; TOTP uses AES-256-GCM.
 Effect's WebCrypto AEAD Layer supplies both. Existing application configuration
 continues to use redacted key bytes or base64url keyring material.
 
-For Cloudflare Workers, provide `WorkerdPasswordlessServices.layer` from
-`@yielded/auth-platform-workerd/Passwordless`. It includes these crypto services
-and a Fetch `HttpClient`, with no Wasm or Node.js compatibility requirement.
-Use `WorkerdServices.layer` from `@yielded/auth-platform-workerd` for passwords;
-that Layer also supplies password hashing, Wasm Argon2id, native scrypt, and
-bounded admission. Enable `nodejs_compat` and bundle with Wrangler.
+On Cloudflare Workers, `WorkerdServices.layer` from `@yielded/auth-platform-workerd`
+supplies crypto, a Fetch `HttpClient`, password hashing, Wasm Argon2id, native scrypt,
+and bounded admission. Enable `nodejs_compat` and bundle with Wrangler. Without
+password hashing, compose Effect's WebCrypto Layers and `FetchHttpClient.layer`
+directly; these need neither Wasm nor Node.js compatibility.
 
 Provide the selected Layer to the application once. Storage, account policy,
 keys, delivery, and protocol adapters remain application-owned. Direct callers of

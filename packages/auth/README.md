@@ -14,10 +14,9 @@ public results and telemetry. Runtime dependencies are Effect and the first-part
 `@yielded/jose` and `@yielded/oauth` packages.
 General cryptographic operations use `effect/crypto`.
 
-On Cloudflare Workers, provide `WorkerdPasswordlessServices.layer` from
-`@yielded/auth-platform-workerd/Passwordless` for runtime crypto and HTTP without Wasm.
-Use `@yielded/auth-platform-workerd` to include password hashing and bounded KDF
-admission. Other runtimes can compose crypto Layers explicitly. Supply keys separately;
+On Cloudflare Workers, use `@yielded/auth-platform-workerd` for runtime crypto,
+HTTP, password hashing, and bounded KDF admission. Applications without password
+hashing can compose Effect's WebCrypto and HTTP Layers directly. Supply keys separately;
 see [runtime setup](https://yielded.dev/auth/reference/crypto/#use-with-auth).
 
 OAuth providers require an explicit nonretrying, nonredirecting Effect `HttpClient`.

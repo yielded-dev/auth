@@ -39,7 +39,6 @@ import {
   StaleAuthentication,
   type StatefulSessionPersistence,
 } from "@yielded/auth/Sessions";
-import { layerWebCrypto as layerCryptoWeb } from "@yielded/auth/WebCrypto";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -106,7 +105,7 @@ export const services = (options: ServicesOptions = {}) => {
 
       const entropy =
         seed === undefined
-          ? layerCryptoWeb
+          ? Layer.merge(SecureRandom.layerWebCrypto, Digest.layerWebCrypto)
           : Layer.effect(
               SecureRandom.SecureRandom,
               Effect.gen(function* () {

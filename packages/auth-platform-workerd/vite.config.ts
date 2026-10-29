@@ -3,7 +3,7 @@ import { defineConfig } from "vite-plus";
 export default defineConfig({
   pack: {
     tsconfig: "tsconfig.build.json",
-    entry: ["src/index.ts", "src/Passwordless.ts"],
+    entry: ["src/index.ts"],
     deps: { neverBundle: [/\.wasm$/] },
     copy: [{ from: "src/internal/argon2.wasm", to: "dist/internal" }],
     dts: true,

@@ -16,9 +16,9 @@ import { Auth, AuthContract, Client, Http, Password, Sessions } from "@yielded/a
 
 Contracts, strategies, and client helpers use the same root import. Distinct
 names such as `PasskeyContract` and `Passkey` keep their roles clear.
-Lower-level modules such as `HttpServer`, `Rpc`, `Strava`, and `WebCrypto` are
+Lower-level modules such as `OperationHttp` and `Strava` are
 also root namespaces. Access individual exports through the module, for example
-`Proofs.ProofKeys` or `WebCrypto.layerWebCrypto`.
+`Proofs.ProofKeys` or `Password.KdfAdmission.layer()`.
 
 Direct module paths remain available and expose the same namespaces:
 
@@ -41,10 +41,9 @@ Optional adapters are direct imports, for example `@yielded/auth-persistence-dri
 `@yielded/auth/adapters/Twilio`. Install only the peers
 required by the selected adapters.
 
-For Cloudflare Workers, import `@yielded/auth-platform-workerd/Passwordless` directly
-for runtime crypto and HTTP without Wasm. Use `@yielded/auth-platform-workerd` when
-the application also hashes passwords. Provide the selected `layer` once to your
-application. Auth does not depend on this companion package; see
+For Cloudflare Workers with password hashing, use `@yielded/auth-platform-workerd`
+and provide its `layer` once to your application. Otherwise, compose Effect's crypto
+and HTTP Layers directly. Auth does not depend on this companion package; see
 [runtime setup](./crypto#use-with-auth).
 
 ## Application composition
@@ -100,7 +99,7 @@ See [HTTP integration](../guide/http-and-client) for contract sharing,
 SDK integrations live in companion packages. Import the platform entrypoint
 you use.
 
-- **`@yielded/auth-platform-workerd`**: Workers runtime Layers with WASM password hashing; `/Passwordless` supplies crypto and HTTP without WASM or `nodejs_compat`.
+- **`@yielded/auth-platform-workerd`**: Workers runtime Layers with WASM password hashing.
 - **`@yielded/auth-simplewebauthn/Browser`**: Browser WebAuthn ceremonies through `make()` or `layer`.
 - **`@yielded/auth-simplewebauthn/Server`**: Server verification through `make(options)` or `layer`.
 - **`@yielded/auth-react-native`**: iOS passkey ceremonies through `make()` or `layer`; import only in the native entrypoint.

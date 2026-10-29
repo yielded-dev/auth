@@ -4,7 +4,6 @@ import * as OAuth from "@yielded/auth/OAuth";
 import * as Password from "@yielded/auth/Password";
 import { KdfAdmission } from "@yielded/auth/Password";
 import * as Totp from "@yielded/auth/Totp";
-import { layerWebCrypto as layerCryptoWeb } from "@yielded/auth/WebCrypto";
 import * as Context from "effect/Context";
 import * as Aead from "effect/crypto/Aead";
 import * as Kdf from "effect/crypto/Kdf";
@@ -22,10 +21,7 @@ import { expect } from "vite-plus/test";
 
 import fixtures from "./crypto-fixtures";
 
-const runtime = Layer.merge(
-  layerCryptoWeb,
-  NodeCrypto.layerKdf.pipe(Layer.provideMerge(KdfAdmission.layer())),
-);
+const runtime = Layer.merge(NodeCrypto.layer, KdfAdmission.layer());
 
 // At 5199d99, payload.ts seal borrowed keyring bytes before waiting for entropy;
 // the Layer finalizer wiped them without joining seal. Gate this window because
@@ -257,6 +253,6 @@ for (const method of ["hash", "verify", "dummy"] as const) {
       expect(bytes?.every((byte) => byte === 0)).toBe(true);
       yield* operation;
       expect(output.every((byte) => byte === 0)).toBe(true);
-    }).pipe(Effect.provide(layerCryptoWeb)),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 }

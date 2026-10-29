@@ -1,9 +1,11 @@
 import { OAuthScope, OAuthServer } from "@yielded/auth";
-import * as Platform from "@yielded/auth-platform-workerd/Passwordless";
 import { Jwks } from "@yielded/jose";
 import * as Cause from "effect/Cause";
+import * as SecureRandom from "effect/crypto/SecureRandom";
+import * as Signature from "effect/crypto/Signature";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as Redacted from "effect/Redacted";
@@ -18,7 +20,11 @@ export const makeWorker = (authority: {
 }) => {
   const runtime = ManagedRuntime.make(
     Jwks.layerRemote({ url: authority.jwksUrl, maxKeys: 16 }).pipe(
-      Layer.provideMerge(Platform.layer),
+      Layer.provideMerge(
+        Layer.merge(Signature.layerWebCrypto, FetchHttpClient.layer).pipe(
+          Layer.provideMerge(SecureRandom.layerWebCrypto),
+        ),
+      ),
     ),
   );
 

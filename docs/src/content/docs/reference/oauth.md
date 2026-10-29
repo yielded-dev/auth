@@ -458,8 +458,7 @@ The [runnable application](https://github.com/yielded-dev/auth/blob/main/example
 supplies those application Layers. Native providers require HTTP and crypto services;
 OpenID Connect also requires Effect `Signature`. Protectors require Effect
 `Aead` and `SecureRandom`; Effect supplies XChaCha20-Poly1305. On Workers,
-provide `WorkerdPasswordlessServices.layer` from
-`@yielded/auth-platform-workerd/Passwordless` for HTTP and crypto without Wasm.
+compose Effect's WebCrypto Layers and `FetchHttpClient.layer` for HTTP and crypto.
 Use `WorkerdServices` when the application also hashes passwords; see
 [runtime composition](./crypto.md#use-with-auth).
 Keep the resulting Layer alive for the application's lifetime.

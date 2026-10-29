@@ -213,11 +213,10 @@ const checkAuthOperations = Effect.fn("packageConsumers.authOperations")(functio
     `import assert from "node:assert/strict";
 import { Effect, Layer, Redacted, Schema } from "effect";
 import { Password, Totp, OAuth } from "@yielded/auth";
-import { layerWebCrypto } from "@yielded/auth/WebCrypto";
 const fixtures = ${JSON.stringify(authCryptoFixtures)};
 const admission = Password.KdfAdmission.layer({ maxQueued: 0 });
-const { layerKdf } = await import(process.argv[2]);
-const runtime = Layer.mergeAll(layerWebCrypto, layerKdf, admission);
+const { layer } = await import(process.argv[2]);
+const runtime = Layer.merge(layer, admission);
 const key = Redacted.make(Schema.decodeUnknownSync(Schema.Uint8ArrayFromBase64Url)(fixtures.totp.key));
 const keys = Layer.succeed(Totp.TotpSecretKeys, { current: Effect.succeed({ keyId: "key1", key }), get: () => Effect.succeed(key) });
 const keyring = { activeKeyId: "key1", keys: [{ id: "key1", material: Redacted.make(fixtures.oauth.key) }] };
@@ -251,7 +250,7 @@ await Effect.runPromise(Effect.gen(function* () {
     assert.deepEqual(Schema.encodeSync(plainSchema)(plain), fixture.plain);
   }
 }).pipe(Effect.provide(services)));
-console.log("Published Auth verifies stored passwords, TOTP/recovery and all four OAuth envelopes with an explicit Effect platform Kdf.");`,
+console.log("Published Auth verifies stored passwords, TOTP/recovery and all four OAuth envelopes with an explicit Effect platform crypto Layer.");`,
   );
   for (const runtime of ["node", "bun"] as const) {
     const child = yield* ChildProcess.make(
@@ -790,8 +789,7 @@ export const verifyPackageConsumers = Effect.fn("verifyPackageConsumers")(functi
 
       yield* fs.writeFileString(
         declarations,
-        `export * as Workerd from "@yielded/auth-platform-workerd";
-export * as Passwordless from "@yielded/auth-platform-workerd/Passwordless";`,
+        `export * as Workerd from "@yielded/auth-platform-workerd";`,
       );
       yield* checkDeclarations(stage, [declarations]);
       yield* checkReusableBuild(workerd.destination);
