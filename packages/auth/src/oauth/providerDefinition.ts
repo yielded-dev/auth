@@ -20,4 +20,7 @@ export interface ProviderDefinition<E = never, R = never> {
     E,
     R
   >;
+  /** Query parameters the provider appends to every callback beyond the OAuth
+   * response fields. The callback refuses any other parameter. */
+  readonly callbackQueryParameters?: ReadonlyArray<string>;
 }

@@ -12,9 +12,11 @@ export type ProviderRegistration = typeof Registration.Type;
 export type ProviderOptions = OidcPresetOptions<ProviderRegistration>;
 
 /** Google OpenID Connect with client_secret_post, account selection and offline
- * consent. hd is a consent hint; enforce Workspace policy against verified claims. */
-export const provider = (options: ProviderOptions) =>
-  makeOidcPreset(options, Registration, ({ hd, ...registration }) => ({
+ * consent. hd is a consent hint; enforce Workspace policy against verified claims.
+ * Google's callback also carries scope, authuser and prompt, and hd for Workspace
+ * accounts. */
+export const provider = (options: ProviderOptions) => ({
+  ...makeOidcPreset(options, Registration, ({ hd, ...registration }) => ({
     ...registration,
     protocol: "oidc",
     issuer: "https://accounts.google.com",
@@ -25,4 +27,6 @@ export const provider = (options: ProviderOptions) =>
       access_type: "offline",
       ...(hd === undefined ? {} : { hd }),
     },
-  }));
+  })),
+  callbackQueryParameters: ["scope", "authuser", "prompt", "hd"],
+});

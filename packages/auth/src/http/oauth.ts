@@ -114,8 +114,15 @@ export const makeOAuth = <E, R, ResponseR>(
               );
             paths.add(path);
             ids.add(callbackId);
+
+            const allowedQueryParameters = [
+              ...(declaration.callbackQueryParameters ?? []),
+              ...(callback.allowedQueryParameters ?? []),
+            ];
+
             captured.push({
               ...callback,
+              ...(allowedQueryParameters.length === 0 ? {} : { allowedQueryParameters }),
               path,
               callbackId,
               redirectUri: yield* Schema.decodeResult(OAuthRedirectUri)(`${origin}${path}`),
