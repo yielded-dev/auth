@@ -344,6 +344,7 @@ export const layer = <E, R>(options: Options<E, R>) => {
           "scope",
           "authuser",
           "prompt",
+          "hd",
           ...(formPost ? ["user"] : []),
         ]);
 
