@@ -48,6 +48,8 @@ export class Rejected extends Schema.TaggedError<Rejected>()("OAuthServerRejecte
     "access_denied",
     "login_required",
     "consent_required",
+    "invalid_redirect_uri",
+    "invalid_client_metadata",
   ]),
 }) {}
 
@@ -106,6 +108,8 @@ export const Client = Schema.Struct({
   grantTypes: Schema.optionalKey(
     Schema.Array(Schema.Literals(["authorization_code", "refresh_token"])),
   ),
+  /** Limit this client to these scopes. Without it, every declared scope is allowed. */
+  scopes: Schema.optionalKey(Scopes),
 }).check(
   Schema.makeFilter(
     (value) =>
@@ -147,7 +151,21 @@ export const AuthorizationMetadata = Schema.Struct({
   code_challenge_methods_supported: Schema.Array(Schema.Literal("S256")),
   authorization_response_iss_parameter_supported: Schema.Literal(true),
   client_id_metadata_document_supported: Schema.Boolean,
+  registration_endpoint: Schema.optionalKey(Text),
   scopes_supported: Scopes,
+});
+
+/** RFC 7591 response for a public client, so it holds no secret. */
+export const RegistrationResponse = Schema.Struct({
+  client_id: Text,
+  client_id_issued_at: Schema.Natural,
+  client_name: Text,
+  redirect_uris: Schema.Array(Text),
+  application_type: Schema.Literals(["web", "native"]),
+  grant_types: Schema.Array(Schema.Literals(["authorization_code", "refresh_token"])),
+  response_types: Schema.Array(Schema.Literal("code")),
+  token_endpoint_auth_method: Schema.Literal("none"),
+  scope: ScopeText,
 });
 
 export const ResourceMetadata = Schema.Struct({

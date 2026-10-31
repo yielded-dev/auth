@@ -7,10 +7,11 @@ Start with the [OAuth guide](../guide/oauth) for the flow and choice of API.
 
 ## Authorization server
 
-`OAuthServer.make(id, { scopes })` provides `Identity`, `Clients`, `Service`, `routes`,
+`OAuthServer.make(id, { scopes })` provides `Identity`, `Clients`, `Registration`, `Service`, `routes`,
 `middleware(requiredScopes)`, `securityLayer(api)`, and `paths`. It supports
 authorization code with PKCE for MCP clients, including static registrations,
-registrations stored by your application, and Client ID Metadata Documents (CIMD).
+registrations stored by your application, opt-in dynamic registration, and Client
+ID Metadata Documents (CIMD).
 Use the [OpenID profile](#shared-openid-sign-in) for shared browser sign-in.
 
 Declare scopes with `OAuthScope.make("documents:read")` from `@yielded/auth`. The result
@@ -23,16 +24,18 @@ request all of them at once.
 
 Provide these to `oauth.layer`:
 
-| Input            | Purpose                                                              |
-| ---------------- | -------------------------------------------------------------------- |
-| `origin`         | Public issuer origin                                                 |
-| `resource`       | Exact protected resource URL on that origin                          |
-| `clients`        | Static registrations; may be empty with CIMD or `oauth.Clients`      |
-| `clientMetadata` | Optional `{ allowedOrigins }` policy for metadata and JWKS discovery |
-| `loginPath`      | Login route that returns to `oauth.paths.authorize`                  |
-| `keys`           | Signing keyring; use separate random material from session keys      |
-| `oauth.Identity` | Verify the current application session                               |
-| `oauth.Clients`  | Optional client registrations from your storage                      |
+| Input                | Purpose                                                              |
+| -------------------- | -------------------------------------------------------------------- |
+| `origin`             | Public issuer origin                                                 |
+| `resource`           | Exact protected resource URL on that origin                          |
+| `clients`            | Static registrations; may be empty with CIMD or `oauth.Clients`      |
+| `clientMetadata`     | Optional `{ allowedOrigins }` policy for metadata and JWKS discovery |
+| `registration`       | Optional scope policy that enables dynamic client registration       |
+| `loginPath`          | Login route that returns to `oauth.paths.authorize`                  |
+| `keys`               | Signing keyring; use separate random material from session keys      |
+| `oauth.Identity`     | Verify the current application session                               |
+| `oauth.Clients`      | Optional client registrations from your storage                      |
+| `oauth.Registration` | Admission and storage for dynamic registration                       |
 
 Provide durable `OAuthServer.Persistence` plus `HttpClient`, `SecureRandom`, `Digest`, `Mac`, and
 `Signature`.
@@ -48,6 +51,7 @@ Allow `oauth.paths.authorize` in your login flow's `OAuthReturnTargets`.
 | `GET/POST /oauth/mcp/authorize`                 | Validate the request and obtain consent |
 | `POST /oauth/mcp/token`                         | Redeem a code or rotate a refresh token |
 | `POST /oauth/mcp/revoke`                        | Revoke the token's grant                |
+| `POST /oauth/mcp/register`                      | Register a client when enabled          |
 
 All clients use S256 PKCE. Code redemption includes the original callback and
 `code_verifier`; token requests also identify the client and resource. Refresh may
@@ -60,6 +64,8 @@ Static clients configure `clientId`, `name`, and `redirectUris`. Add a redacted
 `clientSecret` or its `clientSecretDigest` for Basic/form-secret authentication, or
 `clientAssertion: { jwks }` or `{ jwksUri }` for `private_key_jwt`. Configure one
 authentication method. `grantTypes` permits `authorization_code` and/or `refresh_token`.
+`scopes` limits a client to those scopes; an authorization request that omits `scope`
+gets them.
 
 Callbacks match exactly. A native client's loopback callback may vary its port;
 the selected callback remains bound to the authorization code.
@@ -91,6 +97,49 @@ Origin allowlists alone do not provide network isolation.
 
 Errors and private or non-cacheable responses are not cached. Metadata changes take
 effect when cached entries expire and can invalidate outstanding grants.
+
+### Dynamic client registration
+
+Set `registration` and provide `oauth.Registration` and `oauth.Clients` to accept
+anonymous RFC 7591 requests at `oauth.paths.register`. Metadata then publishes
+`registration_endpoint`. The server fails at startup when a service is missing, and
+`OAuthServer.makeOpenId` does not offer registration.
+
+```ts
+const registration = Layer.effect(
+  oauth.Registration,
+  Effect.gen(function* () {
+    const clients = yield* Registrations;
+    const limiter = yield* RegistrationLimiter;
+
+    return oauth.Registration.of({
+      admit: limiter.admit,
+      save: clients.insert,
+    });
+  }),
+);
+```
+
+`admit` runs before the body is read, with the request in context, and `false` returns 429. The library has no rate limit of its own. Anyone can call this endpoint, so `admit`
+is the only bound on the rows `save` writes. `save` stores a new row that `Clients.get`
+returns with every field it received: a missing `scopes` allows every declared scope,
+and a missing `grantTypes` allows refresh. Delete unused rows on your own schedule.
+
+Clients registered here are public and always use S256 PKCE. A request can set
+`redirect_uris`, `client_name`, `application_type`, `grant_types`, `response_types`,
+`token_endpoint_auth_method`, and `scope`; the server ignores other members.
+
+| Rule                    | Value                                                        |
+| ----------------------- | ------------------------------------------------------------ |
+| Body / callbacks / name | 5 KiB / 16 / 128 characters, no control or format characters |
+| Callback                | The `redirectUris` rules; no custom schemes                  |
+| Authentication          | `none`; other methods return `invalid_client_metadata`       |
+| Grant types             | Default `authorization_code`; `refresh_token` on request     |
+| Scope                   | Default `defaultScopes`; only `allowedScopes`                |
+| Application type        | Default `web`, or `native` with a loopback callback          |
+| Resource                | The server's one `resource`; registration does not set it    |
+
+Names are self-asserted. A custom `ConsentRenderer` must show `redirectUri` too.
 
 ### Private-key client assertions
 
@@ -148,12 +197,12 @@ same-origin policy.
 
 ### Token lifecycle and storage
 
-| Lifetime           | Default                             |
-| ------------------ | ----------------------------------- |
-| Pending consent    | 5 minutes                           |
-| Authorization code | 1 minute                            |
-| Access token       | 10 minutes                          |
-| Grant              | 30 days; refresh does not extend it |
+| Lifetime           | Default                                                                               |
+| ------------------ | ------------------------------------------------------------------------------------- |
+| Pending consent    | 5 minutes                                                                             |
+| Authorization code | 1 minute                                                                              |
+| Access token       | 10 minutes                                                                            |
+| Grant              | 30 days with refresh, otherwise the access token lifetime; refresh does not extend it |
 
 Use `OAuthServerPersistence.layer` with SQLite, D1, or PostgreSQL and apply its
 `migrations` through your application. Server replicas sharing an issuer share

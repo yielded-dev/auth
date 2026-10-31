@@ -1324,3 +1324,416 @@ it.effect("private_key_jwt validates CIMD key sources and refreshes expired JWKS
     ),
   );
 });
+
+const registrationConfig: OAuthServer.Options = {
+  ...config,
+  clients: [],
+  registration: { defaultScopes: [Read], allowedScopes: [Read, Write] },
+};
+
+const Registered = Schema.Struct({
+  client_id: Schema.String,
+  client_id_issued_at: Schema.Int,
+  client_name: Schema.String,
+  redirect_uris: Schema.Array(Schema.String),
+  grant_types: Schema.Array(Schema.String),
+  response_types: Schema.Array(Schema.String),
+  token_endpoint_auth_method: Schema.Literal("none"),
+  application_type: Schema.String,
+  scope: Schema.String,
+});
+
+const registering = (
+  admit: Effect.Effect<
+    boolean,
+    OAuthServer.Unavailable,
+    HttpServerRequest.HttpServerRequest
+  > = Effect.succeed(true),
+  saved = new Map<string, OAuthServer.Client>(),
+  save?: Effect.Effect<void, OAuthServer.Unavailable>,
+) =>
+  harness(undefined, registrationConfig).pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.succeed(server.Clients, { get: (clientId) => Effect.succeed(saved.get(clientId)) }),
+        Layer.succeed(server.Registration, {
+          admit,
+          save: Effect.fnUntraced(function* (client) {
+            saved.set(client.clientId, client);
+            if (save !== undefined) yield* save;
+          }),
+        }),
+      ),
+    ),
+  );
+
+const register = (metadata: unknown, contentType = "application/json") =>
+  new Request(`${origin}${server.paths.register}`, {
+    method: "POST",
+    headers: { "content-type": contentType },
+    body: typeof metadata === "string" ? metadata : JSON.stringify(metadata),
+  });
+
+it.effect("registration stays off unless configured", () =>
+  Effect.gen(function* () {
+    const service = yield* server.Service;
+    const metadata = yield* service.handle(get(server.paths.metadata));
+
+    expect(yield* Effect.promise(() => metadata.json())).not.toHaveProperty(
+      "registration_endpoint",
+    );
+    expect((yield* service.handle(register({ redirect_uris: [redirectUri] }))).status).toBe(404);
+  }).pipe(Effect.provide(harness())),
+);
+
+it.effect("a registered public client completes code, token and refresh", () => {
+  const saved = new Map<string, OAuthServer.Client>();
+
+  return Effect.gen(function* () {
+    const service = yield* server.Service;
+    const metadata = yield* service.handle(get(server.paths.metadata));
+
+    expect(yield* Effect.promise(() => metadata.json())).toMatchObject({
+      registration_endpoint: `${origin}${server.paths.register}`,
+    });
+
+    const response = yield* service.handle(
+      register({
+        client_name: "Example",
+        redirect_uris: [redirectUri],
+        grant_types: ["authorization_code", "refresh_token"],
+        token_endpoint_auth_method: "none",
+        client_secret: "ignored",
+      }),
+    );
+
+    expect(response.status).toBe(201);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    const client = yield* body(response, Registered);
+
+    expect(client).toMatchObject({
+      client_name: "Example",
+      redirect_uris: [redirectUri],
+      grant_types: ["authorization_code", "refresh_token"],
+      response_types: ["code"],
+      application_type: "web",
+      scope: "read",
+    });
+    expect(saved.get(client.client_id)).toEqual({
+      clientId: client.client_id,
+      name: "Example",
+      redirectUris: [redirectUri],
+      applicationType: "web",
+      grantTypes: ["authorization_code", "refresh_token"],
+      scopes: ["read"],
+    });
+
+    const flow = yield* authorize("alice", "read", { client_id: client.client_id });
+
+    const exchanged = yield* service.handle(
+      post(server.paths.token, {
+        grant_type: "authorization_code",
+        client_id: client.client_id,
+        resource,
+        redirect_uri: redirectUri,
+        code: flow.code,
+        code_verifier: verifier,
+      }),
+    );
+
+    expect(exchanged.status).toBe(200);
+    const tokens = yield* body(exchanged, Tokens);
+
+    const refreshed = yield* service.handle(
+      post(server.paths.token, {
+        grant_type: "refresh_token",
+        client_id: client.client_id,
+        resource,
+        refresh_token: tokens.refresh_token,
+      }),
+    );
+
+    expect(refreshed.status).toBe(200);
+  }).pipe(Effect.provide(registering(Effect.succeed(true), saved)));
+});
+
+it.effect("registration keeps a client to its scopes and defaults an omitted scope", () =>
+  Effect.gen(function* () {
+    const service = yield* server.Service;
+
+    const client = yield* body(
+      yield* service.handle(register({ redirect_uris: [redirectUri] })),
+      Registered,
+    );
+
+    const widened = yield* service.handle(
+      get(
+        `${server.paths.authorize}?${new URLSearchParams({
+          response_type: "code",
+          client_id: client.client_id,
+          scope: "read write",
+          resource,
+          code_challenge: challenge,
+          code_challenge_method: "S256",
+        })}`,
+      ),
+    );
+
+    expect(widened.status).toBe(400);
+    expect(yield* Effect.promise(() => widened.text())).toContain("invalid_scope");
+
+    const omitted = yield* service.handle(
+      get(
+        `${server.paths.authorize}?${new URLSearchParams({
+          response_type: "code",
+          client_id: client.client_id,
+          resource,
+          code_challenge: challenge,
+          code_challenge_method: "S256",
+        })}`,
+      ),
+    );
+
+    expect(omitted.status).toBe(303);
+  }).pipe(Effect.provide(registering())),
+);
+
+it.effect("registration gives refresh tokens only to clients that asked for the grant", () =>
+  Effect.gen(function* () {
+    const service = yield* server.Service;
+
+    const client = yield* body(
+      yield* service.handle(register({ redirect_uris: [redirectUri] })),
+      Registered,
+    );
+
+    expect(client.grant_types).toEqual(["authorization_code"]);
+    const flow = yield* authorize("alice", "read", { client_id: client.client_id });
+
+    const exchanged = yield* service.handle(
+      post(server.paths.token, {
+        grant_type: "authorization_code",
+        client_id: client.client_id,
+        resource,
+        redirect_uri: redirectUri,
+        code: flow.code,
+        code_verifier: verifier,
+      }),
+    );
+
+    expect(exchanged.status).toBe(200);
+    expect(yield* Effect.promise(() => exchanged.json())).not.toHaveProperty("refresh_token");
+  }).pipe(Effect.provide(registering())),
+);
+
+it.effect("registration admission sees the caller's original request", () => {
+  const seen: Array<string | undefined> = [];
+
+  return Effect.gen(function* () {
+    const service = yield* server.Service;
+
+    const original = HttpServerRequest.fromWeb(
+      new Request(`${origin}${server.paths.register}`, { headers: { "x-original": "yes" } }),
+    );
+
+    yield* service
+      .handle(register({ redirect_uris: [redirectUri] }))
+      .pipe(Effect.provideService(HttpServerRequest.HttpServerRequest, original));
+    expect(seen).toEqual(["yes"]);
+  }).pipe(
+    Effect.provide(
+      registering(
+        Effect.map(HttpServerRequest.HttpServerRequest, (request) => {
+          seen.push(request.headers["x-original"]);
+
+          return true;
+        }),
+      ),
+    ),
+  );
+});
+
+it.effect("registration infers a native client only from a loopback callback", () =>
+  Effect.gen(function* () {
+    const service = yield* server.Service;
+    const loopback = "http://127.0.0.1:9000/callback";
+
+    const inferred = yield* body(
+      yield* service.handle(register({ redirect_uris: [loopback] })),
+      Registered,
+    );
+
+    expect(inferred.application_type).toBe("native");
+
+    const web = yield* service.handle(
+      register({ application_type: "web", redirect_uris: [loopback] }),
+    );
+
+    expect(web.status).toBe(400);
+    expect(yield* body(web, Schema.Struct({ error: Schema.String }))).toEqual({
+      error: "invalid_redirect_uri",
+    });
+  }).pipe(Effect.provide(registering())),
+);
+
+it.effect("registration refuses unsafe metadata and stores nothing", () => {
+  const saved = new Map<string, OAuthServer.Client>();
+  const uris = (uri: string) => ({ redirect_uris: [uri] });
+
+  const redirects = [
+    "javascript:alert(1)",
+    "cursor://callback",
+    "http://client.example.com/callback",
+    "https://client.example.com/callback#fragment",
+    "https://user:pass@client.example.com/callback",
+    "https://client.example.com/callback?code=1",
+    "https://client.example.com/back\\slash",
+  ];
+
+  const metadata = [
+    "not json",
+    "[]",
+    "null",
+    {},
+    { redirect_uris: [] },
+    { redirect_uris: "https://client.example.com/callback" },
+    { redirect_uris: Array.from({ length: 17 }, (_, n) => `${redirectUri}/${n}`) },
+    { ...uris(redirectUri), token_endpoint_auth_method: "client_secret_basic" },
+    { ...uris(redirectUri), token_endpoint_auth_method: "private_key_jwt" },
+    { ...uris(redirectUri), grant_types: ["refresh_token"] },
+    { ...uris(redirectUri), grant_types: ["authorization_code", "client_credentials"] },
+    { ...uris(redirectUri), response_types: ["token"] },
+    { ...uris(redirectUri), scope: "admin" },
+    { ...uris(redirectUri), scope: "read  write" },
+    { ...uris(redirectUri), client_name: "x".repeat(129) },
+    { ...uris(redirectUri), client_name: "Good‮evil" },
+    { ...uris(redirectUri), client_name: "line\nbreak" },
+  ];
+
+  return Effect.gen(function* () {
+    const service = yield* server.Service;
+
+    for (const uri of redirects) {
+      const response = yield* service.handle(register(uris(uri)));
+
+      expect(response.status).toBe(400);
+      expect(yield* body(response, Schema.Struct({ error: Schema.String }))).toEqual({
+        error: "invalid_redirect_uri",
+      });
+    }
+    for (const input of metadata) {
+      const response = yield* service.handle(register(input));
+
+      expect(response.status).toBe(400);
+      expect(yield* body(response, Schema.Struct({ error: Schema.String }))).toEqual({
+        error: "invalid_client_metadata",
+      });
+    }
+
+    expect(
+      (yield* service.handle(
+        new Request(`${origin}${server.paths.register}`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+        }),
+      )).status,
+    ).toBe(400);
+
+    expect(
+      (yield* service.handle(register(uris(`https://${"a".repeat(130)}.example.com/callback`))))
+        .status,
+    ).toBe(400);
+
+    const oversized = yield* service.handle(
+      register({ ...uris(redirectUri), client_name: "x".repeat(6000) }),
+    );
+
+    expect(oversized.status).toBe(400);
+    expect((yield* service.handle(register(uris(redirectUri), "text/plain"))).status).toBe(400);
+    expect(
+      (yield* service.handle(new Request(`${origin}${server.paths.register}`, { method: "GET" })))
+        .status,
+    ).toBe(405);
+    expect(saved.size).toBe(0);
+  }).pipe(Effect.provide(registering(Effect.succeed(true), saved)));
+});
+
+it.effect("registration admission refuses before the body is read", () => {
+  const saved = new Map<string, OAuthServer.Client>();
+  let reads = 0;
+
+  return Effect.gen(function* () {
+    const service = yield* server.Service;
+
+    const stream = new ReadableStream(
+      {
+        pull: (controller) => {
+          reads += 1;
+          controller.close();
+        },
+      },
+      { highWaterMark: 0 },
+    );
+
+    const response = yield* service.handle(
+      new Request(`${origin}${server.paths.register}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: stream,
+        duplex: "half",
+      } as RequestInit),
+    );
+
+    expect(response.status).toBe(429);
+    expect(saved.size).toBe(0);
+    expect(reads).toBe(0);
+  }).pipe(Effect.provide(registering(Effect.succeed(false), saved)));
+});
+
+it.effect("registration returns 503 when admission or storage is unavailable", () => {
+  const failure = OAuthServer.Unavailable.make({});
+
+  return Effect.gen(function* () {
+    const refused = yield* Effect.flatMap(server.Service, (service) =>
+      service.handle(register({ redirect_uris: [redirectUri] })),
+    ).pipe(Effect.provide(registering(Effect.fail(failure))));
+
+    const unsaved = yield* Effect.flatMap(server.Service, (service) =>
+      service.handle(register({ redirect_uris: [redirectUri] })),
+    ).pipe(Effect.provide(registering(Effect.succeed(true), new Map(), Effect.fail(failure))));
+
+    expect(refused.status).toBe(503);
+    expect(unsaved.status).toBe(503);
+    expect(yield* Effect.promise(() => unsaved.text())).not.toContain("client_id");
+  });
+});
+
+it.effect("registration fails at startup without its services or with widened defaults", () =>
+  Effect.gen(function* () {
+    const withoutServices = yield* Layer.build(harness(undefined, registrationConfig)).pipe(
+      Effect.scoped,
+      Effect.exit,
+    );
+
+    expect(Exit.isFailure(withoutServices)).toBe(true);
+
+    const wide = yield* Layer.build(
+      harness(undefined, {
+        ...registrationConfig,
+        registration: { defaultScopes: [Write], allowedScopes: [Read] },
+      }).pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            Layer.succeed(server.Clients, { get: () => Effect.as(Effect.void, undefined) }),
+            Layer.succeed(server.Registration, {
+              admit: Effect.succeed(true),
+              save: () => Effect.void,
+            }),
+          ),
+        ),
+      ),
+    ).pipe(Effect.scoped, Effect.exit);
+
+    expect(Exit.isFailure(wide)).toBe(true);
+  }),
+);
