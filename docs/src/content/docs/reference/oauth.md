@@ -156,7 +156,8 @@ same-origin policy.
 | Grant              | 30 days; refresh does not extend it |
 
 Use `OAuthServerPersistence.layer` with SQLite, D1, or PostgreSQL and apply its
-`migrations` through your application. Server replicas sharing an issuer share
+`migrations` through your application; with MySQL or MariaDB, apply its
+`mysqlMigrations`. Server replicas sharing an issuer share
 storage and signing keys. Keep keys and replay receipts until their credentials
 expire; schedule expired-row cleanup and ingress rate limits.
 
