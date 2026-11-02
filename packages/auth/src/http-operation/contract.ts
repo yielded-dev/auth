@@ -32,6 +32,8 @@ export interface OperationHttpRoute<
   readonly operation: O;
   readonly path: string;
   readonly method: Method;
+  /** Auth HTTP maintenance may extend the session and replace a signed credential. */
+  readonly sessionRefresh?: true | undefined;
   readonly credentials: Fields;
   readonly reveals: ReadonlyArray<AuthRevealKind>;
 }

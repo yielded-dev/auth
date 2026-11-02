@@ -505,6 +505,7 @@ export const makeEmailConsumer = Effect.gen(function* () {
           ? Effect.succeed(row)
           : Effect.fail(Sessions.SessionInvalid.make({}));
       }),
+    refresh: () => Effect.fail(Sessions.SessionUnavailable.make({})),
     rotate: () => Effect.fail(Sessions.SessionUnavailable.make({})),
     revokeDigest: (digest, prepare) =>
       own(function* (s, journal) {

@@ -83,6 +83,19 @@ export interface StatefulSessionPersistence<Claims> {
     },
     prepare: PrepareSessionCommit<StatefulSessionRecord<Claims>, A>,
   ) => Effect.Effect<PreparedCommit<A>, SessionConflict | SessionInvalid | SessionUnavailable>;
+  /** Extend a live session without changing its bearer or credential version.
+   * CAS the captured owner, digest, issuedAt and expiry; recheck current authority
+   * and both expiry bounds at commit. Never shorten expiry or change authentication
+   * evidence, provenance or absolute expiry. Project current account
+   * claims consistently with verify. A concurrent update conflicts. */
+  readonly refresh: <A>(
+    input: {
+      readonly record: StatefulSessionRecord<Claims>;
+      readonly nextExpiresAt: DateTime.Utc;
+      readonly now: DateTime.Utc;
+    },
+    prepare: PrepareSessionCommit<StatefulSessionRecord<Claims>, A>,
+  ) => Effect.Effect<PreparedCommit<A>, SessionConflict | SessionInvalid | SessionUnavailable>;
   readonly revokeDigest: <A>(
     digest: TokenDigest,
     prepare: PrepareSessionCommit<boolean, A>,
