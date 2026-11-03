@@ -67,16 +67,13 @@ For an authorized manual release, run the handoff gate,
 npm access to the `yielded` organization. The dry run publishes nothing and
 creates no tags; the publish task restores source manifests after packaging.
 
-## CI and review
+## CI
 
-Require `ready` and `Effect Agent review` in the main branch ruleset. Review needs
-the repository secret `OPENAI_API_KEY` and a `pr-review` environment without
-required reviewers. Fork CI may require separate GitHub workflow approval.
+Require `ready` in the main branch ruleset. Fork CI may require separate GitHub
+workflow approval.
 
 Title and description edits do not rerun CI. After changing a PR's base, close and
-reopen it to validate the new diff. Draft PRs skip agent review. To retry a stopped
-review, use an authorized `@effect-agent review full` comment or manual workflow
-dispatch; `@effect-agent review` requests an incremental pass.
+reopen it to validate the new diff.
 
 ## Documentation
 
