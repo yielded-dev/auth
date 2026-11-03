@@ -1,8 +1,10 @@
-import { Jwk, Jwks, Jwt } from "@yielded/jose";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Signature from "effect/crypto/Signature";
 import * as Effect from "effect/Effect";
+import * as Jwk from "effect/jose/Jwk";
+import * as Jwks from "effect/jose/Jwks";
+import * as Jwt from "effect/jose/Jwt";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 
@@ -79,7 +81,7 @@ const makeVerifier = Effect.fnUntraced(function* <Scope extends OAuthScope.OAuth
       issuer: config.issuer,
       audience: config.resource,
       typ: "at+jwt",
-      maxTokenAge: 600,
+      maxTokenAge: "10 minutes",
       requiredClaims: ["iss", "sub", "aud", "iat", "exp", "jti"],
     }).pipe(
       Effect.provideService(Jwks.Jwks, keys),
@@ -87,7 +89,8 @@ const makeVerifier = Effect.fnUntraced(function* <Scope extends OAuthScope.OAuth
       Effect.catchCause((cause) =>
         Effect.failCause(
           Cause.map(cause, (error) =>
-            error._tag === "CryptoError" || error._tag === "JoseJwksUnavailable"
+            error._tag === "JoseError" &&
+            (error.reason._tag === "InvalidKey" || error.reason._tag === "KeySetUnavailable")
               ? Unavailable.make({})
               : InvalidToken.make({}),
           ),
@@ -172,7 +175,7 @@ export function makeAccessTokenVerifier(options: AccessTokenVerifierOptions) {
 }
 
 /** Verify with the supplied Jwks service, for example Jwks.layerRemote from
- * @yielded/jose. Captures only Jwks and Signature.Signature; the caller's clock and context
+ * effect/jose. Captures only Jwks and Signature.Signature; the caller's clock and context
  * still govern verification. Retain the resolver's owning Scope while using the
  * verifier. Remote key failures become Unavailable; invalid tokens remain InvalidToken.
  *

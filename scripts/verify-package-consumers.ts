@@ -116,41 +116,14 @@ const checkReusableOperations = Effect.fn("packageConsumers.reusableOperations")
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
 
-  // JOSE's native oracle matches test/compact-validation.test.ts; no jose is installed.
   yield* fs.writeFileString(
     path.join(stage, "fixtures/reusable-operations.mjs"),
     `import assert from "node:assert/strict";
-import { createCipheriv, createHmac } from "node:crypto";
-import { Effect, Layer, Redacted, Schema} from "effect";
-import { Aead, Digest, Mac, SecureRandom, Signature } from "effect/crypto";
+import { Effect, Layer, Redacted } from "effect";
+import { Digest, SecureRandom } from "effect/crypto";
 import { FetchHttpClient } from "effect/http";
 import { OAuth, Pkce } from "@yielded/oauth";
-import { Jwe, Jwk, Jws, Jwt } from "@yielded/jose";
-const utf8 = (value) => new TextEncoder().encode(value);
 const text = (value) => new TextDecoder().decode(value);
-const primitives = Layer.mergeAll(Aead.layerWebCrypto, Mac.layerWebCrypto, Signature.layerWebCrypto).pipe(Layer.provideMerge(SecureRandom.layerWebCrypto));
-  await Effect.runPromise(Effect.gen(function* () {
-    const secret = new Uint8Array(32).fill(7);
-    const jwk = { kty: "oct", k: Buffer.from(secret).toString("base64url") };
-    const signing = yield* Jwk.importSecret(Redacted.make(jwk), "HS256");
-    const payload = utf8(JSON.stringify({ sub: "packaged-consumer" }));
-    const input = Buffer.from(JSON.stringify({ alg: "HS256" })).toString("base64url") + "." + Buffer.from(payload).toString("base64url");
-    const expected = input + "." + createHmac("sha256", secret).update(input).digest("base64url");
-    const signed = yield* Jws.sign(Redacted.make(payload), signing, { alg: "HS256" });
-    assert.equal(Redacted.value(signed), expected);
-    const verified = yield* Jwt.verify(Schema.Struct({ sub: Schema.String }), Redacted.make(expected), signing, { algorithms: ["HS256"] });
-    assert.equal(verified.claims.sub, "packaged-consumer");
-
-    const encryption = yield* Jwk.importSecret(Redacted.make(jwk), "dir");
-    const header = Buffer.from(JSON.stringify({ alg: "dir", enc: "A256GCM" })).toString("base64url");
-    const iv = new Uint8Array(12);
-    const cipher = createCipheriv("aes-256-gcm", secret, iv);
-    cipher.setAAD(utf8(header));
-    const ciphertext = Buffer.concat([cipher.update(utf8("payload")), cipher.final()]);
-    const token = [header, "", Buffer.from(iv).toString("base64url"), ciphertext.toString("base64url"), cipher.getAuthTag().toString("base64url")].join(".");
-    const decrypted = yield* Jwe.decrypt(Redacted.make(token), encryption);
-    assert.equal(text(Redacted.value(decrypted.plaintext)), "payload");
-  }).pipe(Effect.provide(primitives)));
 const effectCrypto = Layer.merge(SecureRandom.layerWebCrypto, Digest.layerWebCrypto);
 let requests = 0;
 const fetchReceipt = async (url, init) => {
@@ -175,7 +148,7 @@ await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
   assert.equal(Redacted.value(tokens.accessToken), "private-access");
   assert.equal(requests, 1);
 })).pipe(Effect.provide(Layer.merge(effectCrypto, FetchHttpClient.layer)), Effect.provideService(FetchHttpClient.Fetch, fetchReceipt)));
-console.log("Packaged JWS/JWT, JWE and native OAuth passed with only Effect and first-party packages.");`,
+console.log("Packaged OAuth and PKCE passed with Effect as the only runtime dependency.");`,
   );
   for (const runtime of ["node", "bun"] as const) {
     const child = yield* ChildProcess.make(
@@ -579,110 +552,100 @@ const checkReusableConsumers = Effect.fn("packageConsumers.reusable")(function* 
 
   yield* fs.makeDirectory(path.join(stage, "fixtures"), { recursive: true });
   yield* fs.copyFile(path.join(repositoryRoot, "package.json"), path.join(stage, "package.json"));
-  const jose = yield* stagePackage(repositoryRoot, stage, "jose");
   const oauth = yield* stagePackage(repositoryRoot, stage, "oauth");
 
-  if (jose.manifest.exports === undefined || oauth.manifest.exports === undefined)
+  if (oauth.manifest.exports === undefined)
     return yield* PackageConsumerError.make({
-      message: "JOSE and OAuth exports are required",
+      message: "OAuth exports are required",
     });
-  const joseEntries = Object.keys(jose.manifest.exports);
   const oauthEntries = Object.keys(oauth.manifest.exports);
   const effectSource = yield* fs.realPath(path.join(repositoryRoot, "node_modules/effect"));
 
   yield* fs.symlink(effectSource, path.join(stage, "node_modules/effect"));
 
-  const joseNamespaces = ["Errors", "Jwe", "Jwk", "Jwks", "Jws", "Jwt"];
   const oauthNamespaces = ["Errors", "OAuth", "Oidc", "Pkce"];
 
-  // Only first-party JOSE, OAuth and Effect exist throughout this stage.
+  // Only OAuth and Effect exist throughout this stage.
   yield* withPublishManifests(stage, () =>
     Effect.gen(function* () {
-      for (const directory of [jose.destination, oauth.destination]) {
-        const published = yield* Schema.decodeEffect(Schema.fromJsonString(ReusableManifest))(
-          yield* fs.readFileString(path.join(directory, "package.json")),
-        );
+      const published = yield* Schema.decodeEffect(Schema.fromJsonString(ReusableManifest))(
+        yield* fs.readFileString(path.join(oauth.destination, "package.json")),
+      );
 
-        const problems = reusableDependencyProblems(published, {});
+      const problems = reusableDependencyProblems(published, {});
 
-        if (problems.length > 0)
-          return yield* PackageConsumerError.make({ message: problems.join("\n") });
-        yield* checkReusableBuild(directory);
+      if (problems.length > 0)
+        return yield* PackageConsumerError.make({ message: problems.join("\n") });
+      yield* checkReusableBuild(oauth.destination);
+      const probe = "oauth";
+      const packageName = "@yielded/oauth";
+
+      const names = oauthEntries.map((key) =>
+        key === "." ? packageName : `${packageName}${key.slice(1)}`,
+      );
+
+      const declarations = path.join(stage, "fixtures", `${probe}.ts`);
+
+      yield* fs.writeFileString(
+        declarations,
+        names.map((name, index) => `export * as Crypto${index} from "${name}";`).join("\n"),
+      );
+      yield* checkDeclarations(stage, [declarations]);
+
+      // Only the direct runtime entries may pull native imports into a consumer.
+      yield* fs.writeFileString(
+        path.join(stage, "fixtures", `${probe}-browser.ts`),
+        names.map((name, index) => `export * as Crypto${index} from "${name}";`).join("\n"),
+      );
+      const chunks = yield* esbuildConsumer(stage, `${probe}-browser`);
+
+      const allowedDirectories = [
+        path.join(stage, "fixtures"),
+        path.join(oauth.destination, "dist"),
+        effectSource,
+      ];
+
+      for (const module of chunks.flatMap((chunk) => chunk.modules)) {
+        const resolved = path.resolve(stage, module);
+
+        if (!allowedDirectories.some((directory) => resolved.startsWith(`${directory}${path.sep}`)))
+          return yield* PackageConsumerError.make({
+            message: `${probe} bundles a module outside Effect and the staged packages: ${module}`,
+          });
       }
-      for (const [probe, entries, packageName, rootNamespaces] of [
-        ["jose", joseEntries, "@yielded/jose", joseNamespaces],
-        ["oauth", oauthEntries, "@yielded/oauth", oauthNamespaces],
-      ] as const) {
-        const names = entries.map((key) =>
-          key === "." ? packageName : `${packageName}${key.slice(1)}`,
-        );
 
-        const declarations = path.join(stage, "fixtures", `${probe}.ts`);
-
-        yield* fs.writeFileString(
-          declarations,
-          names.map((name, index) => `export * as Crypto${index} from "${name}";`).join("\n"),
-        );
-        yield* checkDeclarations(stage, [declarations]);
-
-        // Only the direct runtime entries may pull native imports into a consumer.
-        yield* fs.writeFileString(
-          path.join(stage, "fixtures", `${probe}-browser.ts`),
-          names.map((name, index) => `export * as Crypto${index} from "${name}";`).join("\n"),
-        );
-        const chunks = yield* esbuildConsumer(stage, `${probe}-browser`);
-
-        const allowedDirectories = [
-          path.join(stage, "fixtures"),
-          path.join(jose.destination, "dist"),
-          path.join(oauth.destination, "dist"),
-          effectSource,
-        ];
-
-        for (const module of chunks.flatMap((chunk) => chunk.modules)) {
-          const resolved = path.resolve(stage, module);
-
-          if (
-            !allowedDirectories.some((directory) => resolved.startsWith(`${directory}${path.sep}`))
-          )
-            return yield* PackageConsumerError.make({
-              message: `${probe} bundles a module outside Effect and the staged packages: ${module}`,
-            });
-        }
-
-        const child = yield* ChildProcess.make(
-          "node",
-          [
-            "--input-type=module",
-            "--eval",
-            `import assert from "node:assert/strict";
+      const child = yield* ChildProcess.make(
+        "node",
+        [
+          "--input-type=module",
+          "--eval",
+          `import assert from "node:assert/strict";
 const root = await import(${JSON.stringify(packageName)});
-assert.deepEqual(Object.keys(root).sort(), ${JSON.stringify(rootNamespaces)});
-for (const name of ${JSON.stringify(rootNamespaces)}) {
-  assert.equal(root[name], await import(${JSON.stringify(packageName + "/")} + name));
+assert.deepEqual(Object.keys(root).sort(), ${JSON.stringify(oauthNamespaces)});
+for (const name of ${JSON.stringify(oauthNamespaces)}) {
+assert.equal(root[name], await import(${JSON.stringify(packageName + "/")} + name));
 }
 for (const name of ${JSON.stringify(names)}) await import(name);`,
-          ],
-          { cwd: stage, stdout: "pipe", stderr: "pipe" },
-        );
+        ],
+        { cwd: stage, stdout: "pipe", stderr: "pipe" },
+      );
 
-        const [stdout, stderr, code] = yield* Effect.all(
-          [
-            Stream.mkString(Stream.decodeText(child.stdout)),
-            Stream.mkString(Stream.decodeText(child.stderr)),
-            child.exitCode,
-          ],
-          { concurrency: 3 },
-        );
+      const [stdout, stderr, code] = yield* Effect.all(
+        [
+          Stream.mkString(Stream.decodeText(child.stdout)),
+          Stream.mkString(Stream.decodeText(child.stderr)),
+          child.exitCode,
+        ],
+        { concurrency: 3 },
+      );
 
-        if (code !== 0)
-          return yield* PackageConsumerError.make({
-            message: `${probe} consumer exited ${code}: ${stdout}${stderr}`,
-          });
-        yield* Console.log(
-          `${probe}: ${names.length} published exports type-check with only Effect and first-party packages; Node loading excludes workerd and browser imports exclude platform entries.`,
-        );
-      }
+      if (code !== 0)
+        return yield* PackageConsumerError.make({
+          message: `${probe} consumer exited ${code}: ${stdout}${stderr}`,
+        });
+      yield* Console.log(
+        `${probe}: ${names.length} published exports type-check with only Effect and first-party packages; Node loading excludes workerd and browser imports exclude platform entries.`,
+      );
       yield* checkReusableOperations(stage);
     }),
   );
@@ -721,7 +684,7 @@ export const verifyPackageConsumers = Effect.fn("verifyPackageConsumers")(functi
     return yield* PackageConsumerError.make({ message: "Core exports are missing" });
 
   // Load every core module with its complete first-party runtime graph and Effect.
-  for (const directory of ["jose", "oauth"]) yield* stagePackage(repositoryRoot, stage, directory);
+  yield* stagePackage(repositoryRoot, stage, "oauth");
   for (const [name, target] of [
     ["@yielded/auth", destination],
     ["effect", yield* fs.realPath(path.join(repositoryRoot, "node_modules/effect"))],

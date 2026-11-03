@@ -3,7 +3,6 @@ import * as SqliteClient from "@effect/sql-sqlite-node/SqliteClient";
 import { it } from "@effect/vitest";
 import { OAuthScope, OAuthServer } from "@yielded/auth";
 import { SubjectId } from "@yielded/auth/Schema";
-import { Jwk, Jwt } from "@yielded/jose";
 import * as McpProtocol from "effect/ai/McpProtocol";
 import * as McpServer from "effect/ai/McpServer";
 import * as Tool from "effect/ai/Tool";
@@ -18,6 +17,8 @@ import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
+import * as Jwk from "effect/jose/Jwk";
+import * as Jwt from "effect/jose/Jwt";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
@@ -1026,7 +1027,8 @@ const signingKeys = Effect.gen(function* () {
     globalThis.crypto.subtle.exportKey("jwk", pair.privateKey),
   );
 
-  const key = yield* Jwk.importPrivate(Redacted.make(privateKey), "ES256");
+  const privateJwk = yield* Schema.decodeUnknownEffect(Jwk.PrivateJwk)(privateKey);
+  const key = yield* Jwk.importPrivate(Redacted.make(privateJwk), "ES256");
   const jwk = yield* Schema.decodeUnknownEffect(Jwk.PublicJwk)({ ...publicKey, kid: "client-key" });
 
   return { key, jwks: { keys: [jwk] } };
@@ -1054,7 +1056,6 @@ const assertion = Effect.fnUntraced(function* (
   );
 
   const jwt = yield* Jwt.sign(Jwt.RegisteredClaims, payload, key, {
-    alg: key.algorithm === "dir" ? "HS256" : key.algorithm,
     kid: "client-key",
   });
 

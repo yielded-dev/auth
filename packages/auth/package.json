@@ -101,7 +101,6 @@
     "test": "vp test --passWithNoTests"
   },
   "dependencies": {
-    "@yielded/jose": "workspace:*",
     "@yielded/oauth": "workspace:*"
   },
   "devDependencies": {
@@ -115,6 +114,6 @@
     "vitest": "catalog:"
   },
   "peerDependencies": {
-    "effect": "^4.1.0"
+    "effect": "^4.1.2"
   }
 }

@@ -44,6 +44,7 @@
           "effect/cli",
           "effect/http",
           "effect/http-api",
+          "effect/jose",
           "effect/persistence/KeyValueStore",
           "effect/persistence/RateLimiter",
           "effect/process",

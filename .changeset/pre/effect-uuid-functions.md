@@ -5,7 +5,6 @@
 "@yielded/auth-persistence-drizzle": patch
 "@yielded/auth-react-native": patch
 "@yielded/auth-simplewebauthn": patch
-"@yielded/jose": patch
 "@yielded/oauth": patch
 ---
 

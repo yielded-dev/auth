@@ -8,11 +8,12 @@ import {
 } from "@yielded/auth/OAuth";
 import * as OpenIdConnect from "@yielded/auth/OpenIdConnect";
 import { RequestBindingFlowId } from "@yielded/auth/Operations";
-import { Jwk, Jwt } from "@yielded/jose";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
+import * as Jwk from "effect/jose/Jwk";
+import * as Jwt from "effect/jose/Jwt";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
@@ -161,7 +162,7 @@ describe("OIDC callback user field", () => {
             email: "ada@example.com",
           },
           signing,
-          { alg: "ES256", kid: "key" },
+          { kid: "key" },
         ).pipe(Effect.map(Redacted.value));
 
       const workspace = yield* protocol.prepareAuthorization({
@@ -282,7 +283,7 @@ describe("Apple string verification flags", () => {
             email_verified: emailVerified,
           },
           signing,
-          { alg: "ES256", kid: "key" },
+          { kid: "key" },
         ).pipe(Effect.map(Redacted.value));
 
       idToken = yield* sign("true");

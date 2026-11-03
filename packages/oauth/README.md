@@ -1,8 +1,8 @@
 # @yielded/oauth
 
 Effect OAuth authorization-code and refresh flows, PKCE S256, and signed OpenID
-Connect. Runtime dependencies are Effect and `@yielded/jose`; applications own
-registered callbacks, provider configuration, permissions, identity, and grant storage.
+Connect. Effect is its only runtime dependency; applications own registered
+callbacks, provider configuration, permissions, identity, and grant storage.
 
 Use `OAuth.make` for an installed client and `Oidc.makeVerifier` for its OIDC
 verifier. Both require `HttpClient` and an owning `Scope`; keep that scope open
