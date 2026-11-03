@@ -264,7 +264,7 @@ claims only. When `resource` differs from UserInfo, discovery omits UserInfo and
 the UserInfo route rejects those access tokens.
 
 For a resource server, construct `OAuthServer.makeAccessTokenVerifierWithKeySet({
-issuer, resource })` and supply `Jwks.Jwks` from `@yielded/jose` plus
+issuer, resource })` and supply `Jwks.Jwks` from `effect/jose` plus
 `effect/crypto/Signature`. Its `verify(Redacted.make(token))` Effect checks RS256,
 the `at+jwt` type, issuer, audience, expiry, and scope encoding, then returns
 `OAuthServer.Access` with the subject, client, grant, resource, scopes, and optional
@@ -272,7 +272,10 @@ application claims. It captures the two services while using the caller's clock.
 
 For remote keys, build `Jwks.layerRemote({ url: "https://issuer.example/keys" })`
 once in the application's runtime and provide an Effect HttpClient. The configured
-URL is trusted application policy; tokens cannot select it. JOSE owns the
+URL is trusted application policy; tokens cannot select it. Supply a client that
+does not follow redirects; with FetchHttpClient, provide
+`FetchHttpClient.RequestInit` as `{ redirect: "manual", credentials: "omit" }`
+on its Layer. Effect owns the
 [bounded cache and refresh](./jose.mdx#local-and-remote-public-key-sets).
 Keep its Scope open while using the verifier. Remote-key failures return
 `OAuthServer.Unavailable`; invalid credentials return `OAuthServer.InvalidToken`.

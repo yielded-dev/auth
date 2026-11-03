@@ -1,22 +1,21 @@
-import * as Jwk from "@yielded/jose/Jwk";
-import * as Jwks from "@yielded/jose/Jwks";
-import type * as Jws from "@yielded/jose/Jws";
-import * as Jwt from "@yielded/jose/Jwt";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
-import * as Context from "effect/Context";
 import * as Digest from "effect/crypto/Digest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Base64Url from "effect/encoding/Base64Url";
-import * as HttpClient from "effect/http/HttpClient";
+import type * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
-import * as Layer from "effect/Layer";
+import * as Jwk from "effect/jose/Jwk";
+import * as Jwks from "effect/jose/Jwks";
+import type * as Jws from "effect/jose/Jws";
+import * as Jwt from "effect/jose/Jwt";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 
 import { ConfigurationError, Rejected, Unavailable } from "./Errors";
+import * as OidcJwks from "./internal/jwks";
 import * as Ownership from "./internal/ownership";
 import * as Transport from "./internal/transport";
 import * as V from "./internal/validation";
@@ -83,10 +82,7 @@ export interface Verified {
   readonly upstreamAuthenticatedAt?: DateTime.Utc;
 }
 
-type VerificationRequirements =
-  | Exclude<Effect.Services<ReturnType<typeof Jws.verifyWithKeySet>>, Jwks.Jwks>
-  | Jws.Requirements
-  | Digest.Digest;
+type VerificationRequirements = Jws.Requirements | Digest.Digest;
 
 export interface Verifier {
   readonly verify: (
@@ -402,16 +398,11 @@ export const makeVerifier = Effect.fnUntraced(function* (
   const keys =
     hmacOnly || jwksUri === undefined
       ? undefined
-      : Context.get(
-          yield* Layer.build(
-            Jwks.layerRemote({
-              url: jwksUri,
-              timeoutMs: options.timeoutMs,
-              maxResponseBytes: options.maxResponseBytes,
-            }).pipe(Layer.provide(Layer.succeed(HttpClient.HttpClient, yield* Transport.capture))),
-          ).pipe(Effect.mapError(() => Unavailable.make({}))),
-          Jwks.Jwks,
-        );
+      : yield* OidcJwks.makeRemote({
+          url: jwksUri,
+          timeoutMs: options.timeoutMs,
+          maxResponseBytes: options.maxResponseBytes,
+        }).pipe(Effect.mapError(() => Unavailable.make({})));
 
   const { use } = yield* Ownership.make;
 
@@ -421,6 +412,7 @@ export const makeVerifier = Effect.fnUntraced(function* (
   ): Effect.fn.Return<Verified, Rejected | Unavailable, VerificationRequirements> {
     // Capture caller policy and secret values before key lookup or cryptography.
     const policy = yield* V.decode(VerifyInput, input);
+    const credential = yield* V.decode(V.secret(65536), token);
     const start = DateTime.toEpochMillis(policy.verificationStartedAt);
     const expectedNonce = yield* V.reveal(policy.nonce);
 
@@ -434,34 +426,39 @@ export const makeVerifier = Effect.fnUntraced(function* (
     const tenantTemplate = isTenantIssuerTemplate(metadata.issuer);
 
     const jwtPolicy = {
-      algorithms: advertised,
       ...(tenantTemplate ? {} : { issuer: metadata.issuer }),
       audience: options.clientId,
       requiredClaims: ["iss", "sub", "aud", "exp", "iat"] as const,
       clockTolerance: 0,
     };
 
-    const mapJwtError = (error: { readonly _tag: string }) =>
-      error._tag === "JoseClaimValidationFailed" ? claimFailure() : Unavailable.make({});
+    const mapJwtError = (error: Jwt.JwtError) =>
+      error._tag === "JoseError" && error.reason._tag === "ClaimValidationFailed"
+        ? claimFailure()
+        : Unavailable.make({});
 
     const opened =
       hmacKey !== undefined
         ? {
-            verified: yield* Jwt.verify(JsonObject, token, hmacKey, jwtPolicy).pipe(
+            verified: yield* Jwt.verify(JsonObject, credential, hmacKey, jwtPolicy).pipe(
               Effect.catchCause((cause) => Effect.failCause(Cause.map(cause, mapJwtError))),
             ),
             signingKey: undefined,
           }
         : keys === undefined
           ? yield* Unavailable.make({})
-          : yield* Jwt.verifyWithKeySet(JsonObject, token, jwtPolicy).pipe(
-              Effect.provideService(Jwks.Jwks, keys),
+          : yield* Jwt.verifyWithKeySet(JsonObject, credential, {
+              ...jwtPolicy,
+              algorithms: advertised.filter((algorithm) => algorithm !== "HS256"),
+            }).pipe(
+              Effect.provideService(Jwks.Jwks, keys.service),
               Effect.map((verified) => ({ verified, signingKey: verified.key })),
               Effect.catchCause((cause) => Effect.failCause(Cause.map(cause, mapJwtError))),
             );
 
     const verified = opened.verified;
     const signingKey = opened.signingKey;
+    const keyIssuer = signingKey === undefined ? undefined : keys?.issuerOf(signingKey);
 
     const claims = yield* V.decode(IdClaims, verified.claims).pipe(Effect.mapError(claimFailure));
 
@@ -478,12 +475,10 @@ export const makeVerifier = Effect.fnUntraced(function* (
     if (
       tenantTemplate ||
       metadata.signing_key_issuer_required === true ||
-      signingKey?.jwk.issuer !== undefined
+      keyIssuer !== undefined
     ) {
       if (verified.protectedHeader.alg === "HS256" || signingKey === undefined)
         return yield* claimFailure();
-
-      const keyIssuer = signingKey.jwk.issuer;
 
       if (keyIssuer === undefined) return yield* claimFailure();
 

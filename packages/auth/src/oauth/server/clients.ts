@@ -1,4 +1,3 @@
-import { Jwk, Jwks, Jwt } from "@yielded/jose";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -11,6 +10,8 @@ import * as Base64 from "effect/encoding/Base64";
 import * as Base64Url from "effect/encoding/Base64Url";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
+import * as Jwks from "effect/jose/Jwks";
+import * as Jwt from "effect/jose/Jwt";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
@@ -109,7 +110,7 @@ const Document = Schema.Struct({
   redirect_uris: Schema.NonEmptyArray(RedirectUri).check(Schema.isMaxLength(16)),
   application_type: Schema.optionalKey(Schema.Literals(["web", "native"])),
   token_endpoint_auth_method: Schema.optionalKey(Schema.Literals(["none", "private_key_jwt"])),
-  token_endpoint_auth_signing_alg: Schema.optionalKey(Jwk.AsymmetricAlgorithm),
+  token_endpoint_auth_signing_alg: Schema.optionalKey(Schema.Literals(AssertionAlgorithms)),
   jwks: Schema.optionalKey(Jwks.KeySet),
   jwks_uri: Schema.optionalKey(KeyUrl),
   client_secret: Schema.optionalKey(Schema.Never),
@@ -465,7 +466,8 @@ export const makeClients = Effect.fnUntraced(function* (
       Effect.catchCause((cause) =>
         Effect.failCause(
           Cause.map(cause, (error) =>
-            error._tag === "CryptoError" || error._tag === "JoseJwksUnavailable"
+            error._tag === "JoseError" &&
+            (error.reason._tag === "InvalidKey" || error.reason._tag === "KeySetUnavailable")
               ? Unavailable.make({})
               : reject("invalid_client"),
           ),
@@ -529,7 +531,7 @@ export const makeClients = Effect.fnUntraced(function* (
         );
 
         id = (yield* Schema.decodeUnknownEffect(Schema.Struct({ sub: Text }))(
-          Redacted.value(unverified.claims),
+          unverified.claims,
         ).pipe(Effect.mapError(() => reject("invalid_client")))).sub;
       }
       const client = yield* resolve(id);

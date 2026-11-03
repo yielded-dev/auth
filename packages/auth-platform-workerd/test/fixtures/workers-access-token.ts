@@ -1,10 +1,10 @@
 import { OAuthScope, OAuthServer } from "@yielded/auth";
 import * as WebCrypto from "@yielded/auth/WebCrypto";
-import { Jwks } from "@yielded/jose";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
+import * as Jwks from "effect/jose/Jwks";
 import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as Redacted from "effect/Redacted";

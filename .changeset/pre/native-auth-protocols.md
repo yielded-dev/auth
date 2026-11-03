@@ -2,7 +2,6 @@
 "@yielded/auth": minor
 "@yielded/auth-persistence": minor
 "@yielded/auth-persistence-drizzle": minor
-"@yielded/jose": minor
 "@yielded/oauth": minor
 ---
 

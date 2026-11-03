@@ -37,7 +37,6 @@
   "devDependencies": {
     "@effect/vitest": "catalog:",
     "@types/node": "catalog:",
-    "@yielded/jose": "workspace:*",
     "effect": "catalog:",
     "typescript": "catalog:",
     "vite": "catalog:",
@@ -45,6 +44,6 @@
     "vitest": "catalog:"
   },
   "peerDependencies": {
-    "effect": "^4.1.0"
+    "effect": "^4.1.2"
   }
 }
