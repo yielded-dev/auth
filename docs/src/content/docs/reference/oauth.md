@@ -83,11 +83,11 @@ Use an HTTP client and network policy that reject private, loopback, and link-lo
 destinations after DNS resolution. Disable redirects and ambient credentials.
 Origin allowlists alone do not provide network isolation.
 
-| Discovery limit               | Value                                     |
-| ----------------------------- | ----------------------------------------- |
-| Metadata / JWKS body          | 5 KiB / 128 KiB                           |
-| Request timeout / concurrency | 5 seconds / 8 requests per server Layer   |
-| Cache lifetime / entries      | At most 5 minutes / 256 entries per cache |
+| Discovery limit          | Value                                     |
+| ------------------------ | ----------------------------------------- |
+| Metadata / JWKS body     | 5 KiB / 128 KiB                           |
+| Request timeout          | 5 seconds                                 |
+| Cache lifetime / entries | At most 5 minutes / 256 entries per cache |
 
 Errors and private or non-cacheable responses are not cached. Metadata changes take
 effect when cached entries expire and can invalidate outstanding grants.

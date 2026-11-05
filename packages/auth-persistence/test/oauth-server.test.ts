@@ -750,6 +750,39 @@ it.effect("CIMD cancels a stalled metadata request at its deadline", () =>
   ),
 );
 
+// https://github.com/yielded-dev/auth/issues/298: on Cloudflare Workers, an ended
+// request's fetch and deadline never complete and its fiber is never interrupted.
+// Discoveries abandoned that way must not refuse later ones.
+it.effect("CIMD still discovers clients after abandoned discoveries", () => {
+  let calls = 0;
+
+  return Effect.gen(function* () {
+    const service = yield* server.Service;
+
+    for (let index = 0; index < 8; index++) yield* Effect.forkChild(service.handle(begin()));
+    while (calls < 8) yield* Effect.yieldNow;
+    expect((yield* service.handle(begin())).status).toBe(303);
+    expect(calls).toBe(9);
+  }).pipe(
+    Effect.provide(
+      harness(
+        undefined,
+        metadataConfig,
+        Layer.succeed(
+          HttpClient.HttpClient,
+          HttpClient.make((request) => {
+            calls++;
+
+            return calls <= 8
+              ? Effect.never
+              : Effect.sync(() => HttpClientResponse.fromWeb(request, Response.json(metadata)));
+          }),
+        ),
+      ),
+    ),
+  );
+});
+
 it.effect("OAuth 2.1 permits an omitted sole callback and token redirect_uri", () =>
   Effect.gen(function* () {
     const flow = yield* authorize("alice", "read", { redirect_uri: "" });

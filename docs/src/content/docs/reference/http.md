@@ -207,7 +207,7 @@ const ServerLive = Routes.pipe(Layer.provideMerge(DiagnosticsLive));
 With `HttpRouter.toWebHandler`, expose logging and tracing configuration in the
 built Layer's output as above, or pass it in the handler's request `Context`.
 Auth logs and spans use that invocation context. Failed persistence initialization
-stays cached until its owning Layer is reacquired.
+is reported by the operation that ran it and retried by the next.
 
 Auth's diagnostic payloads exclude credentials and raw causes. Your application
 owns redaction of its annotations, span names, and logger output. Keep HTTP headers,

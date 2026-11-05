@@ -100,11 +100,10 @@ Effect SQL applications supply their own migration runner.
 The composed Layer validates mapped columns and unique keys on its first storage
 operation. Its configured SQL client's connection acquirer can read services from
 the invoking request during initialization and subsequent operations. Build
-persistence in the same scope as its SQL client and rebuild it after schema changes
-or failed initialization. Canceling one caller leaves setup
-running for other waiting callers. Interrupted setup requires rebuilding the Layer
-before storage operations resume. Cookie-cached and anonymous session reads do
-not trigger initialization.
+persistence in the same scope as its SQL client and rebuild it after schema changes.
+Until setup succeeds, each storage operation runs it for itself, so a failed,
+interrupted or abandoned attempt never blocks the next. Cookie-cached and anonymous
+session reads do not trigger initialization.
 
 Composition supports password sign-in, registration and management, email codes,
 magic links and address management, phone sign-in and enabled lifecycle operations,

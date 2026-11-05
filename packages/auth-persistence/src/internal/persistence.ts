@@ -29,7 +29,6 @@ import type * as Digest from "effect/crypto/Digest";
 import type * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 
@@ -572,34 +571,33 @@ export const createPersistence = <T extends object, R, Database extends object =
         const scope = yield* Effect.scope;
         const captured = yield* Effect.context<Layer.Services<typeof services>>();
         const client = Context.get(captured, SqlClient.SqlClient);
-        const started = yield* Ref.make(false);
+        let settled: Context.Context<Layer.Success<typeof services>> | undefined;
 
         // Keep the layer's dependencies and lifetime while letting its SQL acquirer
         // resolve request-local services. Never capture the caller's commit owner
         // or transaction in the shared services built by the first operation.
-        // cached shares active waiters and completed failures, but discards interrupted
-        // runs. Claim the sole attempt before building so abandoning all waiters cannot
-        // restart partially completed setup, even while its finalizers are still running.
-        const initialize = yield* Effect.cached(
-          Effect.flatMap(Ref.getAndSet(started, true), (alreadyStarted) =>
-            alreadyStarted
-              ? Effect.void
-              : Layer.buildWithScope(services, scope).pipe(
-                  Effect.updateContext((current: Context.Context<never>) =>
-                    Context.merge(
-                      current.pipe(
-                        Context.omit(
-                          CurrentSqlCommit,
-                          CurrentCommitJournal,
-                          SqlNativeCommit,
-                          client.transactionService,
-                        ),
+        // Keep only a completed build. Until one succeeds, each caller builds for
+        // itself rather than joining another's, whose I/O a host such as Cloudflare
+        // Workers drops without interruption when its request ends.
+        const initialize = Effect.suspend(() =>
+          settled !== undefined
+            ? Effect.succeed(settled)
+            : Layer.buildWithScope(services, scope).pipe(
+                Effect.updateContext((current: Context.Context<never>) =>
+                  Context.merge(
+                    current.pipe(
+                      Context.omit(
+                        CurrentSqlCommit,
+                        CurrentCommitJournal,
+                        SqlNativeCommit,
+                        client.transactionService,
                       ),
-                      captured,
                     ),
+                    captured,
                   ),
                 ),
-          ),
+                Effect.flatMap((context) => Effect.sync(() => (settled ??= context))),
+              ),
         );
 
         const service = Effect.fnUntraced(function* <I, S, Failure>(
@@ -614,7 +612,7 @@ export const createPersistence = <T extends object, R, Database extends object =
             yield* requireStandalone(unavailable, client.transactionService);
           }
 
-          // Observe the cached failure in this invocation, not the captured setup context.
+          // Observe a setup failure in this invocation, not the captured setup context.
           const acquired = yield* reportPersistenceFailure(initialize, () => false, {
             markReported: true,
           }).pipe(
@@ -631,11 +629,6 @@ export const createPersistence = <T extends object, R, Database extends object =
             Effect.catchCause((cause) => Effect.failCause(Cause.map(cause, unavailable))),
           );
 
-          if (acquired === undefined) {
-            yield* reportAuthDiagnostic("persistence-initialization", "unavailable");
-
-            return yield* Effect.fail(unavailable());
-          }
           const value = Context.getOrUndefined(acquired, key);
 
           return value === undefined ? yield* Effect.fail(unavailable()) : value;
