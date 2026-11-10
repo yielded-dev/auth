@@ -1,5 +1,17 @@
 # @yielded/auth-persistence
 
+## 0.1.0-beta.48
+
+### Minor Changes
+
+- [#292](https://github.com/yielded-dev/auth/pull/292) [`7882390`](https://github.com/yielded-dev/auth/commit/788239010e5f806d28f7fb3151e9b37c1e59a39c) Thanks [@artile](https://github.com/artile)! - Support MySQL and MariaDB in `OAuthServerPersistence`. Apply the new `mysqlMigrations` on those servers.
+
+### Patch Changes
+
+- [#299](https://github.com/yielded-dev/auth/pull/299) [`adbd95f`](https://github.com/yielded-dev/auth/commit/adbd95f01409c8130487391857f38f0bc639021f) Thanks [@grmkris](https://github.com/grmkris)! - Retry composed and direct OAuth persistence setup after a failed or interrupted first use, and never make one request wait on setup another started.
+- Updated dependencies [[`e2705d9`](https://github.com/yielded-dev/auth/commit/e2705d950d6213f8befc8e07ed59c400b3869393), [`b8a94df`](https://github.com/yielded-dev/auth/commit/b8a94df51121c90fc712012f33f05128f4fba4dc), [`058d118`](https://github.com/yielded-dev/auth/commit/058d118b6386cedaa1e3ec30b140bd19c44692b3), [`adbd95f`](https://github.com/yielded-dev/auth/commit/adbd95f01409c8130487391857f38f0bc639021f)]:
+  - @yielded/auth@0.1.0-beta.48
+
 ## 0.1.0-beta.47
 
 ### Patch Changes
