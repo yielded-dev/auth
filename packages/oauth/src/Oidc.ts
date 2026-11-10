@@ -48,6 +48,10 @@ export interface DiscoverOptions extends RequestOptions {
 export interface VerifierOptions extends RequestOptions {
   readonly metadata: Metadata;
   readonly clientId: string;
+  /** Accepted ID-token audiences, for one relying party known by several client
+   * IDs, such as an app per platform. A token's `aud` must contain one of them, and
+   * a present `azp` must be one of them. Defaults to `[clientId]`. */
+  readonly audiences?: ReadonlyArray<string>;
   /** Algorithms this verifier will accept. Discovery must advertise at least one.
    * Defaults to RS256, PS256, ES256 and EdDSA. HS256 is accepted only when
    * requested here and a client secret is supplied. */
@@ -66,11 +70,6 @@ export interface VerificationInput {
   readonly maxAgeSeconds?: number;
   readonly accessToken?: Redacted.Redacted<string>;
   readonly code?: Redacted.Redacted<string>;
-  /** Subject of another ID token this verifier accepted for the same request with
-   * `nonce`. This token must carry that `sub`; it may omit `nonce`, which must still
-   * match when present. For issuers that drop the nonce from the token-endpoint ID
-   * token of a natively issued code. Not combined with `previous`. */
-  readonly nonceSubject?: string;
   /** Refresh continuation: same subject, optional nonce must match, auth_time cannot change.
    * A `{tenantid}` metadata issuer also requires the original token `iss`. */
   readonly previous?: {
@@ -99,6 +98,9 @@ export interface Verifier {
 const Configuration = Schema.Struct({
   metadata: Metadata,
   clientId: V.text(1024),
+  audiences: Schema.optionalKey(
+    Schema.Array(V.text(1024)).check(Schema.isMinLength(1), Schema.isMaxLength(64)),
+  ),
   ...V.RequestOptions.fields,
   algorithms: Schema.optionalKey(
     Schema.Array(IdTokenAlgorithm).check(Schema.isMinLength(1), Schema.isMaxLength(5)),
@@ -113,7 +115,6 @@ const VerifyInput = Schema.Struct({
   maxAgeSeconds: Schema.optional(V.integer(0, 86400)),
   accessToken: Schema.optional(V.secret(16384)),
   code: Schema.optional(V.secret(16384)),
-  nonceSubject: Schema.optional(V.text(1024)),
   previous: Schema.optional(
     Schema.Struct({
       subject: V.text(1024),
@@ -122,9 +123,7 @@ const VerifyInput = Schema.Struct({
       issuer: Schema.optional(V.text(2048)),
     }),
   ),
-}).check(
-  Schema.makeFilter((input) => input.previous === undefined || input.nonceSubject === undefined),
-);
+});
 
 const IdClaims = Schema.Struct({
   iss: V.text(2048),
@@ -365,6 +364,7 @@ export const makeVerifier = Effect.fnUntraced(function* (
   const options = yield* V.configuration(Configuration, input, "metadata");
 
   const metadata = V.freeze(options.metadata);
+  const audiences = V.freeze([...(options.audiences ?? [options.clientId])]);
 
   const algorithms = idTokenAlgorithms.filter((algorithm) =>
     (options.algorithms ?? defaultIdTokenAlgorithms).includes(algorithm),
@@ -435,7 +435,7 @@ export const makeVerifier = Effect.fnUntraced(function* (
 
     const jwtPolicy = {
       ...(tenantTemplate ? {} : { issuer: metadata.issuer }),
-      audience: options.clientId,
+      audience: audiences,
       requiredClaims: ["iss", "sub", "aud", "exp", "iat"] as const,
       clockTolerance: 0,
     };
@@ -507,7 +507,7 @@ export const makeVerifier = Effect.fnUntraced(function* (
     if (
       start < 0 ||
       start > now * 1000 ||
-      (claims.azp !== undefined && claims.azp !== options.clientId) ||
+      (claims.azp !== undefined && !audiences.includes(claims.azp)) ||
       claims.exp <= now ||
       claims.iat > now ||
       (claims.nbf !== undefined && claims.nbf > now) ||
@@ -516,10 +516,7 @@ export const makeVerifier = Effect.fnUntraced(function* (
       return yield* claimFailure();
     if (policy.previous === undefined) {
       if (
-        (policy.nonceSubject === undefined
-          ? claims.nonce !== expectedNonce
-          : claims.sub !== policy.nonceSubject ||
-            (claims.nonce !== undefined && claims.nonce !== expectedNonce)) ||
+        claims.nonce !== expectedNonce ||
         (policy.maxAgeSeconds !== undefined &&
           (claims.auth_time === undefined ||
             claims.auth_time + policy.maxAgeSeconds < Math.floor(now)))

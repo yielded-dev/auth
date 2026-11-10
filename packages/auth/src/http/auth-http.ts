@@ -32,6 +32,7 @@ import {
   cookieConfiguration,
   OperationHttpServerConfig,
 } from "../http-operation/OperationHttpServerConfig";
+import { nativeCredentialHeader } from "../http-operation/private";
 import { mutationSecurity, requestSecurity } from "../http-operation/security";
 import { make as makeOperationServer } from "../http-operation/server";
 import { rotationCookies, snapshotCookie } from "../http-operation/session-cache-cookie";
@@ -448,9 +449,15 @@ export const make = <
         }),
       );
 
+      // Native requests passed host admission above and carry no Origin or CSRF header.
+      const admission: Effect.Effect<void, OperationHttpError> = security.native
+        ? ["GET", "HEAD", "OPTIONS"].includes(request.method)
+          ? Effect.fail(OperationHttpError.make({ reason: "method" }))
+          : Effect.void
+        : mutationSecurity(request).pipe(Effect.provideService(OperationHttpServerConfig, config));
+
       const beforeMutation = yield* Effect.cached(
-        mutationSecurity(request).pipe(
-          Effect.provideService(OperationHttpServerConfig, config),
+        admission.pipe(
           Effect.mapError(() => HookDenied.make({ reason: "policy" })),
           Effect.andThen(
             Effect.gen(function* () {
@@ -510,6 +517,19 @@ export const make = <
         for (const command of commands) {
           const cookie = config.cookies[command.slot];
 
+          if (security.native) {
+            const headers = config.native?.responseHeaders;
+
+            if (headers === undefined)
+              return yield* OperationHttpError.make({ reason: "credentials" });
+            if (command.slot !== "session-cache")
+              response = HttpServerResponse.setHeader(
+                response,
+                headers[command.slot],
+                nativeCredentialHeader(command),
+              );
+            continue;
+          }
           if (command.slot === "session-cache") {
             if (cacheTransport === undefined) continue;
             const snapshot = yield* snapshotCookie(cookie, command, now);

@@ -80,7 +80,7 @@ const harness = Effect.fnUntraced(function* () {
   const flows = new Map<string, OAuth.OAuthSignInFlow>();
   const credentials = new Map<string, OAuth.OAuthCredentialSnapshot>();
   const intents = new Map<string, OAuth.OAuthRegistrationIntent>();
-  const exchanges: Array<string> = [];
+  const verifications: Array<string> = [];
   let consumed = 0;
 
   const persistence = Layer.succeed(OAuth.OAuthSignInPersistence, {
@@ -213,11 +213,11 @@ const harness = Effect.fnUntraced(function* () {
         },
       }),
     // The real adapter's verification is covered in native-sign-in.test.ts.
-    exchangeNativeIdentity: ({ response }) =>
+    verifyNativeIdentity: ({ credential }) =>
       Effect.sync(() => {
-        const subject = Redacted.value(response.code);
+        const subject = Redacted.value(credential.idToken);
 
-        exchanges.push(subject);
+        verifications.push(subject);
 
         return { identity: { provider, issuer, subject } };
       }),
@@ -279,7 +279,7 @@ const harness = Effect.fnUntraced(function* () {
   return {
     auth,
     client,
-    exchanges,
+    verifications,
     flows,
     consumed: () => consumed,
   };
@@ -291,7 +291,7 @@ const run = <A, E, R>(effect: Effect.Effect<A, E, R>, request: Auth.AuthRequest[
 describe("native OAuth sign-in", () => {
   it.effect("registers a new identity, then authenticates the same subject again", () =>
     Effect.gen(function* () {
-      const { auth, client, exchanges } = yield* harness();
+      const { auth, client, verifications } = yield* harness();
       const device = client();
 
       const begun = yield* run(
@@ -306,8 +306,8 @@ describe("native OAuth sign-in", () => {
         auth.completeNativeSignIn({
           flowId: begun.flowId,
           provider: "apple",
-          code: "apple-subject",
-          user: JSON.stringify({ name: { firstName: "Ada" } }),
+          idToken: "apple-subject",
+          name: { givenName: "Ada" },
         }),
         device.request,
       );
@@ -343,7 +343,7 @@ describe("native OAuth sign-in", () => {
         auth.completeNativeSignIn({
           flowId: again.flowId,
           provider: "apple",
-          code: "apple-subject",
+          idToken: "apple-subject",
         }),
         returning.request,
       );
@@ -354,13 +354,13 @@ describe("native OAuth sign-in", () => {
       });
       expect(returning.held.has("session")).toBe(true);
       expect(returning.held.has("request-binding")).toBe(false);
-      expect(exchanges).toEqual(["apple-subject", "apple-subject"]);
+      expect(verifications).toEqual(["apple-subject", "apple-subject"]);
     }),
   );
 
   it.effect("requires the flow's request binding before consuming it", () =>
     Effect.gen(function* () {
-      const { auth, client, exchanges, flows, consumed } = yield* harness();
+      const { auth, client, verifications, flows, consumed } = yield* harness();
       const device = client();
       const other = client();
 
@@ -376,7 +376,7 @@ describe("native OAuth sign-in", () => {
           auth.completeNativeSignIn({
             flowId: begun.flowId,
             provider: "apple",
-            code: "apple-subject",
+            idToken: "apple-subject",
           }),
           request,
         ).pipe(Effect.result);
@@ -392,13 +392,13 @@ describe("native OAuth sign-in", () => {
       });
       expect(flows.has(begun.flowId)).toBe(true);
       expect(consumed()).toBe(0);
-      expect(exchanges).toEqual([]);
+      expect(verifications).toEqual([]);
     }),
   );
 
   it.effect("keeps native and web flows on their own completions", () =>
     Effect.gen(function* () {
-      const { auth, client, exchanges, consumed } = yield* harness();
+      const { auth, client, verifications, consumed } = yield* harness();
       const device = client();
 
       const native = yield* run(
@@ -430,14 +430,14 @@ describe("native OAuth sign-in", () => {
         auth.completeNativeSignIn({
           flowId: web.flowId,
           provider: "apple",
-          code: "apple-subject",
+          idToken: "apple-subject",
         }),
         browser.request,
       ).pipe(Effect.result);
 
       expect(viaNative).toMatchObject({ _tag: "Failure", failure: { _tag: "OAuthRejected" } });
       expect(consumed()).toBe(0);
-      expect(exchanges).toEqual([]);
+      expect(verifications).toEqual([]);
     }),
   );
 });

@@ -73,7 +73,7 @@ export const OAuthSignInTransactionContext = Schema.Struct({
   generation: OAuthGeneration,
   flowId: RequestBindingFlowId,
   ...OAuthProtocolConfiguration.fields,
-  /** Absent only for native sign-in, whose provider code was minted without a redirect. */
+  /** Absent only for native sign-in, which has no redirect. */
   redirectUri: Schema.optionalKey(OAuthRedirectUri),
   /** Captured permission/retention policy; part of the encrypted transaction context. */
   access: Schema.optionalKey(OAuthConnectedProfile),
@@ -342,25 +342,34 @@ export const OAuthNativeSignInAuthorization = Schema.Struct({
   expiresAtMillis: OAuthInstant,
 });
 
-/** What the platform returned. The code is always redeemed; `idToken` is optional
- * corroboration and is never accepted without that exchange. */
-export const OAuthNativeCodeResponse = Schema.Struct({
-  code: OAuthCodeResponse.fields.code,
-  idToken: Schema.optionalKey(
-    Schema.RedactedFromValue(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(16384))),
-  ),
-  /** First-consent name, as Apple's web `user` JSON: `{"name":{"firstName","lastName"}}`.
-   * Unsigned display data only; it never selects identity. */
-  user: OAuthCodeResponse.fields.user,
+const nameText = Schema.String.check(Schema.isMaxLength(256));
+
+/** First-consent name from a native sheet, such as Apple's `PersonNameComponents`.
+ * Unsigned display data sent once; it only fills names the verified token lacks. */
+export const OAuthNativeName = Schema.Struct({
+  givenName: Schema.optionalKey(nameText),
+  familyName: Schema.optionalKey(nameText),
 });
 
-export type OAuthNativeCodeResponse = typeof OAuthNativeCodeResponse.Type;
+export type OAuthNativeName = typeof OAuthNativeName.Type;
+
+/** What the platform sheet returned. The ID token is the assertion; `code` is used
+ * only to check the token's `c_hash` and is never redeemed. */
+export const OAuthNativeCredential = Schema.Struct({
+  idToken: Schema.RedactedFromValue(
+    Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(16384)),
+  ),
+  code: Schema.optionalKey(OAuthCodeResponse.fields.code),
+  name: Schema.optionalKey(OAuthNativeName),
+});
+
+export type OAuthNativeCredential = typeof OAuthNativeCredential.Type;
 
 export const OAuthNativeSignInComplete = Schema.Struct({
   flowId: RequestBindingFlowId,
   provider: OAuthProviderKey,
   requestBinding: RequestBindingCredential,
-  ...OAuthNativeCodeResponse.fields,
+  ...OAuthNativeCredential.fields,
 });
 
 export const OAuthNativeProtocolPreparation = Schema.Struct({

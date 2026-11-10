@@ -68,7 +68,7 @@ export {
   OAuthNativeCallbackId,
   OAuthNativeProtocolConfiguration,
   OAuthNativeProtocolPreparation,
-  OAuthNativeCodeResponse,
+  OAuthNativeCredential,
   OAuthNativeSignInInput,
   OAuthNativeSignInBegin,
   OAuthNativeSignInComplete,

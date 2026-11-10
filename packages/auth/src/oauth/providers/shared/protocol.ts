@@ -24,7 +24,8 @@ import {
   OAuthDisplayProfile,
   OAuthLoginHint,
   OAuthNativeCallbackId,
-  OAuthNativeCodeResponse,
+  OAuthNativeCredential,
+  type OAuthNativeName,
   OAuthNativeProtocolConfiguration,
   OAuthNativeProtocolPreparation,
   OAuthProtocolConfiguration,
@@ -43,7 +44,12 @@ import {
   type OpenIdConnectOidcProvider,
 } from "./models";
 import { PrivateKeyClientSecret } from "./privateKeyJwt";
-import { decodeOidcProfile, mergeAppleCallbackUser, mergeUserInfo } from "./profile";
+import {
+  decodeAppleCallbackUser,
+  decodeOidcProfile,
+  mergeAppleName,
+  mergeUserInfo,
+} from "./profile";
 import { tokens } from "./receipt";
 import { subjectInTenant } from "./tenantSubject";
 
@@ -73,10 +79,10 @@ const nativeBeginInput = Schema.Struct({
   flowId: RequestBindingFlowId,
 });
 
-const nativeExchangeInput = Schema.toType(
+const nativeVerifyInput = Schema.toType(
   Schema.Struct({
     configuration: OAuthNativeProtocolConfiguration,
-    response: OAuthNativeCodeResponse,
+    credential: OAuthNativeCredential,
     secrets: OAuthTransactionSecrets,
     verificationStartedAt: Schema.DateTimeUtcFromMillis,
   }),
@@ -95,10 +101,10 @@ const oidcIdentity = Effect.fnUntraced(function* (
   provider: OpenIdConnectOidcProvider,
   verified: Oidc.Verified,
   claims: Schema.JsonObject,
-  user: string | undefined,
+  name: OAuthNativeName | undefined,
 ) {
   const profile = yield* decodeOidcProfile(
-    provider[discoveryProfile] === "apple" ? yield* mergeAppleCallbackUser(claims, user) : claims,
+    provider[discoveryProfile] === "apple" ? mergeAppleName(claims, name) : claims,
     provider.profileSchema,
   );
 
@@ -171,7 +177,12 @@ export const makeOpenIdConnectOAuthProtocol = Effect.fn("makeOpenIdConnectOAuthP
           ? undefined
           : selectCallback(provider.provider, provider.callbacks, request.callbackId);
 
-      if (entry === undefined || provider === undefined || callback === undefined)
+      if (
+        entry === undefined ||
+        entry.client === undefined ||
+        provider === undefined ||
+        callback === undefined
+      )
         return yield* OAuthRejected.make({});
 
       const state = yield* Pkce.random().pipe(
@@ -256,8 +267,9 @@ export const makeOpenIdConnectOAuthProtocol = Effect.fn("makeOpenIdConnectOAuthP
             registrationKind(provider) === "web",
         );
 
-        if (entry === undefined) return yield* unavailable();
+        if (entry === undefined || entry.client === undefined) return yield* unavailable();
         const provider = entry.provider;
+        const client = entry.client;
 
         const callback = provider.callbacks.find(
           (candidate) => candidate.callbackId === saved.callbackId,
@@ -293,7 +305,7 @@ export const makeOpenIdConnectOAuthProtocol = Effect.fn("makeOpenIdConnectOAuthP
 
         const clientSecret = yield* requestSecret(provider.authentication);
 
-        const receipt = yield* entry.client
+        const receipt = yield* client
           .codeGrant({
             code: request.response.code,
             redirectUri: saved.redirectUri,
@@ -351,7 +363,7 @@ export const makeOpenIdConnectOAuthProtocol = Effect.fn("makeOpenIdConnectOAuthP
           const claims =
             provider.userInfo === "merge"
               ? yield* (function* () {
-                  const userInfo = yield* entry.client
+                  const userInfo = yield* client
                     .fetchProfile(grant.accessToken)
                     .pipe(
                       Effect.catchCause((cause) => Effect.failCause(Cause.map(cause, unavailable))),
@@ -367,7 +379,12 @@ export const makeOpenIdConnectOAuthProtocol = Effect.fn("makeOpenIdConnectOAuthP
                 })()
               : Redacted.value(verified.claims);
 
-          return yield* oidcIdentity(provider, verified, claims, request.response.user);
+          return yield* oidcIdentity(
+            provider,
+            verified,
+            claims,
+            yield* decodeAppleCallbackUser(request.response.user),
+          );
         }
 
         if (provider.protocol !== "oauth") return yield* unavailable();
@@ -375,7 +392,7 @@ export const makeOpenIdConnectOAuthProtocol = Effect.fn("makeOpenIdConnectOAuthP
         const body =
           provider.identitySource.from === "token"
             ? Redacted.value(receipt.body)
-            : yield* entry.client
+            : yield* client
                 .fetchProfile(grant.accessToken)
                 .pipe(
                   Effect.catchCause((cause) => Effect.failCause(Cause.map(cause, unavailable))),
@@ -458,9 +475,9 @@ export const makeOpenIdConnectOAuthProtocol = Effect.fn("makeOpenIdConnectOAuthP
       });
     });
 
-    const exchangeNativeIdentity: NonNullable<OAuthProtocol["Service"]["exchangeNativeIdentity"]> =
-      Effect.fn("OpenIdConnect.exchangeNativeIdentity")(function* (input) {
-        const request = yield* snapshotNativeExchangeInput.effect(input);
+    const verifyNativeIdentity: NonNullable<OAuthProtocol["Service"]["verifyNativeIdentity"]> =
+      Effect.fn("OpenIdConnect.verifyNativeIdentity")(function* (input) {
+        const request = yield* snapshotNativeVerifyInput.effect(input);
         const saved = request.configuration;
 
         const entry = installed.find(
@@ -479,7 +496,6 @@ export const makeOpenIdConnectOAuthProtocol = Effect.fn("makeOpenIdConnectOAuthP
         )
           return yield* unavailable();
         const provider = entry.provider;
-        const verifier = entry.verifier;
         const nonce = request.secrets.oidcNonce;
 
         if (nonce === undefined || request.secrets.pkceVerifier !== undefined)
@@ -489,91 +505,39 @@ export const makeOpenIdConnectOAuthProtocol = Effect.fn("makeOpenIdConnectOAuthP
         if (startedAt < 0 || startedAt > DateTime.toEpochMillis(yield* DateTime.now))
           return yield* rejected();
 
-        const verify = (
-          token: Redacted.Redacted<string>,
-          options: {
-            readonly accessToken?: Redacted.Redacted<string>;
-            readonly nonceSubject?: string;
-          },
-        ) =>
-          verifier
-            .verify(token, {
-              verificationStartedAt: request.verificationStartedAt,
-              nonce,
-              code: request.response.code,
-              ...options,
-              ...(provider.maxAgeSeconds === undefined
-                ? {}
-                : { maxAgeSeconds: provider.maxAgeSeconds }),
-            })
-            .pipe(
-              Effect.catchCause((cause) =>
-                Effect.failCause(
-                  Cause.map(cause, (error) =>
-                    error._tag === "OAuthRejected" ? rejected() : unavailable(),
-                  ),
-                ),
-              ),
-            );
-
-        // Check the caller's platform token, including its nonce and code hash, before
-        // spending the code. It only corroborates the exchange and never replaces it.
-        const corroborated =
-          request.response.idToken === undefined
-            ? undefined
-            : yield* verify(request.response.idToken, {});
-
-        const clientSecret = yield* requestSecret(provider.authentication);
-
-        // Platform codes carry no redirect; the native registration's client redeems it.
-        const receipt = yield* entry.client
-          .codeGrant({
-            code: request.response.code,
-            ...(provider.tokenParameters === undefined
+        // The platform token is the assertion. Its code only satisfies `c_hash`.
+        const verified = yield* entry.verifier
+          .verify(request.credential.idToken, {
+            verificationStartedAt: request.verificationStartedAt,
+            nonce,
+            ...(request.credential.code === undefined ? {} : { code: request.credential.code }),
+            ...(provider.maxAgeSeconds === undefined
               ? {}
-              : { parameters: provider.tokenParameters }),
-            ...(clientSecret === undefined ? {} : { clientSecret }),
+              : { maxAgeSeconds: provider.maxAgeSeconds }),
           })
           .pipe(
-            Effect.catchCause((cause) => Effect.failCause(Cause.map(cause, unavailable))),
-            Effect.ensuring(
-              Effect.sync(() => {
-                if (clientSecret !== undefined) Redacted.wipeUnsafe(clientSecret);
-              }),
+            Effect.catchCause((cause) =>
+              Effect.failCause(
+                Cause.map(cause, (error) =>
+                  error._tag === "OAuthRejected" ? rejected() : unavailable(),
+                ),
+              ),
             ),
           );
-
-        const grant = yield* tokens(receipt, undefined, {
-          scopes: provider.scopes,
-          refreshRequired: false,
-          operation: "authorization_code",
-        });
-
-        if (grant.idToken === undefined) return yield* unavailable();
-
-        // Without a nonce in the redeemed token, the platform token must prove it for
-        // the same subject. Otherwise the redeemed token's own nonce must match.
-        const verified = yield* verify(grant.idToken, {
-          accessToken: grant.accessToken,
-          ...(corroborated === undefined ? {} : { nonceSubject: corroborated.subject }),
-        });
-
-        if (corroborated !== undefined && corroborated.subject !== verified.subject)
-          return yield* rejected();
 
         return yield* oidcIdentity(
           provider,
           verified,
           Redacted.value(verified.claims),
-          request.response.user,
+          request.credential.name,
         );
       });
 
     return OAuthProtocol.of({
       prepareNative: (input) => run(prepareNative(input)),
-      exchangeNativeIdentity: (input) =>
+      verifyNativeIdentity: (input) =>
         run(
-          exchangeNativeIdentity(input).pipe(
+          verifyNativeIdentity(input).pipe(
             timeoutOrElseWithCause({
               duration: timeoutSeconds * 1000,
               orElse: () => Effect.fail(unavailable()),
@@ -612,4 +576,4 @@ const snapshotOAuthProtocolPreparation = makeOAuthSnapshot(OAuthProtocolPreparat
 const snapshotExchangeInput = makeOAuthSnapshot(exchangeInput);
 const snapshotOAuthVerifiedExternalIdentity = makeOAuthSnapshot(OAuthVerifiedExternalIdentity);
 const snapshotOAuthNativeProtocolPreparation = makeOAuthSnapshot(OAuthNativeProtocolPreparation);
-const snapshotNativeExchangeInput = makeOAuthSnapshot(nativeExchangeInput);
+const snapshotNativeVerifyInput = makeOAuthSnapshot(nativeVerifyInput);

@@ -57,9 +57,10 @@ const registration = Schema.Union([
   }),
   Schema.Struct({
     ...registrationFields,
+    // Empty only for a native-only host; web and connected configuration require one.
     callbacks: Schema.Array(
       Schema.Struct({ callbackId: OAuthCallbackId, redirectUri: OAuthRedirectUri }),
-    ).check(Schema.isMinLength(1), Schema.isMaxLength(16)),
+    ).check(Schema.isMaxLength(16)),
     redirectUri: Schema.optionalKey(Schema.Never),
     callbackId: Schema.optionalKey(Schema.Never),
   }),

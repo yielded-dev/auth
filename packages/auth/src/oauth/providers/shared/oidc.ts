@@ -12,6 +12,7 @@ import * as HttpClient from "effect/http/HttpClient";
 import type * as Redacted from "effect/Redacted";
 
 import { OAuthUnavailable } from "../../signInErrors";
+import { nativeAudiences } from "./compatibility";
 import { installProvider, prepareConfigurations, type InstalledProvider } from "./configuration";
 import {
   installConnectedProvider,
@@ -98,6 +99,7 @@ const makeVerifier = Effect.fn("OpenIdConnect.makeVerifier")(function* (
     readonly algorithms: ReadonlyArray<Oidc.IdTokenAlgorithm>;
     readonly pkceS256: boolean;
     readonly clientSecret?: Redacted.Redacted<string>;
+    readonly audiences?: ReadonlyArray<string>;
   },
 ) {
   const context = Context.make(SecureRandom.SecureRandom, yield* SecureRandom.SecureRandom).pipe(
@@ -113,6 +115,7 @@ const makeVerifier = Effect.fn("OpenIdConnect.makeVerifier")(function* (
     algorithms: options.algorithms,
     pkceS256: options.pkceS256,
     ...(options.clientSecret === undefined ? {} : { clientSecret: options.clientSecret }),
+    ...(options.audiences === undefined ? {} : { audiences: options.audiences }),
   }).pipe(Effect.catchCause((cause) => Effect.failCause(Cause.map(cause, configurationError))));
 
   return {
@@ -163,6 +166,9 @@ export const installConfigurations = Effect.fn("OpenIdConnect.installConfigurati
               ...(hasStaticSecret(provider.authentication)
                 ? { clientSecret: provider.authentication.secret }
                 : {}),
+              ...(provider[nativeAudiences] === undefined
+                ? {}
+                : { audiences: provider[nativeAudiences] }),
             }),
           }
         : entry,

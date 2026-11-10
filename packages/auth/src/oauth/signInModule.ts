@@ -44,7 +44,6 @@ import {
 import { OAuthReturnTargets } from "./OAuthReturnTargets";
 import { OAuthSignInPersistence } from "./OAuthSignInPersistence";
 import { OAuthTransactionProtector } from "./OAuthTransactionProtector";
-import type { OAuthGrantId, OAuthPermissionProfileKey } from "./permissionProfile";
 import {
   claimsIdentitySchema,
   type OAuthClaimsIdentity,
@@ -145,11 +144,6 @@ const nativeStateMessage = Schema.fromJsonString(
     TokenDigest.check(Schema.isPattern(/^[A-Za-z0-9_-]{43}$/)),
   ]),
 );
-
-type Connection = {
-  readonly grantId: typeof OAuthGrantId.Type;
-  readonly profileKey: typeof OAuthPermissionProfileKey.Type;
-};
 
 /** One provider exchange within the flow's captured deadline; protocol rejections
  * become OAuthRejected and a timeout becomes OAuthUnavailable. */
@@ -463,7 +457,7 @@ export const makeOAuthMethod = <
           prepareAuthorization,
           exchangeVerifiedIdentity,
           prepareNative,
-          exchangeNativeIdentity,
+          verifyNativeIdentity,
         } = yield* OAuthProtocol;
 
         const { resolve: returnTarget } = yield* OAuthReturnTargets;
@@ -758,15 +752,17 @@ export const makeOAuthMethod = <
           );
         });
 
-        /** Shared tail after one verified exchange: match the account, then either
-         * issue a registration intent or authenticate. */
-        const settle = Effect.fn("OAuth.SignIn.settle")(function* <E, R>(
+        /** Shared tail after one verified identity: match the account, then either
+         * issue a registration intent or authenticate. Retained access requires the
+         * web exchange's private grant; native sign-in never has one. */
+        const settle = Effect.fn("OAuth.SignIn.settle")(function* (
           flow: OAuthSignInFlow,
           identity: OAuthVerifiedExternalIdentity,
           startedAtMillis: number,
-          retain: (
-            credential: OAuthCredentialSnapshot,
-          ) => Effect.Effect<Connection | undefined, E, R>,
+          grant?: {
+            readonly response: OAuthConnectedGrantResponse;
+            readonly startedAtMillis: number;
+          },
         ) {
           const context = flow.context;
           let verifiedAt = startedAtMillis;
@@ -835,7 +831,13 @@ export const makeOAuthMethod = <
             };
           }
           const credential = yield* checkCredential(resolved, identity);
-          const connection = yield* retain(credential);
+
+          const connection =
+            access === undefined
+              ? undefined
+              : grant === undefined
+                ? yield* OAuthUnavailable.make({})
+                : yield* access.retain(flow, credential, grant.response, grant.startedAtMillis);
 
           const established = yield* authenticate({
             context,
@@ -974,12 +976,13 @@ export const makeOAuthMethod = <
               context.exchangeTimeoutMillis,
             );
 
-            return yield* settle(flow, identity, DateTime.toEpochMillis(start), (credential) =>
-              access === undefined
-                ? Effect.as(Effect.void, undefined)
-                : privateGrant === undefined || grantStartedAt === undefined
-                  ? Effect.fail(OAuthUnavailable.make({}))
-                  : access.retain(flow, credential, privateGrant, grantStartedAt),
+            return yield* settle(
+              flow,
+              identity,
+              DateTime.toEpochMillis(start),
+              privateGrant === undefined || grantStartedAt === undefined
+                ? undefined
+                : { response: privateGrant, startedAtMillis: grantStartedAt },
             );
           },
           Effect.scoped,
@@ -997,7 +1000,7 @@ export const makeOAuthMethod = <
           function* (raw: typeof OAuthNativeSignInComplete.Type) {
             yield* noAmbient();
             // Unsupported adapters reject before any flow is consumed.
-            if (exchangeNativeIdentity === undefined || access !== undefined)
+            if (verifyNativeIdentity === undefined || access !== undefined)
               return yield* OAuthMethodUnsupported.make({});
             const request = yield* snapshotOAuthNativeSignInComplete.effect(raw);
 
@@ -1059,7 +1062,7 @@ export const makeOAuthMethod = <
                 if (secrets.oidcNonce === undefined || secrets.pkceVerifier !== undefined)
                   return yield* OAuthUnavailable.make({});
 
-                return yield* exchangeNativeIdentity({
+                return yield* verifyNativeIdentity({
                   configuration: yield* snapshotOAuthNativeProtocolConfiguration.effect({
                     provider: context.provider,
                     protocol: "oidc",
@@ -1068,10 +1071,10 @@ export const makeOAuthMethod = <
                     responseIssuerMode: "unsupported",
                     callbackId: context.callbackId,
                   }),
-                  response: {
-                    code: request.code,
-                    ...(request.idToken === undefined ? {} : { idToken: request.idToken }),
-                    ...(request.user === undefined ? {} : { user: request.user }),
+                  credential: {
+                    idToken: request.idToken,
+                    ...(request.code === undefined ? {} : { code: request.code }),
+                    ...(request.name === undefined ? {} : { name: request.name }),
                   },
                   secrets,
                   verificationStartedAt: start,
@@ -1082,9 +1085,7 @@ export const makeOAuthMethod = <
               context.exchangeTimeoutMillis,
             );
 
-            return yield* settle(flow, identity, DateTime.toEpochMillis(start), () =>
-              Effect.as(Effect.void, undefined),
-            );
+            return yield* settle(flow, identity, DateTime.toEpochMillis(start));
           },
           Effect.provideService(SecureRandom.SecureRandom, crypto),
           Effect.provideService(Digest.Digest, digests),

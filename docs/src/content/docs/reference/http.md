@@ -106,6 +106,41 @@ serialized cookie, including name and attributes, must fit 4,096 bytes. Oversize
 encoding, and backend failures report sanitized diagnostics and fall back to
 authoritative reads. Invalid, expired, or duplicate snapshots fall back silently.
 
+## Native clients
+
+Apps that hold credentials themselves, such as iOS apps, use headers instead of
+cookies. Configure `native` on `Http.layer`:
+
+```ts
+native: {
+  modeHeader: "x-auth-mode",
+  requestHeaders: OperationHttpServer.headerConfiguration("x-auth-request-"),
+  responseHeaders: OperationHttpServer.headerConfiguration("x-auth-response-"),
+  // Host admission, not authentication. Credentials supply authority.
+  authorize: (request) =>
+    request.headers.get("x-app-client") === "ios"
+      ? Effect.void
+      : Effect.fail(OperationHttp.OperationHttpError.make({ reason: "origin" })),
+}
+```
+
+A native request sets the mode header to `native`, passes `authorize`, and sends
+no Origin, cookies, or browser fetch metadata. The mode header selects the
+transport; it does not authenticate the app. Actions and `http.withRequest`
+routes then skip Origin and CSRF checks but still require POST for mutations.
+
+Each action is `POST {basePath}/{action name}` with a JSON body `{ "payload": ... }`.
+The response body is `{ "_tag": "Success", "value": ... }` or
+`{ "_tag": "Failure", "error": ... }`. Credentials never appear in either:
+
+- **Response:** each changed slot arrives in its response header as JSON,
+  `{ "_tag": "Issue", "credential": "...", "expiresAtMillis": 0 }` or `{ "_tag": "Clear" }`.
+- **Request:** send each held credential's raw value in its request header.
+
+Store credentials in the platform keychain and delete them on `Clear`. Send no
+cookies, refuse redirects, and never retry a mutation automatically. TypeScript
+clients get this behavior from [`Client.make({ native })`](./client#client-options).
+
 ## Proof request rate limits
 
 Auth supplies `Proofs.HostIngressLimiter` for email code/link and password-reset

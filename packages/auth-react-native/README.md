@@ -92,3 +92,9 @@ contributes paths to your app-owned file. Older iOS versions reject HTTPS callba
 Let this adapter own the authentication session: do not open a competing
 WebBrowser session or handle its callback through `Linking`. If presentation
 stays pending, interrupt login before trying again.
+
+## Sign in with Apple
+
+Native Sign in with Apple needs no adapter. Call `expo-apple-authentication` in a
+development build and give this vault to your native-mode client; see the
+[Apple guide](../../docs/src/content/docs/guide/apple.md#native-apps).

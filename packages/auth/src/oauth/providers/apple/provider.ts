@@ -8,6 +8,7 @@ import * as Schema from "effect/Schema";
 
 import type { ProviderDefinition } from "../../providerDefinition";
 import { type OAuthUnavailable } from "../../signInErrors";
+import { nativeAudiences } from "../shared/compatibility";
 import { discoveryProfile } from "../shared/discovery";
 import { provider as oidcProvider } from "../shared/layer";
 import { OpenIdConnectConfigurationError } from "../shared/models";
@@ -24,21 +25,38 @@ const pem = Schema.toType(
 
 const lifetime = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 15_777_000 }));
 
-const Registration = Schema.Struct({
-  /** Web (default): a Services ID for the browser flow. Native: an App ID (bundle ID)
-   * for `ASAuthorizationController` codes. A native registration serves only native
-   * sign-in; each kind keeps one active generation. */
-  kind: Schema.optionalKey(Schema.Literals(["web", "native"])),
+const generation = {
+  configurationGeneration: Schema.optionalKey(Schema.Int),
+  issuance: Schema.optionalKey(Schema.Literals(["active", "retired"])),
+};
+
+/** Browser sign-in with a Services ID and the key that signs Apple client secrets. */
+const WebRegistration = Schema.Struct({
+  kind: Schema.optionalKey(Schema.Literal("web")),
   clientId: Schema.NonEmptyString,
   teamId: identifier,
   keyId: identifier,
   privateKey: pem,
-  configurationGeneration: Schema.optionalKey(Schema.Int),
-  issuance: Schema.optionalKey(Schema.Literals(["active", "retired"])),
+  ...generation,
   scopes: Schema.optionalKey(Schema.Array(Schema.Literals(["openid", "email", "name"]))),
   clientSecretLifetimeSeconds: Schema.optionalKey(lifetime),
 });
 
+/** Native sign-in from `ASAuthorizationController` in the listed apps, such as an iOS
+ * and a macOS app. Each bundle ID is an accepted ID-token audience. Apple's `sub` is
+ * team-scoped, so list only apps from the team that owns the web Services ID. */
+const NativeRegistration = Schema.Struct({
+  kind: Schema.Literal("native"),
+  bundleIds: Schema.NonEmptyArray(Schema.NonEmptyString.check(Schema.isMaxLength(1024))).check(
+    Schema.isMaxLength(64),
+  ),
+  ...generation,
+});
+
+const Registration = Schema.Union([NativeRegistration, WebRegistration]);
+
+export type WebRegistration = typeof WebRegistration.Type;
+export type NativeRegistration = typeof NativeRegistration.Type;
 export type ProviderRegistration = typeof Registration.Type;
 
 export type ProviderOptions = {
@@ -57,7 +75,7 @@ const decodePem = (value: string): Uint8Array | undefined =>
   );
 
 const importSigningKey = Effect.fnUntraced(function* (
-  privateKey: ProviderRegistration["privateKey"],
+  privateKey: WebRegistration["privateKey"],
   keyId: string,
 ) {
   const der = decodePem(Redacted.value(privateKey));
@@ -80,7 +98,7 @@ export const mintClientSecret = Effect.fn("Apple.mintClientSecret")(function* (o
   readonly teamId: string;
   readonly clientId: string;
   readonly keyId: string;
-  readonly privateKey: ProviderRegistration["privateKey"];
+  readonly privateKey: WebRegistration["privateKey"];
   readonly lifetimeSeconds?: number;
 }) {
   const teamId = yield* Schema.decodeEffect(identifier)(options.teamId).pipe(
@@ -119,9 +137,9 @@ export const mintClientSecret = Effect.fn("Apple.mintClientSecret")(function* (o
 /** Sign in with Apple through the shared OIDC implementation. Defaults to the
  * openid scope, client_secret_post, form_post callbacks, advertised RS256, and
  * no PKCE. AppleUserProfile decodes boolean or string email_verified /
- * is_private_email flags. Name arrives once in the user form field on first consent and is merged
- * into that profile. A `kind: "native"` registration adds native sign-in for the
- * app's bundle ID beside the web Services ID registration.
+ * is_private_email flags. Name arrives once on first consent and is merged
+ * into that profile. A `kind: "native"` registration adds native sign-in for its
+ * bundle IDs, with or without a web Services ID registration; it needs no key.
  * No UserInfo request or retained API access is installed.
  * Credentials are captured when the host builds its Layer; supply HttpClient and
  * crypto in that Scope. */
@@ -135,8 +153,31 @@ export const provider = (
           "registrations" in options ? options.registrations : [options],
         ).pipe(Effect.mapError(() => OpenIdConnectConfigurationError.make({ reason: "provider" })));
 
+        const apple = {
+          protocol: "oidc" as const,
+          issuer: "https://appleid.apple.com",
+          responseIssuerMode: "unsupported" as const,
+          responseMode: "form_post" as const,
+          pkceS256: false,
+          idTokenSignedResponseAlg: "RS256" as const,
+          profileSchema: AppleUserProfile,
+          [discoveryProfile]: "apple" as const,
+        };
+
         const prepared = yield* Effect.forEach(registrations, (registration) =>
           Effect.gen(function* () {
+            if (registration.kind === "native") {
+              const { kind: _kind, bundleIds, ...rest } = registration;
+
+              // A public app client: no secret and no token client.
+              return {
+                ...rest,
+                ...apple,
+                clientId: bundleIds[0],
+                [nativeAudiences]: bundleIds,
+                authentication: { method: "none" as const, publicClient: true as const },
+              };
+            }
             const der = decodePem(Redacted.value(registration.privateKey));
 
             if (der === undefined || der.length === 0)
@@ -159,6 +200,7 @@ export const provider = (
                 : registration.clientSecretLifetimeSeconds;
 
             const {
+              kind: _kind,
               privateKey: _privateKey,
               clientSecretLifetimeSeconds: _lifetime,
               teamId,
@@ -168,14 +210,7 @@ export const provider = (
 
             return {
               ...rest,
-              protocol: "oidc" as const,
-              issuer: "https://appleid.apple.com",
-              responseIssuerMode: "unsupported" as const,
-              responseMode: "form_post" as const,
-              pkceS256: false,
-              idTokenSignedResponseAlg: "RS256" as const,
-              profileSchema: AppleUserProfile,
-              [discoveryProfile]: "apple" as const,
+              ...apple,
               authentication: {
                 method: "client_secret_post" as const,
                 privateKeyJwt: {

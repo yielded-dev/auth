@@ -3,7 +3,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import { OAuthProtocolRejected } from "../../signInErrors";
-import { type OAuthDisplayProfile } from "../../signInModels";
+import { type OAuthDisplayProfile, type OAuthNativeName } from "../../signInModels";
 
 const text = Schema.String.check(Schema.isMaxLength(256));
 const url = Schema.String.check(Schema.isMaxLength(2048));
@@ -55,35 +55,47 @@ const firstConsentName = Schema.Struct({
   ),
 });
 
-/** Merge Apple's first-consent `user` form field into ID-token claims. Name is
- * only sent once; later callbacks leave these fields absent. */
-export const mergeAppleCallbackUser = Effect.fnUntraced(function* (
-  claims: Schema.JsonObject,
+/** Decode Apple's web first-consent `user` form field. Malformed values carry no name. */
+export const decodeAppleCallbackUser = Effect.fnUntraced(function* (
   user: string | undefined,
-) {
-  if (user === undefined) return claims;
+): Effect.fn.Return<OAuthNativeName | undefined> {
+  if (user === undefined) return undefined;
 
   const parsed = yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown))(user).pipe(
     Effect.orElseSucceed(() => undefined),
   );
 
-  if (parsed === undefined) return claims;
+  if (parsed === undefined) return undefined;
 
   const payload = yield* Schema.decodeUnknownEffect(firstConsentName)(parsed).pipe(
     Effect.orElseSucceed(() => undefined),
   );
 
-  if (payload?.name === undefined) return claims;
-  const given = payload.name.firstName?.trim();
-  const family = payload.name.lastName?.trim();
+  if (payload?.name === undefined) return undefined;
+
+  return {
+    ...(payload.name.firstName === undefined ? {} : { givenName: payload.name.firstName }),
+    ...(payload.name.lastName === undefined ? {} : { familyName: payload.name.lastName }),
+  };
+});
+
+/** Fill missing ID-token names from Apple's first-consent name. Apple sends it only
+ * once; later sign-ins leave these fields absent. */
+export const mergeAppleName = (
+  claims: Schema.JsonObject,
+  name: OAuthNativeName | undefined,
+): Schema.JsonObject => {
+  if (name === undefined) return claims;
+  const given = name.givenName?.trim();
+  const family = name.familyName?.trim();
 
   const parts = [given, family].filter(
     (value): value is string => value !== undefined && value.length > 0,
   );
 
-  const name = parts.join(" ");
+  const joined = parts.join(" ");
   // given_name and family_name each allow 256. The combined name must too.
-  const mergedName = name.length > 0 && name.length <= 256 ? name : undefined;
+  const mergedName = joined.length > 0 && joined.length <= 256 ? joined : undefined;
 
   return {
     ...claims,
@@ -95,7 +107,7 @@ export const mergeAppleCallbackUser = Effect.fnUntraced(function* (
       : { family_name: family }),
     ...(mergedName === undefined || claims.name !== undefined ? {} : { name: mergedName }),
   };
-});
+};
 
 /** Standard OpenID Connect user claims, plus Google's optional hosted domain.
  * Generic OIDC uses this schema unless a preset supplies its own. The adapter

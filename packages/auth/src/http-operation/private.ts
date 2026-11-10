@@ -29,6 +29,12 @@ export const credentialWire = (command: AuthCredentialCommand) =>
         expiresAtMillis: command.expiresAtMillis,
       };
 
+const encodeCredentialWire = Schema.encodeSync(Schema.fromJsonString(CredentialWire));
+
+/** Native response-header value for one credential command. */
+export const nativeCredentialHeader = (command: AuthCredentialCommand) =>
+  encodeCredentialWire(credentialWire(command));
+
 export const revealWire = (command: AuthRevealCommand): typeof RevealWire.Type => ({
   kind: command.kind,
   revealId: command.revealId,

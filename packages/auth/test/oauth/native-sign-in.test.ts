@@ -1,4 +1,4 @@
-import { generateKeyPairSync } from "node:crypto";
+import { createHash, generateKeyPairSync } from "node:crypto";
 
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { it } from "@effect/vitest";
@@ -25,23 +25,24 @@ import { describe, expect } from "vite-plus/test";
 import { expectTag } from "./helpers/oauth";
 
 // Human-requested seam: native (no-browser) Sign in with Apple through the real Apple
-// provider, its discovery pinning, client-secret JWT and shared ID-token verifier. Only
-// Apple's HTTP endpoints are substituted.
+// provider, its discovery pinning and shared ID-token verifier. Only Apple's HTTP
+// endpoints are substituted; the token endpoint must never be called.
 // Failure inventory:
-// 1. A native code is redeemed by the bundle-ID client without redirect_uri, and the
-//    redeemed ID token's nonce must equal the flow nonce.
-// 2. A redeemed ID token without nonce is accepted only with a platform ID token that
-//    carries the nonce and the same subject; neither nonce present is rejected.
-// 3. A platform ID token for another subject is rejected.
-// 4. Web and native registrations coexist, and neither serves the other flow.
-// 5. Apple's first-consent `user` JSON fills the native profile name.
+// 1. A platform ID token for any listed bundle ID, carrying the flow nonce, verifies
+//    to one identity; the first-consent name fills the profile.
+// 2. A token with another nonce, no nonce, or an unlisted audience is rejected.
+// 3. A token carrying `c_hash` verifies only with its own authorization code.
+// 4. Web and native registrations coexist, neither serves the other flow, and a
+//    native registration needs no signing key or callback.
 
 const seconds = 1_700_000_000;
 const platform = Layer.mergeAll(FetchHttpClient.layer, NodeCrypto.layer);
 const json = (body: unknown) => Response.json(body);
 const apple = OAuthProviderKey.make("apple");
-const bundleId = "com.example.app";
+const iosApp = "com.example.ios";
+const macApp = "com.example.mac";
 const servicesId = "com.example.services";
+const webCallback = OAuthRedirectUri.make("https://app.test/auth/apple/callback");
 
 const IdToken = Schema.Struct({
   iss: Schema.String,
@@ -50,29 +51,26 @@ const IdToken = Schema.Struct({
   iat: Schema.Finite,
   exp: Schema.Finite,
   nonce: Schema.optionalKey(Schema.String),
+  c_hash: Schema.optionalKey(Schema.String),
   email: Schema.String,
 });
 
-const signingKey = () =>
-  Redacted.make(
+const web = () => ({
+  clientId: servicesId,
+  teamId: "TEAM123456",
+  keyId: "KEY1234567",
+  privateKey: Redacted.make(
     generateKeyPairSync("ec", { namedCurve: "P-256" })
       .privateKey.export({ type: "pkcs8", format: "pem" })
       .toString(),
-  );
-
-const registration = (kind: "web" | "native", clientId: string) => ({
-  kind,
-  clientId,
-  teamId: "TEAM123456",
-  keyId: "KEY1234567",
-  privateKey: signingKey(),
+  ),
   scopes: ["openid", "email", "name"] as const,
 });
 
-interface TokenRequest {
-  readonly clientId: string | null;
-  readonly redirectUri: string | null;
-}
+const native = { kind: "native" as const, bundleIds: [iosApp, macApp] as const };
+
+const codeHash = (code: string) =>
+  createHash("sha256").update(code).digest().subarray(0, 16).toString("base64url");
 
 const harness = Effect.fnUntraced(function* (
   kinds: ReadonlyArray<"web" | "native"> = ["web", "native"],
@@ -80,10 +78,9 @@ const harness = Effect.fnUntraced(function* (
   yield* TestClock.setTime(seconds * 1000);
   const pair = yield* Jwk.generateKeyPair({ algorithm: "RS256", kid: "apple" });
   const signing = yield* Jwk.importPrivate(pair.privateKey, "RS256");
-  const requests: Array<TokenRequest> = [];
-  let tokenEndpointIdToken = "";
+  const tokenCalls: Array<string> = [];
 
-  const fetch: typeof globalThis.fetch = async (input, init) => {
+  const fetch: typeof globalThis.fetch = async (input) => {
     const url = input instanceof Request ? input.url : String(input);
 
     if (url === "https://appleid.apple.com/.well-known/openid-configuration")
@@ -98,43 +95,19 @@ const harness = Effect.fnUntraced(function* (
         token_endpoint_auth_methods_supported: ["client_secret_post"],
       });
     if (url === "https://appleid.apple.com/auth/keys") return json({ keys: [pair.publicKey] });
-    if (url === "https://appleid.apple.com/auth/token") {
-      const form =
-        init?.body instanceof URLSearchParams
-          ? init.body
-          : new URLSearchParams(
-              typeof init?.body === "string"
-                ? init.body
-                : init?.body instanceof Uint8Array
-                  ? new TextDecoder().decode(init.body)
-                  : "",
-            );
-
-      requests.push({ clientId: form.get("client_id"), redirectUri: form.get("redirect_uri") });
-
-      return json({
-        access_token: "private-access",
-        token_type: "Bearer",
-        refresh_token: "private-refresh",
-        id_token: tokenEndpointIdToken,
-      });
-    }
+    tokenCalls.push(url);
     throw new Error(`Unexpected endpoint ${url}`);
   };
 
   const protocol = yield* Apple.provider({
-    registrations: kinds.map((kind) =>
-      registration(kind, kind === "native" ? bundleId : servicesId),
-    ),
+    registrations: kinds.map((kind) => (kind === "native" ? native : web())),
   })
     .configure({
       provider: apple,
-      callbacks: [
-        {
-          callbackId: OAuthCallbackId.make("apple"),
-          redirectUri: OAuthRedirectUri.make("https://app.test/auth/apple/callback"),
-        },
-      ],
+      // A native-only host mounts no browser callback.
+      callbacks: kinds.includes("web")
+        ? [{ callbackId: OAuthCallbackId.make("apple"), redirectUri: webCallback }]
+        : [],
     })
     .pipe(Effect.provideService(FetchHttpClient.Fetch, fetch));
 
@@ -142,47 +115,46 @@ const harness = Effect.fnUntraced(function* (
     readonly sub?: string;
     readonly nonce?: string;
     readonly aud?: string;
+    readonly code?: string;
   }) =>
     Jwt.sign(
       IdToken,
       {
         iss: "https://appleid.apple.com",
         sub: claims.sub ?? "apple-subject",
-        aud: claims.aud ?? bundleId,
+        aud: claims.aud ?? iosApp,
         iat: seconds,
         exp: seconds + 300,
         ...(claims.nonce === undefined ? {} : { nonce: claims.nonce }),
+        ...(claims.code === undefined ? {} : { c_hash: codeHash(claims.code) }),
         email: "ada@privaterelay.appleid.com",
       },
       signing,
       { kid: "apple" },
     ).pipe(Effect.map(Redacted.value));
 
-  return {
-    protocol,
-    requests,
-    sign,
-    redeemedIdToken: (token: string) => {
-      tokenEndpointIdToken = token;
-    },
-  };
+  return { protocol, tokenCalls, sign };
 });
 
-const exchange = (
+const verify = (
   protocol: OAuthProtocol["Service"],
   started: OAuthNativeProtocolPreparation,
-  response: { readonly idToken?: string; readonly user?: string } = {},
+  credential: {
+    readonly idToken: string;
+    readonly code?: string;
+    readonly name?: { readonly givenName?: string; readonly familyName?: string };
+  },
 ) => {
-  if (protocol.exchangeNativeIdentity === undefined) return Effect.die("missing native exchange");
+  if (protocol.verifyNativeIdentity === undefined) return Effect.die("missing native verifier");
 
-  return protocol.exchangeNativeIdentity({
+  return protocol.verifyNativeIdentity({
     configuration: started.configuration,
     secrets: started.secrets,
     verificationStartedAt: DateTime.makeUnsafe(seconds * 1000),
-    response: {
-      code: Redacted.make("platform-code"),
-      ...(response.idToken === undefined ? {} : { idToken: Redacted.make(response.idToken) }),
-      ...(response.user === undefined ? {} : { user: response.user }),
+    credential: {
+      idToken: Redacted.make(credential.idToken),
+      ...(credential.code === undefined ? {} : { code: Redacted.make(credential.code) }),
+      ...(credential.name === undefined ? {} : { name: credential.name }),
     },
   });
 };
@@ -200,83 +172,74 @@ const nonceOf = (started: OAuthNativeProtocolPreparation) => {
   return Redacted.value(nonce);
 };
 
-describe("native Sign in with Apple exchange", () => {
-  it.effect("redeems with the bundle ID, no redirect_uri, and the flow nonce", () =>
+describe("native Sign in with Apple verification", () => {
+  it.effect("verifies a platform token for every listed app without a token exchange", () =>
     Effect.gen(function* () {
-      const { protocol, requests, sign, redeemedIdToken } = yield* harness();
+      const { protocol, tokenCalls, sign } = yield* harness();
       const started = yield* prepare(protocol, "flow-native");
+      const nonce = nonceOf(started);
 
       expect(started.configuration).toMatchObject({ callbackId: "native", protocol: "oidc" });
       expect(started.configuration).not.toHaveProperty("redirectUri");
       expect(started.secrets.pkceVerifier).toBeUndefined();
 
-      redeemedIdToken(yield* sign({ nonce: nonceOf(started) }));
-
-      const verified = yield* exchange(protocol, started, {
-        user: JSON.stringify({ name: { firstName: "Ada", lastName: "Lovelace" } }),
+      const fromIos = yield* verify(protocol, started, {
+        idToken: yield* sign({ nonce, code: "ios-code" }),
+        code: "ios-code",
+        name: { givenName: "Ada", familyName: "Lovelace" },
       });
 
-      expect(verified.identity).toEqual({
+      const fromMac = yield* verify(protocol, started, {
+        idToken: yield* sign({ nonce, aud: macApp }),
+      });
+
+      expect(fromIos.identity).toEqual({
         provider: "apple",
         issuer: "https://appleid.apple.com",
         subject: "apple-subject",
       });
-      expect(verified.profile?.displayName).toBe("Ada Lovelace");
-      expect(requests).toEqual([{ clientId: bundleId, redirectUri: null }]);
+      expect(fromMac.identity).toEqual(fromIos.identity);
+      expect(fromIos.profile?.displayName).toBe("Ada Lovelace");
+      expect(tokenCalls).toEqual([]);
     }).pipe(Effect.provide(platform), Effect.scoped),
   );
 
-  it.effect("rejects a redeemed ID token for another nonce", () =>
+  it.effect("rejects another nonce, a missing nonce, and an unlisted audience", () =>
     Effect.gen(function* () {
-      const { protocol, sign, redeemedIdToken } = yield* harness();
+      const { protocol, sign } = yield* harness();
       const started = yield* prepare(protocol, "flow-mismatch");
-
-      redeemedIdToken(yield* sign({ nonce: "B".repeat(43) }));
-      yield* expectTag(exchange(protocol, started), "OAuthProtocolRejected");
-    }).pipe(Effect.provide(platform), Effect.scoped),
-  );
-
-  it.effect("accepts a nonce-less redeemed token only with a matching platform token", () =>
-    Effect.gen(function* () {
-      const { protocol, sign, redeemedIdToken } = yield* harness();
-      const started = yield* prepare(protocol, "flow-corroborated");
       const nonce = nonceOf(started);
 
-      redeemedIdToken(yield* sign({}));
-      // Neither token carries the nonce.
-      yield* expectTag(exchange(protocol, started), "OAuthProtocolRejected");
       yield* expectTag(
-        exchange(protocol, started, { idToken: yield* sign({}) }),
+        verify(protocol, started, { idToken: yield* sign({ nonce: "B".repeat(43) }) }),
         "OAuthProtocolRejected",
       );
-      // The platform token proves the nonce, but for another subject.
       yield* expectTag(
-        exchange(protocol, started, { idToken: yield* sign({ nonce, sub: "other-subject" }) }),
+        verify(protocol, started, { idToken: yield* sign({}) }),
         "OAuthProtocolRejected",
       );
-      // A platform token for another client never corroborates.
       yield* expectTag(
-        exchange(protocol, started, { idToken: yield* sign({ nonce, aud: servicesId }) }),
+        verify(protocol, started, { idToken: yield* sign({ nonce, aud: servicesId }) }),
+        "OAuthProtocolRejected",
+      );
+    }).pipe(Effect.provide(platform), Effect.scoped),
+  );
+
+  it.effect("requires the matching authorization code for a token's c_hash", () =>
+    Effect.gen(function* () {
+      const { protocol, sign } = yield* harness();
+      const started = yield* prepare(protocol, "flow-code-hash");
+      const idToken = yield* sign({ nonce: nonceOf(started), code: "platform-code" });
+
+      yield* expectTag(verify(protocol, started, { idToken }), "OAuthProtocolRejected");
+      yield* expectTag(
+        verify(protocol, started, { idToken, code: "other-code" }),
         "OAuthProtocolRejected",
       );
 
-      const verified = yield* exchange(protocol, started, { idToken: yield* sign({ nonce }) });
+      const verified = yield* verify(protocol, started, { idToken, code: "platform-code" });
 
       expect(verified.identity.subject).toBe("apple-subject");
-    }).pipe(Effect.provide(platform), Effect.scoped),
-  );
-
-  it.effect("rejects a platform token for another subject even when the nonce matches", () =>
-    Effect.gen(function* () {
-      const { protocol, sign, redeemedIdToken } = yield* harness();
-      const started = yield* prepare(protocol, "flow-other-subject");
-      const nonce = nonceOf(started);
-
-      redeemedIdToken(yield* sign({ nonce }));
-      yield* expectTag(
-        exchange(protocol, started, { idToken: yield* sign({ nonce, sub: "other-subject" }) }),
-        "OAuthProtocolRejected",
-      );
     }).pipe(Effect.provide(platform), Effect.scoped),
   );
 
@@ -284,13 +247,13 @@ describe("native Sign in with Apple exchange", () => {
     Effect.gen(function* () {
       const both = yield* harness();
 
-      const web = yield* both.protocol.prepareAuthorization({
+      const webFlow = yield* both.protocol.prepareAuthorization({
         provider: apple,
         flowId: RequestBindingFlowId.make("flow-web"),
       });
 
-      expect(Redacted.value(web.authorizationUrl)).toContain(`client_id=${servicesId}`);
-      expect(web.configuration.redirectUri).toBe("https://app.test/auth/apple/callback");
+      expect(Redacted.value(webFlow.authorizationUrl)).toContain(`client_id=${servicesId}`);
+      expect(webFlow.configuration.redirectUri).toBe(webCallback);
 
       const webOnly = yield* harness(["web"]);
 
@@ -305,15 +268,12 @@ describe("native Sign in with Apple exchange", () => {
         }),
         "OAuthRejected",
       );
-      // A native flow cannot be redeemed through the web exchange.
+      // A native flow cannot be completed through the web exchange.
       const started = yield* prepare(nativeOnly.protocol, "flow-native-as-web");
 
       yield* expectTag(
         nativeOnly.protocol.exchangeVerifiedIdentity({
-          configuration: {
-            ...started.configuration,
-            redirectUri: OAuthRedirectUri.make("https://app.test/auth/apple/callback"),
-          },
+          configuration: { ...started.configuration, redirectUri: webCallback },
           secrets: started.secrets,
           verificationStartedAt: DateTime.makeUnsafe(seconds * 1000),
           response: {
@@ -324,7 +284,7 @@ describe("native Sign in with Apple exchange", () => {
         }),
         "OAuthUnavailable",
       );
-      expect(nativeOnly.requests).toEqual([]);
+      expect(nativeOnly.tokenCalls).toEqual([]);
     }).pipe(Effect.provide(platform), Effect.scoped),
   );
 });

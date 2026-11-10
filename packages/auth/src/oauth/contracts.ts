@@ -104,8 +104,8 @@ export const nativeSignIn = (options?: { readonly strategy?: string }) =>
     ...options,
   });
 
-/** Complete native sign-in with the platform's authorization code, and optionally its
- * ID token and first-consent `user` JSON. Results match completeSignIn. */
+/** Complete native sign-in with the platform sheet's ID token, its authorization code
+ * for the token's `c_hash`, and any first-consent name. Results match completeSignIn. */
 export const completeNativeSignIn = <S extends Schema.Codec<Completion, unknown, unknown, unknown>>(
   schemas: { readonly CompletionResult: S },
   options?: { readonly strategy?: string },
@@ -114,9 +114,9 @@ export const completeNativeSignIn = <S extends Schema.Codec<Completion, unknown,
     payload: Schema.Struct({
       flowId: OAuthNativeSignInComplete.fields.flowId,
       provider: OAuthNativeSignInComplete.fields.provider,
-      code: OAuthNativeSignInComplete.fields.code,
       idToken: OAuthNativeSignInComplete.fields.idToken,
-      user: OAuthNativeSignInComplete.fields.user,
+      code: OAuthNativeSignInComplete.fields.code,
+      name: OAuthNativeSignInComplete.fields.name,
     }),
     success: completionResult(schemas.CompletionResult),
     error: Failure,

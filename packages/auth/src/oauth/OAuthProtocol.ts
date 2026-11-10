@@ -8,7 +8,7 @@ import type { OAuthProtocolRejected, OAuthRejected, OAuthUnavailable } from "./s
 import type {
   OAuthCallbackId,
   OAuthCodeResponse,
-  OAuthNativeCodeResponse,
+  OAuthNativeCredential,
   OAuthNativeProtocolConfiguration,
   OAuthNativeProtocolPreparation,
   OAuthProtocolConfiguration,
@@ -52,13 +52,12 @@ export class OAuthProtocol extends Context.Service<
       readonly provider: OAuthProviderKey;
       readonly flowId: RequestBindingFlowId;
     }) => Effect.Effect<OAuthNativeProtocolPreparation, OAuthRejected | OAuthUnavailable>;
-    /** Redeem the platform code once with the native client and no redirect URI.
-     * Verify the token-endpoint ID token, including the sealed nonce. When it omits
-     * the nonce, require the platform ID token, verify it with the same issuer,
-     * audience and nonce, and require the same subject. */
-    readonly exchangeNativeIdentity?: (input: {
+    /** Verify the platform ID token once against the captured native registration:
+     * signature, issuer, audience, time, the sealed nonce and, with `code`, its
+     * `c_hash`. Never redeem the code or call the token endpoint. */
+    readonly verifyNativeIdentity?: (input: {
       readonly configuration: OAuthNativeProtocolConfiguration;
-      readonly response: OAuthNativeCodeResponse;
+      readonly credential: OAuthNativeCredential;
       readonly secrets: OAuthTransactionSecrets;
       readonly verificationStartedAt: DateTime.Utc;
     }) => Effect.Effect<OAuthVerifiedExternalIdentity, OAuthProtocolRejected | OAuthUnavailable>;

@@ -123,10 +123,7 @@ export interface AuthorizationInput extends Parameters {
 
 export interface CodeGrantInput extends Parameters {
   readonly code: Redacted.Redacted<string>;
-  /** The authorization request's exact redirect URI. Omit only for codes the issuer
-   * minted without one, such as a native platform sign-in sheet; the request then
-   * carries no `redirect_uri`. */
-  readonly redirectUri?: string;
+  readonly redirectUri: string;
   readonly pkceVerifier?: Redacted.Redacted<string>;
   /** Used when client_secret_post has no stored secret. */
   readonly clientSecret?: Redacted.Redacted<string>;
@@ -206,7 +203,7 @@ const requestSecret = Schema.optionalKey(V.secret(8192));
 const CodeGrant = Schema.Struct({
   ...additional,
   code: V.secret(16384),
-  redirectUri: Schema.optionalKey(V.Callback),
+  redirectUri: V.Callback,
   pkceVerifier: Schema.optionalKey(V.Verifier),
   clientSecret: requestSecret,
 });
@@ -498,7 +495,7 @@ export const make = Effect.fnUntraced(function* (
     body.set("code", yield* V.reveal(value.code));
     if (value.pkceVerifier !== undefined)
       body.set("code_verifier", yield* V.reveal(value.pkceVerifier));
-    if (value.redirectUri !== undefined) body.set("redirect_uri", value.redirectUri);
+    body.set("redirect_uri", value.redirectUri);
 
     return yield* send(body, value.clientSecret);
   }, use);

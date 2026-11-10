@@ -17,6 +17,7 @@ import {
   TokenCompatibility,
   tokenCompatibility,
   githubVerifiedPrimaryEmail,
+  nativeAudiences,
 } from "./compatibility";
 import { DiscoveryProfile, discoveryProfile } from "./discovery";
 import {
@@ -134,9 +135,10 @@ const common = {
   responseIssuerMode: Schema.Literals(["required", "unsupported", "discovered"]),
   clientId: boundedString(1024),
   authentication,
+  // Web registrations need at least one; native registrations have no callback.
   callbacks: Schema.Array(
     Schema.Struct({ callbackId: OAuthCallbackId, redirectUri: OAuthRedirectUri }),
-  ).check(Schema.isMinLength(1), Schema.isMaxLength(16)),
+  ).check(Schema.isMaxLength(16)),
   scopes: Schema.Array(
     Schema.String.check(Schema.isPattern(/^[\x21\x23-\x5b\x5d-\x7e]{1,128}$/)),
   ).check(Schema.isMaxLength(32)),
@@ -153,7 +155,12 @@ const optionsSchema = <R>() =>
           Schema.Struct({
             ...common,
             protocol: Schema.Literal("oidc"),
-            kind: Schema.optionalKey(Schema.Literals(["web", "native"])),
+            [nativeAudiences]: Schema.optionalKey(
+              Schema.Array(boundedString(1024)).check(
+                Schema.isMinLength(1),
+                Schema.isMaxLength(64),
+              ),
+            ),
             [discoveryProfile]: Schema.optionalKey(DiscoveryProfile),
             idTokenSignedResponseAlg: Schema.Array(IdTokenSignedResponseAlg).check(
               Schema.isMinLength(1),
@@ -354,11 +361,13 @@ const checkParameters = Effect.fnUntraced(function* (
 
 export type Provider<R> = OpenIdConnectOidcProvider | OpenIdConnectOAuthProvider<R>;
 
-/** Plain OAuth providers and unmarked OIDC registrations are web clients. */
+/** Plain OAuth providers and OIDC registrations without native audiences are web clients. */
 export const registrationKind = <R>(provider: Provider<R>): "web" | "native" =>
-  provider.protocol === "oidc" && provider.kind === "native" ? "native" : "web";
+  provider.protocol === "oidc" && provider[nativeAudiences] !== undefined ? "native" : "web";
 
-export interface InstalledProvider<R> extends NativeProvider {
+export interface InstalledProvider<R> extends Omit<NativeProvider, "client"> {
+  /** Absent for native registrations, which only verify platform ID tokens. */
+  readonly client?: NativeProvider["client"];
   readonly provider: Provider<R>;
   readonly metadata: OAuth.Metadata;
 }
@@ -440,6 +449,8 @@ export const prepareConfigurations = Effect.fn("OpenIdConnect.prepareConfigurati
     }
     if (registrationKind(provider) === "native" && provider.pkceS256)
       return yield* configError("parameters");
+    if (registrationKind(provider) === "web" && provider.callbacks.length === 0)
+      return yield* configError("callback");
     const issuer = yield* endpoint(provider.issuer, "provider");
 
     if (provider.issuer.includes("?") || issuer.pathname.includes("/.well-known/"))
@@ -513,6 +524,7 @@ export const installProvider = Effect.fn("OpenIdConnect.installProvider")(functi
     (provider.protocol === "oidc" ? ["client_secret_basic"] : undefined);
 
   if (
+    registrationKind(provider) === "web" &&
     supportedAuthentication !== undefined &&
     !supportedAuthentication.includes(provider.authentication.method)
   )
@@ -544,6 +556,8 @@ export const installProvider = Effect.fn("OpenIdConnect.installProvider")(functi
     yield* endpoint(provider.identitySource.url);
   }
   freezeOAuth(metadata);
+  // Native registrations never call the token endpoint, so they install no client.
+  if (registrationKind(provider) === "native") return { provider, metadata };
 
   const native = yield* install(
     {
