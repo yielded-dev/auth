@@ -10,6 +10,7 @@ import * as Base64 from "effect/encoding/Base64";
 import * as Base64Url from "effect/encoding/Base64Url";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
+import type * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as Jwks from "effect/jose/Jwks";
 import * as Jwt from "effect/jose/Jwt";
 import * as Option from "effect/Option";
@@ -25,6 +26,7 @@ import {
   ConfigurationError,
   Persistence,
   RedirectUri,
+  ScopeText,
   Text,
   maximumClientAssertionLength,
   Unavailable,
@@ -118,6 +120,74 @@ const Document = Schema.Struct({
     Schema.NonEmptyArray(Schema.Literals(["authorization_code", "refresh_token"])),
   ),
   response_types: Schema.optionalKey(Schema.NonEmptyArray(Schema.Literal("code"))),
+});
+
+/** Bytes accepted from an anonymous registration request, the same as a metadata document. */
+export const maximumRegistrationBytes = 5120;
+
+const maximumRegisteredNameLength = 128;
+
+const RegistrationRequest = Schema.Struct({
+  redirect_uris: Schema.NonEmptyArray(Schema.String).check(Schema.isMaxLength(16)),
+  client_name: Schema.optionalKey(
+    Text.check(Schema.isMaxLength(maximumRegisteredNameLength), Schema.isPattern(/^[^\p{C}]*$/u)),
+  ),
+  application_type: Schema.optionalKey(Schema.Literals(["web", "native"])),
+  token_endpoint_auth_method: Schema.optionalKey(Schema.Literal("none")),
+  grant_types: Schema.optionalKey(
+    Schema.NonEmptyArray(Schema.Literals(["authorization_code", "refresh_token"])),
+  ),
+  response_types: Schema.optionalKey(Schema.NonEmptyArray(Schema.Literal("code"))),
+  scope: Schema.optionalKey(ScopeText),
+});
+
+const isRedirectUri = Schema.is(RedirectUri);
+
+const isLoopbackRedirect = (uri: string) => new URL(uri).protocol === "http:";
+
+/** Turn untrusted RFC 7591 metadata into a public client. Unknown members are
+ * ignored, and every field the client may not set comes from the server.
+ */
+export const decodeRegistration = Effect.fnUntraced(function* <Scope extends string>(
+  text: string,
+  policy: {
+    readonly defaultScopes: ReadonlyArray<Scope>;
+    readonly allowedScopes: ReadonlyArray<Scope>;
+  },
+) {
+  const request = yield* Schema.decodeEffect(Schema.fromJsonString(RegistrationRequest))(text).pipe(
+    Effect.mapError(() => reject("invalid_client_metadata")),
+  );
+
+  const grantTypes = request.grant_types ?? ["authorization_code"];
+  const requested = request.scope?.split(" ") ?? policy.defaultScopes;
+
+  if (
+    !grantTypes.includes("authorization_code") ||
+    !requested.every((scope) => policy.allowedScopes.some((allowed) => allowed === scope))
+  )
+    return yield* reject("invalid_client_metadata");
+
+  if (!request.redirect_uris.every(isRedirectUri)) return yield* reject("invalid_redirect_uri");
+
+  // RFC 7591 defaults to web, but loopback clients commonly omit the type (RFC 8252).
+  const applicationType =
+    request.application_type ?? (request.redirect_uris.some(isLoopbackRedirect) ? "native" : "web");
+
+  if (applicationType === "web" && request.redirect_uris.some(isLoopbackRedirect))
+    return yield* reject("invalid_redirect_uri");
+
+  const name = request.client_name ?? new URL(request.redirect_uris[0]).host;
+
+  if (name.length > maximumRegisteredNameLength) return yield* reject("invalid_client_metadata");
+
+  return {
+    name,
+    redirectUris: request.redirect_uris,
+    applicationType,
+    grantTypes: [...new Set(grantTypes)],
+    scopes: [...new Set(requested)],
+  };
 });
 
 /** Match exactly except for a native client's HTTP loopback port (RFC 8252). */
@@ -217,6 +287,27 @@ export const makeClientStore = <const Id extends string>(id: Id) =>
       ) => Effect.Effect<Omit<Client, "clientSecret"> | undefined, Unavailable>;
     }
   >()(`effect-auth/OAuthServer/${id}/Clients`);
+
+/** Application seam for anonymous RFC 7591 registration. Required with `registration`,
+ * together with the Clients service that resolves what `save` stored.
+ */
+export const makeClientRegistration = <const Id extends string>(id: Id) =>
+  Context.Service<
+    { readonly server: Id; readonly kind: "registration" },
+    {
+      /** Admit or refuse a request before its body is read, usually a rate limit.
+       * Unauthenticated callers reach this, so key it on what your deployment trusts.
+       * Return false for 429. Through `routes` the request keeps its remoteAddress; a
+       * direct `handle(request)` has none unless you provide the original request.
+       */
+      readonly admit: Effect.Effect<boolean, Unavailable, HttpServerRequest.HttpServerRequest>;
+      /** Store a new public client. The server minted its ID; insert only. Clients.get
+       * must return every field: a missing scopes allows every declared scope. The server
+       * never deletes a registration, so expire unused rows yourself.
+       */
+      readonly save: (client: Omit<Client, "clientSecret">) => Effect.Effect<void, Unavailable>;
+    }
+  >()(`effect-auth/OAuthServer/${id}/ClientRegistration`);
 
 export const makeClients = Effect.fnUntraced(function* (
   id: string,
