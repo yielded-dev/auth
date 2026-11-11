@@ -33,7 +33,13 @@ import * as OAuthScope from "../../OAuthScope";
 import { SubjectId } from "../../Schema";
 import { makeSessionSigningCodec, type SessionSigningKeyring } from "../../sessions/crypto";
 import { makeAccessTokenVerifier } from "./access-token";
-import { makeAuthorization, standardOpenIdScopes } from "./authorization";
+import {
+  makeAuthorization,
+  makeOpenIdAuthorization,
+  makeResultSchema,
+  type OpenIdAuthorizationResult,
+  standardOpenIdScopes,
+} from "./authorization";
 import {
   makeClients,
   makeClientStore,
@@ -306,6 +312,14 @@ interface ServerIdentity<Scope extends OAuthScope.OAuthScope = OAuthScope.OAuthS
     HttpServerRequest.HttpServerRequest
   >;
   readonly openId?: Omit<OpenIdIdentity<Scope>, "current">;
+  readonly authorize: (input: {
+    readonly subjectId: SubjectId;
+    readonly authentication: Authentication | undefined;
+    readonly clientId: string;
+    readonly resource: string;
+    readonly scopes: ReadonlyArray<Scope>;
+    readonly grantType: "authorization_code" | "refresh_token";
+  }) => Effect.Effect<OpenIdAuthorizationResult<Scope>, Unavailable>;
 }
 
 /** One grant state machine serves OAuth and opt-in OpenID authentication. */
@@ -323,7 +337,7 @@ const makeServer = <
   const ScopeSchema = Schema.Literals(scopes);
   const ScopesSchema = makeScopesSchema<Scope>(ScopeSchema);
   const AccessSchema = makeAccessSchema<Scope>(ScopeSchema);
-  const authorizationSource = makeAuthorization<Id, Scope>(id, ScopeSchema);
+  const AuthorizationResult = makeResultSchema(ScopeSchema);
   const Clients = makeClientStore(id);
 
   const ScopedCurrentAccess = Context.Reference<Access<Scope> | undefined>(
@@ -437,11 +451,6 @@ const makeServer = <
         const openIdConsent = Option.getOrElse(
           yield* Effect.serviceOption(OpenIdConsent),
           () => OpenIdConsent.default,
-        );
-
-        const authorization = Option.getOrElse(
-          yield* Effect.serviceOption(authorizationSource.Service),
-          () => authorizationSource.default,
         );
 
         const identity = yield* identitySource;
@@ -1200,48 +1209,36 @@ const makeServer = <
               if (!requested.every((scope) => record.authorization.scopes.includes(scope)))
                 return yield* reject("invalid_scope");
 
-              const authorized =
-                openId === undefined
-                  ? { scopes: requested }
-                  : yield* (function* () {
-                      if (record.authentication === undefined)
-                        return yield* reject("invalid_grant");
+              const decision = yield* identity
+                .authorize({
+                  subjectId: record.subjectId,
+                  authentication: record.authentication,
+                  clientId: record.authorization.clientId,
+                  resource: config.resource,
+                  scopes: requested,
+                  grantType: query.grant_type,
+                })
+                .pipe(
+                  Effect.flatMap(Schema.decodeEffect(AuthorizationResult)),
+                  Effect.catchCause((cause) =>
+                    Effect.failCause(Cause.map(cause, () => Unavailable.make({}))),
+                  ),
+                );
 
-                      const decision = yield* authorization
-                        .authorize({
-                          authentication: record.authentication,
-                          clientId: record.authorization.clientId,
-                          resource: config.resource,
-                          scopes: requested,
-                          grantType: query.grant_type,
-                        })
-                        .pipe(
-                          Effect.flatMap(Schema.decodeEffect(authorizationSource.Result)),
-                          Effect.catchCause((cause) =>
-                            Effect.failCause(Cause.map(cause, () => Unavailable.make({}))),
-                          ),
-                        );
+              if (
+                new Set(decision.scopes).size !== decision.scopes.length ||
+                !decision.scopes.every((scope) => requested.includes(scope))
+              )
+                return yield* Unavailable.make({});
+              const [first, ...remaining] = decision.scopes;
 
-                      if (
-                        new Set(decision.scopes).size !== decision.scopes.length ||
-                        !decision.scopes.every((scope) => requested.includes(scope))
-                      )
-                        return yield* Unavailable.make({});
-                      const [first, ...remaining] = decision.scopes;
+              if (
+                first === undefined ||
+                (openId !== undefined && !decision.scopes.some((scope) => scope === "openid"))
+              )
+                return yield* reject("access_denied");
 
-                      if (
-                        first === undefined ||
-                        !decision.scopes.some((scope) => scope === "openid")
-                      )
-                        return yield* reject("access_denied");
-
-                      return {
-                        ...decision,
-                        scopes: [first, ...remaining] satisfies readonly [Scope, ...Scope[]],
-                      };
-                    })();
-
-              const granted = authorized.scopes;
+              const granted: readonly [Scope, ...Scope[]] = [first, ...remaining];
               const time = yield* now;
 
               const refreshEnabled =
@@ -1256,9 +1253,7 @@ const makeServer = <
                 ...(record.authentication === undefined
                   ? {}
                   : { authentication: record.authentication }),
-                ...("claims" in authorized && authorized.claims !== undefined
-                  ? { claims: authorized.claims }
-                  : {}),
+                ...(decision.claims === undefined ? {} : { claims: decision.claims }),
                 expiresAtMillis:
                   expected === "code"
                     ? Math.min(
@@ -1707,13 +1702,13 @@ const makeServer = <
     Scope: ScopeSchema,
     Access: AccessSchema,
     CurrentAccess: ScopedCurrentAccess,
-    Authorization: authorizationSource.Service,
     Clients,
   };
 };
 
 /** Authorization-code server for MCP/resource authorization.
  * Declared scopes retain their branded literal types throughout the server.
+ * The optional Authorization service decides scopes and claims at each issue.
  */
 export const make = <const Id extends string, const S extends ReadonlyArray<OAuthScope.OAuthScope>>(
   id: Id,
@@ -1732,14 +1727,28 @@ export const make = <const Id extends string, const S extends ReadonlyArray<OAut
     }
   >()(`effect-auth/OAuthServer/${id}/Identity`);
 
+  const authorizationSource = makeAuthorization<Id, Scope>(id);
+
   const server = makeServer(
     id,
     input,
-    Effect.map(Identity, (identity): ServerIdentity<Scope> => ({
-      current: Effect.map(identity.current, (subjectId) =>
-        subjectId === undefined ? undefined : { subjectId },
-      ),
-    })),
+    Effect.gen(function* () {
+      const identity = yield* Identity;
+
+      const authorization = Option.getOrElse(
+        yield* Effect.serviceOption(authorizationSource.Service),
+        () => authorizationSource.default,
+      );
+
+      const source: ServerIdentity<Scope> = {
+        current: Effect.map(identity.current, (subjectId) =>
+          subjectId === undefined ? undefined : { subjectId },
+        ),
+        authorize: ({ authentication: _, ...grant }) => authorization.authorize(grant),
+      };
+
+      return source;
+    }),
   );
 
   return {
@@ -1752,6 +1761,7 @@ export const make = <const Id extends string, const S extends ReadonlyArray<OAut
     securityLayer: server.securityLayer,
     paths: server.paths,
     Identity,
+    Authorization: authorizationSource.Service,
     Clients: server.Clients,
     layer: (options: Options) => server.layer(options),
   };
@@ -1772,7 +1782,7 @@ export const makeOpenId = <
   options: { readonly scopes?: S } = {},
 ) => {
   type OpenIdScope = S[number] | (typeof standardOpenIdScopes)[number];
-  const scopes = [...(options.scopes ?? []), ...standardOpenIdScopes];
+  const scopes: ReadonlyArray<OpenIdScope> = [...(options.scopes ?? []), ...standardOpenIdScopes];
 
   const Identity = Context.Service<
     {
@@ -1783,22 +1793,41 @@ export const makeOpenId = <
     OpenIdIdentity<OpenIdScope>
   >()(`effect-auth/OAuthServer/${id}/OpenIdIdentity`);
 
+  const authorizationSource = makeOpenIdAuthorization<Id, OpenIdScope>(id);
+
   const server = makeServer(
     id,
     { scopes },
-    Effect.map(Identity, (identity): ServerIdentity<OpenIdScope> => ({
-      current: Effect.map(identity.current, (authentication) =>
-        authentication === undefined
-          ? undefined
-          : { subjectId: authentication.subjectId, authentication },
-      ),
-      openId: identity,
-    })),
+    Effect.gen(function* () {
+      const identity = yield* Identity;
+
+      const authorization = Option.getOrElse(
+        yield* Effect.serviceOption(authorizationSource.Service),
+        () => authorizationSource.default,
+      );
+
+      const source: ServerIdentity<OpenIdScope> = {
+        current: Effect.map(identity.current, (authentication) =>
+          authentication === undefined
+            ? undefined
+            : { subjectId: authentication.subjectId, authentication },
+        ),
+        openId: identity,
+        // Reading the grant already refused an OpenID record without authentication.
+        authorize: ({ subjectId: _, authentication, ...grant }) =>
+          authentication === undefined
+            ? Effect.fail(Unavailable.make({}))
+            : authorization.authorize({ ...grant, authentication }),
+      };
+
+      return source;
+    }),
   );
 
   return {
     ...server,
     Identity,
+    Authorization: authorizationSource.Service,
     layer: (options: OpenIdOptions) =>
       options.accessTokenFormat === "jwt" && options.resource === undefined
         ? Layer.effect(server.Service, Effect.fail(ConfigurationError.make({})))
