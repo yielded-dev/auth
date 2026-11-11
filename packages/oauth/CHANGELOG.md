@@ -1,5 +1,15 @@
 # @yielded/oauth
 
+## 0.1.0-beta.48
+
+### Minor Changes
+
+- [#308](https://github.com/yielded-dev/auth/pull/308) [`058d118`](https://github.com/yielded-dev/auth/commit/058d118b6386cedaa1e3ec30b140bd19c44692b3) Thanks [@danieljvdm](https://github.com/danieljvdm)! - Add native Sign in with Apple for any number of iOS and macOS apps, from Swift or Expo: declare `Apple.provider({ kind: "native", bundleIds })` without a signing key and expose `AuthContract.oauthNativeSignIn` and `AuthContract.oauthCompleteNativeSignIn`. `Oidc.makeVerifier` accepts several ID-token `audiences`.
+
+### Patch Changes
+
+- [#300](https://github.com/yielded-dev/auth/pull/300) [`e2705d9`](https://github.com/yielded-dev/auth/commit/e2705d950d6213f8befc8e07ed59c400b3869393) Thanks [@danieljvdm](https://github.com/danieljvdm)! - Use Effect's bundled JOSE implementation and require Effect 4.1.2 across the package family. Replace `@yielded/jose` imports with `effect/jose`; use Effect durations for JWT age and remote JWKS settings, and match JOSE errors through their typed `reason`.
+
 ## 0.1.0-beta.47
 
 ### Patch Changes
