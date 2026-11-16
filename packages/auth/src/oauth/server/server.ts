@@ -1242,8 +1242,9 @@ const makeServer = <
               const time = yield* now;
 
               const refreshEnabled =
-                openId === undefined ||
-                (config.refreshTokens && client.grantTypes?.includes("refresh_token") === true);
+                openId === undefined
+                  ? client.grantTypes === undefined || client.grantTypes.includes("refresh_token")
+                  : config.refreshTokens && client.grantTypes?.includes("refresh_token") === true;
 
               const next: Record = {
                 status: "Active",

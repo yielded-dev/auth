@@ -117,7 +117,8 @@ authorization flow.
 Provide `oauth.Authorization` to check current permission and attach claims. Its
 `authorize` Effect runs at code exchange and every refresh with the subject ID, client
 ID, resource, requested scopes, and grant type. Return a subset of those scopes; an
-empty result denies issuance. Without this service, the server grants the requested
+empty result denies issuance. Narrowing is permanent for that grant; later refreshes
+cannot regain removed scopes. Without this service, the server grants the requested
 scopes and sets no claims.
 
 ```ts
@@ -181,12 +182,12 @@ same-origin policy.
 
 ### Token lifecycle and storage
 
-| Lifetime           | Default                             |
-| ------------------ | ----------------------------------- |
-| Pending consent    | 5 minutes                           |
-| Authorization code | 1 minute                            |
-| Access token       | 10 minutes                          |
-| Grant              | 30 days; refresh does not extend it |
+| Lifetime           | Default                                                                               |
+| ------------------ | ------------------------------------------------------------------------------------- |
+| Pending consent    | 5 minutes                                                                             |
+| Authorization code | 1 minute                                                                              |
+| Access token       | 10 minutes                                                                            |
+| Grant              | 30 days with refresh, otherwise the access token lifetime; refresh does not extend it |
 
 Use `OAuthServerPersistence.layer` with SQLite, D1, or PostgreSQL and apply its
 `migrations` through your application; with MySQL or MariaDB, apply its

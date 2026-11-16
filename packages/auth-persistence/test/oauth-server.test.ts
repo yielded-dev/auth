@@ -1393,6 +1393,30 @@ it.effect("private_key_jwt validates CIMD key sources and refreshes expired JWKS
   );
 });
 
+// https://github.com/yielded-dev/auth/issues/310: never issue an unusable refresh token.
+it.effect("code-only clients receive access without a refresh token", () =>
+  Effect.gen(function* () {
+    const flow = yield* authorize();
+    const response = yield* flow.service.handle(exchange(flow.code));
+
+    expect(response.status).toBe(200);
+    const tokens = yield* body(response, Schema.Record(Schema.String, Schema.Json));
+
+    expect(Object.hasOwn(tokens, "refresh_token")).toBe(false);
+    expect(tokens).toHaveProperty("access_token");
+  }).pipe(
+    Effect.provide(
+      harness(undefined, {
+        ...config,
+        clients: config.clients.map((client) => ({
+          ...client,
+          grantTypes: ["authorization_code"],
+        })),
+      }),
+    ),
+  ),
+);
+
 const authorized = (authorize: Parameters<typeof server.Authorization.of>[0]["authorize"]) =>
   harness().pipe(Layer.provide(Layer.succeed(server.Authorization, { authorize })));
 
