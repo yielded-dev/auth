@@ -73,10 +73,20 @@ it.live.each(["sqlite", "d1", "pglite"] as const)(
                 expect((yield* (yield* fixture.signIn.consume(access, prepare)).read)._tag).toBe(
                   "Rejected",
                 );
-                yield* sql`update ${table} set expires_at = ${expires}, binder_expires_at = ${now - 1} where flow_id = ${name}`;
-                expect((yield* (yield* fixture.signIn.consume(access, prepare)).read)._tag).toBe(
-                  "Rejected",
-                );
+
+                const expiredBinding = {
+                  ...flow.context,
+                  requestBindingExpiresAtMillis: OAuth.OAuthInstant.make(now - 1),
+                };
+
+                const snapshot = yield* Schema.encodeEffect(
+                  Schema.fromJsonString(OAuth.OAuthSignInFlow),
+                )({ ...flow, context: expiredBinding });
+
+                yield* sql`update ${table} set expires_at = ${expires}, binder_expires_at = ${expiredBinding.requestBindingExpiresAtMillis}, snapshot = ${snapshot} where flow_id = ${name}`;
+                expect(
+                  (yield* (yield* fixture.signIn.consume(expiredBinding, prepare)).read)._tag,
+                ).toBe("Rejected");
                 continue;
               }
 
