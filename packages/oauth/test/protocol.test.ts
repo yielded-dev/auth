@@ -78,7 +78,105 @@ it.effect(
         ))._tag,
       ).toBe("OAuthConfigurationError");
       expect(requests).toHaveLength(2);
+
+      const loopback = {
+        ...metadata,
+        issuer: "http://127.0.0.1:8080",
+        token_endpoint: "http://localhost:8080/token",
+        jwks_uri: "https://issuer.example/jwks",
+      };
+
+      document = loopback;
+      expect(
+        yield* Oidc.discover(loopback.issuer, { timeoutMs: 1000 }).pipe(
+          Effect.provideService(HttpClient.HttpClient, client),
+        ),
+      ).toEqual(loopback);
+      expect(requests[2]).toBe("http://127.0.0.1:8080/.well-known/openid-configuration");
     }),
+);
+
+// Requested security seam: remote issuers cannot select HTTP loopback endpoints.
+it.effect("binds HTTP loopback endpoints to an explicitly local issuer", () =>
+  Effect.gen(function* () {
+    const requests: string[] = [];
+
+    const remote = {
+      ...metadata,
+      token_endpoint: "http://localhost:9901/token",
+      userinfo_endpoint: "http://127.0.0.1:8500/user",
+    };
+
+    const http = transport((request) => {
+      requests.push(request.url);
+
+      return Response.json(remote);
+    });
+
+    expect(
+      (yield* Oidc.discover(metadata.issuer, { timeoutMs: 1000 }).pipe(
+        Effect.provideService(HttpClient.HttpClient, http),
+        Effect.flip,
+      ))._tag,
+    ).toBe("OAuthConfigurationError");
+    expect(
+      (yield* Oidc.discover(metadata.issuer, {
+        timeoutMs: 1000,
+        metadataUrl: "http://localhost:8080/discovery",
+      }).pipe(Effect.provideService(HttpClient.HttpClient, http), Effect.flip))._tag,
+    ).toBe("OAuthConfigurationError");
+    expect(
+      (yield* OAuth.make({ ...options, metadata: remote }).pipe(
+        Effect.provideService(HttpClient.HttpClient, http),
+        Effect.flip,
+      ))._tag,
+    ).toBe("OAuthConfigurationError");
+    expect(
+      (yield* OAuth.make({ ...options, profile: { url: "http://localhost:8080/user" } }).pipe(
+        Effect.provideService(HttpClient.HttpClient, http),
+        Effect.flip,
+      ))._tag,
+    ).toBe("OAuthConfigurationError");
+    expect(requests).toEqual(["https://issuer.example/tenant/.well-known/openid-configuration"]);
+
+    const local = yield* OAuth.make({
+      ...options,
+      metadata: { ...remote, issuer: "http://127.0.0.1:8080" },
+      profile: { url: "http://localhost:8080/user" },
+    }).pipe(Effect.provideService(HttpClient.HttpClient, http));
+
+    expect(local.metadata.token_endpoint).toBe(remote.token_endpoint);
+  }).pipe(Effect.scoped),
+);
+
+// Requested verifier seam: HTTP JWKS is a permanent configuration error.
+it.effect("rejects HTTP JWKS before constructing an asymmetric verifier", () =>
+  Effect.gen(function* () {
+    const requests: string[] = [];
+
+    const result = yield* Oidc.makeVerifier({
+      metadata: {
+        ...metadata,
+        issuer: "http://127.0.0.1:8080",
+        jwks_uri: "http://[::1]:8080/jwks",
+      },
+      clientId: "client",
+      timeoutMs: 1000,
+    }).pipe(
+      Effect.provideService(
+        HttpClient.HttpClient,
+        transport((request) => {
+          requests.push(request.url);
+
+          return Response.json({ keys: [] });
+        }),
+      ),
+      Effect.flip,
+    );
+
+    expect(result._tag).toBe("OAuthConfigurationError");
+    expect(requests).toEqual([]);
+  }).pipe(Effect.scoped),
 );
 
 it.effect("authenticates Basic/Post/None once and preserves private raw provider receipts", () =>

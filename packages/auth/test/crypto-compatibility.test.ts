@@ -1,13 +1,11 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { it } from "@effect/vitest";
 import * as OAuth from "@yielded/auth/OAuth";
 import * as Password from "@yielded/auth/Password";
+import { KdfAdmission } from "@yielded/auth/Password";
 import * as Totp from "@yielded/auth/Totp";
-import { layerCryptoWeb } from "@yielded/auth/WebCrypto";
-import * as KdfAdmission from "@yielded/crypto/KdfAdmission";
-import * as Portable from "@yielded/crypto/Portable";
-import * as WebCrypto from "@yielded/crypto/WebCrypto";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Base64Url from "effect/encoding/Base64Url";
 import * as Layer from "effect/Layer";
@@ -18,8 +16,7 @@ import { expect } from "vite-plus/test";
 import fixtures from "./crypto-fixtures";
 
 const admission = KdfAdmission.layer({ maxQueued: 0 });
-const backend = Portable.layer(globalThis.crypto.subtle).pipe(Layer.provideMerge(admission));
-const runtime = Layer.merge(backend, layerCryptoWeb);
+const runtime = Layer.merge(NodeCrypto.layer, admission);
 
 it.effect(
   "verifies stored PHC and PBKDF2 without normalizing password bytes or nesting admission",
@@ -69,13 +66,13 @@ const keys = Layer.succeed(Totp.TotpSecretKeys, {
 // on every execution, including when a caller retains the same Effect value.
 it.effect("keeps TOTP entropy lazy and fresh on every execution", () =>
   Effect.gen(function* () {
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
     let requests = 0;
 
     const services = yield* Layer.build(
       Totp.TotpCryptography.layer.pipe(
         Layer.provide(
-          Layer.succeed(Crypto.Crypto, {
+          Layer.succeed(SecureRandom.SecureRandom, {
             ...crypto,
             randomBytes: (size) => Effect.sync(() => new Uint8Array(size).fill(++requests)),
           }),
@@ -141,32 +138,6 @@ const keyring = {
   activeKeyId: "key1",
   keys: [{ id: "key1", material: Redacted.make(fixtures.oauth.key) }],
 };
-
-// https://github.com/yielded-dev/auth/issues/200: unsupported OAuth encryption
-// must fail at construction, before a request can collapse it to OAuthUnavailable.
-it.effect("rejects an AEAD backend without XChaCha at protector construction", () =>
-  Effect.gen(function* () {
-    const result = yield* OAuth.OAuthTransactionProtector.layer(keyring).pipe(
-      Layer.build,
-      Effect.provide(
-        Layer.merge(
-          layerCryptoWeb,
-          WebCrypto.layer(globalThis.crypto.subtle).pipe(Layer.provide(admission)),
-        ),
-      ),
-      Effect.result,
-    );
-
-    expect(result).toMatchObject({
-      _tag: "Failure",
-      failure: {
-        _tag: "OAuthConfigurationError",
-        reason: "crypto",
-        message: expect.stringContaining("XChaCha20-Poly1305"),
-      },
-    });
-  }),
-);
 
 it.effect("opens all stored OAuth envelope domains and rejects changed durable authority", () =>
   Effect.gen(function* () {

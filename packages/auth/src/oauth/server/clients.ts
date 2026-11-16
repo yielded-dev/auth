@@ -1,22 +1,22 @@
-import { Hmac } from "@yielded/crypto/Hmac";
-import { Signature } from "@yielded/crypto/Signature";
-import { Jwk, Jwks, Jwt } from "@yielded/jose";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
+import * as Mac from "effect/crypto/Mac";
+import * as SecureRandom from "effect/crypto/SecureRandom";
+import * as Signature from "effect/crypto/Signature";
 import * as Effect from "effect/Effect";
 import * as Base64 from "effect/encoding/Base64";
 import * as Base64Url from "effect/encoding/Base64Url";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
+import * as Jwks from "effect/jose/Jwks";
+import * as Jwt from "effect/jose/Jwt";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
-import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
-import { equalBytes } from "../../internal/equalBytes";
 import { timeoutOrElseWithCause } from "../../internal/timeout";
 import {
   AssertionAlgorithms,
@@ -109,15 +109,13 @@ const Document = Schema.Struct({
   redirect_uris: Schema.NonEmptyArray(RedirectUri).check(Schema.isMaxLength(16)),
   application_type: Schema.optionalKey(Schema.Literals(["web", "native"])),
   token_endpoint_auth_method: Schema.optionalKey(Schema.Literals(["none", "private_key_jwt"])),
-  token_endpoint_auth_signing_alg: Schema.optionalKey(Jwk.AsymmetricAlgorithm),
+  token_endpoint_auth_signing_alg: Schema.optionalKey(Schema.Literals(AssertionAlgorithms)),
   jwks: Schema.optionalKey(Jwks.KeySet),
   jwks_uri: Schema.optionalKey(KeyUrl),
   client_secret: Schema.optionalKey(Schema.Never),
   client_secret_expires_at: Schema.optionalKey(Schema.Never),
-  grant_types: Schema.optionalKey(
-    Schema.NonEmptyArray(Schema.Literals(["authorization_code", "refresh_token"])),
-  ),
-  response_types: Schema.optionalKey(Schema.NonEmptyArray(Schema.Literal("code"))),
+  grant_types: Schema.optionalKey(Schema.NonEmptyArray(Text)),
+  response_types: Schema.optionalKey(Schema.NonEmptyArray(Text)),
 });
 
 /** Match exactly except for a native client's HTTP loopback port (RFC 8252). */
@@ -162,8 +160,9 @@ const cacheLifetime = (headers: Readonly<Record<string, string>>, now: number) =
   )
     return 0;
 
-  const maxAge = (maxAges.find((match) => match[1].toLowerCase() === "s-maxage") ??
-    maxAges[0])?.[2].trim();
+  const maxAge = (
+    maxAges.find((match) => match[1].toLowerCase() === "s-maxage") ?? maxAges[0]
+  )?.[2].trim();
 
   if (maxAge !== undefined && !/^(?:\d+|"\d+")$/.test(maxAge)) return 0;
   const age = Number(headers.age ?? 0);
@@ -184,6 +183,8 @@ interface Cached<A> {
   readonly value: A;
   readonly expires: number;
 }
+
+const discoveryTimeoutMillis = 5_000;
 
 const remember = <A>(cache: Map<string, Cached<A>>, id: string, entry: Cached<A>) => {
   if (cache.size >= 256) {
@@ -230,34 +231,25 @@ export const makeClients = Effect.fnUntraced(function* (
     return yield* ConfigurationError.make({});
   // The network dependency is explicit in the server Layer, including when disabled.
   const http = HttpClient.withScope(yield* HttpClient.HttpClient);
-  const hmac = yield* Hmac;
-  const signatures = yield* Signature;
+  const hmac = yield* Mac.Mac;
+  const signatures = yield* Signature.Signature;
   const store = yield* Persistence;
-  const permits = yield* Semaphore.make(8);
+  const permits = new Set<{ readonly expires: bigint }>();
   const cache = new Map<string, Cached<Client>>();
   const keyCache = new Map<string, Cached<Jwks.Jwks["Service"]>>();
   const localResolvers = new WeakMap<Jwks.KeySet, Jwks.Jwks["Service"]>();
   const discovered = new WeakSet<Client>();
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
+  const digests = yield* Digest.Digest;
 
-  const key = yield* hmac
-    .importKey({
-      algorithm: "SHA-256",
-      key: Redacted.make(
-        yield* crypto
-          .randomBytes(32)
-          .pipe(
-            Effect.catchCause((cause) =>
-              Effect.failCause(Cause.map(cause, () => ConfigurationError.make({}))),
-            ),
-          ),
-      ),
-    })
-    .pipe(
-      Effect.catchCause((cause) =>
-        Effect.failCause(Cause.map(cause, () => ConfigurationError.make({}))),
-      ),
-    );
+  const key = yield* crypto.randomBytes(32).pipe(
+    Effect.flatMap((bytes) =>
+      Mac.key(Mac.hmacSha256, bytes).pipe(Effect.ensuring(Effect.sync(() => bytes.fill(0)))),
+    ),
+    Effect.catchCause((cause) =>
+      Effect.failCause(Cause.map(cause, () => ConfigurationError.make({}))),
+    ),
+  );
 
   const secrets = new Map<string, Uint8Array>();
 
@@ -268,8 +260,8 @@ export const makeClients = Effect.fnUntraced(function* (
       );
     if (client.clientSecret === undefined) continue;
 
-    const tag = yield* key
-      .sign(new TextEncoder().encode(Redacted.value(client.clientSecret)))
+    const tag = yield* hmac
+      .sign(key, new TextEncoder().encode(Redacted.value(client.clientSecret)))
       .pipe(
         Effect.catchCause((cause) =>
           Effect.failCause(Cause.map(cause, () => ConfigurationError.make({}))),
@@ -283,6 +275,22 @@ export const makeClients = Effect.fnUntraced(function* (
   // owns key selection and cryptography after this untrusted discovery boundary.
   const fetchJson = Effect.fnUntraced(
     function* (url: string, maximum: number) {
+      yield* Effect.acquireRelease(
+        Effect.gen(function* () {
+          const now = yield* Clock.monotonicTimeNanos;
+
+          // Reclaim on admission: an abandoned Worker's timers and finalizers may
+          // never run. Each permit has its own identity so late cleanup is harmless.
+          for (const permit of permits) if (permit.expires <= now) permits.delete(permit);
+          if (permits.size >= 8) return yield* Unavailable.make({});
+          const permit = { expires: now + BigInt(discoveryTimeoutMillis) * 1_000_000n };
+
+          permits.add(permit);
+
+          return permit;
+        }),
+        (permit) => Effect.sync(() => permits.delete(permit)),
+      );
       const response = yield* http.get(url, { headers: { accept: "application/json" } });
 
       if (response.status !== 200 || (response.url !== "" && response.url !== new URL(url).href))
@@ -323,9 +331,10 @@ export const makeClients = Effect.fnUntraced(function* (
         ),
       ),
     ),
-    timeoutOrElseWithCause({ duration: "5 seconds", orElse: () => Unavailable.make({}) }),
-    permits.withPermitsIfAvailable(1),
-    Effect.flatMap(Option.match({ onNone: () => Unavailable.make({}), onSome: Effect.succeed })),
+    timeoutOrElseWithCause({
+      duration: discoveryTimeoutMillis,
+      orElse: () => Unavailable.make({}),
+    }),
   );
 
   const fetch = Effect.fnUntraced(function* (id: string) {
@@ -343,7 +352,9 @@ export const makeClients = Effect.fnUntraced(function* (
 
     if (
       document.client_id !== id ||
-      (document.grant_types !== undefined && !document.grant_types.includes("authorization_code"))
+      (document.grant_types !== undefined &&
+        !document.grant_types.includes("authorization_code")) ||
+      (document.response_types !== undefined && !document.response_types.includes("code"))
     )
       return yield* reject("invalid_client");
 
@@ -371,7 +382,9 @@ export const makeClients = Effect.fnUntraced(function* (
       ...(document.application_type === undefined
         ? {}
         : { applicationType: document.application_type }),
-      grantTypes: document.grant_types ?? ["authorization_code"],
+      grantTypes: document.grant_types?.includes("refresh_token")
+        ? ["authorization_code", "refresh_token"]
+        : ["authorization_code"],
       ...(clientAssertion === undefined ? {} : { clientAssertion }),
     });
 
@@ -402,7 +415,7 @@ export const makeClients = Effect.fnUntraced(function* (
 
       if (client.clientSecret !== undefined) return yield* Unavailable.make({});
       // Grants bind the exact ID, so a case-folding or padding lookup must not alias it.
-      // Registrant-chosen key hosts must not hold the shared discovery permits.
+      // Stored clients use inline keys; registrants never choose a host to fetch.
       if (client.clientId !== id || client.clientAssertion?.jwksUri !== undefined)
         return yield* reject("invalid_client");
 
@@ -470,13 +483,12 @@ export const makeClients = Effect.fnUntraced(function* (
       requiredClaims: ["iss", "sub", "aud", "exp", "jti"],
     }).pipe(
       Effect.provideService(Jwks.Jwks, resolver),
-      Effect.provideService(Signature, signatures),
+      Effect.provideService(Signature.Signature, signatures),
       Effect.catchCause((cause) =>
         Effect.failCause(
           Cause.map(cause, (error) =>
-            error._tag === "CryptoUnavailable" ||
-            error._tag === "CryptoUnsupportedAlgorithm" ||
-            error._tag === "JoseJwksUnavailable"
+            error._tag === "JoseError" &&
+            (error.reason._tag === "InvalidKey" || error.reason._tag === "KeySetUnavailable")
               ? Unavailable.make({})
               : reject("invalid_client"),
           ),
@@ -493,8 +505,11 @@ export const makeClients = Effect.fnUntraced(function* (
     )
       return yield* reject("invalid_client");
 
-    const receiptId = yield* crypto
-      .digest("SHA-256", new TextEncoder().encode(JSON.stringify([client.clientId, claims.jti])))
+    const receiptId = yield* digests
+      .digest(
+        Digest.sha256,
+        new TextEncoder().encode(JSON.stringify([client.clientId, claims.jti])),
+      )
       .pipe(
         Effect.map(Base64Url.encode),
         Effect.catchCause((cause) =>
@@ -537,7 +552,7 @@ export const makeClients = Effect.fnUntraced(function* (
         );
 
         id = (yield* Schema.decodeUnknownEffect(Schema.Struct({ sub: Text }))(
-          Redacted.value(unverified.claims),
+          unverified.claims,
         ).pipe(Effect.mapError(() => reject("invalid_client")))).sub;
       }
       const client = yield* resolve(id);
@@ -582,7 +597,7 @@ export const makeClients = Effect.fnUntraced(function* (
       if (secret === undefined) return yield* reject("invalid_client");
 
       // Compare fixed-length digest encodings, never the presented secret itself.
-      const presented = yield* crypto.digest("SHA-256", new TextEncoder().encode(secret)).pipe(
+      const presented = yield* digests.digest(Digest.sha256, new TextEncoder().encode(secret)).pipe(
         Effect.map(Base64Url.encode),
         Effect.catchCause((cause) =>
           Effect.failCause(Cause.map(cause, () => Unavailable.make({}))),
@@ -590,7 +605,7 @@ export const makeClients = Effect.fnUntraced(function* (
       );
 
       if (
-        !equalBytes(
+        !Mac.timingSafeEqual(
           new TextEncoder().encode(presented),
           new TextEncoder().encode(client.clientSecretDigest),
         )
@@ -603,8 +618,8 @@ export const makeClients = Effect.fnUntraced(function* (
 
       if (
         expected === undefined ||
-        !(yield* key
-          .verify(new TextEncoder().encode(secret), expected)
+        !(yield* hmac
+          .verify(key, expected, new TextEncoder().encode(secret))
           .pipe(
             Effect.catchCause((cause) =>
               Effect.failCause(Cause.map(cause, () => Unavailable.make({}))),

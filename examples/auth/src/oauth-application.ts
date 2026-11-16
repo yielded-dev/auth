@@ -43,7 +43,6 @@ export const makeExample = <E, R>(config: {
     cookie: { secure: new URL(config.origin).protocol === "https:" },
     oauth: {
       providers: { [config.profile.provider]: config.provider },
-      callbacks: { [config.profile.provider]: { allowedQueryParameters: ["scope"] } },
     },
   });
 

@@ -8,7 +8,9 @@ import { SubjectId } from "@yielded/auth/Schema";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
+import * as Latch from "effect/Latch";
 import * as Layer from "effect/Layer";
 import * as Reactivity from "effect/reactivity/Reactivity";
 import * as Schema from "effect/Schema";
@@ -91,6 +93,7 @@ const requestSql = Layer.effect(
   SqlClient.SqlClient,
   SqlClient.make({
     compiler: Statement.makeCompilerSqlite(),
+    driver: "@effect/sql-sqlite-node",
     spanAttributes: [],
     acquirer: Effect.gen(function* () {
       const client = yield* RequestClient;
@@ -135,6 +138,67 @@ it.effect("preserves request-local SQL during initialization and across concurre
 
     expect(results.map((result) => result.revision.securityRevision)).toEqual(["first", "second"]);
     expect((yield* capture.pipe(Effect.provide(services), Effect.result))._tag).toBe("Failure");
+  }).pipe(Effect.provide(Reactivity.layer)),
+);
+
+// https://github.com/yielded-dev/auth/issues/298: on Cloudflare Workers, an ended
+// request's I/O never completes and its fiber is never interrupted. A first use
+// that fails, is interrupted, or never completes must not fail or block the next.
+it.effect("retries initialization after a failed, interrupted or abandoned first use", () =>
+  Effect.gen(function* () {
+    const client = yield* SqliteClient.make({ filename: ":memory:" });
+
+    yield* migrate("current").pipe(Effect.provideService(SqlClient.SqlClient, client));
+
+    const build = Layer.build(
+      persistence.layer.pipe(
+        Layer.provide(persistence.Config.layer(storage)),
+        Layer.provide(requestSql),
+        Layer.provide(NodeCrypto.layer),
+      ),
+    );
+
+    type Services = Effect.Success<typeof build>;
+
+    const read = (services: Services, request: SqlClient.SqlClient | undefined) =>
+      capture.pipe(
+        Effect.map((authority) => authority.revision.securityRevision),
+        Effect.provide(services),
+        Effect.provideService(RequestClient, request),
+      );
+
+    // Each stalled first use waits on a connection that never arrives.
+    const stall = Effect.fnUntraced(function* (services: Services) {
+      const reached = yield* Latch.make();
+
+      const stalled = yield* SqlClient.make({
+        compiler: Statement.makeCompilerSqlite(),
+        driver: "@effect/sql-sqlite-node",
+        spanAttributes: [],
+        acquirer: Effect.andThen(reached.open, Effect.never),
+      });
+
+      const fiber = yield* Effect.forkChild(read(services, stalled));
+
+      yield* reached.await;
+
+      return fiber;
+    });
+
+    const failed = yield* build;
+
+    expect((yield* read(failed, undefined).pipe(Effect.result))._tag).toBe("Failure");
+    expect(yield* read(failed, client)).toBe("current");
+
+    const interrupted = yield* build;
+
+    yield* Fiber.interrupt(yield* stall(interrupted));
+    expect(yield* read(interrupted, client)).toBe("current");
+
+    const abandoned = yield* build;
+
+    yield* stall(abandoned);
+    expect(yield* read(abandoned, client)).toBe("current");
   }).pipe(Effect.provide(Reactivity.layer)),
 );
 
@@ -201,6 +265,41 @@ const mapping = {
   string
 >;
 
+const registrationIntent = Effect.gen(function* () {
+  const now = yield* Clock.currentTimeMillis;
+
+  return yield* Schema.decodeEffect(OAuth.OAuthRegistrationIntent)({
+    namespace: "effect-auth/oauth-registration-intent/v1",
+    reference: "A".repeat(43),
+    context: {
+      namespace: "effect-auth/oauth-sign-in-context/v1",
+      moduleId: "request/oauth",
+      generation: 1,
+      flowId: "registration",
+      provider: "example",
+      protocol: "oauth",
+      configurationGeneration: 1,
+      issuer: "https://provider.example",
+      responseIssuerMode: "unsupported",
+      callbackId: "example",
+      redirectUri: "https://app.example/callback",
+      returnTarget: "/",
+      stateDigest: "A".repeat(43),
+      requestBindingVerifier: "B".repeat(43),
+      requestBindingExpiresAtMillis: now + 300_000,
+      issuedAtMillis: now,
+      expiresAtMillis: now + 300_000,
+      exchangeTimeoutMillis: 30_000,
+    },
+    identity: { provider: "example", issuer: "https://provider.example", subject: "member" },
+    verifiedAtMillis: now,
+    credentialDigest: "A".repeat(43),
+    issuedAtMillis: now,
+    expiresAtMillis: now + 60_000,
+    retentionUntilMillis: now + 300_000,
+  });
+});
+
 // The explicit-constructor failure from the same issue occurs before a request
 // exists. Exercise real writes so removing or bypassing validation cannot pass.
 it.live(
@@ -217,6 +316,7 @@ it.live(
       // Closing each physical connection on release makes expiration deterministic.
       const reconnecting = yield* SqlClient.make({
         compiler: Statement.makeCompilerSqlite(),
+        driver: "@effect/sql-sqlite-node",
         spanAttributes: [],
         acquirer: SqliteClient.make({ filename: `${directory}/oauth.sqlite` }).pipe(
           Effect.flatMap((client) => client.reserve),
@@ -238,38 +338,7 @@ it.live(
       );
 
       const invalid = yield* construct;
-      const now = yield* Clock.currentTimeMillis;
-
-      const intent = yield* Schema.decodeEffect(OAuth.OAuthRegistrationIntent)({
-        namespace: "effect-auth/oauth-registration-intent/v1",
-        reference: "A".repeat(43),
-        context: {
-          namespace: "effect-auth/oauth-sign-in-context/v1",
-          moduleId: "request/oauth",
-          generation: 1,
-          flowId: "registration",
-          provider: "example",
-          protocol: "oauth",
-          configurationGeneration: 1,
-          issuer: "https://provider.example",
-          responseIssuerMode: "unsupported",
-          callbackId: "example",
-          redirectUri: "https://app.example/callback",
-          returnTarget: "/",
-          stateDigest: "A".repeat(43),
-          requestBindingVerifier: "B".repeat(43),
-          requestBindingExpiresAtMillis: now + 300_000,
-          issuedAtMillis: now,
-          expiresAtMillis: now + 300_000,
-          exchangeTimeoutMillis: 30_000,
-        },
-        identity: { provider: "example", issuer: "https://provider.example", subject: "member" },
-        verifiedAtMillis: now,
-        credentialDigest: "A".repeat(43),
-        issuedAtMillis: now,
-        expiresAtMillis: now + 60_000,
-        retentionUntilMillis: now + 300_000,
-      });
+      const intent = yield* registrationIntent;
 
       const issue = (service: OAuth.OAuthRegistrationIntents["Service"]) =>
         service.issue({ intent }, (value, journal) => journal.prepare(value));
@@ -358,4 +427,64 @@ it.live(
         ),
       ).toMatchObject({ _tag: "Failure", failure: { _tag: "OAuthUnavailable" } });
     }).pipe(Effect.provide([Reactivity.layer, NodeFileSystem.layer])),
+);
+
+// https://github.com/yielded-dev/auth/issues/298: explicit OAuth setup must not keep
+// a failed first use or make later operations wait on one that never completes.
+it.live("retries explicit OAuth setup after a failed or abandoned first use", () =>
+  Effect.gen(function* () {
+    const dependencies = yield* Layer.build(
+      Layer.mergeAll(requestSql, NodeCrypto.layer, hooksLayer),
+    );
+
+    const construct = OAuthPersistence.makeOAuthRegistrationIntentServices(mapping).pipe(
+      Effect.provide(dependencies),
+    );
+
+    const intent = yield* registrationIntent;
+
+    const issue = (
+      services: Effect.Success<typeof construct>,
+      request: SqlClient.SqlClient | undefined,
+    ) =>
+      services.oauthRegistrationIntents
+        .issue({ intent }, (value, journal) => journal.prepare(value))
+        .pipe(
+          Effect.flatMap((receipt) => receipt.read),
+          Effect.map((decision) => decision._tag),
+          Effect.provideService(RequestClient, request),
+        );
+
+    const database = Effect.gen(function* () {
+      const client = yield* SqliteClient.make({ filename: ":memory:" });
+
+      yield* client`create table ownership (identity_key text unique, subject_id text, provider text, issuer text, external_subject text)`;
+      yield* client`create table intents (module_id text, reference text, flow_id text, identity_key text, snapshot text, expires_at integer, retention_until integer, unique(module_id, reference), unique(module_id, flow_id))`;
+
+      return client;
+    });
+
+    const failed = yield* construct;
+
+    expect(yield* issue(failed, undefined).pipe(Effect.result)).toMatchObject({
+      _tag: "Failure",
+      failure: { _tag: "OAuthUnavailable" },
+    });
+    expect(yield* issue(failed, yield* database)).toBe("RegistrationIssued");
+
+    // The abandoned first use waits on a connection that never arrives.
+    const abandoned = yield* construct;
+    const reached = yield* Latch.make();
+
+    const stalled = yield* SqlClient.make({
+      compiler: Statement.makeCompilerSqlite(),
+      driver: "@effect/sql-sqlite-node",
+      spanAttributes: [],
+      acquirer: Effect.andThen(reached.open, Effect.never),
+    });
+
+    yield* Effect.forkChild(issue(abandoned, stalled));
+    yield* reached.await;
+    expect(yield* issue(abandoned, yield* database)).toBe("RegistrationIssued");
+  }).pipe(Effect.provide(Reactivity.layer)),
 );

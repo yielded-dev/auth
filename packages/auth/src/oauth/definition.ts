@@ -1,5 +1,5 @@
 import * as Array from "effect/Array";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Layer from "effect/Layer";
 
 import { makeAuthStrategy } from "../auth/AuthStrategy";
@@ -90,8 +90,12 @@ const bindSignIn = <
       {
         signIn: module.signIn,
         completeSignIn: module.operations.Complete.invoke,
+        nativeSignIn: module.nativeSignIn,
+        completeNativeSignIn: module.operations.NativeComplete.invoke,
       },
-      module.layer(options.policy).pipe(Layer.merge(Layer.effect(Crypto.Crypto, Crypto.Crypto))),
+      module
+        .layer(options.policy)
+        .pipe(Layer.merge(Layer.effect(SecureRandom.SecureRandom, SecureRandom.SecureRandom))),
       { completion: true },
     ),
   });
@@ -140,7 +144,7 @@ const bindAccess = <
         disconnectAccount: access.operations.Disconnect.invoke,
       },
       Layer.merge(base.layer(captured.options.policy), connectedLayer).pipe(
-        Layer.merge(Layer.effect(Crypto.Crypto, Crypto.Crypto)),
+        Layer.merge(Layer.effect(SecureRandom.SecureRandom, SecureRandom.SecureRandom)),
       ),
       { completion: true },
     ),
@@ -311,9 +315,11 @@ const bindDefineRegistration = <
       {
         signIn: module.signIn,
         completeSignIn: module.operations.Complete.invoke,
+        nativeSignIn: module.nativeSignIn,
+        completeNativeSignIn: module.operations.NativeComplete.invoke,
         register: registration.operations.Complete.invoke,
       },
-      layer.pipe(Layer.merge(Layer.effect(Crypto.Crypto, Crypto.Crypto))),
+      layer.pipe(Layer.merge(Layer.effect(SecureRandom.SecureRandom, SecureRandom.SecureRandom))),
       { completion: true },
     ),
   });

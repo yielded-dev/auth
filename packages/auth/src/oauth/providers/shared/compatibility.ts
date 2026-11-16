@@ -31,6 +31,10 @@ export const tokenCompatibility = Symbol("effect-auth/OpenIdConnect/tokenCompati
 /** Private first-party capability; it never exposes a grant to an application decoder. */
 export const githubVerifiedPrimaryEmail = Symbol("effect-auth/GitHub/verifiedPrimaryEmail");
 
+/** Private first-party native registration: the app client IDs, such as Apple bundle
+ * IDs, accepted as ID-token audiences. Only first-party presets set it. */
+export const nativeAudiences = Symbol("effect-auth/OpenIdConnect/nativeAudiences");
+
 export const TokenCompatibility = Schema.declare<TokenCompatibility>(
   (input): input is TokenCompatibility =>
     Predicate.isObject(input) &&

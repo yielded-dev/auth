@@ -1,16 +1,18 @@
-import { Hmac } from "@yielded/crypto/Hmac";
-import { Signature } from "@yielded/crypto/Signature";
 import type * as OAuth from "@yielded/oauth/OAuth";
 import * as Oidc from "@yielded/oauth/Oidc";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
+import * as Mac from "effect/crypto/Mac";
+import * as SecureRandom from "effect/crypto/SecureRandom";
+import * as Signature from "effect/crypto/Signature";
 import * as Effect from "effect/Effect";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
 import type * as Redacted from "effect/Redacted";
 
 import { OAuthUnavailable } from "../../signInErrors";
+import { nativeAudiences } from "./compatibility";
 import { installProvider, prepareConfigurations, type InstalledProvider } from "./configuration";
 import {
   installConnectedProvider,
@@ -26,7 +28,7 @@ import {
 } from "./models";
 import type { Requirements as OAuthRequirements } from "./native";
 
-export type Requirements = OAuthRequirements | Signature | Hmac;
+export type Requirements = OAuthRequirements | Signature.Signature | Mac.Mac;
 
 const configurationError = (error: Effect.Error<ReturnType<typeof Oidc.discover>>) =>
   error._tag === "OAuthConfigurationError"
@@ -97,11 +99,13 @@ const makeVerifier = Effect.fn("OpenIdConnect.makeVerifier")(function* (
     readonly algorithms: ReadonlyArray<Oidc.IdTokenAlgorithm>;
     readonly pkceS256: boolean;
     readonly clientSecret?: Redacted.Redacted<string>;
+    readonly audiences?: ReadonlyArray<string>;
   },
 ) {
-  const context = Context.make(Crypto.Crypto, yield* Crypto.Crypto).pipe(
-    Context.add(Signature, yield* Signature),
-    Context.add(Hmac, yield* Hmac),
+  const context = Context.make(SecureRandom.SecureRandom, yield* SecureRandom.SecureRandom).pipe(
+    Context.add(Digest.Digest, yield* Digest.Digest),
+    Context.add(Signature.Signature, yield* Signature.Signature),
+    Context.add(Mac.Mac, yield* Mac.Mac),
   );
 
   const verifier = yield* Oidc.makeVerifier({
@@ -111,6 +115,7 @@ const makeVerifier = Effect.fn("OpenIdConnect.makeVerifier")(function* (
     algorithms: options.algorithms,
     pkceS256: options.pkceS256,
     ...(options.clientSecret === undefined ? {} : { clientSecret: options.clientSecret }),
+    ...(options.audiences === undefined ? {} : { audiences: options.audiences }),
   }).pipe(Effect.catchCause((cause) => Effect.failCause(Cause.map(cause, configurationError))));
 
   return {
@@ -161,6 +166,9 @@ export const installConfigurations = Effect.fn("OpenIdConnect.installConfigurati
               ...(hasStaticSecret(provider.authentication)
                 ? { clientSecret: provider.authentication.secret }
                 : {}),
+              ...(provider[nativeAudiences] === undefined
+                ? {}
+                : { audiences: provider[nativeAudiences] }),
             }),
           }
         : entry,

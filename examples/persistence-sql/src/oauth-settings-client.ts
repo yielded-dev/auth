@@ -1,6 +1,6 @@
 import { Atom as AuthAtom, Client, OAuth } from "@yielded/auth";
-import { layerCryptoWeb } from "@yielded/auth/WebCrypto";
-import { Crypto, DateTime, Effect, Layer, Redacted, Schema } from "effect";
+import { DateTime, Effect, Layer, Redacted, Schema } from "effect";
+import { SecureRandom } from "effect/crypto";
 import { KeyValueStore } from "effect/persistence";
 import { Atom } from "effect/reactivity";
 
@@ -11,11 +11,14 @@ const factory = Atom.context();
 const runtime = factory(
   Layer.merge(
     KeyValueStore.layerStorage(() => sessionStorage),
-    layerCryptoWeb,
+    SecureRandom.layerWebCrypto,
   ),
 );
 
-const id = Effect.flatMap(Crypto.Crypto, (crypto) => crypto.randomUUIDv4()).pipe(Effect.orDie);
+const id = Effect.flatMap(SecureRandom.SecureRandom, (crypto) => crypto.uuidV4()).pipe(
+  Effect.orDie,
+);
+
 const SettingsClient = Client.make(SettingsApi, { baseUrl: location.origin });
 
 export const auth = AuthAtom.make(SettingsClient, { runtime: factory });

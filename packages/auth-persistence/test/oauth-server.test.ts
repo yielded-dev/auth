@@ -1,11 +1,8 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as SqliteClient from "@effect/sql-sqlite-node/SqliteClient";
 import { it } from "@effect/vitest";
 import { OAuthScope, OAuthServer } from "@yielded/auth";
 import { SubjectId } from "@yielded/auth/Schema";
-import * as WebCrypto from "@yielded/auth/WebCrypto";
-import * as KdfAdmission from "@yielded/crypto/KdfAdmission";
-import * as CryptoBackend from "@yielded/crypto/WebCrypto";
-import { Jwk, Jwt } from "@yielded/jose";
 import * as McpProtocol from "effect/ai/McpProtocol";
 import * as McpServer from "effect/ai/McpServer";
 import * as Tool from "effect/ai/Tool";
@@ -20,6 +17,8 @@ import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
+import * as Jwk from "effect/jose/Jwk";
+import * as Jwt from "effect/jose/Jwt";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
@@ -38,10 +37,7 @@ const redirectUri = "https://client.example.com/callback";
 const verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
 const challenge = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM";
 
-const cryptoLayer = Layer.merge(
-  WebCrypto.layerWebCrypto,
-  CryptoBackend.layer(globalThis.crypto.subtle).pipe(Layer.provide(KdfAdmission.layer())),
-);
+const cryptoLayer = NodeCrypto.layer;
 
 const config: OAuthServer.Options = {
   origin,
@@ -480,6 +476,7 @@ const begin = (extra: Record<string, string> = {}) =>
     })}`,
   );
 
+// https://github.com/yielded-dev/auth/issues/310: supported capabilities survive unknown entries.
 it.effect(
   "CIMD discovery, consent, PKCE exchange, refresh and revocation work without pre-registration",
   () => {
@@ -548,7 +545,14 @@ it.effect(
           () => {
             fetches++;
 
-            return Response.json(metadata, { headers: { "cache-control": "max-age=60" } });
+            return Response.json(
+              {
+                ...metadata,
+                grant_types: [...metadata.grant_types, "client_credentials"],
+                response_types: [...metadata.response_types, "token"],
+              },
+              { headers: { "cache-control": "max-age=60" } },
+            );
           },
           { ...metadataConfig, clients: [] },
         ),
@@ -753,6 +757,65 @@ it.effect("CIMD cancels a stalled metadata request at its deadline", () =>
     ),
   ),
 );
+
+// 21bb21d removed the eight-fetch bound. Issue #298 requires recovery even when
+// an abandoned request's I/O and timer callbacks never finish.
+it.effect("CIMD bounds discovery and reclaims abandoned slots at their deadline", () => {
+  let calls = 0;
+  let stalled = true;
+
+  return Effect.gen(function* () {
+    const service = yield* server.Service;
+    const clock = yield* Clock.Clock;
+
+    const start = Effect.forEach(Array.from({ length: 8 }), () =>
+      Effect.forkChild(
+        service
+          .handle(begin())
+          .pipe(Effect.provideService(Clock.Clock, { ...clock, sleep: () => Effect.never })),
+      ),
+    );
+
+    const abandoned = yield* start;
+
+    while (calls < 8) yield* Effect.yieldNow;
+    stalled = false;
+    expect((yield* service.handle(begin())).status).toBe(503);
+    expect(calls).toBe(8);
+
+    yield* TestClock.adjust("5 seconds");
+    stalled = true;
+    const replacements = yield* start;
+
+    while (calls < 16) yield* Effect.yieldNow;
+    yield* Fiber.interruptAll(abandoned);
+    stalled = false;
+    expect((yield* service.handle(begin())).status).toBe(503);
+    expect(calls).toBe(16);
+
+    yield* Fiber.interruptAll(replacements);
+    for (let index = 0; index < 9; index++)
+      expect((yield* service.handle(begin())).status).toBe(303);
+    expect(calls).toBe(25);
+  }).pipe(
+    Effect.provide(
+      harness(
+        undefined,
+        metadataConfig,
+        Layer.succeed(
+          HttpClient.HttpClient,
+          HttpClient.make((request) => {
+            calls++;
+
+            return stalled
+              ? Effect.never
+              : Effect.sync(() => HttpClientResponse.fromWeb(request, Response.json(metadata)));
+          }),
+        ),
+      ),
+    ),
+  );
+});
 
 it.effect("OAuth 2.1 permits an omitted sole callback and token redirect_uri", () =>
   Effect.gen(function* () {
@@ -1031,7 +1094,8 @@ const signingKeys = Effect.gen(function* () {
     globalThis.crypto.subtle.exportKey("jwk", pair.privateKey),
   );
 
-  const key = yield* Jwk.importPrivate(Redacted.make(privateKey), "ES256");
+  const privateJwk = yield* Schema.decodeUnknownEffect(Jwk.PrivateJwk)(privateKey);
+  const key = yield* Jwk.importPrivate(Redacted.make(privateJwk), "ES256");
   const jwk = yield* Schema.decodeUnknownEffect(Jwk.PublicJwk)({ ...publicKey, kid: "client-key" });
 
   return { key, jwks: { keys: [jwk] } };
@@ -1059,7 +1123,6 @@ const assertion = Effect.fnUntraced(function* (
   );
 
   const jwt = yield* Jwt.sign(Jwt.RegisteredClaims, payload, key, {
-    alg: key.algorithm === "dir" ? "HS256" : key.algorithm,
     kid: "client-key",
   });
 
@@ -1329,3 +1392,144 @@ it.effect("private_key_jwt validates CIMD key sources and refreshes expired JWKS
     ),
   );
 });
+
+// https://github.com/yielded-dev/auth/issues/310: never issue an unusable refresh token.
+it.effect("code-only clients receive access without a refresh token", () =>
+  Effect.gen(function* () {
+    const flow = yield* authorize();
+    const response = yield* flow.service.handle(exchange(flow.code));
+
+    expect(response.status).toBe(200);
+    const tokens = yield* body(response, Schema.Record(Schema.String, Schema.Json));
+
+    expect(Object.hasOwn(tokens, "refresh_token")).toBe(false);
+    expect(tokens).toHaveProperty("access_token");
+  }).pipe(
+    Effect.provide(
+      harness(undefined, {
+        ...config,
+        clients: config.clients.map((client) => ({
+          ...client,
+          grantTypes: ["authorization_code"],
+        })),
+      }),
+    ),
+  ),
+);
+
+const authorized = (authorize: Parameters<typeof server.Authorization.of>[0]["authorize"]) =>
+  harness().pipe(Layer.provide(Layer.succeed(server.Authorization, { authorize })));
+
+it.effect("Authorization sets claims at code exchange and recomputes them at each refresh", () => {
+  const calls: Array<{
+    readonly subjectId: string;
+    readonly clientId: string;
+    readonly resource: string;
+    readonly scopes: ReadonlyArray<string>;
+    readonly grantType: string;
+  }> = [];
+
+  return Effect.gen(function* () {
+    const { service, tokens } = yield* issue("alice", "read write");
+
+    expect(yield* service.verify(Redacted.make(tokens.access_token))).toMatchObject({
+      scopes: ["read"],
+      claims: { revision: 1 },
+    });
+
+    const refreshed = yield* service.handle(refresh(tokens.refresh_token));
+
+    expect(refreshed.status).toBe(200);
+    const next = yield* body(refreshed, Tokens);
+
+    expect(next.scope).toBe("read");
+    expect(yield* service.verify(Redacted.make(next.access_token))).toMatchObject({
+      claims: { revision: 2 },
+    });
+
+    const withoutClaims = yield* service.handle(refresh(next.refresh_token));
+    const latest = yield* body(withoutClaims, Tokens);
+
+    expect((yield* service.verify(Redacted.make(latest.access_token))).claims).toBeUndefined();
+    expect(calls).toEqual([
+      {
+        subjectId: "alice",
+        clientId: "client",
+        resource,
+        scopes: ["read", "write"],
+        grantType: "authorization_code",
+      },
+      {
+        subjectId: "alice",
+        clientId: "client",
+        resource,
+        scopes: ["read"],
+        grantType: "refresh_token",
+      },
+      {
+        subjectId: "alice",
+        clientId: "client",
+        resource,
+        scopes: ["read"],
+        grantType: "refresh_token",
+      },
+    ]);
+  }).pipe(
+    Effect.provide(
+      authorized((input) =>
+        Effect.sync(() => {
+          calls.push({ ...input });
+
+          return {
+            scopes: [Read],
+            ...(calls.length === 3 ? {} : { claims: { revision: calls.length } }),
+          };
+        }),
+      ),
+    ),
+  );
+});
+
+it.effect("Authorization denies issuance with an empty result at exchange and refresh", () => {
+  let denied = false;
+
+  return Effect.gen(function* () {
+    const { service, tokens } = yield* issue();
+
+    denied = true;
+    const refused = yield* service.handle(refresh(tokens.refresh_token));
+
+    expect(refused.status).toBe(400);
+    expect(yield* body(refused, Schema.Struct({ error: Schema.String }))).toEqual({
+      error: "access_denied",
+    });
+
+    const flow = yield* authorize();
+    const exchanged = yield* service.handle(exchange(flow.code));
+
+    expect(exchanged.status).toBe(400);
+    expect(yield* Effect.promise(() => exchanged.text())).not.toContain("access_token");
+  }).pipe(
+    Effect.provide(authorized(({ scopes }) => Effect.succeed({ scopes: denied ? [] : scopes }))),
+  );
+});
+
+it.effect("Authorization cannot widen a grant beyond the requested scopes", () =>
+  Effect.gen(function* () {
+    const flow = yield* authorize("alice", "read");
+    const response = yield* flow.service.handle(exchange(flow.code));
+
+    expect(response.status).toBe(503);
+    expect(yield* Effect.promise(() => response.text())).not.toContain("access_token");
+  }).pipe(Effect.provide(authorized(() => Effect.succeed({ scopes: [Read, Write] })))),
+);
+
+it.effect("Authorization failure returns 503 and issues nothing", () =>
+  Effect.gen(function* () {
+    const flow = yield* authorize();
+    const response = yield* flow.service.handle(exchange(flow.code));
+
+    expect(response.status).toBe(503);
+    expect((yield* flow.service.handle(exchange(flow.code))).status).toBe(503);
+  }).pipe(Effect.provide(authorized(() => Effect.fail(OAuthServer.Unavailable.make({}))))),
+);

@@ -7,8 +7,8 @@ Start with the [OAuth guide](../guide/oauth) for the flow and choice of API.
 
 ## Authorization server
 
-`OAuthServer.make(id, { scopes })` provides `Identity`, `Clients`, `Service`, `routes`,
-`middleware(requiredScopes)`, `securityLayer(api)`, and `paths`. It supports
+`OAuthServer.make(id, { scopes })` provides `Identity`, `Authorization`, `Clients`,
+`Service`, `routes`, `middleware(requiredScopes)`, `securityLayer(api)`, and `paths`. It supports
 authorization code with PKCE for MCP clients, including static registrations,
 registrations stored by your application, and Client ID Metadata Documents (CIMD).
 Use the [OpenID profile](#shared-openid-sign-in) for shared browser sign-in.
@@ -23,18 +23,19 @@ request all of them at once.
 
 Provide these to `oauth.layer`:
 
-| Input            | Purpose                                                              |
-| ---------------- | -------------------------------------------------------------------- |
-| `origin`         | Public issuer origin                                                 |
-| `resource`       | Exact protected resource URL on that origin                          |
-| `clients`        | Static registrations; may be empty with CIMD or `oauth.Clients`      |
-| `clientMetadata` | Optional `{ allowedOrigins }` policy for metadata and JWKS discovery |
-| `loginPath`      | Login route that returns to `oauth.paths.authorize`                  |
-| `keys`           | Signing keyring; use separate random material from session keys      |
-| `oauth.Identity` | Verify the current application session                               |
-| `oauth.Clients`  | Optional client registrations from your storage                      |
+| Input                 | Purpose                                                              |
+| --------------------- | -------------------------------------------------------------------- |
+| `origin`              | Public issuer origin                                                 |
+| `resource`            | Exact protected resource URL on that origin                          |
+| `clients`             | Static registrations; may be empty with CIMD or `oauth.Clients`      |
+| `clientMetadata`      | Optional `{ allowedOrigins }` policy for metadata and JWKS discovery |
+| `loginPath`           | Login route that returns to `oauth.paths.authorize`                  |
+| `keys`                | Signing keyring; use separate random material from session keys      |
+| `oauth.Identity`      | Verify the current application session                               |
+| `oauth.Clients`       | Optional client registrations from your storage                      |
+| `oauth.Authorization` | Optional scope decision and claims at each token issue               |
 
-Provide durable `OAuthServer.Persistence` plus `HttpClient`, `Crypto`, `Hmac`, and
+Provide durable `OAuthServer.Persistence` plus `HttpClient`, `SecureRandom`, `Digest`, `Mac`, and
 `Signature`.
 
 `Identity.current` returns the verified `SubjectId` or `undefined`; dependency
@@ -60,6 +61,9 @@ Static clients configure `clientId`, `name`, and `redirectUris`. Add a redacted
 `clientSecret` or its `clientSecretDigest` for Basic/form-secret authentication, or
 `clientAssertion: { jwks }` or `{ jwksUri }` for `private_key_jwt`. Configure one
 authentication method. `grantTypes` permits `authorization_code` and/or `refresh_token`.
+On `OAuthServer.make`, static and stored clients that omit `grantTypes` allow refresh;
+metadata clients must advertise it. OpenID requires both `refreshTokens: true` and
+an explicit `refresh_token` grant.
 
 Callbacks match exactly. A native client's loopback callback may vary its port;
 the selected callback remains bound to the authorization code.
@@ -79,6 +83,10 @@ A document declares its exact URL as `client_id`, a `client_name`, and
 public key source. Static registrations take precedence over stored ones, and both
 over metadata documents.
 
+When present, `grant_types` must include `authorization_code` and `response_types`
+must include `code`. Unknown capabilities are ignored; only an advertised
+`refresh_token` grant enables refresh for a metadata client.
+
 Use an HTTP client and network policy that reject private, loopback, and link-local
 destinations after DNS resolution. Disable redirects and ambient credentials.
 Origin allowlists alone do not provide network isolation.
@@ -86,9 +94,11 @@ Origin allowlists alone do not provide network isolation.
 | Discovery limit               | Value                                     |
 | ----------------------------- | ----------------------------------------- |
 | Metadata / JWKS body          | 5 KiB / 128 KiB                           |
-| Request timeout / concurrency | 5 seconds / 8 requests per server Layer   |
+| Request timeout / concurrency | 5 seconds / 8 slots per server Layer      |
 | Cache lifetime / entries      | At most 5 minutes / 256 entries per cache |
 
+Discovery slots become available at their five-second deadline even if an abandoned
+request never runs its cleanup. Applications still own ingress rate limits.
 Errors and private or non-cacheable responses are not cached. Metadata changes take
 effect when cached entries expire and can invalidate outstanding grants.
 
@@ -104,6 +114,35 @@ EdDSA. Retain old public keys through the JWKS cache interval when rotating them
 Each assertion is single-use across server instances. A lost acknowledgment needs
 a fresh assertion; an uncertain token-issuance outcome still requires a new
 authorization flow.
+
+### Authorizing token issuance
+
+Provide `oauth.Authorization` to check current permission and attach claims. Its
+`authorize` Effect runs at code exchange and every refresh with the subject ID, client
+ID, resource, requested scopes, and grant type. Return a subset of those scopes; an
+empty result denies issuance. Narrowing is permanent for that grant; later refreshes
+cannot regain removed scopes. Without this service, the server grants the requested
+scopes and sets no claims.
+
+```ts
+const authorization = Layer.succeed(oauth.Authorization, {
+  authorize: ({ subjectId, scopes }) =>
+    accounts.current(subjectId).pipe(
+      Effect.map((account) =>
+        account === undefined
+          ? { scopes: [] }
+          : { scopes, claims: { organizationId: account.organizationId } },
+      ),
+    ),
+});
+```
+
+Optional JSON `claims` replace the previous claims on each issue and reach `verify`
+and `CurrentAccess` as `claims`; they stay in the grant record and tokens remain opaque.
+Scopes outside the request and `OAuthServer.Unavailable` return 503 without issuing
+credentials.
+
+Denial stops new issuance, not existing access. Revoke the grant for immediate invalidation.
 
 ### Protecting resources
 
@@ -148,15 +187,16 @@ same-origin policy.
 
 ### Token lifecycle and storage
 
-| Lifetime           | Default                             |
-| ------------------ | ----------------------------------- |
-| Pending consent    | 5 minutes                           |
-| Authorization code | 1 minute                            |
-| Access token       | 10 minutes                          |
-| Grant              | 30 days; refresh does not extend it |
+| Lifetime           | Default                                                                               |
+| ------------------ | ------------------------------------------------------------------------------------- |
+| Pending consent    | 5 minutes                                                                             |
+| Authorization code | 1 minute                                                                              |
+| Access token       | 10 minutes                                                                            |
+| Grant              | 30 days with refresh, otherwise the access token lifetime; refresh does not extend it |
 
 Use `OAuthServerPersistence.layer` with SQLite, D1, or PostgreSQL and apply its
-`migrations` through your application. Server replicas sharing an issuer share
+`migrations` through your application; with MySQL or MariaDB, apply its
+`mysqlMigrations`. Server replicas sharing an issuer share
 storage and signing keys. Keep keys and replay receipts until their credentials
 expire; schedule expired-row cleanup and ingress rate limits.
 
@@ -264,15 +304,18 @@ claims only. When `resource` differs from UserInfo, discovery omits UserInfo and
 the UserInfo route rejects those access tokens.
 
 For a resource server, construct `OAuthServer.makeAccessTokenVerifierWithKeySet({
-issuer, resource })` and supply `Jwks.Jwks` from `@yielded/jose` plus
-`@yielded/crypto/Signature`. Its `verify(Redacted.make(token))` Effect checks RS256,
+issuer, resource })` and supply `Jwks.Jwks` from `effect/jose` plus
+`effect/crypto/Signature`. Its `verify(Redacted.make(token))` Effect checks RS256,
 the `at+jwt` type, issuer, audience, expiry, and scope encoding, then returns
 `OAuthServer.Access` with the subject, client, grant, resource, scopes, and optional
 application claims. It captures the two services while using the caller's clock.
 
 For remote keys, build `Jwks.layerRemote({ url: "https://issuer.example/keys" })`
 once in the application's runtime and provide an Effect HttpClient. The configured
-URL is trusted application policy; tokens cannot select it. JOSE owns the
+URL is trusted application policy; tokens cannot select it. Supply a client that
+does not follow redirects; with FetchHttpClient, provide
+`FetchHttpClient.RequestInit` as `{ redirect: "manual", credentials: "omit" }`
+on its Layer. Effect owns the
 [bounded cache and refresh](./jose.mdx#local-and-remote-public-key-sets).
 Keep its Scope open while using the verifier. Remote-key failures return
 `OAuthServer.Unavailable`; invalid credentials return `OAuthServer.InvalidToken`.
@@ -282,7 +325,7 @@ On Workers, register the bounded verification's `runPromiseExit` promise with
 Do not abort that retained verification on client disconnect: other requests may
 still need its refresh. Keep the refresh deadline within the platform's lifetime
 extension; the default is five seconds. The
-[minimal Worker fixture](https://github.com/yielded-dev/auth/blob/main/packages/auth/test/fixtures/workers-access-token.ts)
+[minimal Worker fixture](https://github.com/yielded-dev/auth/blob/main/packages/auth-platform-workerd/test/fixtures/workers-access-token.ts)
 shows the composition. Cookies, application claims and permissions stay with the host.
 
 For preloaded keys, `OAuthServer.makeAccessTokenVerifier({ issuer, resource,
@@ -456,12 +499,10 @@ export const Routes = AuthRoutes.pipe(
 
 The [runnable application](https://github.com/yielded-dev/auth/blob/main/examples/auth/src/oauth-application.ts)
 supplies those application Layers. Native providers require HTTP and crypto services;
-OpenID Connect also requires `Signature`. Protectors require `Aead` and `Crypto`.
-Their Layers check for XChaCha20-Poly1305 support and fail with
-`OAuthConfigurationError` (`reason: "crypto"`) when it is absent. On Workers,
-provide `WorkerdPasswordlessServices.layer` from
-`@yielded/auth/WorkerdPasswordlessServices` for HTTP and crypto without Wasm.
-Use `WorkerdServices` when the application also hashes passwords; see
+OpenID Connect also requires Effect `Signature`. Protectors require Effect
+`Aead` and `SecureRandom`; Effect supplies XChaCha20-Poly1305. On Workers,
+provide `WebCrypto.layer` from `@yielded/auth/WebCrypto` and an HTTP client such as
+`FetchHttpClient.layer`. Use `WorkerdServices` for crypto when the application also hashes passwords; see
 [runtime composition](./crypto.md#use-with-auth).
 Keep the resulting Layer alive for the application's lifetime.
 
@@ -491,7 +532,7 @@ and commit scopes. After a lost acknowledgement, retry the same input. Concurren
 conflicts may fail and can be retried after the competing import completes.
 
 For application-owned persistence, `OAuthPersistence.identityKey(identity)` returns
-the same stable key used by sign-in and requires Effect `Crypto`. It validates the
+the same stable key used by sign-in and requires Effect `Digest`. It validates the
 exact provider/issuer/subject tuple, rejects malformed Unicode with
 `OAuthUnavailable`, and excludes the OAuth module from ownership. Use it inside
 your own atomic import; the key alone does not create login authority. See the
@@ -500,8 +541,11 @@ your own atomic import; the key alone does not create login authority. See the
 ## Customize callbacks
 
 `Http` derives `/auth/{provider}/callback` from the origin and contract base path.
-Callbacks use HTTPS, with HTTP loopback support for local development. Provider
-endpoints use HTTPS.
+Callbacks use HTTPS, with HTTP loopback support for local development.
+Auth provider configuration requires HTTPS endpoints. The lower-level
+`@yielded/oauth` package accepts HTTP endpoints and discovery URLs on `localhost`,
+`127.0.0.1`, or `[::1]` only with an explicitly configured HTTP loopback issuer.
+Asymmetric OIDC verification still requires an HTTPS JWKS URL.
 
 ```ts
 const AuthRoutes = Http.layer(AppAuth, {

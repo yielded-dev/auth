@@ -1,4 +1,4 @@
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Base64Url from "effect/encoding/Base64Url";
@@ -57,7 +57,7 @@ const make = Effect.fnUntraced(function* (
   const protocol = yield* OAuthConnectedProtocol;
   const persistence = yield* OAuthConnectedPersistence;
   const protector = yield* OAuthConnectedTokenProtector;
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
 
   const random = crypto.randomBytes(32).pipe(
     Effect.mapError(() => OAuthUnavailable.make({})),
@@ -99,15 +99,18 @@ const make = Effect.fnUntraced(function* (
   const configurationFor = Effect.fn("OAuth.access.configuration")(function* (
     flow: OAuthSignInFlow,
   ) {
+    const { redirectUri, access } = flow.context;
+
     if (
-      flow.context.access === undefined ||
-      !connectedSame(OAuthConnectedProfile, flow.context.access, profile)
+      redirectUri === undefined ||
+      access === undefined ||
+      !connectedSame(OAuthConnectedProfile, access, profile)
     )
       return yield* OAuthRejected.make({});
 
     return yield* snapshotOAuthConnectedConfiguration.effect({
-      ...(yield* snapshotOAuthProtocolConfiguration.effect(flow.context)),
-      profile: flow.context.access,
+      ...(yield* snapshotOAuthProtocolConfiguration.effect({ ...flow.context, redirectUri })),
+      profile: access,
     });
   });
 

@@ -19,6 +19,8 @@ export { signIn as phoneSignIn, completeSignIn as phoneCompleteSignIn } from "./
 export {
   signIn as oauthSignIn,
   completeSignIn as oauthCompleteSignIn,
+  nativeSignIn as oauthNativeSignIn,
+  completeNativeSignIn as oauthCompleteNativeSignIn,
   register as oauthRegister,
   listLinkedAccounts as oauthListLinkedAccounts,
 } from "./oauth/contracts";

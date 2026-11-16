@@ -39,7 +39,7 @@ import { OperationHttpConfigurationError, OperationHttpError } from "./errors";
 import type { HttpCredentials, OperationHttpConfiguration } from "./models";
 import { OperationHttpInvocation } from "./OperationHttpInvocation";
 import { OperationHttpServerConfig } from "./OperationHttpServerConfig";
-import { CredentialWire, RevealWire, credentialWire, revealWire } from "./private";
+import { RevealWire, nativeCredentialHeader, revealWire } from "./private";
 import { requestSecurity } from "./security";
 import { rotationCookies, snapshotCookie } from "./session-cache-cookie";
 
@@ -53,7 +53,6 @@ const responseSchema = Schema.Union([
 ]);
 
 const encodeResponse = Schema.encodeEffect(Schema.fromJsonString(responseSchema));
-const encodeCredential = Schema.encodeSync(Schema.fromJsonString(CredentialWire));
 const decodeRequestBody = Schema.decodeEffect(Schema.fromJsonString(HttpRequestBody));
 
 export interface OAuthHttpCallback<R = never> {
@@ -331,10 +330,7 @@ const applyCommands = Effect.fnUntraced(function* (
       continue;
     }
     if (native) {
-      headers.set(
-        config.native!.responseHeaders[command.slot],
-        encodeCredential(credentialWire(command)),
-      );
+      headers.set(config.native!.responseHeaders[command.slot], nativeCredentialHeader(command));
     } else {
       const cookie = config.cookies[command.slot];
       const value = command._tag === "Issue" ? Redacted.value(command.credential) : "";

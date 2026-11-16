@@ -8,6 +8,9 @@ import type { OAuthProtocolRejected, OAuthRejected, OAuthUnavailable } from "./s
 import type {
   OAuthCallbackId,
   OAuthCodeResponse,
+  OAuthNativeCredential,
+  OAuthNativeProtocolConfiguration,
+  OAuthNativeProtocolPreparation,
   OAuthProtocolConfiguration,
   OAuthProtocolPreparation,
   OAuthTransactionSecrets,
@@ -38,6 +41,23 @@ export class OAuthProtocol extends Context.Service<
     readonly exchangeVerifiedIdentity: (input: {
       readonly configuration: OAuthProtocolConfiguration;
       readonly response: OAuthCodeResponse;
+      readonly secrets: OAuthTransactionSecrets;
+      readonly verificationStartedAt: DateTime.Utc;
+    }) => Effect.Effect<OAuthVerifiedExternalIdentity, OAuthProtocolRejected | OAuthUnavailable>;
+    /** Native OIDC sign-in from a platform sheet, without a browser redirect. Select
+     * only the provider's active native registration; return the reserved native
+     * callback, no redirect URI, no PKCE verifier and an OIDC nonce for the app.
+     * Adapters without native registrations omit both native members. */
+    readonly prepareNative?: (input: {
+      readonly provider: OAuthProviderKey;
+      readonly flowId: RequestBindingFlowId;
+    }) => Effect.Effect<OAuthNativeProtocolPreparation, OAuthRejected | OAuthUnavailable>;
+    /** Verify the platform ID token once against the captured native registration:
+     * signature, issuer, audience, time, the sealed nonce and, with `code`, its
+     * `c_hash`. Never redeem the code or call the token endpoint. */
+    readonly verifyNativeIdentity?: (input: {
+      readonly configuration: OAuthNativeProtocolConfiguration;
+      readonly credential: OAuthNativeCredential;
       readonly secrets: OAuthTransactionSecrets;
       readonly verificationStartedAt: DateTime.Utc;
     }) => Effect.Effect<OAuthVerifiedExternalIdentity, OAuthProtocolRejected | OAuthUnavailable>;

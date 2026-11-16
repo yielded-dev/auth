@@ -71,8 +71,8 @@ stable across restarts and allow no other writers. Storage is device-only,
 available while unlocked, and does not use biometric gating. Keychain data can
 survive app deletion.
 
-Your app also supplies `Crypto.Crypto` with cryptographically secure random bytes
-and SHA-256. React Native does not supply browser `SubtleCrypto`.
+Your app also supplies `SecureRandom.SecureRandom` and `Digest.Digest` from `effect/crypto`
+for cryptographically secure random bytes and SHA-256. React Native does not supply browser `SubtleCrypto`.
 With [`expo-crypto`](https://docs.expo.dev/versions/latest/sdk/crypto/), use
 `getRandomValues` and `digest`; `getRandomBytes` can fall back to `Math.random`
 in development.
@@ -92,3 +92,9 @@ contributes paths to your app-owned file. Older iOS versions reject HTTPS callba
 Let this adapter own the authentication session: do not open a competing
 WebBrowser session or handle its callback through `Linking`. If presentation
 stays pending, interrupt login before trying again.
+
+## Sign in with Apple
+
+Native Sign in with Apple needs no adapter. Call `expo-apple-authentication` in a
+development build and give this vault to your native-mode client; see the
+[Apple guide](../../docs/src/content/docs/guide/apple.md#native-apps).

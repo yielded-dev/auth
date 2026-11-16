@@ -14,6 +14,7 @@ import * as Schema from "effect/Schema";
 import { reportAuthFailure, ReportedOperationDefect } from "../../internal/diagnostics";
 import { httpsOrigin as Origin } from "../../internal/origin";
 import { timeoutWithCause } from "../../internal/timeout";
+import { providerCallbackParameters } from "../callback";
 import type { ProviderDefinition } from "../providerDefinition";
 import { OAuthProviderKey } from "../schema";
 import {
@@ -341,9 +342,7 @@ export const layer = <E, R>(options: Options<E, R>) => {
           "error",
           "error_description",
           "error_uri",
-          "scope",
-          "authuser",
-          "prompt",
+          ...providerCallbackParameters,
           ...(formPost ? ["user"] : []),
         ]);
 

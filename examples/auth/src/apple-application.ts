@@ -12,9 +12,9 @@ import { OAuthSignInApi } from "./oauth-contract";
 export const makeAppleExample = (config: {
   readonly origin: string;
   readonly clientId: string;
-  readonly teamId: Apple.ProviderRegistration["teamId"];
-  readonly keyId: Apple.ProviderRegistration["keyId"];
-  readonly privateKey: Apple.ProviderRegistration["privateKey"];
+  readonly teamId: Apple.WebRegistration["teamId"];
+  readonly keyId: Apple.WebRegistration["keyId"];
+  readonly privateKey: Apple.WebRegistration["privateKey"];
   readonly userId: string;
   readonly filename: string;
   readonly sessionKeys: Sessions.SessionSigningKeyring;

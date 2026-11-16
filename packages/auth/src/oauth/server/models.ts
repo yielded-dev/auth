@@ -1,6 +1,6 @@
-import { Jwk, Jwks } from "@yielded/jose";
 import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
+import * as Jwks from "effect/jose/Jwks";
 import * as Schema from "effect/Schema";
 
 import * as OAuthScope from "../../OAuthScope";
@@ -84,7 +84,7 @@ export const AssertionAlgorithms = ["RS256", "PS256", "ES256", "EdDSA"] as const
 export const ClientAssertion = Schema.Struct({
   jwks: Schema.optionalKey(Jwks.KeySet),
   jwksUri: Schema.optionalKey(Url),
-  algorithm: Schema.optionalKey(Jwk.AsymmetricAlgorithm),
+  algorithm: Schema.optionalKey(Schema.Literals(AssertionAlgorithms)),
 }).check(
   Schema.makeFilter((value) => (value.jwks === undefined) !== (value.jwksUri === undefined)),
 );
@@ -139,11 +139,15 @@ export const AuthorizationMetadata = Schema.Struct({
   token_endpoint_auth_methods_supported: Schema.Array(
     Schema.Literals(["none", "client_secret_basic", "client_secret_post", "private_key_jwt"]),
   ),
-  token_endpoint_auth_signing_alg_values_supported: Schema.Array(Jwk.AsymmetricAlgorithm),
+  token_endpoint_auth_signing_alg_values_supported: Schema.Array(
+    Schema.Literals(AssertionAlgorithms),
+  ),
   revocation_endpoint_auth_methods_supported: Schema.Array(
     Schema.Literals(["none", "client_secret_basic", "client_secret_post", "private_key_jwt"]),
   ),
-  revocation_endpoint_auth_signing_alg_values_supported: Schema.Array(Jwk.AsymmetricAlgorithm),
+  revocation_endpoint_auth_signing_alg_values_supported: Schema.Array(
+    Schema.Literals(AssertionAlgorithms),
+  ),
   code_challenge_methods_supported: Schema.Array(Schema.Literal("S256")),
   authorization_response_iss_parameter_supported: Schema.Literal(true),
   client_id_metadata_document_supported: Schema.Boolean,
@@ -205,7 +209,9 @@ export const OpenIdMetadata = Schema.Struct({
   subject_types_supported: Schema.Array(Schema.Literal("public")),
   id_token_signing_alg_values_supported: Schema.Array(Schema.Literal("RS256")),
   token_endpoint_auth_methods_supported: Schema.Array(Schema.String),
-  token_endpoint_auth_signing_alg_values_supported: Schema.Array(Jwk.AsymmetricAlgorithm),
+  token_endpoint_auth_signing_alg_values_supported: Schema.Array(
+    Schema.Literals(AssertionAlgorithms),
+  ),
   code_challenge_methods_supported: Schema.Array(Schema.Literal("S256")),
   authorization_response_iss_parameter_supported: Schema.Literal(true),
   scopes_supported: Scopes,

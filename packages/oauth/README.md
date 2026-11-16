@@ -1,13 +1,13 @@
 # @yielded/oauth
 
 Effect OAuth authorization-code and refresh flows, PKCE S256, and signed OpenID
-Connect. Runtime dependencies are Effect and `@yielded/jose`; applications own
-registered callbacks, provider configuration, permissions, identity, and grant storage.
+Connect. Effect is its only runtime dependency; applications own registered
+callbacks, provider configuration, permissions, identity, and grant storage.
 
 Use `OAuth.make` for an installed client and `Oidc.makeVerifier` for its OIDC
 verifier. Both require `HttpClient` and an owning `Scope`; keep that scope open
-for their lifetime. `Pkce` requires Effect `Crypto`; verification also requires
-`Signature` from `@yielded/crypto`. `Oidc.discover` retrieves metadata from the
+for their lifetime. `Pkce` requires Effect `SecureRandom` and `Digest`; verification also requires
+`Signature` from `effect/crypto`. `Oidc.discover` retrieves metadata from the
 exact trusted issuer, or from an explicit `metadataUrl`. A discovered issuer
 may use a `{tenantid}` path segment when that template matches the configured
 authority. A concrete GUID pinned from that document keeps its token issuer
@@ -32,12 +32,18 @@ an omitted ID token is application policy.
 
 Each exchange, refresh, or revocation makes one request. An uncertain outcome
 requires application recovery, not an automatic retry. Provider endpoints require
-HTTPS. Custom HttpClients must preserve cancellation and disable retries,
-redirects, and ambient cookies. Bound the complete workflow as well as individual
-requests; keep token receipts out of logs and telemetry.
+HTTPS. HTTP endpoints and discovery URLs on `localhost`, `127.0.0.1`, or `[::1]`
+are accepted only with an explicitly configured HTTP loopback issuer. Applications
+must validate issuer input; require HTTPS for untrusted
+tenant-supplied issuers to prevent plain-HTTP loopback requests. Custom
+HttpClients must preserve cancellation and disable retries, redirects, and ambient
+cookies. Bound the complete workflow as well as individual requests; keep token
+receipts out of logs and telemetry.
 
-Each verifier owns a scoped JWKS cache. It never takes a key endpoint from a token
-or serves expired keys after refresh failure. Configure the issuer's advertised
+Asymmetric OIDC verification still requires an HTTPS JWKS URL, even for a loopback
+issuer; an HTTP JWKS URL fails with `ConfigurationError`. Each verifier owns a scoped JWKS cache. It never
+takes a key endpoint from a token or serves expired keys after refresh failure.
+Configure the issuer's advertised
 code flow and signing algorithms. HS256 is accepted only with a client secret of
 at least 32 bytes. Keep S256 PKCE enabled unless the issuer cannot
 support it. Other OAuth grants are outside this package's profile.

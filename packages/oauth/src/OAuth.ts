@@ -14,6 +14,8 @@ import * as V from "./internal/validation";
 export const JsonObject = V.JsonObject;
 export type JsonObject = typeof JsonObject.Type;
 
+/** HTTP loopback endpoints require an HTTP loopback issuer. Remote issuers
+ * cannot downgrade endpoints to HTTP, including through discovery. */
 export const Metadata = Schema.Struct({
   issuer: V.Issuer,
   /** Local discovery policy: a tenant-template document requires key issuer
@@ -43,7 +45,19 @@ export const Metadata = Schema.Struct({
     Schema.Array(V.text(64)).check(Schema.isMaxLength(64)),
   ),
   authorization_response_iss_parameter_supported: Schema.optionalKey(Schema.Boolean),
-});
+}).check(
+  Schema.makeFilter((metadata) =>
+    [
+      metadata.authorization_endpoint,
+      metadata.token_endpoint,
+      metadata.jwks_uri,
+      metadata.userinfo_endpoint,
+      metadata.revocation_endpoint,
+    ].every(
+      (endpoint) => endpoint === undefined || V.endpointMatchesIssuer(metadata.issuer, endpoint),
+    ),
+  ),
+);
 
 export type Metadata = typeof Metadata.Type;
 
@@ -178,7 +192,13 @@ const ClientOptionsSchema = Schema.Struct({
   tokenBodyFormat: Schema.optionalKey(Schema.Literals(["form", "json"])),
   scopeSeparator: Schema.optionalKey(Schema.Literals([" ", ","])),
   revocationAuthentication: Schema.optionalKey(Authentication),
-});
+}).check(
+  Schema.makeFilter(
+    (options) =>
+      options.profile === undefined ||
+      V.endpointMatchesIssuer(options.metadata.issuer, options.profile.url),
+  ),
+);
 
 const additional = {
   parameters: Schema.optionalKey(V.Parameters),

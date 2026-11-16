@@ -15,6 +15,9 @@ import {
 } from "./registrationModels";
 import { OAuthMethodUnsupported, OAuthRejected, OAuthUnavailable } from "./signInErrors";
 import {
+  OAuthNativeSignInAuthorization,
+  OAuthNativeSignInComplete,
+  OAuthNativeSignInInput,
   OAuthReturnTarget,
   OAuthSignInAuthorization,
   OAuthSignInInput,
@@ -73,6 +76,54 @@ export const completeSignIn = <S extends Schema.Codec<Completion, unknown, unkno
     credentials: true,
     method: "completeSignIn",
     oauthCallback: true,
+    requestFields: { requestBinding: "request-binding" },
+    ...options,
+    subject: {
+      fromSuccess: (value) =>
+        "completion" in value && value.completion._tag === "Authenticated"
+          ? value.completion.session.subjectId
+          : undefined,
+      sessionFromSuccess: (value) =>
+        "completion" in value && value.completion._tag === "Authenticated"
+          ? value.completion.session
+          : undefined,
+    },
+  });
+
+/** Start native sign-in for a platform sheet such as Sign in with Apple on iOS.
+ * Pass the returned nonce to the platform request. The request binding is a private
+ * credential; native clients keep it through the native credential transport. */
+export const nativeSignIn = (options?: { readonly strategy?: string }) =>
+  action({
+    payload: OAuthNativeSignInInput,
+    success: OAuthNativeSignInAuthorization,
+    error: Failure,
+    mode: "mutation",
+    credentials: true,
+    method: "nativeSignIn",
+    ...options,
+  });
+
+/** Complete native sign-in with the platform sheet's ID token, its authorization code
+ * for the token's `c_hash`, and any first-consent name. Results match completeSignIn. */
+export const completeNativeSignIn = <S extends Schema.Codec<Completion, unknown, unknown, unknown>>(
+  schemas: { readonly CompletionResult: S },
+  options?: { readonly strategy?: string },
+) =>
+  action({
+    payload: Schema.Struct({
+      flowId: OAuthNativeSignInComplete.fields.flowId,
+      provider: OAuthNativeSignInComplete.fields.provider,
+      idToken: OAuthNativeSignInComplete.fields.idToken,
+      code: OAuthNativeSignInComplete.fields.code,
+      name: OAuthNativeSignInComplete.fields.name,
+    }),
+    success: completionResult(schemas.CompletionResult),
+    error: Failure,
+    mode: "mutation",
+    replay: "single-use",
+    credentials: true,
+    method: "completeNativeSignIn",
     requestFields: { requestBinding: "request-binding" },
     ...options,
     subject: {

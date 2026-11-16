@@ -1,6 +1,6 @@
-import type { Hmac } from "@yielded/crypto/Hmac";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
+import type * as Mac from "effect/crypto/Mac";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -32,6 +32,7 @@ import {
   cookieConfiguration,
   OperationHttpServerConfig,
 } from "../http-operation/OperationHttpServerConfig";
+import { nativeCredentialHeader } from "../http-operation/private";
 import { mutationSecurity, requestSecurity } from "../http-operation/security";
 import { make as makeOperationServer } from "../http-operation/server";
 import { rotationCookies, snapshotCookie } from "../http-operation/session-cache-cookie";
@@ -100,6 +101,12 @@ export interface AuthHttpOptions<E = never, R = never, ResponseR = never> {
   };
   readonly csrf?: { readonly header: string; readonly value: string };
   readonly oauth?: OAuthOptions<E, R, ResponseR>;
+  /** Native clients that hold private credentials themselves, such as an iOS app
+   * completing `oauthCompleteNativeSignIn`. A request selects native mode with
+   * `modeHeader: native`, carries credentials only in `requestHeaders`, and receives
+   * issued credentials in `responseHeaders`; it must send no Origin or cookies and
+   * pass `authorize`. Browser requests and OAuth callbacks are unchanged. */
+  readonly native?: OperationHttpConfiguration["native"];
 }
 
 type OAuthConfiguration<O> = O extends { readonly oauth?: infer C } ? Exclude<C, undefined> : never;
@@ -280,6 +287,7 @@ export const make = <
         csrfValue: options.csrf?.value ?? "1",
         maximumBodyBytes: options.maximumBodyBytes ?? 65536,
         maximumUrlBytes: options.maximumUrlBytes ?? 8192,
+        ...(options.native === undefined ? {} : { native: options.native }),
       });
     }),
   );
@@ -441,9 +449,15 @@ export const make = <
         }),
       );
 
+      // Native requests passed host admission above and carry no Origin or CSRF header.
+      const admission: Effect.Effect<void, OperationHttpError> = security.native
+        ? ["GET", "HEAD", "OPTIONS"].includes(request.method)
+          ? Effect.fail(OperationHttpError.make({ reason: "method" }))
+          : Effect.void
+        : mutationSecurity(request).pipe(Effect.provideService(OperationHttpServerConfig, config));
+
       const beforeMutation = yield* Effect.cached(
-        mutationSecurity(request).pipe(
-          Effect.provideService(OperationHttpServerConfig, config),
+        admission.pipe(
           Effect.mapError(() => HookDenied.make({ reason: "policy" })),
           Effect.andThen(
             Effect.gen(function* () {
@@ -503,6 +517,19 @@ export const make = <
         for (const command of commands) {
           const cookie = config.cookies[command.slot];
 
+          if (security.native) {
+            const headers = config.native?.responseHeaders;
+
+            if (headers === undefined)
+              return yield* OperationHttpError.make({ reason: "credentials" });
+            if (command.slot !== "session-cache")
+              response = HttpServerResponse.setHeader(
+                response,
+                headers[command.slot],
+                nativeCredentialHeader(command),
+              );
+            continue;
+          }
           if (command.slot === "session-cache") {
             if (cacheTransport === undefined) continue;
             const snapshot = yield* snapshotCookie(cookie, command, now);
@@ -753,8 +780,8 @@ export const make = <
       Effect.Success<typeof server>,
       | Exclude<Effect.Error<typeof server>, RequestBindingConfigurationError>
       | OAuthConfigured<Options, RequestBindingConfigurationError>,
-      | Exclude<Effect.Services<typeof server>, RequestBindingConfig | Hmac>
-      | OAuthConfigured<Options, RequestBindingConfig | Hmac>
+      | Exclude<Effect.Services<typeof server>, RequestBindingConfig | Mac.Mac>
+      | OAuthConfigured<Options, RequestBindingConfig | Mac.Mac>
     >;
   };
 

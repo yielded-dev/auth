@@ -1,22 +1,21 @@
-import * as Jwk from "@yielded/jose/Jwk";
-import * as Jwks from "@yielded/jose/Jwks";
-import type * as Jws from "@yielded/jose/Jws";
-import * as Jwt from "@yielded/jose/Jwt";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
-import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Base64Url from "effect/encoding/Base64Url";
-import * as HttpClient from "effect/http/HttpClient";
+import type * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
-import * as Layer from "effect/Layer";
+import * as Jwk from "effect/jose/Jwk";
+import * as Jwks from "effect/jose/Jwks";
+import type * as Jws from "effect/jose/Jws";
+import * as Jwt from "effect/jose/Jwt";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 
 import { ConfigurationError, Rejected, Unavailable } from "./Errors";
+import * as OidcJwks from "./internal/jwks";
 import * as Ownership from "./internal/ownership";
 import * as Transport from "./internal/transport";
 import * as V from "./internal/validation";
@@ -42,13 +41,18 @@ const idTokenAlgorithms: readonly IdTokenAlgorithm[] = [
 
 export interface DiscoverOptions extends RequestOptions {
   /** Fetch this document instead of issuer + `/.well-known/openid-configuration`.
-   * The document issuer must still equal the trusted issuer identifier. */
+   * The document issuer must still equal the trusted issuer identifier.
+   * HTTP loopback discovery requires an HTTP loopback issuer. */
   readonly metadataUrl?: string;
 }
 
 export interface VerifierOptions extends RequestOptions {
   readonly metadata: Metadata;
   readonly clientId: string;
+  /** Accepted ID-token audiences, for one relying party known by several client
+   * IDs, such as an app per platform. A token's `aud` must contain one of them, and
+   * a present `azp` must be one of them. Defaults to `[clientId]`. */
+  readonly audiences?: ReadonlyArray<string>;
   /** Algorithms this verifier will accept. Discovery must advertise at least one.
    * Defaults to RS256, PS256, ES256 and EdDSA. HS256 is accepted only when
    * requested here and a client secret is supplied. */
@@ -83,10 +87,7 @@ export interface Verified {
   readonly upstreamAuthenticatedAt?: DateTime.Utc;
 }
 
-type VerificationRequirements =
-  | Exclude<Effect.Services<ReturnType<typeof Jws.verifyWithKeySet>>, Jwks.Jwks>
-  | Jws.Requirements
-  | Crypto.Crypto;
+type VerificationRequirements = Jws.Requirements | Digest.Digest;
 
 export interface Verifier {
   readonly verify: (
@@ -98,6 +99,9 @@ export interface Verifier {
 const Configuration = Schema.Struct({
   metadata: Metadata,
   clientId: V.text(1024),
+  audiences: Schema.optionalKey(
+    Schema.Array(V.text(1024)).check(Schema.isMinLength(1), Schema.isMaxLength(64)),
+  ),
   ...V.RequestOptions.fields,
   algorithms: Schema.optionalKey(
     Schema.Array(IdTokenAlgorithm).check(Schema.isMinLength(1), Schema.isMaxLength(5)),
@@ -147,12 +151,12 @@ const IdClaims = Schema.Struct({
 
 const tokenHash = (algorithm: string) =>
   algorithm === "EdDSA"
-    ? { digest: "SHA-512" as const, octets: 32 }
+    ? { digest: Digest.sha512, octets: 32 }
     : algorithm === "RS256" ||
         algorithm === "PS256" ||
         algorithm === "ES256" ||
         algorithm === "HS256"
-      ? { digest: "SHA-256" as const, octets: 16 }
+      ? { digest: Digest.sha256, octets: 16 }
       : undefined;
 
 const tenantPlaceholder = "{tenantid}";
@@ -303,6 +307,9 @@ export const discover = Effect.fnUntraced(function* (
   const issuer = yield* V.configuration(V.Issuer, input, "issuer");
 
   const options = yield* V.configuration(DiscoverConfiguration, inputOptions);
+
+  if (options.metadataUrl !== undefined && !V.endpointMatchesIssuer(issuer, options.metadataUrl))
+    return yield* ConfigurationError.make({ reason: "metadata" });
   const url = new URL(options.metadataUrl ?? issuer);
 
   if (options.metadataUrl === undefined) {
@@ -345,7 +352,8 @@ export const discover = Effect.fnUntraced(function* (
 const claimFailure = () => Rejected.make({ reason: "claims" });
 
 /** Signed ID tokens using advertised RS256, PS256, ES256, EdDSA, or explicit
- * HS256. Asymmetric verification and the bounded JWKS cache belong to the
+ * HS256. Asymmetric verification requires an HTTPS JWKS URL; an HTTP URL
+ * fails with ConfigurationError. Verification and the bounded JWKS cache belong to the
  * caller's Scope. HS256 uses the supplied client secret as the HMAC key and
  * does not install JWKS. Owner closure cancels and joins active verification,
  * returning Unavailable; caller interruption joins its operation without
@@ -361,6 +369,7 @@ export const makeVerifier = Effect.fnUntraced(function* (
   const options = yield* V.configuration(Configuration, input, "metadata");
 
   const metadata = V.freeze(options.metadata);
+  const audiences = V.freeze([...(options.audiences ?? [options.clientId])]);
 
   const algorithms = idTokenAlgorithms.filter((algorithm) =>
     (options.algorithms ?? defaultIdTokenAlgorithms).includes(algorithm),
@@ -384,7 +393,7 @@ export const makeVerifier = Effect.fnUntraced(function* (
 
   const jwksUri = metadata.jwks_uri;
 
-  if (!hmacOnly && jwksUri === undefined)
+  if (!hmacOnly && (jwksUri === undefined || new URL(jwksUri).protocol !== "https:"))
     return yield* ConfigurationError.make({ reason: "metadata" });
 
   const hmacKey =
@@ -402,16 +411,11 @@ export const makeVerifier = Effect.fnUntraced(function* (
   const keys =
     hmacOnly || jwksUri === undefined
       ? undefined
-      : Context.get(
-          yield* Layer.build(
-            Jwks.layerRemote({
-              url: jwksUri,
-              timeoutMs: options.timeoutMs,
-              maxResponseBytes: options.maxResponseBytes,
-            }).pipe(Layer.provide(Layer.succeed(HttpClient.HttpClient, yield* Transport.capture))),
-          ).pipe(Effect.mapError(() => Unavailable.make({}))),
-          Jwks.Jwks,
-        );
+      : yield* OidcJwks.makeRemote({
+          url: jwksUri,
+          timeoutMs: options.timeoutMs,
+          maxResponseBytes: options.maxResponseBytes,
+        }).pipe(Effect.mapError(() => Unavailable.make({})));
 
   const { use } = yield* Ownership.make;
 
@@ -421,6 +425,7 @@ export const makeVerifier = Effect.fnUntraced(function* (
   ): Effect.fn.Return<Verified, Rejected | Unavailable, VerificationRequirements> {
     // Capture caller policy and secret values before key lookup or cryptography.
     const policy = yield* V.decode(VerifyInput, input);
+    const credential = yield* V.decode(V.secret(65536), token);
     const start = DateTime.toEpochMillis(policy.verificationStartedAt);
     const expectedNonce = yield* V.reveal(policy.nonce);
 
@@ -434,34 +439,39 @@ export const makeVerifier = Effect.fnUntraced(function* (
     const tenantTemplate = isTenantIssuerTemplate(metadata.issuer);
 
     const jwtPolicy = {
-      algorithms: advertised,
       ...(tenantTemplate ? {} : { issuer: metadata.issuer }),
-      audience: options.clientId,
+      audience: audiences,
       requiredClaims: ["iss", "sub", "aud", "exp", "iat"] as const,
       clockTolerance: 0,
     };
 
-    const mapJwtError = (error: { readonly _tag: string }) =>
-      error._tag === "JoseClaimValidationFailed" ? claimFailure() : Unavailable.make({});
+    const mapJwtError = (error: Jwt.JwtError) =>
+      error._tag === "JoseError" && error.reason._tag === "ClaimValidationFailed"
+        ? claimFailure()
+        : Unavailable.make({});
 
     const opened =
       hmacKey !== undefined
         ? {
-            verified: yield* Jwt.verify(JsonObject, token, hmacKey, jwtPolicy).pipe(
+            verified: yield* Jwt.verify(JsonObject, credential, hmacKey, jwtPolicy).pipe(
               Effect.catchCause((cause) => Effect.failCause(Cause.map(cause, mapJwtError))),
             ),
             signingKey: undefined,
           }
         : keys === undefined
           ? yield* Unavailable.make({})
-          : yield* Jwt.verifyWithKeySet(JsonObject, token, jwtPolicy).pipe(
-              Effect.provideService(Jwks.Jwks, keys),
+          : yield* Jwt.verifyWithKeySet(JsonObject, credential, {
+              ...jwtPolicy,
+              algorithms: advertised.filter((algorithm) => algorithm !== "HS256"),
+            }).pipe(
+              Effect.provideService(Jwks.Jwks, keys.service),
               Effect.map((verified) => ({ verified, signingKey: verified.key })),
               Effect.catchCause((cause) => Effect.failCause(Cause.map(cause, mapJwtError))),
             );
 
     const verified = opened.verified;
     const signingKey = opened.signingKey;
+    const keyIssuer = signingKey === undefined ? undefined : keys?.issuerOf(signingKey);
 
     const claims = yield* V.decode(IdClaims, verified.claims).pipe(Effect.mapError(claimFailure));
 
@@ -478,12 +488,10 @@ export const makeVerifier = Effect.fnUntraced(function* (
     if (
       tenantTemplate ||
       metadata.signing_key_issuer_required === true ||
-      signingKey?.jwk.issuer !== undefined
+      keyIssuer !== undefined
     ) {
       if (verified.protectedHeader.alg === "HS256" || signingKey === undefined)
         return yield* claimFailure();
-
-      const keyIssuer = signingKey.jwk.issuer;
 
       if (keyIssuer === undefined) return yield* claimFailure();
 
@@ -504,7 +512,7 @@ export const makeVerifier = Effect.fnUntraced(function* (
     if (
       start < 0 ||
       start > now * 1000 ||
-      (claims.azp !== undefined && claims.azp !== options.clientId) ||
+      (claims.azp !== undefined && !audiences.includes(claims.azp)) ||
       claims.exp <= now ||
       claims.iat > now ||
       (claims.nbf !== undefined && claims.nbf > now) ||
@@ -538,9 +546,9 @@ export const makeVerifier = Effect.fnUntraced(function* (
     ] as const) {
       if (hash === undefined) continue;
       if (secret === undefined) return yield* claimFailure();
-      const crypto = yield* Crypto.Crypto;
+      const digests = yield* Digest.Digest;
 
-      const digest = yield* crypto
+      const digest = yield* digests
         .digest(hashProfile.digest, new TextEncoder().encode(secret))
         .pipe(
           Effect.catchCause((cause) =>

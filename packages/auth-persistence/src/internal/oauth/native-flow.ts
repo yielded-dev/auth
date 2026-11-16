@@ -3,6 +3,7 @@ import type {
   OAuthSignInAccess,
   OAuthSignInTransactionContext,
 } from "@yielded/auth/OAuth";
+import { AuthenticationClock } from "@yielded/auth/Operations";
 import type { SubjectId } from "@yielded/auth/Schema";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -51,6 +52,7 @@ export const makeOAuthNativeFlow = Effect.fnUntraced(function* <Flow extends OAu
 ) {
   const boundOwner = yield* Effect.serviceOption(CurrentSqlCommit);
   const sql = (yield* SqlClient.SqlClient).withoutTransforms();
+  const { futureToleranceMillis } = yield* AuthenticationClock;
   const flow = tables(mapping.flow.table);
   const f = mapping.flow;
   const persisted = storage(codec);
@@ -84,7 +86,7 @@ export const makeOAuthNativeFlow = Effect.fnUntraced(function* <Flow extends OAu
       sql`${flow.column(f.binderExpiresAt)} = ${flow.value(f.binderExpiresAt, mapping.clock.encodeInstant(input.requestBindingExpiresAtMillis))}`,
       sql`${millis(f.binderExpiresAt)} > ${now}`,
       sql`${millis(f.expiresAt)} > ${now}`,
-      sql`${millis(f.issuedAt)} <= ${now}`,
+      sql`${millis(f.issuedAt)} <= ${now} + ${futureToleranceMillis}`,
       input.formPostSubject === true
         ? sql`${flow.column(f.subjectId)} is not null`
         : nativeId === undefined
@@ -131,12 +133,15 @@ export const makeOAuthNativeFlow = Effect.fnUntraced(function* <Flow extends OAu
         const clock = yield* sql`select ${now} as engine_now`;
         const engineNow = yield* Schema.decodeEffect(Schema.Int)(Number(clock[0]?.engine_now));
 
-        if (context.issuedAtMillis > engineNow || context.expiresAtMillis <= engineNow)
+        if (
+          context.issuedAtMillis > engineNow + futureToleranceMillis ||
+          context.expiresAtMillis <= engineNow
+        )
           return false;
         yield* appendSqlBatchStatement(
           sqlBatchAssertion(
             sql,
-            sql`${now} >= ${context.issuedAtMillis} and ${now} < ${context.expiresAtMillis}`,
+            sql`${now} + ${futureToleranceMillis} >= ${context.issuedAtMillis} and ${now} < ${context.expiresAtMillis}`,
           ),
         );
         yield* appendSqlBatchStatement(statement);
@@ -155,7 +160,10 @@ export const makeOAuthNativeFlow = Effect.fnUntraced(function* <Flow extends OAu
       if (!(rows.length === 1)) return yield* invalidState();
       const engineNow = yield* Schema.decodeEffect(Schema.Int)(Number(rows[0]!.engine_now));
 
-      return context.issuedAtMillis <= engineNow && context.expiresAtMillis > engineNow;
+      return (
+        context.issuedAtMillis <= engineNow + futureToleranceMillis &&
+        context.expiresAtMillis > engineNow
+      );
     }).pipe(
       Effect.catchCauseIf(
         (cause) =>

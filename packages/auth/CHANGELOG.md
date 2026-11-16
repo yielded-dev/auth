@@ -1,5 +1,40 @@
 # @yielded/auth
 
+## 0.1.0-beta.48
+
+### Minor Changes
+
+- [#308](https://github.com/yielded-dev/auth/pull/308) [`058d118`](https://github.com/yielded-dev/auth/commit/058d118b6386cedaa1e3ec30b140bd19c44692b3) Thanks [@danieljvdm](https://github.com/danieljvdm)! - Add native Sign in with Apple for any number of iOS and macOS apps, from Swift or Expo: declare `Apple.provider({ kind: "native", bundleIds })` without a signing key and expose `AuthContract.oauthNativeSignIn` and `AuthContract.oauthCompleteNativeSignIn`. `Oidc.makeVerifier` accepts several ID-token `audiences`.
+
+### Patch Changes
+
+- [#300](https://github.com/yielded-dev/auth/pull/300) [`e2705d9`](https://github.com/yielded-dev/auth/commit/e2705d950d6213f8befc8e07ed59c400b3869393) Thanks [@danieljvdm](https://github.com/danieljvdm)! - Use Effect's bundled JOSE implementation and require Effect 4.1.2 across the package family. Replace `@yielded/jose` imports with `effect/jose`; use Effect durations for JWT age and remote JWKS settings, and match JOSE errors through their typed `reason`.
+
+- [#290](https://github.com/yielded-dev/auth/pull/290) [`b8a94df`](https://github.com/yielded-dev/auth/commit/b8a94df51121c90fc712012f33f05128f4fba4dc) Thanks [@Makisuo](https://github.com/Makisuo)! - Accept the `scope`, `authuser`, `prompt` and `hd` parameters Google appends to OAuth callbacks, so Google sign-in no longer needs `allowedQueryParameters`.
+
+- [#299](https://github.com/yielded-dev/auth/pull/299) [`adbd95f`](https://github.com/yielded-dev/auth/commit/adbd95f01409c8130487391857f38f0bc639021f) Thanks [@grmkris](https://github.com/grmkris)! - Recover OAuth metadata and JWKS discovery capacity after abandoned requests while retaining the eight-slot limit.
+- Updated dependencies [[`e2705d9`](https://github.com/yielded-dev/auth/commit/e2705d950d6213f8befc8e07ed59c400b3869393), [`058d118`](https://github.com/yielded-dev/auth/commit/058d118b6386cedaa1e3ec30b140bd19c44692b3)]:
+  - @yielded/oauth@0.1.0-beta.48
+
+## 0.1.0-beta.47
+
+### Minor Changes
+
+- [#278](https://github.com/yielded-dev/auth/pull/278) [`1dd5bbe`](https://github.com/yielded-dev/auth/commit/1dd5bbe219733a0f09614c2e3b2520f62bdb421f) Thanks [@leonitousconforti](https://github.com/leonitousconforti)! - Add Login with Discord through `Discord.provider`, an OpenID preset that merges UserInfo. Treat `null` standard UserInfo profile claims as absent and prefer `nickname` over `preferred_username` for OpenID display names.
+
+- [#277](https://github.com/yielded-dev/auth/pull/277) [`b0b5df2`](https://github.com/yielded-dev/auth/commit/b0b5df2d405bcbc70a04b4391763f16aed10f9e1) Thanks [@leonitousconforti](https://github.com/leonitousconforti)! - Let OAuth and OpenID servers declare up to 1024 scopes instead of 32, as long as their names fit 8192 characters joined by spaces, or 4096 with JWT access tokens. Access token verifiers accept the same limit; upgrade separately deployed verifiers before issuing tokens with more than 32 scopes.
+
+### Patch Changes
+
+- [#279](https://github.com/yielded-dev/auth/pull/279) [`197ddba`](https://github.com/yielded-dev/auth/commit/197ddba9395e4622c0d4dd0b8cb769b8d6364a78) Thanks [@danieljvdm](https://github.com/danieljvdm)! - Compose email code and magic-link sign-in with managed or mapped persistence, including proof storage and verified-email lookup. Support stateless sessions for email sign-in alongside OAuth.
+
+  BEHAVIOR CHANGE: Definitions with email sign-in now require `emailCredentials` and `proofs` in managed migrations or mapped tables.
+
+- [#288](https://github.com/yielded-dev/auth/pull/288) [`109c420`](https://github.com/yielded-dev/auth/commit/109c4201e63637c8e9c23039c5a248b872fddca0) Thanks [@danieljvdm](https://github.com/danieljvdm)! - Use Effect crypto and one `WebCrypto.layer` preset, and move Workers password hashing to `@yielded/auth-platform-workerd`. BEHAVIOR CHANGE: require Effect 4.1 and matching SQL drivers; replace `@yielded/crypto` and Auth's Workers subpaths with Effect crypto Layers or the Workers package, supply HTTP and the Kdf for `Testing.services()` separately, and use `Password.KdfAdmission.layer()`, optional `PasswordScrypt.layer`, and opaque Effect keys for JOSE.
+- Updated dependencies [[`109c420`](https://github.com/yielded-dev/auth/commit/109c4201e63637c8e9c23039c5a248b872fddca0)]:
+  - @yielded/jose@0.1.0-beta.47
+  - @yielded/oauth@0.1.0-beta.47
+
 ## 0.1.0-beta.46
 
 ### Patch Changes

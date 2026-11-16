@@ -9,7 +9,7 @@ import { OperationHttpConfigurationError, OperationHttpError } from "../http-ope
 import { OperationHttpServerConfig } from "../http-operation/OperationHttpServerConfig";
 import { oauthCallback, type OAuthHttpCallback } from "../http-operation/server";
 import { origin as Origin } from "../internal/origin";
-import { selectCallback } from "../oauth/callback";
+import { providerCallbackParameters, selectCallback } from "../oauth/callback";
 import { OAuthConnectedProtocol } from "../oauth/OAuthConnectedProtocol";
 import { OAuthProtocol } from "../oauth/OAuthProtocol";
 import type { ProviderDefinition } from "../oauth/providerDefinition";
@@ -72,15 +72,21 @@ export const makeOAuth = <E, R, ResponseR>(
             (options.complete === undefined || name === options.complete),
         );
 
-        if (selected.length !== 1)
+        // A contract with only native sign-in mounts no browser callback.
+        if (
+          selected.length > 1 ||
+          (selected.length === 0 &&
+            (options.complete !== undefined || options.callbacks !== undefined))
+        )
           return yield* Result.fail(OperationHttpConfigurationError.make({ reason: "callback" }));
-        const [complete, action] = selected[0]!;
+        const browser = selected[0];
 
         if (
-          action.mode !== "mutation" ||
-          action.route.operation.replay !== "single-use" ||
-          !action.route.operation.credentials ||
-          action.requestFields.requestBinding !== "request-binding"
+          browser !== undefined &&
+          (browser[1].mode !== "mutation" ||
+            browser[1].route.operation.replay !== "single-use" ||
+            !browser[1].route.operation.credentials ||
+            browser[1].requestFields.requestBinding !== "request-binding")
         )
           return yield* Result.fail(OperationHttpConfigurationError.make({ reason: "callback" }));
         const paths = new Set(Object.values(actions).map((action) => String(action.route.path)));
@@ -91,11 +97,17 @@ export const makeOAuth = <E, R, ResponseR>(
           const configured = options.callbacks?.[name];
 
           const callbacks: ReadonlyArray<OAuthCallbackOptions<ResponseR>> =
-            configured === undefined ? [{}] : Array.isArray(configured) ? configured : [configured];
+            browser === undefined
+              ? []
+              : configured === undefined
+                ? [{}]
+                : Array.isArray(configured)
+                  ? configured
+                  : [configured];
 
           const ids = new Set<string>();
 
-          if (callbacks.length === 0 || callbacks.length > 16)
+          if ((browser !== undefined && callbacks.length === 0) || callbacks.length > 16)
             return yield* Result.fail(OperationHttpConfigurationError.make({ reason: "callback" }));
           const captured = [];
 
@@ -116,6 +128,10 @@ export const makeOAuth = <E, R, ResponseR>(
             ids.add(callbackId);
             captured.push({
               ...callback,
+              allowedQueryParameters: [
+                ...providerCallbackParameters,
+                ...(callback.allowedQueryParameters ?? []),
+              ],
               path,
               callbackId,
               redirectUri: yield* Schema.decodeResult(OAuthRedirectUri)(`${origin}${path}`),
@@ -124,7 +140,7 @@ export const makeOAuth = <E, R, ResponseR>(
           entries.push({ provider, declaration, callbacks: captured });
         }
 
-        return { complete, entries };
+        return { complete: browser?.[0], entries };
       }),
     catch: (error) =>
       Schema.is(OperationHttpConfigurationError)(error)
@@ -164,6 +180,11 @@ export const makeOAuth = <E, R, ResponseR>(
         exchangeVerifiedIdentity: (input) =>
           protocols.get(input.configuration.provider)?.exchangeVerifiedIdentity(input) ??
           OAuthUnavailable.make({}),
+        prepareNative: (input) =>
+          protocols.get(input.provider)?.prepareNative?.(input) ?? OAuthRejected.make({}),
+        verifyNativeIdentity: (input) =>
+          protocols.get(input.configuration.provider)?.verifyNativeIdentity?.(input) ??
+          OAuthUnavailable.make({}),
       });
 
       const connected = OAuthConnectedProtocol.of({
@@ -191,6 +212,8 @@ export const makeOAuth = <E, R, ResponseR>(
     routes: Routes,
   ) {
     const { complete, entries } = yield* configuration;
+
+    if (complete === undefined) return [];
     const { trustedOrigins } = yield* OperationHttpServerConfig;
 
     const flowId = yield* makeRequestBindingFlowResolver("oauth-entry");
