@@ -55,7 +55,7 @@ const checkReusableBuild = Effect.fn("packageConsumers.reusableBuild")(function*
           path.relative(directory, file).replaceAll("\\", "/") ===
             "dist/_virtual/_rolldown/runtime.mjs" &&
           createHash("sha256").update(code).digest("hex") ===
-            "1b10431e13b4eb349c329aba7d2beb6e6c224de569eac52966731c8239a941c9"
+            "00cf7268c9e09f1f83eed8260d1f7c0f9d18674a27be59b7c439b2307e0aca4c"
         )
           continue;
 

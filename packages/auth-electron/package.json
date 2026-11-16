@@ -39,6 +39,6 @@
   },
   "peerDependencies": {
     "effect": "^4.1.2",
-    "electron": "^44.5.1"
+    "electron": "^44.5.1 || ^45.2.3"
   }
 }
