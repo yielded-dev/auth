@@ -42,7 +42,7 @@ import {
   PhoneOtpRejected,
   PhoneOtpUnavailable,
 } from "./models";
-import { commitPhoneMutation } from "./mutation";
+import { commitPhoneMutation, phoneSignUpAllowed, phoneSignUpFailure } from "./mutation";
 import { defaultPhoneAdmissionLayer } from "./PhoneAdmission";
 import { PhoneDeliveryEligibility } from "./PhoneDeliveryEligibility";
 import { PhonePersistence } from "./PhonePersistence";
@@ -409,13 +409,19 @@ const makePhoneCode = <
             Effect.fn("PhoneOtp.signIn")(function* (input, invocation) {
               const started = yield* begin(input, invocation);
 
-              const registrationTarget = Option.isNone(started.current.target)
+              const target = Option.isNone(started.current.target)
                 ? yield* (yield* PhonePersistence).target({
                     moduleId,
                     action: "register",
                     phoneNumber: input.phoneNumber,
                   })
                 : undefined;
+
+              const registrationTarget =
+                target?.eligible === true &&
+                !(yield* phoneSignUpAllowed(moduleId, input.phoneNumber))
+                  ? { ...target, eligible: false }
+                  : target;
 
               return yield* issue(input, started, registrationTarget);
             }),
@@ -464,6 +470,10 @@ const makePhoneCode = <
                     redemption,
                   },
                   verifiedAt,
+                ).pipe(
+                  Effect.catchCause((cause) =>
+                    Effect.failCause(Cause.map(cause, phoneSignUpFailure)),
+                  ),
                 );
               }
 

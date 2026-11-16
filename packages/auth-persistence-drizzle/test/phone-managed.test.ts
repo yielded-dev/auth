@@ -2,7 +2,7 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as D1Client from "@effect/sql-d1/D1Client";
 import * as SqliteClient from "@effect/sql-sqlite-node/SqliteClient";
 import { it } from "@effect/vitest";
-import { Auth, Operations, PhoneOtp, Proofs, Sessions, SmsDelivery } from "@yielded/auth";
+import { Auth, Hooks, Operations, PhoneOtp, Proofs, Sessions, SmsDelivery } from "@yielded/auth";
 import type { PersistenceApi } from "@yielded/auth-persistence/Adapter";
 import type { LoginIdentifier } from "@yielded/auth/Identity";
 import { SubjectId } from "@yielded/auth/Schema";
@@ -25,6 +25,9 @@ import { makeD1Transport } from "./fixtures/proof-sqlite";
 // Human-requested red/green seam (2026-10-25): managed phone registration through
 // public Auth operations, including application provisioning and atomic rollback.
 // D1 substitutes only its transport; production batch SQL runs on real SQLite.
+// Human-requested seam (2026-11-16): signup through signIn/completeSignIn with the
+// same provisioning and rollback scenarios, plus registration-hook denial that must
+// read the same for known and unknown numbers.
 const subjects = sqliteTable("phone_members", {
   id: text().primaryKey(),
   active: integer({ mode: "boolean" }).notNull(),
@@ -34,6 +37,7 @@ const subjects = sqliteTable("phone_members", {
 
 const Claims = Schema.Struct({ displayName: Schema.String });
 const phoneNumber = "+27820000001";
+const otherNumber = "+27820000002";
 
 const keyring = {
   activeKeyId: "test",
@@ -51,7 +55,7 @@ const setupWithDatabase = Effect.fnUntraced(function* <R>(
   const app = Auth.make("test/managed-phone", {
     claims: Claims,
     sessions: Sessions.stateful({ maxAge: "1 hour" }),
-    strategies: { phone: PhoneOtp.make({ namespace: "phone", lifecycle }) },
+    strategies: { phone: PhoneOtp.make({ namespace: "phone", allowSignUp: true, lifecycle }) },
     defaultStrategy: "phone",
   });
 
@@ -98,6 +102,7 @@ const setupWithDatabase = Effect.fnUntraced(function* <R>(
   );
 
   let denyProvisioning = false;
+  let denyRegistration = false;
   const provisions: { readonly requestId: string; readonly identifier: LoginIdentifier }[] = [];
   const sent: SmsDelivery.SmsMessage[] = [];
 
@@ -112,7 +117,7 @@ const setupWithDatabase = Effect.fnUntraced(function* <R>(
           provisions.push(input);
 
           return {
-            id: "member-1",
+            id: input.identifier.value === phoneNumber ? "member-1" : "member-2",
             active: true,
             revision: "member-v1",
             displayName: "Phone member",
@@ -138,6 +143,13 @@ const setupWithDatabase = Effect.fnUntraced(function* <R>(
         }),
     }),
     Layer.succeed(PhoneOtp.PhoneDeliveryEligibility, { allowed: () => Effect.succeed(true) }),
+    Layer.succeed(Hooks.LifecycleHooks, {
+      before: (snapshot) =>
+        denyRegistration && snapshot.action === "registration"
+          ? Effect.fail(Hooks.HookDenied.make({ reason: "policy" }))
+          : Effect.void,
+      after: () => Effect.succeed([]),
+    }),
     Layer.succeed(PhoneOtp.PhoneActionEvidence, {
       verify: () => Effect.fail(PhoneOtp.PhoneActionRequired.make({})),
     }),
@@ -217,6 +229,24 @@ const setupWithDatabase = Effect.fnUntraced(function* <R>(
     };
   });
 
+  const signIn = Effect.fnUntraced(function* (number: string) {
+    const before = sent.length;
+    const challenge = yield* asGuest(auth.signIn({ phoneNumber: number, locale: "en-ZA" }));
+    const message = sent.find((value) => value.id === challenge.reference.proofId);
+
+    return {
+      delivered: sent.length - before,
+      fields: Object.keys(challenge).sort(),
+      input: {
+        flowId: challenge.flowId,
+        phoneNumber: number,
+        requestBinding: Redacted.value(credential("request-binding")),
+        reference: challenge.reference,
+        code: message === undefined ? "000000" : Redacted.value(message.body),
+      },
+    };
+  });
+
   const state = Effect.gen(function* () {
     const counts: Record<string, number> = {};
 
@@ -239,9 +269,13 @@ const setupWithDatabase = Effect.fnUntraced(function* <R>(
     code,
     asGuest,
     begin,
+    signIn,
     state,
     deny: (value: boolean) => {
       denyProvisioning = value;
+    },
+    denyRegistration: (value: boolean) => {
+      denyRegistration = value;
     },
     assertBatch: () => {
       if (backend === "d1") expect(batches).toBeGreaterThan(0);
@@ -371,6 +405,141 @@ it.live.each(["sqlite", "d1"] as const)(
       });
       expect(yield* f.state).toEqual(after);
       expect(f.provisions).toHaveLength(provisions);
+      f.assertBatch();
+    }),
+);
+
+it.live.each(["sqlite", "d1"] as const)(
+  "%s phone sign-in creates the application account for an unused number and signs it in afterwards",
+  (backend) =>
+    Effect.gen(function* () {
+      const f = yield* setup(backend);
+      const signup = yield* f.signIn(phoneNumber);
+
+      expect(signup.delivered).toBe(1);
+      expect(f.provisions).toHaveLength(0);
+      expect(yield* f.state).toMatchObject({
+        subjects: 0,
+        credentials: 0,
+        identifiers: 0,
+        proofs: 1,
+      });
+      expect(yield* f.asGuest(f.auth.completeSignIn(signup.input))).toMatchObject({
+        _tag: "Authenticated",
+        session: { subjectId: "member-1", claims: { displayName: "Phone member" } },
+      });
+      expect((yield* f.auth.verifySession(f.credential("session"))).subjectId).toBe("member-1");
+      expect(f.provisions).toEqual([
+        { requestId: expect.any(String), identifier: { namespace: "phone", value: phoneNumber } },
+      ]);
+      expect(yield* f.state).toMatchObject({
+        subjects: 1,
+        credentials: 1,
+        identifiers: 1,
+        proofs: 0,
+      });
+      const login = yield* f.signIn(phoneNumber);
+
+      expect(yield* f.asGuest(f.auth.completeSignIn(login.input))).toMatchObject({
+        _tag: "Authenticated",
+        session: { subjectId: "member-1" },
+      });
+      expect(f.provisions).toHaveLength(1);
+      expect(yield* f.state).toMatchObject({ subjects: 1, credentials: 1, identifiers: 1 });
+      f.assertBatch();
+    }),
+);
+
+it.live.each(["sqlite", "d1"] as const)(
+  "%s phone sign-in signup preserves the code on provisioning or credential-write failure",
+  (backend) =>
+    Effect.gen(function* () {
+      const f = yield* setup(backend);
+      const signup = yield* f.signIn(phoneNumber);
+      const before = yield* f.state;
+      const complete = f.asGuest(f.auth.completeSignIn(signup.input)).pipe(Effect.result);
+
+      f.deny(true);
+      expect(yield* complete).toMatchObject({
+        _tag: "Failure",
+        failure: { _tag: "PhoneOtpUnavailable" },
+      });
+      expect(yield* f.state).toEqual(before);
+      expect(f.delivered.has("session")).toBe(false);
+      f.deny(false);
+      const credentials = getTableName(f.storage.schema.credentials);
+
+      yield* f.sql.unsafe(
+        `create trigger reject_phone before insert on "${credentials}" begin select raise(abort, 'credential write failed'); end`,
+      );
+      expect(yield* complete).toMatchObject({
+        _tag: "Failure",
+        failure: { _tag: "PhoneOtpUnavailable" },
+      });
+      expect(yield* f.state).toEqual(before);
+      expect(f.delivered.has("session")).toBe(false);
+      yield* f.sql`drop trigger reject_phone`;
+      expect(yield* complete).toMatchObject({
+        _tag: "Success",
+        success: { _tag: "Authenticated" },
+      });
+      const after = yield* f.state;
+      const provisions = f.provisions.length;
+
+      expect(yield* complete).toMatchObject({
+        _tag: "Failure",
+        failure: { _tag: "PhoneOtpRejected" },
+      });
+      expect(yield* f.state).toEqual(after);
+      expect(f.provisions).toHaveLength(provisions);
+      f.assertBatch();
+    }),
+);
+
+it.live.each(["sqlite", "d1"] as const)(
+  "%s a denied phone signup reads the same as a known number with a wrong code",
+  (backend) =>
+    Effect.gen(function* () {
+      const f = yield* setup(backend);
+      const rejected = { _tag: "Failure", failure: { _tag: "PhoneOtpRejected" } };
+
+      yield* f.asGuest(f.auth.completeSignIn((yield* f.signIn(phoneNumber)).input));
+      const known = yield* f.signIn(phoneNumber);
+      const before = yield* f.state;
+
+      f.denyRegistration(true);
+      const denied = yield* f.signIn(otherNumber);
+
+      expect(denied.fields).toEqual(known.fields);
+      expect(denied.delivered).toBe(0);
+      expect(
+        yield* f
+          .asGuest(
+            f.auth.completeSignIn({
+              ...known.input,
+              code: known.input.code === "000000" ? "111111" : "000000",
+            }),
+          )
+          .pipe(Effect.result),
+      ).toMatchObject(rejected);
+      expect(
+        yield* f.asGuest(f.auth.completeSignIn(denied.input)).pipe(Effect.result),
+      ).toMatchObject(rejected);
+      expect(yield* f.state).toEqual(before);
+
+      f.denyRegistration(false);
+      const allowed = yield* f.signIn(otherNumber);
+      const complete = f.asGuest(f.auth.completeSignIn(allowed.input)).pipe(Effect.result);
+
+      expect(allowed.delivered).toBe(1);
+      f.denyRegistration(true);
+      expect(yield* complete).toMatchObject(rejected);
+      expect(f.provisions).toHaveLength(1);
+      f.denyRegistration(false);
+      expect(yield* complete).toMatchObject({
+        _tag: "Success",
+        success: { _tag: "Authenticated", session: { subjectId: "member-2" } },
+      });
       f.assertBatch();
     }),
 );

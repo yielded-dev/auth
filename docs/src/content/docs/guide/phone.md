@@ -51,6 +51,14 @@ or `policy` only to change that behavior. Keys and delivery come from Layers.
 Omit it when only existing accounts may sign in; the methods and contract stay
 the same. Number management is enabled separately with `lifecycle`.
 
+With signup enabled, any deliverable unused number can receive a code;
+`PhoneDeliveryEligibility` and `PhoneAdmission` bound that cost. To restrict who
+may sign up, deny the `registration` action in a [lifecycle hook](https://github.com/yielded-dev/auth/blob/main/examples/auth/src/lifecycle-hooks.ts):
+the number then receives no code and completion fails like a wrong code. The
+hook runs when the code is requested and again at completion. New and
+returning accounts get the same result; derive onboarding state from your session
+claims or the `registration` event.
+
 ## Send a code
 
 With `Effect` imported from `effect`, supply the request's host-verified network key:
