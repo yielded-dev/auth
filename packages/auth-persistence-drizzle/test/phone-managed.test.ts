@@ -3,16 +3,18 @@ import * as D1Client from "@effect/sql-d1/D1Client";
 import * as SqliteClient from "@effect/sql-sqlite-node/SqliteClient";
 import { it } from "@effect/vitest";
 import { Auth, Operations, PhoneOtp, Proofs, Sessions, SmsDelivery } from "@yielded/auth";
+import type { PersistenceApi } from "@yielded/auth-persistence/Adapter";
 import type { LoginIdentifier } from "@yielded/auth/Identity";
 import { SubjectId } from "@yielded/auth/Schema";
 import { getTableName } from "drizzle-orm";
-import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import { integer, sqliteTable, text, type SQLiteTable } from "drizzle-orm/sqlite-core";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
+import type * as SqlError from "effect/sql/SqlError";
 import { expect } from "vite-plus/test";
 
 import { AuthPersistence as D1Persistence } from "../src/D1";
@@ -38,8 +40,12 @@ const keyring = {
   keys: [{ id: "test", material: Redacted.make("A".repeat(43)) }],
 };
 
-const setup = Effect.fnUntraced(function* (
+const setupWithDatabase = Effect.fnUntraced(function* <R>(
   backend: "sqlite" | "d1",
+  api: PersistenceApi<SQLiteTable, R>,
+  makeDatabase: (
+    beforeBatch: Effect.Effect<void>,
+  ) => Layer.Layer<R | SqlClient.SqlClient, SqlError.SqlError>,
   lifecycle: true | PhoneOtp.PhoneLifecyclePolicy = true,
 ) {
   const app = Auth.make("test/managed-phone", {
@@ -50,7 +56,7 @@ const setup = Effect.fnUntraced(function* (
   });
 
   const phone = app.strategies.phone;
-  const persistence = (backend === "d1" ? D1Persistence : SqlitePersistence).make(app);
+  const persistence = api.make(app);
 
   const storage = persistence.managed({
     prefix: "phone_test",
@@ -77,24 +83,12 @@ const setup = Effect.fnUntraced(function* (
   });
 
   let batches = 0;
-  const sqlite = SqliteClient.layer({ filename: ":memory:" });
 
-  const database =
-    backend === "sqlite"
-      ? sqlite
-      : Layer.effectContext(
-          makeD1Transport(
-            Effect.sync(() => {
-              batches++;
-            }),
-          ).pipe(
-            Effect.map((client) =>
-              Context.make(D1Client.D1Client, client).pipe(
-                Context.add(SqlClient.SqlClient, client),
-              ),
-            ),
-          ),
-        ).pipe(Layer.provide(sqlite));
+  const database = makeDatabase(
+    Effect.sync(() => {
+      batches++;
+    }),
+  );
 
   const databaseContext = yield* Layer.build(database);
   const sql = Context.get(databaseContext, SqlClient.SqlClient);
@@ -254,6 +248,30 @@ const setup = Effect.fnUntraced(function* (
     },
   };
 });
+
+const setup = (backend: "sqlite" | "d1", lifecycle: true | PhoneOtp.PhoneLifecyclePolicy = true) =>
+  backend === "sqlite"
+    ? setupWithDatabase(
+        backend,
+        SqlitePersistence,
+        () => SqliteClient.layer({ filename: ":memory:" }),
+        lifecycle,
+      )
+    : setupWithDatabase(
+        backend,
+        D1Persistence,
+        (beforeBatch) =>
+          Layer.effectContext(
+            makeD1Transport(beforeBatch).pipe(
+              Effect.map((client) =>
+                Context.make(D1Client.D1Client, client).pipe(
+                  Context.add(SqlClient.SqlClient, client),
+                ),
+              ),
+            ),
+          ).pipe(Layer.provide(SqliteClient.layer({ filename: ":memory:" }))),
+        lifecycle,
+      );
 
 it.live.each(["sqlite", "d1"] as const)(
   "%s managed phone registration creates the application account and supports subsequent login",
