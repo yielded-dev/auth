@@ -35,7 +35,7 @@ requires application recovery, not an automatic retry. Provider endpoints requir
 HTTPS. HTTP endpoints and discovery URLs on `localhost`, `127.0.0.1`, or `[::1]`
 are accepted only with an explicitly configured HTTP loopback issuer. Applications
 must validate issuer input; require HTTPS for untrusted
-tenant-supplied issuers to prevent loopback requests. Custom
+tenant-supplied issuers to prevent plain-HTTP loopback requests. Custom
 HttpClients must preserve cancellation and disable retries, redirects, and ambient
 cookies. Bound the complete workflow as well as individual requests; keep token
 receipts out of logs and telemetry.
