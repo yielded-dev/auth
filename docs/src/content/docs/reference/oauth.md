@@ -61,6 +61,9 @@ Static clients configure `clientId`, `name`, and `redirectUris`. Add a redacted
 `clientSecret` or its `clientSecretDigest` for Basic/form-secret authentication, or
 `clientAssertion: { jwks }` or `{ jwksUri }` for `private_key_jwt`. Configure one
 authentication method. `grantTypes` permits `authorization_code` and/or `refresh_token`.
+On `OAuthServer.make`, static and stored clients that omit `grantTypes` allow refresh;
+metadata clients must advertise it. OpenID requires both `refreshTokens: true` and
+an explicit `refresh_token` grant.
 
 Callbacks match exactly. A native client's loopback callback may vary its port;
 the selected callback remains bound to the authorization code.
@@ -138,6 +141,8 @@ Optional JSON `claims` replace the previous claims on each issue and reach `veri
 and `CurrentAccess` as `claims`; they stay in the grant record and tokens remain opaque.
 Scopes outside the request and `OAuthServer.Unavailable` return 503 without issuing
 credentials.
+
+Denial stops new issuance, not existing access. Revoke the grant for immediate invalidation.
 
 ### Protecting resources
 
