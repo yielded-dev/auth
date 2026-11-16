@@ -41,7 +41,8 @@ const idTokenAlgorithms: readonly IdTokenAlgorithm[] = [
 
 export interface DiscoverOptions extends RequestOptions {
   /** Fetch this document instead of issuer + `/.well-known/openid-configuration`.
-   * The document issuer must still equal the trusted issuer identifier. */
+   * The document issuer must still equal the trusted issuer identifier.
+   * HTTP loopback discovery requires an HTTP loopback issuer. */
   readonly metadataUrl?: string;
 }
 
@@ -306,6 +307,9 @@ export const discover = Effect.fnUntraced(function* (
   const issuer = yield* V.configuration(V.Issuer, input, "issuer");
 
   const options = yield* V.configuration(DiscoverConfiguration, inputOptions);
+
+  if (options.metadataUrl !== undefined && !V.endpointMatchesIssuer(issuer, options.metadataUrl))
+    return yield* ConfigurationError.make({ reason: "metadata" });
   const url = new URL(options.metadataUrl ?? issuer);
 
   if (options.metadataUrl === undefined) {
@@ -348,7 +352,8 @@ export const discover = Effect.fnUntraced(function* (
 const claimFailure = () => Rejected.make({ reason: "claims" });
 
 /** Signed ID tokens using advertised RS256, PS256, ES256, EdDSA, or explicit
- * HS256. Asymmetric verification and the bounded JWKS cache belong to the
+ * HS256. Asymmetric verification requires an HTTPS JWKS URL; an HTTP URL
+ * fails with ConfigurationError. Verification and the bounded JWKS cache belong to the
  * caller's Scope. HS256 uses the supplied client secret as the HMAC key and
  * does not install JWKS. Owner closure cancels and joins active verification,
  * returning Unavailable; caller interruption joins its operation without
@@ -388,7 +393,7 @@ export const makeVerifier = Effect.fnUntraced(function* (
 
   const jwksUri = metadata.jwks_uri;
 
-  if (!hmacOnly && jwksUri === undefined)
+  if (!hmacOnly && (jwksUri === undefined || new URL(jwksUri).protocol !== "https:"))
     return yield* ConfigurationError.make({ reason: "metadata" });
 
   const hmacKey =

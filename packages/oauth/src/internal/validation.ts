@@ -60,6 +60,9 @@ const validUrl = (value: string) => {
 
 export const Endpoint = text(2048).check(Schema.makeFilter((value) => validUrl(value)));
 
+export const endpointMatchesIssuer = (issuer: string, endpoint: string) =>
+  new URL(endpoint).protocol === "https:" || new URL(issuer).protocol === "http:";
+
 export const Issuer = Endpoint.check(
   Schema.makeFilter(
     (value) => !value.includes("?") && !new URL(value).pathname.includes("/.well-known/"),
