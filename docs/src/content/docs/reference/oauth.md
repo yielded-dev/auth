@@ -501,8 +501,10 @@ your own atomic import; the key alone does not create login authority. See the
 ## Customize callbacks
 
 `Http` derives `/auth/{provider}/callback` from the origin and contract base path.
-Callbacks and provider endpoints use HTTPS, with HTTP support on `localhost`,
-`127.0.0.1`, or `[::1]` for local development. Remote JWKS URLs require HTTPS.
+Callbacks use HTTPS, with HTTP loopback support for local development.
+Auth provider configuration requires HTTPS endpoints. The lower-level
+`@yielded/oauth` package also accepts HTTP endpoints, issuers, and discovery URLs
+on `localhost`, `127.0.0.1`, or `[::1]`. Remote JWKS URLs require HTTPS.
 
 ```ts
 const AuthRoutes = Http.layer(AppAuth, {
