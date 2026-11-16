@@ -1,4 +1,5 @@
 import { OAuthScope, OAuthServer } from "@yielded/auth";
+import type { SubjectId } from "@yielded/auth/Schema";
 import * as Effect from "effect/Effect";
 import * as HttpApi from "effect/http-api/HttpApi";
 import * as HttpApiClient from "effect/http-api/HttpApiClient";
@@ -50,6 +51,17 @@ export const literalScopes = Effect.suspend(() => {
   expectTypeOf<(typeof identity.Access.Type.scopes)[number]>().toEqualTypeOf<
     OAuthScope.OAuthScope<"openid" | "profile" | "email" | "documents:read" | "documents:write">
   >();
+
+  resource.Authorization.of({
+    authorize: ({ subjectId, scopes }) => {
+      expectTypeOf(subjectId).toEqualTypeOf<SubjectId>();
+      expectTypeOf(scopes).toEqualTypeOf<
+        ReadonlyArray<OAuthScope.OAuthScope<"documents:read" | "documents:write">>
+      >();
+
+      return Effect.succeed({ scopes: [read], claims: { tenant: "a" } });
+    },
+  });
 
   resource.middleware([read]);
   // @ts-expect-error A supported spelling still needs the OAuthScope brand.

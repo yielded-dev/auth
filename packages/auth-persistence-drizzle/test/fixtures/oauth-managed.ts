@@ -104,6 +104,7 @@ const pgSubjects = Pg.pgTable("athletes", {
 
 function managed<T extends ManagedTable, R>(
   api: PersistenceApi<T, R>,
+  database: Layer.Layer<R | SqlClient.SqlClient, SqlError.SqlError>,
   subjects: T,
   retained: boolean,
   sessionMode: SessionMode,
@@ -130,7 +131,10 @@ function managed<T extends ManagedTable, R>(
   return {
     subjects,
     schema: storage.schema,
-    layer: persistence.layer.pipe(Layer.provide(persistence.Config.layer(storage))),
+    layer: Layer.merge(
+      persistence.layer.pipe(Layer.provide(persistence.Config.layer(storage))),
+      Layer.effect(SqlClient.SqlClient, SqlClient.SqlClient),
+    ).pipe(Layer.provide(database)),
   };
 }
 
@@ -221,23 +225,14 @@ export const setup = Effect.fnUntraced(function* (
     ),
   ).pipe(Layer.provide(sqlite));
 
-  const selected = backend === "d1" ? d1 : sqlite;
-
   const config =
     backend === "pglite"
-      ? managed(PglitePersistence, pgSubjects, retained, sessionMode)
-      : managed(
-          backend === "d1" ? D1Persistence : SqlitePersistence,
-          sqliteSubjects,
-          retained,
-          sessionMode,
-        );
+      ? managed(PglitePersistence, PgliteClient.layer({}), pgSubjects, retained, sessionMode)
+      : backend === "d1"
+        ? managed(D1Persistence, d1, sqliteSubjects, retained, sessionMode)
+        : managed(SqlitePersistence, sqlite, sqliteSubjects, retained, sessionMode);
 
-  const database = backend === "pglite" ? PgliteClient.layer({}) : selected;
-
-  const context = yield* Layer.build(
-    config.layer.pipe(Layer.provideMerge(database), Layer.provideMerge(NodeCrypto.layer)),
-  );
+  const context = yield* Layer.build(config.layer.pipe(Layer.provideMerge(NodeCrypto.layer)));
 
   const schema: Readonly<Record<string, ManagedTable>> = config.schema;
 

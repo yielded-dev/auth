@@ -476,6 +476,7 @@ const begin = (extra: Record<string, string> = {}) =>
     })}`,
   );
 
+// https://github.com/yielded-dev/auth/issues/310: supported capabilities survive unknown entries.
 it.effect(
   "CIMD discovery, consent, PKCE exchange, refresh and revocation work without pre-registration",
   () => {
@@ -544,7 +545,14 @@ it.effect(
           () => {
             fetches++;
 
-            return Response.json(metadata, { headers: { "cache-control": "max-age=60" } });
+            return Response.json(
+              {
+                ...metadata,
+                grant_types: [...metadata.grant_types, "client_credentials"],
+                response_types: [...metadata.response_types, "token"],
+              },
+              { headers: { "cache-control": "max-age=60" } },
+            );
           },
           { ...metadataConfig, clients: [] },
         ),
@@ -1384,3 +1392,144 @@ it.effect("private_key_jwt validates CIMD key sources and refreshes expired JWKS
     ),
   );
 });
+
+// https://github.com/yielded-dev/auth/issues/310: never issue an unusable refresh token.
+it.effect("code-only clients receive access without a refresh token", () =>
+  Effect.gen(function* () {
+    const flow = yield* authorize();
+    const response = yield* flow.service.handle(exchange(flow.code));
+
+    expect(response.status).toBe(200);
+    const tokens = yield* body(response, Schema.Record(Schema.String, Schema.Json));
+
+    expect(Object.hasOwn(tokens, "refresh_token")).toBe(false);
+    expect(tokens).toHaveProperty("access_token");
+  }).pipe(
+    Effect.provide(
+      harness(undefined, {
+        ...config,
+        clients: config.clients.map((client) => ({
+          ...client,
+          grantTypes: ["authorization_code"],
+        })),
+      }),
+    ),
+  ),
+);
+
+const authorized = (authorize: Parameters<typeof server.Authorization.of>[0]["authorize"]) =>
+  harness().pipe(Layer.provide(Layer.succeed(server.Authorization, { authorize })));
+
+it.effect("Authorization sets claims at code exchange and recomputes them at each refresh", () => {
+  const calls: Array<{
+    readonly subjectId: string;
+    readonly clientId: string;
+    readonly resource: string;
+    readonly scopes: ReadonlyArray<string>;
+    readonly grantType: string;
+  }> = [];
+
+  return Effect.gen(function* () {
+    const { service, tokens } = yield* issue("alice", "read write");
+
+    expect(yield* service.verify(Redacted.make(tokens.access_token))).toMatchObject({
+      scopes: ["read"],
+      claims: { revision: 1 },
+    });
+
+    const refreshed = yield* service.handle(refresh(tokens.refresh_token));
+
+    expect(refreshed.status).toBe(200);
+    const next = yield* body(refreshed, Tokens);
+
+    expect(next.scope).toBe("read");
+    expect(yield* service.verify(Redacted.make(next.access_token))).toMatchObject({
+      claims: { revision: 2 },
+    });
+
+    const withoutClaims = yield* service.handle(refresh(next.refresh_token));
+    const latest = yield* body(withoutClaims, Tokens);
+
+    expect((yield* service.verify(Redacted.make(latest.access_token))).claims).toBeUndefined();
+    expect(calls).toEqual([
+      {
+        subjectId: "alice",
+        clientId: "client",
+        resource,
+        scopes: ["read", "write"],
+        grantType: "authorization_code",
+      },
+      {
+        subjectId: "alice",
+        clientId: "client",
+        resource,
+        scopes: ["read"],
+        grantType: "refresh_token",
+      },
+      {
+        subjectId: "alice",
+        clientId: "client",
+        resource,
+        scopes: ["read"],
+        grantType: "refresh_token",
+      },
+    ]);
+  }).pipe(
+    Effect.provide(
+      authorized((input) =>
+        Effect.sync(() => {
+          calls.push({ ...input });
+
+          return {
+            scopes: [Read],
+            ...(calls.length === 3 ? {} : { claims: { revision: calls.length } }),
+          };
+        }),
+      ),
+    ),
+  );
+});
+
+it.effect("Authorization denies issuance with an empty result at exchange and refresh", () => {
+  let denied = false;
+
+  return Effect.gen(function* () {
+    const { service, tokens } = yield* issue();
+
+    denied = true;
+    const refused = yield* service.handle(refresh(tokens.refresh_token));
+
+    expect(refused.status).toBe(400);
+    expect(yield* body(refused, Schema.Struct({ error: Schema.String }))).toEqual({
+      error: "access_denied",
+    });
+
+    const flow = yield* authorize();
+    const exchanged = yield* service.handle(exchange(flow.code));
+
+    expect(exchanged.status).toBe(400);
+    expect(yield* Effect.promise(() => exchanged.text())).not.toContain("access_token");
+  }).pipe(
+    Effect.provide(authorized(({ scopes }) => Effect.succeed({ scopes: denied ? [] : scopes }))),
+  );
+});
+
+it.effect("Authorization cannot widen a grant beyond the requested scopes", () =>
+  Effect.gen(function* () {
+    const flow = yield* authorize("alice", "read");
+    const response = yield* flow.service.handle(exchange(flow.code));
+
+    expect(response.status).toBe(503);
+    expect(yield* Effect.promise(() => response.text())).not.toContain("access_token");
+  }).pipe(Effect.provide(authorized(() => Effect.succeed({ scopes: [Read, Write] })))),
+);
+
+it.effect("Authorization failure returns 503 and issues nothing", () =>
+  Effect.gen(function* () {
+    const flow = yield* authorize();
+    const response = yield* flow.service.handle(exchange(flow.code));
+
+    expect(response.status).toBe(503);
+    expect((yield* flow.service.handle(exchange(flow.code))).status).toBe(503);
+  }).pipe(Effect.provide(authorized(() => Effect.fail(OAuthServer.Unavailable.make({}))))),
+);

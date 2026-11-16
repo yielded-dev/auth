@@ -132,7 +132,7 @@ export const database = Layer.effectDiscard(
  * competing committed writer immediately before that transaction begins. */
 export const makeD1Transport = Effect.fnUntraced(function* (
   beforeBatch: Effect.Effect<void, SqlError.SqlError, SqlClient.SqlClient> = Effect.void,
-): Effect.fn.Return<D1Client.D1Client, never, SqlClient.SqlClient> {
+): Effect.fn.Return<typeof D1Client.D1Client.Service, never, SqlClient.SqlClient> {
   const client = yield* SqlClient.SqlClient;
 
   const batch = (statements: ReadonlyArray<Statement.Statement<unknown>>) =>
@@ -161,7 +161,7 @@ export const makeD1Transport = Effect.fnUntraced(function* (
   // Keep SQLite's transaction owner private to batches; D1 views cannot recover it.
   Object.assign(transport, { safe: transport });
 
-  return transport as unknown as D1Client.D1Client;
+  return transport as unknown as typeof D1Client.D1Client.Service;
 });
 
 export const d1Database = (

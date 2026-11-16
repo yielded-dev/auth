@@ -7,8 +7,8 @@ Start with the [OAuth guide](../guide/oauth) for the flow and choice of API.
 
 ## Authorization server
 
-`OAuthServer.make(id, { scopes })` provides `Identity`, `Clients`, `Service`, `routes`,
-`middleware(requiredScopes)`, `securityLayer(api)`, and `paths`. It supports
+`OAuthServer.make(id, { scopes })` provides `Identity`, `Authorization`, `Clients`,
+`Service`, `routes`, `middleware(requiredScopes)`, `securityLayer(api)`, and `paths`. It supports
 authorization code with PKCE for MCP clients, including static registrations,
 registrations stored by your application, and Client ID Metadata Documents (CIMD).
 Use the [OpenID profile](#shared-openid-sign-in) for shared browser sign-in.
@@ -23,16 +23,17 @@ request all of them at once.
 
 Provide these to `oauth.layer`:
 
-| Input            | Purpose                                                              |
-| ---------------- | -------------------------------------------------------------------- |
-| `origin`         | Public issuer origin                                                 |
-| `resource`       | Exact protected resource URL on that origin                          |
-| `clients`        | Static registrations; may be empty with CIMD or `oauth.Clients`      |
-| `clientMetadata` | Optional `{ allowedOrigins }` policy for metadata and JWKS discovery |
-| `loginPath`      | Login route that returns to `oauth.paths.authorize`                  |
-| `keys`           | Signing keyring; use separate random material from session keys      |
-| `oauth.Identity` | Verify the current application session                               |
-| `oauth.Clients`  | Optional client registrations from your storage                      |
+| Input                 | Purpose                                                              |
+| --------------------- | -------------------------------------------------------------------- |
+| `origin`              | Public issuer origin                                                 |
+| `resource`            | Exact protected resource URL on that origin                          |
+| `clients`             | Static registrations; may be empty with CIMD or `oauth.Clients`      |
+| `clientMetadata`      | Optional `{ allowedOrigins }` policy for metadata and JWKS discovery |
+| `loginPath`           | Login route that returns to `oauth.paths.authorize`                  |
+| `keys`                | Signing keyring; use separate random material from session keys      |
+| `oauth.Identity`      | Verify the current application session                               |
+| `oauth.Clients`       | Optional client registrations from your storage                      |
+| `oauth.Authorization` | Optional scope decision and claims at each token issue               |
 
 Provide durable `OAuthServer.Persistence` plus `HttpClient`, `SecureRandom`, `Digest`, `Mac`, and
 `Signature`.
@@ -60,6 +61,9 @@ Static clients configure `clientId`, `name`, and `redirectUris`. Add a redacted
 `clientSecret` or its `clientSecretDigest` for Basic/form-secret authentication, or
 `clientAssertion: { jwks }` or `{ jwksUri }` for `private_key_jwt`. Configure one
 authentication method. `grantTypes` permits `authorization_code` and/or `refresh_token`.
+On `OAuthServer.make`, static and stored clients that omit `grantTypes` allow refresh;
+metadata clients must advertise it. OpenID requires both `refreshTokens: true` and
+an explicit `refresh_token` grant.
 
 Callbacks match exactly. A native client's loopback callback may vary its port;
 the selected callback remains bound to the authorization code.
@@ -78,6 +82,10 @@ A document declares its exact URL as `client_id`, a `client_name`, and
 `redirect_uris`. It can declare public authentication or `private_key_jwt` with a
 public key source. Static registrations take precedence over stored ones, and both
 over metadata documents.
+
+When present, `grant_types` must include `authorization_code` and `response_types`
+must include `code`. Unknown capabilities are ignored; only an advertised
+`refresh_token` grant enables refresh for a metadata client.
 
 Use an HTTP client and network policy that reject private, loopback, and link-local
 destinations after DNS resolution. Disable redirects and ambient credentials.
@@ -106,6 +114,35 @@ EdDSA. Retain old public keys through the JWKS cache interval when rotating them
 Each assertion is single-use across server instances. A lost acknowledgment needs
 a fresh assertion; an uncertain token-issuance outcome still requires a new
 authorization flow.
+
+### Authorizing token issuance
+
+Provide `oauth.Authorization` to check current permission and attach claims. Its
+`authorize` Effect runs at code exchange and every refresh with the subject ID, client
+ID, resource, requested scopes, and grant type. Return a subset of those scopes; an
+empty result denies issuance. Narrowing is permanent for that grant; later refreshes
+cannot regain removed scopes. Without this service, the server grants the requested
+scopes and sets no claims.
+
+```ts
+const authorization = Layer.succeed(oauth.Authorization, {
+  authorize: ({ subjectId, scopes }) =>
+    accounts.current(subjectId).pipe(
+      Effect.map((account) =>
+        account === undefined
+          ? { scopes: [] }
+          : { scopes, claims: { organizationId: account.organizationId } },
+      ),
+    ),
+});
+```
+
+Optional JSON `claims` replace the previous claims on each issue and reach `verify`
+and `CurrentAccess` as `claims`; they stay in the grant record and tokens remain opaque.
+Scopes outside the request and `OAuthServer.Unavailable` return 503 without issuing
+credentials.
+
+Denial stops new issuance, not existing access. Revoke the grant for immediate invalidation.
 
 ### Protecting resources
 
@@ -150,12 +187,12 @@ same-origin policy.
 
 ### Token lifecycle and storage
 
-| Lifetime           | Default                             |
-| ------------------ | ----------------------------------- |
-| Pending consent    | 5 minutes                           |
-| Authorization code | 1 minute                            |
-| Access token       | 10 minutes                          |
-| Grant              | 30 days; refresh does not extend it |
+| Lifetime           | Default                                                                               |
+| ------------------ | ------------------------------------------------------------------------------------- |
+| Pending consent    | 5 minutes                                                                             |
+| Authorization code | 1 minute                                                                              |
+| Access token       | 10 minutes                                                                            |
+| Grant              | 30 days with refresh, otherwise the access token lifetime; refresh does not extend it |
 
 Use `OAuthServerPersistence.layer` with SQLite, D1, or PostgreSQL and apply its
 `migrations` through your application; with MySQL or MariaDB, apply its
