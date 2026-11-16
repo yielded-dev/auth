@@ -162,8 +162,9 @@ const cacheLifetime = (headers: Readonly<Record<string, string>>, now: number) =
   )
     return 0;
 
-  const maxAge = (maxAges.find((match) => match[1].toLowerCase() === "s-maxage") ??
-    maxAges[0])?.[2].trim();
+  const maxAge = (
+    maxAges.find((match) => match[1].toLowerCase() === "s-maxage") ?? maxAges[0]
+  )?.[2].trim();
 
   if (maxAge !== undefined && !/^(?:\d+|"\d+")$/.test(maxAge)) return 0;
   const age = Number(headers.age ?? 0);
