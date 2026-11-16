@@ -476,6 +476,7 @@ const begin = (extra: Record<string, string> = {}) =>
     })}`,
   );
 
+// https://github.com/yielded-dev/auth/issues/310: supported capabilities survive unknown entries.
 it.effect(
   "CIMD discovery, consent, PKCE exchange, refresh and revocation work without pre-registration",
   () => {
@@ -544,7 +545,14 @@ it.effect(
           () => {
             fetches++;
 
-            return Response.json(metadata, { headers: { "cache-control": "max-age=60" } });
+            return Response.json(
+              {
+                ...metadata,
+                grant_types: [...metadata.grant_types, "client_credentials"],
+                response_types: [...metadata.response_types, "token"],
+              },
+              { headers: { "cache-control": "max-age=60" } },
+            );
           },
           { ...metadataConfig, clients: [] },
         ),

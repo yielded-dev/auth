@@ -114,10 +114,8 @@ const Document = Schema.Struct({
   jwks_uri: Schema.optionalKey(KeyUrl),
   client_secret: Schema.optionalKey(Schema.Never),
   client_secret_expires_at: Schema.optionalKey(Schema.Never),
-  grant_types: Schema.optionalKey(
-    Schema.NonEmptyArray(Schema.Literals(["authorization_code", "refresh_token"])),
-  ),
-  response_types: Schema.optionalKey(Schema.NonEmptyArray(Schema.Literal("code"))),
+  grant_types: Schema.optionalKey(Schema.NonEmptyArray(Text)),
+  response_types: Schema.optionalKey(Schema.NonEmptyArray(Text)),
 });
 
 /** Match exactly except for a native client's HTTP loopback port (RFC 8252). */
@@ -353,7 +351,9 @@ export const makeClients = Effect.fnUntraced(function* (
 
     if (
       document.client_id !== id ||
-      (document.grant_types !== undefined && !document.grant_types.includes("authorization_code"))
+      (document.grant_types !== undefined &&
+        !document.grant_types.includes("authorization_code")) ||
+      (document.response_types !== undefined && !document.response_types.includes("code"))
     )
       return yield* reject("invalid_client");
 
@@ -381,7 +381,9 @@ export const makeClients = Effect.fnUntraced(function* (
       ...(document.application_type === undefined
         ? {}
         : { applicationType: document.application_type }),
-      grantTypes: document.grant_types ?? ["authorization_code"],
+      grantTypes: document.grant_types?.includes("refresh_token")
+        ? ["authorization_code", "refresh_token"]
+        : ["authorization_code"],
       ...(clientAssertion === undefined ? {} : { clientAssertion }),
     });
 

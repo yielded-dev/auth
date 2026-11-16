@@ -80,6 +80,10 @@ A document declares its exact URL as `client_id`, a `client_name`, and
 public key source. Static registrations take precedence over stored ones, and both
 over metadata documents.
 
+When present, `grant_types` must include `authorization_code` and `response_types`
+must include `code`. Unknown capabilities are ignored; only an advertised
+`refresh_token` grant enables refresh for a metadata client.
+
 Use an HTTP client and network policy that reject private, loopback, and link-local
 destinations after DNS resolution. Disable redirects and ambient credentials.
 Origin allowlists alone do not provide network isolation.
