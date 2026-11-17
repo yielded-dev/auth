@@ -53,11 +53,19 @@ the same. Number management is enabled separately with `lifecycle`.
 
 With signup enabled, any deliverable unused number can receive a code;
 `PhoneDeliveryEligibility` and `PhoneAdmission` bound that cost. To restrict who
-may sign up, deny the `registration` action in a [lifecycle hook](https://github.com/yielded-dev/auth/blob/main/examples/auth/src/lifecycle-hooks.ts):
-the number then receives no code and completion fails like a wrong code. The
-hook runs when the code is requested and again at completion. New and
-returning accounts get the same result; derive onboarding state from your session
-claims or the `registration` event.
+may sign up, deny the `registration` action in a [lifecycle hook](https://github.com/yielded-dev/auth/blob/main/examples/auth/src/lifecycle-hooks.ts).
+Signup fails closed: when the hook denies or reports `unavailable`, the number
+receives no code and completion fails like a wrong code. A code sent earlier is
+not consumed and works once the hook allows the number. An unavailable hook is
+logged as `Auth before-hook failed` and is not reported to the caller.
+
+The hook runs only for unused numbers, when a code is requested and on every
+completion attempt before the code is checked. A slow hook, or one that dies
+instead of failing with `HookDenied`, can therefore still tell an unused number
+from a known one; keep it fast and report outages as `unavailable`.
+
+New and returning accounts get the same result; derive onboarding state from your
+session claims or the `registration` event.
 
 ## Send a code
 

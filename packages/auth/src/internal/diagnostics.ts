@@ -79,6 +79,7 @@ type FailureStage =
   | "success-projection"
   | "error-projection"
   | "private-output"
+  | "before-hook"
   | "after-hook"
   | "proof-delivery"
   | "oauth-sign-in"

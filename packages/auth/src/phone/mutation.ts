@@ -10,20 +10,41 @@ import {
   LifecycleEventId,
 } from "../hooks/models";
 import { LoginIdentifier } from "../identity/models";
+import { reportAuthFailure } from "../internal/diagnostics";
 import { phoneFailure } from "./failure";
-import { type PhoneNumber, PhoneOtpRejected, PhoneOtpUnavailable } from "./models";
+import { type PhoneNumber, PhoneOtpRejected, type PhoneOtpUnavailable } from "./models";
 import { PhonePersistence, type PhoneMutation } from "./PhonePersistence";
 
-/** Signup policy runs before the code is verified, so a registration hook's policy
- * denial must read like an unknown number: the request sends no code and
- * completion rejects the code. Hook unavailability stays unavailable. */
-export const phoneSignUpFailure = (
-  error: PhoneOtpRejected | PhoneOtpUnavailable | HookDenied,
-): PhoneOtpRejected | PhoneOtpUnavailable => {
-  if (error._tag !== "HookDenied") return error;
+type PhoneSignUpFailure = PhoneOtpRejected | PhoneOtpUnavailable | HookDenied;
 
-  return error.reason === "policy" ? PhoneOtpRejected.make({}) : PhoneOtpUnavailable.make({});
-};
+const reportUnavailableHook = (cause: Cause.Cause<PhoneSignUpFailure>) =>
+  reportAuthFailure(
+    "before-hook",
+    Cause.fromReasons(
+      cause.reasons.filter(
+        (reason) =>
+          Cause.isFailReason(reason) &&
+          reason.error._tag === "HookDenied" &&
+          reason.error.reason === "unavailable",
+      ),
+    ),
+  );
+
+/** Signup consults the registration hook only for unused numbers and before the
+ * code is verified, so the hook's answer must not shape the response. Signup fails
+ * closed: when the hook denies or is unavailable, the request sends no code and
+ * completion rejects without redeeming the code. Nothing is committed or consumed,
+ * and an unavailable hook is reported for operators instead of to the caller. */
+export const phoneSignUpFailure = (cause: Cause.Cause<PhoneSignUpFailure>) =>
+  reportUnavailableHook(cause).pipe(
+    Effect.andThen(
+      Effect.failCause(
+        Cause.map(cause, (error) =>
+          error._tag === "HookDenied" ? PhoneOtpRejected.make({}) : error,
+        ),
+      ),
+    ),
+  );
 
 export const phoneSignUpAllowed = Effect.fnUntraced(function* (
   moduleId: string,
@@ -39,12 +60,15 @@ export const phoneSignUpAllowed = Effect.fnUntraced(function* (
   return yield* (yield* LifecycleHooks).before(snapshot).pipe(
     Effect.as(true),
     Effect.catchCause((cause) =>
-      cause.reasons.length > 0 &&
-      cause.reasons.every(
-        (reason) => Cause.isFailReason(reason) && reason.error.reason === "policy",
-      )
-        ? Effect.succeed(false)
-        : Effect.failCause(Cause.map(cause, () => PhoneOtpUnavailable.make({}))),
+      cause.reasons.length > 0 && cause.reasons.every(Cause.isFailReason)
+        ? reportUnavailableHook(cause).pipe(Effect.as(false))
+        : Effect.failCause(
+            Cause.fromReasons<never>(
+              cause.reasons.filter(
+                (reason) => Cause.isDieReason(reason) || Cause.isInterruptReason(reason),
+              ),
+            ),
+          ),
     ),
   );
 });

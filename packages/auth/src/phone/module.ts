@@ -470,11 +470,7 @@ const makePhoneCode = <
                     redemption,
                   },
                   verifiedAt,
-                ).pipe(
-                  Effect.catchCause((cause) =>
-                    Effect.failCause(Cause.map(cause, phoneSignUpFailure)),
-                  ),
-                );
+                ).pipe(Effect.catchCause(phoneSignUpFailure));
               }
 
               return yield* establish(input.flowId, proofBinding, credential, verifiedAt);

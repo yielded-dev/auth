@@ -26,8 +26,8 @@ import { makeD1Transport } from "./fixtures/proof-sqlite";
 // public Auth operations, including application provisioning and atomic rollback.
 // D1 substitutes only its transport; production batch SQL runs on real SQLite.
 // Human-requested seam (2026-11-16): signup through signIn/completeSignIn with the
-// same provisioning and rollback scenarios, plus registration-hook denial that must
-// read the same for known and unknown numbers.
+// same provisioning and rollback scenarios, plus a registration hook that denies or
+// is unavailable, which must read the same for known and unknown numbers.
 const subjects = sqliteTable("phone_members", {
   id: text().primaryKey(),
   active: integer({ mode: "boolean" }).notNull(),
@@ -102,7 +102,7 @@ const setupWithDatabase = Effect.fnUntraced(function* <R>(
   );
 
   let denyProvisioning = false;
-  let denyRegistration = false;
+  let registration: "allow" | "policy" | "unavailable" = "allow";
   const provisions: { readonly requestId: string; readonly identifier: LoginIdentifier }[] = [];
   const sent: SmsDelivery.SmsMessage[] = [];
 
@@ -145,8 +145,8 @@ const setupWithDatabase = Effect.fnUntraced(function* <R>(
     Layer.succeed(PhoneOtp.PhoneDeliveryEligibility, { allowed: () => Effect.succeed(true) }),
     Layer.succeed(Hooks.LifecycleHooks, {
       before: (snapshot) =>
-        denyRegistration && snapshot.action === "registration"
-          ? Effect.fail(Hooks.HookDenied.make({ reason: "policy" }))
+        registration !== "allow" && snapshot.action === "registration"
+          ? Effect.fail(Hooks.HookDenied.make({ reason: registration }))
           : Effect.void,
       after: () => Effect.succeed([]),
     }),
@@ -274,8 +274,8 @@ const setupWithDatabase = Effect.fnUntraced(function* <R>(
     deny: (value: boolean) => {
       denyProvisioning = value;
     },
-    denyRegistration: (value: boolean) => {
-      denyRegistration = value;
+    registration: (value: typeof registration) => {
+      registration = value;
     },
     assertBatch: () => {
       if (backend === "d1") expect(batches).toBeGreaterThan(0);
@@ -497,7 +497,7 @@ it.live.each(["sqlite", "d1"] as const)(
 );
 
 it.live.each(["sqlite", "d1"] as const)(
-  "%s a denied phone signup reads the same as a known number with a wrong code",
+  "%s a denied or unavailable phone signup reads the same as a known number with a wrong code",
   (backend) =>
     Effect.gen(function* () {
       const f = yield* setup(backend);
@@ -507,11 +507,6 @@ it.live.each(["sqlite", "d1"] as const)(
       const known = yield* f.signIn(phoneNumber);
       const before = yield* f.state;
 
-      f.denyRegistration(true);
-      const denied = yield* f.signIn(otherNumber);
-
-      expect(denied.fields).toEqual(known.fields);
-      expect(denied.delivered).toBe(0);
       expect(
         yield* f
           .asGuest(
@@ -522,20 +517,28 @@ it.live.each(["sqlite", "d1"] as const)(
           )
           .pipe(Effect.result),
       ).toMatchObject(rejected);
-      expect(
-        yield* f.asGuest(f.auth.completeSignIn(denied.input)).pipe(Effect.result),
-      ).toMatchObject(rejected);
-      expect(yield* f.state).toEqual(before);
+      for (const answer of ["policy", "unavailable"] as const) {
+        f.registration(answer);
+        const refused = yield* f.signIn(otherNumber);
 
-      f.denyRegistration(false);
+        expect(refused.fields).toEqual(known.fields);
+        expect(refused.delivered).toBe(0);
+        expect(
+          yield* f.asGuest(f.auth.completeSignIn(refused.input)).pipe(Effect.result),
+        ).toMatchObject(rejected);
+        expect(yield* f.state).toEqual(before);
+      }
+      f.registration("allow");
       const allowed = yield* f.signIn(otherNumber);
       const complete = f.asGuest(f.auth.completeSignIn(allowed.input)).pipe(Effect.result);
 
       expect(allowed.delivered).toBe(1);
-      f.denyRegistration(true);
-      expect(yield* complete).toMatchObject(rejected);
+      for (const answer of ["policy", "unavailable"] as const) {
+        f.registration(answer);
+        expect(yield* complete).toMatchObject(rejected);
+      }
       expect(f.provisions).toHaveLength(1);
-      f.denyRegistration(false);
+      f.registration("allow");
       expect(yield* complete).toMatchObject({
         _tag: "Success",
         success: { _tag: "Authenticated", session: { subjectId: "member-2" } },
