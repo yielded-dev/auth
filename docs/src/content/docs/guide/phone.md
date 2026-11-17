@@ -54,10 +54,12 @@ the same. Number management is enabled separately with `lifecycle`.
 With signup enabled, any deliverable unused number can receive a code;
 `PhoneDeliveryEligibility` and `PhoneAdmission` bound that cost. To restrict who
 may sign up, deny the `registration` action in a [lifecycle hook](https://github.com/yielded-dev/auth/blob/main/examples/auth/src/lifecycle-hooks.ts).
-Signup fails closed: when the hook denies or reports `unavailable`, the number
-receives no code and completion fails like a wrong code. A code sent earlier is
-not consumed and works once the hook allows the number. An unavailable hook is
-logged as `Auth before-hook failed` and is not reported to the caller.
+Signup through `signIn` fails closed: when the hook denies or reports
+`unavailable`, the number receives no code and `completeSignIn` fails like a
+wrong code. A code sent earlier is not consumed and works, within its lifetime
+and attempt limits, once the hook allows the number. An unavailable hook is not
+reported to the caller; it logs the error `Auth boundary failed` with the cause
+`Auth before-hook failed`.
 
 The hook runs only for unused numbers, when a code is requested and on every
 completion attempt before the code is checked. A slow hook, or one that dies
@@ -230,7 +232,9 @@ controls that independently. Managed and mapped composition supplies the require
 For a separate signup flow, call `auth.begin({ action: "register", ... })`, then
 pass the code, reference, original flow and command IDs, and private request binding to
 `auth.completeLifecycle(input)`. A `Registered` result contains `completion`;
-grant access only when that completion is `Authenticated`, as for sign-in.
+grant access only when that completion is `Authenticated`, as for sign-in. Unlike
+`signIn`, this flow sends the code before consulting a `registration` hook, and
+`completeLifecycle` reports the hook's `HookDenied` for an unused number.
 
 Verifying an existing account's number (`action: "verify"`) or replacing it
 (`action: "change"`, with `sourcePhoneNumber`) requires an authenticated caller

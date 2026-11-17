@@ -38,11 +38,16 @@ const reportUnavailableHook = (cause: Cause.Cause<PhoneSignUpFailure>) =>
 export const phoneSignUpFailure = (cause: Cause.Cause<PhoneSignUpFailure>) =>
   reportUnavailableHook(cause).pipe(
     Effect.andThen(
-      Effect.failCause(
-        Cause.map(cause, (error) =>
-          error._tag === "HookDenied" ? PhoneOtpRejected.make({}) : error,
-        ),
-      ),
+      cause.reasons.length > 0 &&
+        cause.reasons.every(
+          (reason) => Cause.isFailReason(reason) && reason.error._tag === "HookDenied",
+        )
+        ? Effect.fail(PhoneOtpRejected.make({}))
+        : Effect.failCause(
+            Cause.map(cause, (error) =>
+              error._tag === "HookDenied" ? PhoneOtpRejected.make({}) : error,
+            ),
+          ),
     ),
   );
 
