@@ -1,5 +1,11 @@
 # @yielded/oauth
 
+## 0.1.0-beta.49
+
+### Patch Changes
+
+- [#291](https://github.com/yielded-dev/auth/pull/291) [`14bfbbc`](https://github.com/yielded-dev/auth/commit/14bfbbc2cbd3ebe6e812e57801b4be577671db09) Thanks [@leonitousconforti](https://github.com/leonitousconforti)! - Accept HTTP OAuth endpoints and discovery URLs on `localhost`, `127.0.0.1`, or `[::1]` only for explicitly configured HTTP loopback issuers. Keep asymmetric OIDC verification HTTPS-only for JWKS and report HTTP JWKS as a configuration error.
+
 ## 0.1.0-beta.48
 
 ### Minor Changes

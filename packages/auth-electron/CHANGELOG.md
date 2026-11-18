@@ -1,5 +1,13 @@
 # @yielded/auth-electron
 
+## 0.1.0-beta.49
+
+### Patch Changes
+
+- [#302](https://github.com/yielded-dev/auth/pull/302) [`9361a44`](https://github.com/yielded-dev/auth/commit/9361a44601eaea635bc8da16f444d4b2f756ab50) Thanks [@dependabot](https://github.com/apps/dependabot)! - Accept Electron 45 and Expo 58 secure-store and web-browser peers alongside the existing supported versions.
+- Updated dependencies [[`0d300c3`](https://github.com/yielded-dev/auth/commit/0d300c37f1d2638e494073507945d4199c27337d), [`833770f`](https://github.com/yielded-dev/auth/commit/833770ffede51b8526e2d1c4f830e10dcee4babc), [`0d300c3`](https://github.com/yielded-dev/auth/commit/0d300c37f1d2638e494073507945d4199c27337d), [`0d300c3`](https://github.com/yielded-dev/auth/commit/0d300c37f1d2638e494073507945d4199c27337d)]:
+  - @yielded/auth@0.1.0-beta.49
+
 ## 0.1.0-beta.48
 
 ### Patch Changes

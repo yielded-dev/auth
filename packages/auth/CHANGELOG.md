@@ -1,5 +1,24 @@
 # @yielded/auth
 
+## 0.1.0-beta.49
+
+### Minor Changes
+
+- [#281](https://github.com/yielded-dev/auth/pull/281) [`833770f`](https://github.com/yielded-dev/auth/commit/833770ffede51b8526e2d1c4f830e10dcee4babc) Thanks [@danieljvdm](https://github.com/danieljvdm)! - Enable phone account creation after SMS verification with `PhoneOtp.make({ allowSignUp: true })` through the ordinary `signIn` and `completeSignIn` methods, keeping explicit registration and number management independently opt-in with `lifecycle`. A `registration` lifecycle hook gates this signup and fails closed: a denied or unavailable hook sends no code and rejects completion like a wrong code.
+
+- [#314](https://github.com/yielded-dev/auth/pull/314) [`0d300c3`](https://github.com/yielded-dev/auth/commit/0d300c37f1d2638e494073507945d4199c27337d) Thanks [@danieljvdm](https://github.com/danieljvdm)! - Add an optional `Authorization` service to `OAuthServer.make`, so applications can recheck permission and attach `claims` at every code exchange and refresh without the OpenID profile.
+
+### Patch Changes
+
+- [#314](https://github.com/yielded-dev/auth/pull/314) [`0d300c3`](https://github.com/yielded-dev/auth/commit/0d300c37f1d2638e494073507945d4199c27337d) Thanks [@danieljvdm](https://github.com/danieljvdm)! - Accept CIMD documents advertising unknown grant and response types alongside authorization code support. Retain only supported grants when resolving the client.
+
+- [#314](https://github.com/yielded-dev/auth/pull/314) [`0d300c3`](https://github.com/yielded-dev/auth/commit/0d300c37f1d2638e494073507945d4199c27337d) Thanks [@danieljvdm](https://github.com/danieljvdm)! - Issue refresh tokens only when the client's grant policy permits them.
+
+  BEHAVIOR CHANGE: Clients declaring `grantTypes` without `refresh_token` receive only an access token. Static and stored clients of `OAuthServer.make` that omit `grantTypes` retain refresh support.
+
+- Updated dependencies [[`14bfbbc`](https://github.com/yielded-dev/auth/commit/14bfbbc2cbd3ebe6e812e57801b4be577671db09)]:
+  - @yielded/oauth@0.1.0-beta.49
+
 ## 0.1.0-beta.48
 
 ### Minor Changes
