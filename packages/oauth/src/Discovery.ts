@@ -92,10 +92,12 @@ export const Metadata: Schema.StructWithRest<
     ),
     authorization_response_iss_parameter_supported: Schema.optionalKey(Schema.Boolean),
   }),
-  [Schema.Record(Schema.String, Schema.Json)],
+  [V.JsonObject],
 ).check(
-  Schema.makeFilter((metadata) =>
-    endpointsOf(metadata).every((endpoint) => V.endpointMatchesIssuer(metadata.issuer, endpoint)),
+  Schema.makeFilter(
+    (metadata) =>
+      hasSafeJsonGraph(metadata) &&
+      endpointsOf(metadata).every((endpoint) => V.endpointMatchesIssuer(metadata.issuer, endpoint)),
   ),
 );
 
@@ -204,13 +206,52 @@ const endpointsOf = (metadata: {
     metadata.revocation_endpoint,
   ].filter((endpoint): endpoint is string => endpoint !== undefined);
 
+const forbiddenJsonKeys: ReadonlySet<string> = new Set(["__proto__", "constructor", "prototype"]);
+
+const hasSafeJsonGraph = (root: object): boolean => {
+  const pending: Array<object> = [root];
+
+  for (let current = pending.pop(); current !== undefined; current = pending.pop()) {
+    if (Array.isArray(current)) {
+      for (const item of current) {
+        if (item !== null && typeof item === "object") pending.push(item);
+      }
+      continue;
+    }
+
+    const prototype = Object.getPrototypeOf(current);
+
+    if (prototype !== Object.prototype && prototype !== null) return false;
+
+    for (const [key, item] of Object.entries(current)) {
+      if (forbiddenJsonKeys.has(key)) return false;
+      if (item !== null && typeof item === "object") pending.push(item);
+    }
+  }
+
+  return true;
+};
+
+const defineDataProperty = (
+  target: Record<string, Schema.Json>,
+  key: string,
+  value: Schema.Json,
+): void => {
+  Object.defineProperty(target, key, {
+    value,
+    enumerable: true,
+    configurable: true,
+    writable: true,
+  });
+};
+
 const cloneJson = (value: Schema.Json): Schema.Json => {
   if (value === null || typeof value !== "object") return value;
   if (Array.isArray(value)) return value.map(cloneJson);
   const copy: Record<string, Schema.Json> = {};
 
   for (const [key, item] of Object.entries(value)) {
-    copy[key] = cloneJson(item);
+    defineDataProperty(copy, key, cloneJson(item));
   }
 
   return copy;
@@ -221,7 +262,7 @@ const detachMetadata = (metadata: Metadata): Metadata => {
 
   for (const [key, value] of Object.entries(metadata)) {
     if (value !== undefined) {
-      copy[key] = cloneJson(value);
+      defineDataProperty(copy, key, cloneJson(value));
     }
   }
 

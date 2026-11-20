@@ -110,7 +110,7 @@ export const matchEntraDiscoveryIssuer = (
   if (Schema.is(entraTenantId)(tenant)) {
     return { issuer: configured, pinned: true };
   }
-  if (personal !== undefined) {
+  if (tenant === "consumers" && personal !== undefined) {
     return { issuer: personal, pinned: true };
   }
 
