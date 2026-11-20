@@ -1,5 +1,17 @@
 # @yielded/auth-persistence-drizzle
 
+## 0.1.0-beta.50
+
+### Patch Changes
+
+- [#324](https://github.com/yielded-dev/auth/pull/324) [`f97caf5`](https://github.com/yielded-dev/auth/commit/f97caf53e08458853f6d29ebcc32d3ac7d30d9d8) Thanks [@danieljvdm](https://github.com/danieljvdm)! - Add canonical OAuth callback decoding and validation (`OAuth.callbackParamsFromQuery`, `OAuth.callbackParamsFromFormPost`, `OAuth.validateCallback`), wire them across HTTP and proxy callbacks, and enforce atomic `responseMode` binding in OAuth flow persistence.
+
+  BEHAVIOR CHANGE: Callbacks reject front-channel token parameters (`id_token`, `access_token`, `token`, `token_type`, `expires_in`, `response`), cap `form_post` bodies at 16 KiB raw bytes, accept `user` only on `POST`, admit standard parameters (`state`, `code`, `error`, `error_description`, `error_uri`, `iss`, `scope`) plus `Http.make` provider names (`authuser`, `prompt`, `hd`), enforce RFC 6749 `code` syntax before consume, forward `OAuthCodeResponse.scope`, validate issuers under `OAuthIssuer` (failing closed at `begin`), and return `Cancelled` while clearing `request-binding` for bound provider errors. Observed transport is server-owned (`response.mode` removed; JSON completion routes record `"query"`, dedicated routes derive GET/POST, custom `form_post` hosts provide `OAuth.OAuthCallbackTransport`). Mapped tables must bind nullable `OAuthFlowTable.responseMode`, replacement persistence services must compare `access.responseMode` inside the conditional delete (`NULL` for native only), and dev databases need nullable `response_mode` on `${prefix}_oauthSignInFlows` and `${prefix}_oauthConnectedFlows` (or recreate them to clear in-flight browser flows; durable accounts, sessions, identities, and grants are unaffected).
+
+- Updated dependencies [[`ba2baeb`](https://github.com/yielded-dev/auth/commit/ba2baeb7fca5ec61cd83318fac95c7823d2e198e), [`f97caf5`](https://github.com/yielded-dev/auth/commit/f97caf53e08458853f6d29ebcc32d3ac7d30d9d8), [`49d2b01`](https://github.com/yielded-dev/auth/commit/49d2b01b6f1e2d4333269a7b7d90cd76b5a2ead4), [`0609a81`](https://github.com/yielded-dev/auth/commit/0609a813bd0f011fdf2338d2d782d0f8ac48087a), [`3e3eea0`](https://github.com/yielded-dev/auth/commit/3e3eea0157a560bf2166bebe35199243ad4f3286), [`fdb6b4c`](https://github.com/yielded-dev/auth/commit/fdb6b4cb4efc5a49907558c48ee7c0d0a9fb410d), [`a75187b`](https://github.com/yielded-dev/auth/commit/a75187b840f9332caabdbacd23780c9c9edd0aed), [`f4a7c39`](https://github.com/yielded-dev/auth/commit/f4a7c397ea5fe2325a171a0b5dd1b5b1538584da)]:
+  - @yielded/auth@0.1.0-beta.50
+  - @yielded/auth-persistence@0.1.0-beta.50
+
 ## 0.1.0-beta.49
 
 ### Patch Changes
