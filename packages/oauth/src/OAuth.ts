@@ -1558,7 +1558,10 @@ export const callbackParamsFromFormPost: (
     }
 
     bodyText = yield* Effect.try({
-      try: () => new TextDecoder("utf-8", { fatal: true }).decode(options.body as Uint8Array),
+      try: () =>
+        new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
+          options.body as Uint8Array,
+        ),
       catch: () => callbackRejected("invalidTransport"),
     });
   } else if (typeof options.body === "string") {

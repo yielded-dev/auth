@@ -295,12 +295,25 @@ const responseBase = {
 export const OAuthCodeResponse = Schema.TaggedStruct("Code", {
   ...responseBase,
   code: Schema.RedactedFromValue(
-    Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(4096)),
+    Schema.String.check(
+      Schema.isMinLength(1),
+      Schema.isMaxLength(4096),
+      // RFC 6749 Appendix A.11: code = 1*VSCHAR (%x20-7E).
+      Schema.isPattern(/^[\x20-\x7e]+$/),
+    ),
   ),
   /** Provider callback scope receipt; adapters must validate before trusting it. */
-  scope: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(16384))),
+  scope: Schema.optionalKey(
+    Schema.String.check(Schema.isMaxLength(16384), Schema.makeFilter(isWellFormedUnicode)),
+  ),
   /** First-consent name payload. Apple sends this once as a `user` form field. */
-  user: Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(4096))),
+  user: Schema.optionalKey(
+    Schema.String.check(
+      Schema.isMinLength(1),
+      Schema.isMaxLength(4096),
+      Schema.makeFilter(isWellFormedUnicode),
+    ),
+  ),
   error: Schema.optionalKey(Schema.Never),
 });
 
