@@ -8,6 +8,7 @@ import * as Jwt from "effect/jose/Jwt";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 
+import { origin } from "../../internal/origin";
 import type * as OAuthScope from "../../OAuthScope";
 import {
   AccessClaims,
@@ -15,7 +16,6 @@ import {
   ConfigurationError,
   DefaultSubject,
   InvalidToken,
-  Origin,
   Random,
   Scope,
   ScopeText,
@@ -86,7 +86,7 @@ export const makeVerifierCore = Effect.fnUntraced(function* <
 
   const config = yield* Schema.decodeEffect(
     Schema.Struct({
-      issuer: Origin,
+      issuer: origin,
       resource: Url,
     }),
   )(options, { reportInput: false }).pipe(Effect.mapError(() => ConfigurationError.make({})));

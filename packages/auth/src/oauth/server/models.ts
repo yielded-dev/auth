@@ -1,10 +1,11 @@
 import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
 import * as Jwks from "effect/jose/Jwks";
-import type * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 
 import * as OAuthScope from "../../OAuthScope";
+
+export type { SigningKeyring } from "../../internal/signing-codec";
 
 export class Unavailable extends Schema.TaggedError<Unavailable>()("OAuthServerUnavailable", {}) {}
 
@@ -18,13 +19,13 @@ export class ConfigurationError extends Schema.TaggedError<ConfigurationError>()
   {},
 ) {}
 
-export interface SigningKeyring {
-  readonly activeKeyId: string;
-  /** At least 32 cryptographically random bytes per key, encoded as base64url. */
-  readonly keys: ReadonlyArray<{
-    readonly id: string;
-    readonly material: Redacted.Redacted<string>;
-  }>;
+export class ReportedFailure extends Schema.TaggedError<ReportedFailure>()(
+  "OAuthServerReportedFailure",
+  {},
+) {
+  override get message() {
+    return "OAuth server operation failed";
+  }
 }
 
 export const Text = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(2048));
@@ -64,22 +65,6 @@ export class Rejected extends Schema.TaggedError<Rejected>()("OAuthServerRejecte
 
 export const reject = (error: Rejected["error"] = "invalid_request") => Rejected.make({ error });
 
-const isAllowedProtocol = (url: URL) =>
-  url.protocol === "https:" ||
-  (url.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname));
-
-export const Origin = Schema.String.check(
-  Schema.makeFilter((value) => {
-    try {
-      const url = new URL(value);
-
-      return url.origin === value && isAllowedProtocol(url);
-    } catch {
-      return false;
-    }
-  }),
-);
-
 export const Url = Text.check(
   Schema.makeFilter((text) => {
     try {
@@ -90,7 +75,8 @@ export const Url = Text.check(
         !url.password &&
         !text.includes("#") &&
         !/[\s\\]/.test(text) &&
-        isAllowedProtocol(url)
+        (url.protocol === "https:" ||
+          (url.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname)))
       );
     } catch {
       return false;

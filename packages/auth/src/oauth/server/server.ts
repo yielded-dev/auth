@@ -26,6 +26,9 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import type * as Types from "effect/Types";
 
+import { origin as Origin } from "../../internal/origin";
+import { makeSigningCodec, type SigningKeyring } from "../../internal/signing-codec";
+import { timeoutWithCause } from "../../internal/timeout";
 import * as OAuthScope from "../../OAuthScope";
 import { makeAccessTokenVerifier } from "./access-token";
 import {
@@ -43,7 +46,6 @@ import {
   type MetadataOptions,
 } from "./clients";
 import { ConsentRenderer, OpenIdConsent, escapeHtml } from "./consent";
-import { makeSigningCodec, ReportedFailure, timeoutWithCause } from "./internal";
 import {
   type Access,
   BearerToken,
@@ -57,16 +59,15 @@ import {
   Client,
   reject,
   type Rejected,
-  Origin,
   Url,
   ConfigurationError,
   CurrentAccess,
   InvalidToken,
   Persistence,
   Random,
+  ReportedFailure,
   ResourceMetadata,
   ScopeText,
-  type SigningKeyring,
   Text,
   TokenResponse,
   makeAccessSchema,
@@ -556,7 +557,13 @@ const makeServer = <
 
         type Envelope = typeof Envelope.Type;
 
-        const codec = yield* makeSigningCodec(Envelope, options.keys, 2048);
+        const codec = yield* makeSigningCodec(Envelope, options.keys, {
+          version: "eas1",
+          maximumTokenBytes: 2048,
+          onConfigError: () => ConfigurationError.make({}),
+          onInvalid: () => InvalidToken.make({}),
+          onUnavailable: () => Unavailable.make({}),
+        });
 
         const random = crypto.randomBytes(32).pipe(
           Effect.map(Base64Url.encode),

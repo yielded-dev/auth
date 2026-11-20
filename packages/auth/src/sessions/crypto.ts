@@ -1,13 +1,11 @@
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Digest from "effect/crypto/Digest";
-import * as Mac from "effect/crypto/Mac";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Base64Url from "effect/encoding/Base64Url";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
-import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
 import { AuthConfig } from "../auth/AuthConfig";
@@ -17,18 +15,11 @@ import {
   reportAuthFailure,
   withoutObservability,
 } from "../internal/diagnostics";
-import { makeScopedOperation } from "../internal/scoped-operation";
+import { makeSigningCodec, type SigningKeyring } from "../internal/signing-codec";
 import { TokenDigest } from "../Schema";
 import { SessionConfigurationError, SessionInvalid, SessionUnavailable } from "./errors";
 
-export interface SessionSigningKeyring {
-  readonly activeKeyId: string;
-  /** At least 32 cryptographically random bytes per key, encoded as base64url. */
-  readonly keys: ReadonlyArray<{
-    readonly id: string;
-    readonly material: Redacted.Redacted<string>;
-  }>;
-}
+export type SessionSigningKeyring = SigningKeyring;
 
 /** Override the application-secret default to manage signing-key IDs and rotation. */
 export class SessionSigningKeys extends Context.Service<
@@ -50,14 +41,6 @@ export const sessionSigningKeysLayer = defaultLayer(
 );
 
 const opaqueCredential = Schema.String.check(Schema.isPattern(/^[A-Za-z0-9_-]{43}$/));
-const keyIdSchema = Schema.String.check(Schema.isPattern(/^[A-Za-z0-9_-]{1,64}$/));
-
-const Keyring = Schema.Struct({
-  activeKeyId: keyIdSchema,
-  keys: Schema.Array(
-    Schema.Struct({ id: keyIdSchema, material: Schema.Redacted(Schema.String) }),
-  ).check(Schema.isMinLength(1)),
-});
 
 const textEncoder = new TextEncoder();
 
@@ -133,140 +116,28 @@ export const makeSessionSigningCodec = Effect.fn("makeSessionSigningCodec")(func
   maximumTokenBytes: number,
   purpose: "session" | "session-cache" = "session",
 ) {
-  const checked = yield* Schema.decodeEffect(Keyring)(configuration).pipe(
-    Effect.mapError(() => SessionConfigurationError.make({ reason: "keyring" })),
-  );
-
-  const hmac = yield* Mac.Mac;
-  const run = yield* makeScopedOperation(() => SessionUnavailable.make({}));
-
-  const services = (yield* Effect.context<S["DecodingServices"] | S["EncodingServices"]>()).pipe(
-    withoutObservability,
-  );
-
-  const keys = new Map<string, Mac.Key>();
-
-  const version = purpose === "session-cache" ? "eac1" : "eas1";
-
-  const tokenFormat = Schema.String.check(
-    Schema.isPattern(
-      purpose === "session-cache"
-        ? /^eac1\.[A-Za-z0-9_-]{1,64}\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/
-        : /^eas1\.[A-Za-z0-9_-]{1,64}\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/,
-    ),
-  );
-
-  const importKey = (material: Uint8Array) =>
-    Mac.key(Mac.hmacSha256, material).pipe(
-      sessionDiagnostics("session-crypto"),
-      Effect.catchCause((cause) =>
-        Effect.failCause(
-          Cause.map(cause, () => SessionConfigurationError.make({ reason: "keyring" })),
-        ),
+  const codec = yield* makeSigningCodec(schema, configuration, {
+    version: purpose === "session-cache" ? "eac1" : "eas1",
+    maximumTokenBytes,
+    ...(purpose === "session-cache" ? { deriveKeyDomain: "effect-auth/session-cache/key/v1" } : {}),
+    onConfigError: () => SessionConfigurationError.make({ reason: "keyring" }),
+    onInvalid: () => SessionInvalid.make({}),
+    onUnavailable: () => SessionUnavailable.make({}),
+    observeFailure: (stage) =>
+      sessionDiagnostics(
+        stage === "payload" && purpose === "session-cache" ? "session-cache" : "session-crypto",
       ),
-      Effect.ensuring(Effect.sync(() => material.fill(0))),
-    );
-
-  for (const entry of checked.keys) {
-    yield* Schema.decodeEffect(keyIdSchema)(entry.id).pipe(
-      Effect.mapError(() => SessionConfigurationError.make({ reason: "keyring" })),
-    );
-
-    const material = Result.getOrUndefined(Base64Url.decode(Redacted.value(entry.material)));
-
-    if (keys.has(entry.id) || material === undefined || material.length < 32) {
-      return yield* SessionConfigurationError.make({ reason: "keyring" });
-    }
-
-    const root = yield* importKey(material);
-
-    const key =
-      purpose === "session-cache"
-        ? yield* hmac.sign(root, textEncoder.encode("effect-auth/session-cache/key/v1")).pipe(
-            sessionDiagnostics("session-crypto"),
-            Effect.catchCause((cause) =>
-              Effect.failCause(
-                Cause.map(cause, () => SessionConfigurationError.make({ reason: "keyring" })),
-              ),
-            ),
-            Effect.flatMap(importKey),
-          )
-        : root;
-
-    keys.set(entry.id, key);
-  }
-  const activeKeyId = checked.activeKeyId;
-  const activeKey = keys.get(activeKeyId);
-
-  if (activeKey === undefined) return yield* SessionConfigurationError.make({ reason: "keyring" });
-  const codec = Schema.fromJsonString(Schema.toCodecJson(schema));
-  const encode = Schema.encodeEffect(codec);
-  const decode = Schema.decodeEffect(codec);
+    transformContext: withoutObservability,
+  });
 
   return {
     encode: Effect.fn("SessionSigningCodec.encode")(function* (claims: S["Type"]) {
-      const json = yield* encode(claims).pipe(
-        Effect.provide(services),
-        sessionDiagnostics(purpose === "session-cache" ? "session-cache" : "session-crypto"),
-        Effect.catchCause((cause) =>
-          Effect.failCause(Cause.map(cause, () => SessionUnavailable.make({}))),
-        ),
-      );
-
-      const message = `${version}.${activeKeyId}.${Base64Url.encode(json)}`;
-
-      const signature = yield* hmac.sign(activeKey, textEncoder.encode(message)).pipe(
-        sessionDiagnostics("session-crypto"),
-        Effect.catchCause((cause) =>
-          Effect.failCause(Cause.map(cause, () => SessionUnavailable.make({}))),
-        ),
-      );
-
-      const token = `${message}.${Base64Url.encode(signature)}`;
-
-      if (token.length > maximumTokenBytes)
-        return yield* SessionUnavailable.make({}).pipe(
-          sessionDiagnostics(purpose === "session-cache" ? "session-cache" : "session-crypto"),
-        );
-
-      return Redacted.make(token);
-    }, run),
+      return yield* codec.encode(claims);
+    }),
     decode: Effect.fn("SessionSigningCodec.decode")(function* (
       credential: Redacted.Redacted<string>,
     ) {
-      const token = Redacted.value(credential);
-
-      if (token.length > maximumTokenBytes) return yield* SessionInvalid.make({});
-      yield* Schema.decodeEffect(tokenFormat)(token).pipe(
-        Effect.mapError(() => SessionInvalid.make({})),
-      );
-      const [version, keyId, payload, signatureText] = token.split(".");
-      const key = keys.get(keyId);
-      const signature = Result.getOrUndefined(Base64Url.decode(signatureText));
-
-      if (key === undefined || signature === undefined || signature.length !== 32)
-        return yield* SessionInvalid.make({});
-
-      const valid = yield* hmac
-        .verify(key, signature, textEncoder.encode(`${version}.${keyId}.${payload}`))
-        .pipe(
-          sessionDiagnostics("session-crypto"),
-          Effect.catchCause((cause) =>
-            Effect.failCause(Cause.map(cause, () => SessionUnavailable.make({}))),
-          ),
-        );
-
-      if (!valid) return yield* SessionInvalid.make({});
-      const json = Result.getOrUndefined(Base64Url.decodeString(payload));
-
-      if (json === undefined) return yield* SessionInvalid.make({});
-
-      return yield* decode(json).pipe(
-        Effect.provide(services),
-        Effect.catchCause((cause) =>
-          Effect.failCause(Cause.map(cause, () => SessionInvalid.make({}))),
-        ),
-      );
-    }, run),
+      return yield* codec.decode(credential);
+    }),
   };
 });
