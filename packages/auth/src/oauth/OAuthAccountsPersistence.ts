@@ -47,6 +47,12 @@ export class OAuthAccountsPersistence extends Context.Service<
       input: OAuthLinkFlow,
       prepare: PrepareOAuthCommit<typeof OAuthLinkIssueDecision.Type, A>,
     ) => Effect.Effect<PreparedCommit<A>, OAuthUnavailable>;
+    /** Bound, non-consuming read using the exact same callback predicates as
+     * `consume`, so callers can warm lazy provider discovery for the captured
+     * generation before deleting the flow. */
+    readonly inspect?: (
+      input: OAuthLinkAccess,
+    ) => Effect.Effect<OAuthLinkFlow | undefined, OAuthUnavailable>;
     /** Conditional engine-time deletion checks exact callback, subject, and observed
      * `access.responseMode` against the issued flow's `responseMode` (NULL/omitted
      * reserved strictly for native sign-in; browser link flows always carry a mode).

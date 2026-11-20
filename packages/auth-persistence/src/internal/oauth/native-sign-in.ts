@@ -74,6 +74,10 @@ export const makeNativeOAuthSignInServices = Effect.fnUntraced(function* (
         }),
         mode,
       ),
+    inspect: (original) =>
+      executor.read(
+        Effect.suspend(() => flow.inspect(M.snapshotOAuthSync(M.OAuthSignInAccess, original))),
+      ),
     consume: (original, prepare) =>
       run(
         Effect.gen(function* () {

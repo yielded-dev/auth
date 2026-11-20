@@ -91,12 +91,61 @@ export const makeNativeOAuthRevocationServices = Effect.fnUntraced(function* (
           statement: sqlBatchAssertion(sql, condition),
         });
 
+  const decodeJobRow = Effect.fnUntraced(function* (
+    raw: Record<string, unknown>,
+    moduleId: typeof M.OAuthModuleId.Type,
+  ) {
+    const row = job.decode(raw, "job_");
+    const encoded = row[j.snapshot];
+
+    if (!(typeof encoded === "string")) return yield* invalidState();
+    const value = stored.decode(encoded);
+
+    if (
+      !(
+        row[j.jobId] === value.jobId &&
+        value.grant.context.moduleId === moduleId &&
+        mapping.subjectId.equals(
+          row[j.subjectId],
+          yield* mapping.subjectId.toNative(value.grant.context.subjectId),
+        )
+      )
+    )
+      return yield* invalidState();
+
+    return { row, encoded, value };
+  });
+
   const service: M.OAuthConnectedRevocations["Service"] = {
+    peek: (input) =>
+      executor.read(
+        Effect.gen(function* () {
+          const moduleId = M.snapshotOAuthSync(M.OAuthModuleId, input.moduleId);
+
+          const pending = sql.and([
+            exact(j.moduleId, moduleId),
+            exact(j.state, "Pending"),
+            sql`${tables.expression(mapping.clock.toMillis(job.column(j.retentionUntil)))} > ${now}`,
+          ]);
+
+          const rows =
+            yield* sql`select ${job.fields("job_")} from ${job.name} where ${pending} order by ${job.column(j.retentionUntil)}, ${job.column(j.jobId)} limit 1`;
+
+          if (rows[0] === undefined) return undefined;
+
+          return (yield* decodeJobRow(rows[0], moduleId)).value;
+        }),
+      ),
     claim: (input, prepare) =>
       run(
         Effect.gen(function* () {
           const moduleId = M.snapshotOAuthSync(M.OAuthModuleId, input.moduleId);
           const claimId = M.snapshotOAuthSync(M.OAuthClaimId, input.claimId);
+
+          const jobId =
+            input.jobId === undefined
+              ? undefined
+              : M.snapshotOAuthSync(M.OAuthConnectedRevocationJob.fields.jobId, input.jobId);
 
           if (
             !(
@@ -111,29 +160,14 @@ export const makeNativeOAuthRevocationServices = Effect.fnUntraced(function* (
             exact(j.moduleId, moduleId),
             exact(j.state, "Pending"),
             sql`${tables.expression(mapping.clock.toMillis(job.column(j.retentionUntil)))} > ${now}`,
+            ...(jobId === undefined ? [] : [exact(j.jobId, jobId)]),
           ]);
 
           const rows =
             yield* sql`select ${job.fields("job_")}, ${now} as engine_now from ${job.name} where ${pending} order by ${job.column(j.retentionUntil)}, ${job.column(j.jobId)} limit 1 ${lock}`;
 
           if (rows[0] === undefined) return yield* prepareOAuthNative({ _tag: "Empty" }, prepare);
-          const row = job.decode(rows[0], "job_");
-          const encoded = row[j.snapshot];
-
-          if (!(typeof encoded === "string")) return yield* invalidState();
-          const value = stored.decode(encoded);
-
-          if (
-            !(
-              row[j.jobId] === value.jobId &&
-              value.grant.context.moduleId === moduleId &&
-              mapping.subjectId.equals(
-                row[j.subjectId],
-                yield* mapping.subjectId.toNative(value.grant.context.subjectId),
-              )
-            )
-          )
-            return yield* invalidState();
+          const { row, encoded, value } = yield* decodeJobRow(rows[0], moduleId);
           const engineNow = yield* Schema.decodeEffect(Schema.Int)(Number(rows[0].engine_now));
 
           const deadline = engineNow + input.lifetimeMillis;

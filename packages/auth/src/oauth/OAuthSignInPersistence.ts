@@ -30,6 +30,12 @@ export class OAuthSignInPersistence extends Context.Service<
       input: OAuthSignInFlow,
       prepare: PrepareOAuthCommit<OAuthIssueDecision, A>,
     ) => Effect.Effect<PreparedCommit<A>, OAuthUnavailable>;
+    /** Bound, non-consuming read using the exact same callback predicates as
+     * `consume`, so callers can warm lazy provider discovery for the captured
+     * generation before deleting the flow. */
+    readonly inspect?: (
+      input: OAuthSignInAccess,
+    ) => Effect.Effect<OAuthSignInFlow | undefined, OAuthUnavailable>;
     /** Conditional DELETE at engine time checks purpose, module, accepted generation,
      * provider, callback, state, exact binder, response issuer, and observed
      * `access.responseMode` against the issued flow's `responseMode` (NULL/omitted

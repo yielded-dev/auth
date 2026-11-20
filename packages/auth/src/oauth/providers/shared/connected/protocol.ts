@@ -875,7 +875,39 @@ export const makeConnectedProtocolWithCompatibility = Effect.fn(
     return "Confirmed" as const;
   });
 
+  const ready: NonNullable<OAuthConnectedProtocol["Service"]["ready"]> = Effect.fn(
+    "OpenIdConnectConnected.ready",
+  )(function* (target) {
+    if (target === undefined) {
+      yield* Effect.forEach(installed, (entry) => entry.resolve, {
+        concurrency: 4,
+        discard: true,
+      });
+
+      return;
+    }
+
+    if ("protocol" in target) {
+      yield* retained(target);
+
+      return;
+    }
+
+    const matching = installed.filter(
+      ({ provider }) =>
+        provider.provider === target.provider &&
+        (target.configurationGeneration === undefined ||
+          provider.configurationGeneration === target.configurationGeneration),
+    );
+
+    yield* Effect.forEach(matching, (entry) => entry.resolve, {
+      concurrency: 4,
+      discard: true,
+    });
+  });
+
   return OAuthConnectedProtocol.of({
+    ready: (target) => run(ready(target)),
     prepareAuthorization: (input) => run(prepareAuthorization(input)),
     exchangeGrant: (input) =>
       run(exchangeGrant(input)).pipe(

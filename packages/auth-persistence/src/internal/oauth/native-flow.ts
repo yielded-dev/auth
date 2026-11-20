@@ -184,20 +184,10 @@ export const makeOAuthNativeFlow = Effect.fnUntraced(function* <Flow extends OAu
     );
   });
 
-  const consumeMatching = Effect.fnUntraced(function* (
+  const decodeRow = Effect.fnUntraced(function* (
+    rows: ReadonlyArray<Record<string, unknown>>,
     input: OAuthSignInAccess & { readonly subjectId?: SubjectId },
   ) {
-    const predicate = yield* access(input);
-    const deletion = sql`delete from ${flow.name} where ${predicate}`;
-
-    // MySQL has no DELETE RETURNING. Its caller owns one transaction and this
-    // locking read; PostgreSQL and SQLite consume in one statement.
-    const rows = batch
-      ? yield* sql`select ${flow.fields("oauth_flow_")} from ${flow.name} where ${predicate}`
-      : mysql
-        ? yield* sql`select ${flow.fields("oauth_flow_")} from ${flow.name} where ${predicate} for update`
-        : yield* sql`${deletion} returning ${flow.fields("oauth_flow_")}`;
-
     if (rows.length === 0) return undefined;
     if (!(rows.length === 1)) return yield* invalidState();
     const row = flow.decode(rows[0]!, "oauth_flow_");
@@ -231,6 +221,63 @@ export const makeOAuthNativeFlow = Effect.fnUntraced(function* <Flow extends OAu
       )
     )
       return yield* invalidState();
+
+    return { value, encoded };
+  });
+
+  const inspect = Effect.fnUntraced(function* (
+    input: OAuthSignInAccess & {
+      readonly subjectId?: SubjectId;
+      readonly formPostSubject?: boolean;
+    },
+  ) {
+    if (input.formPostSubject === true && input.responseMode !== "form_post") return undefined;
+    const predicate = yield* access(input);
+
+    const rows =
+      yield* sql`select ${flow.fields("oauth_flow_")} from ${flow.name} where ${predicate}`;
+
+    if (input.formPostSubject === true) {
+      if (rows.length === 0) return undefined;
+      if (!(rows.length === 1)) return yield* invalidState();
+      const row = flow.decode(rows[0]!, "oauth_flow_");
+      const encoded = row[f.snapshot];
+
+      if (!(typeof encoded === "string")) return yield* invalidState();
+      const value = persisted.decode(encoded);
+      const owner = subjectId(value);
+
+      if (value.context.responseMode !== "form_post" || owner === undefined) return undefined;
+
+      const { formPostSubject: _formPostSubject, ...matched } = input;
+      const verified = yield* decodeRow(rows, { ...matched, subjectId: owner });
+
+      return verified?.value;
+    }
+
+    const verified = yield* decodeRow(rows, input);
+
+    return verified?.value;
+  });
+
+  const consumeMatching = Effect.fnUntraced(function* (
+    input: OAuthSignInAccess & { readonly subjectId?: SubjectId },
+  ) {
+    const predicate = yield* access(input);
+    const deletion = sql`delete from ${flow.name} where ${predicate}`;
+
+    // MySQL has no DELETE RETURNING. Its caller owns one transaction and this
+    // locking read; PostgreSQL and SQLite consume in one statement.
+    const rows = batch
+      ? yield* sql`select ${flow.fields("oauth_flow_")} from ${flow.name} where ${predicate}`
+      : mysql
+        ? yield* sql`select ${flow.fields("oauth_flow_")} from ${flow.name} where ${predicate} for update`
+        : yield* sql`${deletion} returning ${flow.fields("oauth_flow_")}`;
+
+    const verified = yield* decodeRow(rows, input);
+
+    if (verified === undefined) return undefined;
+    const { value, encoded } = verified;
 
     if (mysql) {
       if (!((yield* executeSqlChange(sql, deletion)) === 1)) return yield* invalidState();
@@ -322,5 +369,5 @@ export const makeOAuthNativeFlow = Effect.fnUntraced(function* <Flow extends OAu
       batch,
     );
 
-  return { issue, consume, cleanup, mysql };
+  return { issue, inspect, consume, cleanup, mysql };
 });

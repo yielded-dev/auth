@@ -197,6 +197,7 @@ export const makeOAuthAccounts = <
         list: listRows,
         capture,
         issue,
+        inspect,
         consume,
         link,
         readCredential,
@@ -205,7 +206,7 @@ export const makeOAuthAccounts = <
       } = yield* OAuthAccountsPersistence;
 
       const { verify: verifyAction } = yield* OAuthActionEvidence;
-      const { prepareAuthorization, exchangeVerifiedIdentity } = yield* OAuthProtocol;
+      const { prepareAuthorization, exchangeVerifiedIdentity, ready } = yield* OAuthProtocol;
       const { resolve: resolveTarget } = yield* OAuthReturnTargets;
       const { seal, open } = yield* OAuthLinkTransactionProtector;
       const { before } = yield* LifecycleHooks;
@@ -562,6 +563,33 @@ export const makeOAuthAccounts = <
             ? { ...binding, formPostSubject: true as const }
             : { ...binding, subjectId: authenticated.subjectId },
         );
+
+        // Warm lazy provider metadata before consuming a valid code flow so a
+        // discovery outage or misconfiguration leaves the flow pending.
+        if (response._tag === "Code" && ready !== undefined) {
+          if (inspect !== undefined) {
+            const pending = yield* inspect(access);
+
+            if (pending === undefined) {
+              if (authenticated === undefined) return yield* AuthenticationRequired.make({});
+
+              return yield* OAuthRejected.make({});
+            }
+            const pendingFlow = yield* snapshotOAuthLinkFlow.effect(pending);
+
+            yield* ready({
+              provider: pendingFlow.context.provider,
+              protocol: pendingFlow.context.protocol,
+              configurationGeneration: pendingFlow.context.configurationGeneration,
+              issuer: pendingFlow.context.issuer,
+              responseIssuerMode: pendingFlow.context.responseIssuerMode,
+              callbackId: pendingFlow.context.callbackId,
+              redirectUri: pendingFlow.context.redirectUri,
+            });
+          } else {
+            yield* ready({ provider: request.provider, kind: "web" });
+          }
+        }
 
         const consumed = yield* consume(access, (value, journal) =>
           journal.prepare(snapshotOAuthLinkConsumeDecision.sync(value)),

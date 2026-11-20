@@ -217,7 +217,17 @@ const make = Effect.fnUntraced(function* (
     }).pipe(Effect.ensuring(Effect.sync(() => wipeConnectedMaterial(projected.material))));
   });
 
-  return { profile, prepare, exchange, retain };
+  const ready = Effect.fn("OAuth.access.ready")(function* (flow: OAuthSignInFlow) {
+    if (protocol.ready === undefined) return;
+    const configuration = yield* configurationFor(flow);
+
+    yield* protocol.ready(configuration);
+  });
+
+  const readyProvider = (provider: OAuthSignInFlow["context"]["provider"]) =>
+    protocol.ready === undefined ? Effect.void : protocol.ready({ provider });
+
+  return { profile, prepare, ready, readyProvider, exchange, retain };
 });
 
 export type SignInAccess = Effect.Success<ReturnType<typeof make>>;

@@ -10,6 +10,7 @@ import type {
   OAuthConnectedTokenContext,
   OAuthConnectedTokenMaterial,
 } from "./connectedModels";
+import type { OAuthGeneration, OAuthProviderKey } from "./schema";
 import type { OAuthProtocolRejected, OAuthUnavailable } from "./signInErrors";
 import type {
   OAuthCallbackId,
@@ -55,5 +56,17 @@ export class OAuthConnectedProtocol extends Context.Service<
       readonly context: OAuthConnectedTokenContext;
       readonly material: OAuthConnectedTokenMaterial;
     }) => Effect.Effect<"Confirmed", OAuthUnavailable>;
+    /** Resolve and validate lazy provider metadata without claiming or consuming
+     * durable state. Pass a captured configuration for one exact generation, a
+     * provider selector for matching registrations, or omit the target to warm
+     * every installed registration. */
+    readonly ready?: (
+      target?:
+        | OAuthConnectedConfiguration
+        | {
+            readonly provider: OAuthProviderKey;
+            readonly configurationGeneration?: typeof OAuthGeneration.Type;
+          },
+    ) => Effect.Effect<void, OAuthUnavailable>;
   }
 >()("effect-auth/OAuthConnectedProtocol") {}

@@ -192,6 +192,23 @@ export const makeOAuth = <E, R, ResponseR>(
         verifyNativeIdentity: (input) =>
           protocols.get(input.configuration.provider)?.verifyNativeIdentity?.(input) ??
           OAuthUnavailable.make({}),
+        ready: (target) => {
+          if (target === undefined) {
+            return Effect.forEach(
+              protocols.values(),
+              (protocol) => protocol.ready?.() ?? Effect.void,
+              { concurrency: 4, discard: true },
+            );
+          }
+
+          const protocol = protocols.get(target.provider);
+
+          if (protocol === undefined) {
+            return "protocol" in target ? OAuthUnavailable.make({}) : Effect.void;
+          }
+
+          return protocol.ready?.(target) ?? Effect.void;
+        },
       });
 
       const connected = OAuthConnectedProtocol.of({
@@ -207,6 +224,23 @@ export const makeOAuth = <E, R, ResponseR>(
         revokeGrant: (input) =>
           protocols.get(input.context.configuration.provider)?.connected?.revokeGrant(input) ??
           OAuthUnavailable.make({}),
+        ready: (target) => {
+          if (target === undefined) {
+            return Effect.forEach(
+              protocols.values(),
+              (protocol) => protocol.connected?.ready?.() ?? Effect.void,
+              { concurrency: 4, discard: true },
+            );
+          }
+
+          const protocol = protocols.get(target.provider)?.connected;
+
+          if (protocol === undefined) {
+            return "protocol" in target ? OAuthUnavailable.make({}) : Effect.void;
+          }
+
+          return protocol.ready?.(target) ?? Effect.void;
+        },
       });
 
       return Context.make(OAuthProtocol, signIn).pipe(

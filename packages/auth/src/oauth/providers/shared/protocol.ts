@@ -279,6 +279,19 @@ export const makeOpenIdConnectOAuthProtocol = Effect.fn("makeOpenIdConnectOAuthP
             provider.responseIssuerMode !== saved.responseIssuerMode)
         )
           return yield* unavailable();
+
+        const resolved = yield* entry.resolve;
+
+        if (resolved.client === undefined) return yield* unavailable();
+        const client = resolved.client;
+
+        const responseIssuerMode = persistedResponseIssuerMode(
+          provider.responseIssuerMode,
+          resolved.metadata.authorization_response_iss_parameter_supported,
+        );
+
+        if (responseIssuerMode !== saved.responseIssuerMode) return yield* unavailable();
+
         if (
           (provider.protocol === "oidc") !== (request.secrets.oidcNonce !== undefined) ||
           provider.pkceS256 !== (request.secrets.pkceVerifier !== undefined) ||
@@ -292,18 +305,6 @@ export const makeOpenIdConnectOAuthProtocol = Effect.fn("makeOpenIdConnectOAuthP
 
         if (startedAt < 0 || startedAt > DateTime.toEpochMillis(yield* DateTime.now))
           return yield* rejected();
-
-        const resolved = yield* entry.resolve;
-
-        if (resolved.client === undefined) return yield* unavailable();
-        const client = resolved.client;
-
-        const responseIssuerMode = persistedResponseIssuerMode(
-          provider.responseIssuerMode,
-          resolved.metadata.authorization_response_iss_parameter_supported,
-        );
-
-        if (responseIssuerMode !== saved.responseIssuerMode) return yield* unavailable();
 
         const receipt = yield* (
           resolved.jsonTokenSender !== undefined
@@ -603,7 +604,88 @@ export const makeOpenIdConnectOAuthProtocol = Effect.fn("makeOpenIdConnectOAuthP
         );
       });
 
+    const ready: NonNullable<OAuthProtocol["Service"]["ready"]> = Effect.fn("OpenIdConnect.ready")(
+      function* (target) {
+        if (target === undefined) {
+          yield* Effect.forEach(installed, (entry) => entry.resolve, {
+            concurrency: 4,
+            discard: true,
+          });
+
+          return;
+        }
+
+        if ("protocol" in target) {
+          const kind = "redirectUri" in target ? "web" : "native";
+
+          const entry = installed.find(
+            ({ provider }) =>
+              provider.provider === target.provider &&
+              provider.configurationGeneration === target.configurationGeneration &&
+              registrationKind(provider) === kind,
+          );
+
+          if (entry === undefined) return yield* unavailable();
+          const provider = entry.provider;
+
+          if (provider.protocol !== target.protocol || provider.issuer !== target.issuer) {
+            return yield* unavailable();
+          }
+
+          if (kind === "web" && "redirectUri" in target) {
+            const callback = provider.callbacks.find(
+              (candidate) => candidate.callbackId === target.callbackId,
+            );
+
+            if (
+              callback === undefined ||
+              callback.redirectUri !== target.redirectUri ||
+              (provider.responseIssuerMode !== "discovered" &&
+                provider.responseIssuerMode !== target.responseIssuerMode)
+            ) {
+              return yield* unavailable();
+            }
+
+            const resolved = yield* entry.resolve;
+
+            if (
+              resolved.client === undefined ||
+              persistedResponseIssuerMode(
+                provider.responseIssuerMode,
+                resolved.metadata.authorization_response_iss_parameter_supported,
+              ) !== target.responseIssuerMode
+            ) {
+              return yield* unavailable();
+            }
+
+            return;
+          }
+
+          if (target.callbackId !== OAuthNativeCallbackId) return yield* unavailable();
+          const resolved = yield* entry.resolve;
+
+          if (resolved.nativeKeySet === undefined) return yield* unavailable();
+
+          return;
+        }
+
+        const matching = installed.filter(
+          ({ provider }) =>
+            provider.provider === target.provider &&
+            (target.kind === undefined || registrationKind(provider) === target.kind) &&
+            (target.configurationGeneration === undefined ||
+              provider.configurationGeneration === target.configurationGeneration),
+        );
+
+        yield* Effect.forEach(matching, (entry) => entry.resolve, {
+          concurrency: 4,
+          discard: true,
+        });
+      },
+    );
+
     return OAuthProtocol.of({
+      ready: (target) => run(ready(target)),
       prepareNative: (input) => run(prepareNative(input)),
       verifyNativeIdentity: (input) =>
         run(
