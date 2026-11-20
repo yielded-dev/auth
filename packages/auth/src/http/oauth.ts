@@ -16,15 +16,6 @@ import { origin as Origin } from "../internal/origin";
 import { providerCallbackParameters, selectCallback } from "../oauth/callback";
 import { OAuthConnectedProtocol } from "../oauth/OAuthConnectedProtocol";
 import { OAuthProtocol } from "../oauth/OAuthProtocol";
-import {
-  attachConnectedProtocolPreflight,
-  attachProtocolPreflight,
-  hasLazyConnectedProtocol,
-  needsLazyConnectedProtocol,
-  needsLazyProtocol,
-  preflightConnectedProtocol,
-  preflightProtocol,
-} from "../oauth/protocolPreflight";
 import type { ProviderDefinition } from "../oauth/providerDefinition";
 import { OAuthProviderKey } from "../oauth/schema";
 import { OAuthRejected, OAuthUnavailable } from "../oauth/signInErrors";
@@ -190,97 +181,67 @@ export const makeOAuth = <E, R, ResponseR>(
 
       const protocols = new Map(installed);
 
-      const signIn = attachProtocolPreflight(
-        OAuthProtocol.of({
-          prepareAuthorization: (input) =>
-            protocols.get(input.provider)?.prepareAuthorization(input) ?? OAuthRejected.make({}),
-          exchangeVerifiedIdentity: (input) =>
-            protocols.get(input.configuration.provider)?.exchangeVerifiedIdentity(input) ??
-            OAuthUnavailable.make({}),
-          prepareNative: (input) =>
-            protocols.get(input.provider)?.prepareNative?.(input) ?? OAuthRejected.make({}),
-          verifyNativeIdentity: (input) =>
-            protocols.get(input.configuration.provider)?.verifyNativeIdentity?.(input) ??
-            OAuthUnavailable.make({}),
-          ready: (target) => {
-            if (target === undefined) {
-              return Effect.forEach(
-                protocols.values(),
-                (protocol) => protocol.ready?.() ?? Effect.void,
-                { concurrency: 4, discard: true },
-              );
-            }
+      const signIn = OAuthProtocol.of({
+        prepareAuthorization: (input) =>
+          protocols.get(input.provider)?.prepareAuthorization(input) ?? OAuthRejected.make({}),
+        exchangeVerifiedIdentity: (input) =>
+          protocols.get(input.configuration.provider)?.exchangeVerifiedIdentity(input) ??
+          OAuthUnavailable.make({}),
+        prepareNative: (input) =>
+          protocols.get(input.provider)?.prepareNative?.(input) ?? OAuthRejected.make({}),
+        verifyNativeIdentity: (input) =>
+          protocols.get(input.configuration.provider)?.verifyNativeIdentity?.(input) ??
+          OAuthUnavailable.make({}),
+        ready: (target) => {
+          if (target === undefined) {
+            return Effect.forEach(
+              protocols.values(),
+              (protocol) => protocol.ready?.() ?? Effect.void,
+              { concurrency: 4, discard: true },
+            );
+          }
 
-            const protocol = protocols.get(target.provider);
+          const protocol = protocols.get(target.provider);
 
-            if (protocol === undefined) return OAuthUnavailable.make({});
+          if (protocol === undefined) {
+            return "protocol" in target ? OAuthUnavailable.make({}) : Effect.void;
+          }
 
-            return protocol.ready?.(target) ?? Effect.void;
-          },
-        }),
-        {
-          needsLazy: (provider, kind) => {
-            const protocol = protocols.get(provider);
-
-            return protocol !== undefined && needsLazyProtocol(protocol, provider, kind);
-          },
-          preflight: (target) => {
-            const protocol = protocols.get(target.provider);
-
-            return protocol === undefined ? Effect.void : preflightProtocol(protocol, target);
-          },
+          return protocol.ready?.(target) ?? Effect.void;
         },
-      );
+      });
 
-      const connected = attachConnectedProtocolPreflight(
-        OAuthConnectedProtocol.of({
-          prepareAuthorization: (input) =>
-            protocols.get(input.profile.provider)?.connected?.prepareAuthorization(input) ??
-            OAuthUnavailable.make({}),
-          exchangeGrant: (input) =>
-            protocols.get(input.configuration.provider)?.connected?.exchangeGrant(input) ??
-            OAuthUnavailable.make({}),
-          refreshGrant: (input) =>
-            protocols.get(input.context.configuration.provider)?.connected?.refreshGrant(input) ??
-            OAuthUnavailable.make({}),
-          revokeGrant: (input) =>
-            protocols.get(input.context.configuration.provider)?.connected?.revokeGrant(input) ??
-            OAuthUnavailable.make({}),
-          ready: (target) => {
-            if (target === undefined) {
-              return Effect.forEach(
-                protocols.values(),
-                (protocol) => protocol.connected?.ready?.() ?? Effect.void,
-                { concurrency: 4, discard: true },
-              );
-            }
+      const connected = OAuthConnectedProtocol.of({
+        prepareAuthorization: (input) =>
+          protocols.get(input.profile.provider)?.connected?.prepareAuthorization(input) ??
+          OAuthUnavailable.make({}),
+        exchangeGrant: (input) =>
+          protocols.get(input.configuration.provider)?.connected?.exchangeGrant(input) ??
+          OAuthUnavailable.make({}),
+        refreshGrant: (input) =>
+          protocols.get(input.context.configuration.provider)?.connected?.refreshGrant(input) ??
+          OAuthUnavailable.make({}),
+        revokeGrant: (input) =>
+          protocols.get(input.context.configuration.provider)?.connected?.revokeGrant(input) ??
+          OAuthUnavailable.make({}),
+        ready: (target) => {
+          if (target === undefined) {
+            return Effect.forEach(
+              protocols.values(),
+              (protocol) => protocol.connected?.ready?.() ?? Effect.void,
+              { concurrency: 4, discard: true },
+            );
+          }
 
-            const protocol = protocols.get(target.provider)?.connected;
+          const protocol = protocols.get(target.provider)?.connected;
 
-            if (protocol === undefined) return OAuthUnavailable.make({});
+          if (protocol === undefined) {
+            return "protocol" in target ? OAuthUnavailable.make({}) : Effect.void;
+          }
 
-            return protocol.ready?.(target) ?? Effect.void;
-          },
-        }),
-        {
-          hasLazy: Array.from(protocols.values()).some(
-            (protocol) =>
-              protocol.connected !== undefined && hasLazyConnectedProtocol(protocol.connected),
-          ),
-          needsLazy: (provider) => {
-            const protocol = protocols.get(provider)?.connected;
-
-            return protocol !== undefined && needsLazyConnectedProtocol(protocol, provider);
-          },
-          preflight: (target) => {
-            const protocol = protocols.get(target.provider)?.connected;
-
-            return protocol === undefined
-              ? Effect.void
-              : preflightConnectedProtocol(protocol, target);
-          },
+          return protocol.ready?.(target) ?? Effect.void;
         },
-      );
+      });
 
       return Context.make(OAuthProtocol, signIn).pipe(
         Context.add(OAuthConnectedProtocol, connected),

@@ -23,7 +23,6 @@ import { OAuthConnectedPersistence } from "./OAuthConnectedPersistence";
 import { OAuthConnectedProtocol } from "./OAuthConnectedProtocol";
 import { OAuthConnectedTokenProtector } from "./OAuthConnectedTokenProtector";
 import { OAuthConnectedUseAuthority } from "./OAuthConnectedUseAuthority";
-import { preflightConnectedProtocol } from "./protocolPreflight";
 import {
   OAuthConfigurationError,
   OAuthMethodUnsupported,
@@ -281,8 +280,7 @@ export const makeOAuthConnectedAccess = <const Id extends string>(
 
       const { read, claimRefresh, settleRefresh } = yield* OAuthConnectedPersistence;
 
-      const protocol = yield* OAuthConnectedProtocol;
-      const { refreshGrant } = protocol;
+      const { refreshGrant, ready } = yield* OAuthConnectedProtocol;
       const { seal, open } = yield* OAuthConnectedTokenProtector;
       const { randomBytes } = yield* SecureRandom.SecureRandom;
 
@@ -306,7 +304,12 @@ export const makeOAuthConnectedAccess = <const Id extends string>(
       ) {
         // Warm lazy provider metadata before claiming the refresh so a
         // discovery failure never settles a valid grant to ReauthorizationRequired.
-        yield* preflightConnectedProtocol(protocol, grant.context.configuration);
+        if (ready !== undefined) {
+          yield* ready({
+            provider: grant.context.configuration.provider,
+            configurationGeneration: grant.context.configuration.configurationGeneration,
+          });
+        }
 
         const claimId = yield* random(),
           nextTokenVersion = SecurityRevision.make(yield* random());

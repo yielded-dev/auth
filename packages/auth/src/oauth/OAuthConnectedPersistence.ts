@@ -32,12 +32,6 @@ export class OAuthConnectedPersistence extends Context.Service<
       input: M.OAuthConnectedFlow,
       prepare: PrepareOAuthCommit<typeof M.OAuthConnectedIssueDecision.Type, A>,
     ) => Mutation<A>;
-    /** Bound, non-consuming read using the exact same callback predicates as
-     * `consume`, so callers can warm lazy provider discovery for the captured
-     * generation before deleting the flow. */
-    readonly inspect?: (
-      input: M.OAuthConnectedAccess,
-    ) => Effect.Effect<M.OAuthConnectedFlow | undefined, OAuthUnavailable>;
     /** Exact live-flow DELETE with state/binder/issuer/engine-expiry and observed
      * `access.responseMode` predicates against the issued flow's `responseMode`
      * (NULL/omitted reserved strictly for native sign-in). Wrong mode must leave

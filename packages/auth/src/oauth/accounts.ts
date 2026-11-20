@@ -66,7 +66,6 @@ import { OAuthActionEvidence } from "./OAuthActionEvidence";
 import { OAuthLinkTransactionProtector } from "./OAuthLinkTransactionProtector";
 import { OAuthProtocol } from "./OAuthProtocol";
 import { OAuthReturnTargets } from "./OAuthReturnTargets";
-import { needsLazyProtocol, preflightProtocol } from "./protocolPreflight";
 import {
   OAuthConfigurationError,
   OAuthMethodUnsupported,
@@ -198,7 +197,6 @@ export const makeOAuthAccounts = <
         list: listRows,
         capture,
         issue,
-        inspect,
         consume,
         link,
         readCredential,
@@ -207,8 +205,7 @@ export const makeOAuthAccounts = <
       } = yield* OAuthAccountsPersistence;
 
       const { verify: verifyAction } = yield* OAuthActionEvidence;
-      const protocol = yield* OAuthProtocol;
-      const { prepareAuthorization, exchangeVerifiedIdentity } = protocol;
+      const { prepareAuthorization, exchangeVerifiedIdentity, ready } = yield* OAuthProtocol;
       const { resolve: resolveTarget } = yield* OAuthReturnTargets;
       const { seal, open } = yield* OAuthLinkTransactionProtector;
       const { before } = yield* LifecycleHooks;
@@ -567,27 +564,9 @@ export const makeOAuthAccounts = <
         );
 
         // Warm lazy provider metadata before consuming a valid code flow so a
-        // discovery outage or metadata mismatch leaves the flow pending.
-        if (response._tag === "Code" && needsLazyProtocol(protocol, request.provider, "web")) {
-          if (inspect === undefined) return yield* OAuthUnavailable.make({});
-          const pending = yield* inspect(access);
-
-          if (pending === undefined) {
-            if (authenticated === undefined) return yield* AuthenticationRequired.make({});
-
-            return yield* OAuthRejected.make({});
-          }
-          const pendingFlow = yield* snapshotOAuthLinkFlow.effect(pending);
-
-          yield* preflightProtocol(protocol, {
-            provider: pendingFlow.context.provider,
-            protocol: pendingFlow.context.protocol,
-            configurationGeneration: pendingFlow.context.configurationGeneration,
-            issuer: pendingFlow.context.issuer,
-            responseIssuerMode: pendingFlow.context.responseIssuerMode,
-            callbackId: pendingFlow.context.callbackId,
-            redirectUri: pendingFlow.context.redirectUri,
-          });
+        // discovery outage leaves the flow pending.
+        if (response._tag === "Code" && ready !== undefined) {
+          yield* ready({ provider: request.provider, kind: "web" });
         }
 
         const consumed = yield* consume(access, (value, journal) =>
