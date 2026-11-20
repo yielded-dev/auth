@@ -1,229 +1,277 @@
+/**
+ * OAuth 2.1 relying-party client service, authorization transactions, and
+ * single-attempt token exchange and revocation.
+ *
+ * {@link make} and {@link layer} bind a client ID, {@link ClientAuth.Method},
+ * optional separate `revocationAuth`, {@link Discovery.Discovery}, and
+ * `HttpClient` within an owning `Scope`. {@link authorize} generates fresh
+ * `state` and optional PKCE `S256` entropy and delegates to
+ * `client.prepareAuthorization` so the authorization URL and
+ * {@link Transaction} are built from one metadata snapshot.
+ *
+ * **Gotchas**
+ *
+ * `exchange` and `exchangeRaw` are interruptible, single-attempt, and scoped
+ * through the bounded response read. Never automatically retry an ambiguous
+ * token exchange or revocation. `response_mode` is omitted on authorization
+ * URLs for `"query"` (the default for `response_type=code`) and emitted only
+ * for `"form_post"`.
+ *
+ * @stability unstable
+ * @since 4.1.4
+ */
+import * as Clock from "effect/Clock";
+import * as Context from "effect/Context";
+import type * as Digest from "effect/crypto/Digest";
+import * as SecureRandom from "effect/crypto/SecureRandom";
+import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
-import * as Base64 from "effect/encoding/Base64";
+import * as Base64Url from "effect/encoding/Base64Url";
 import type * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
+import * as Layer from "effect/Layer";
+import * as Predicate from "effect/Predicate";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 
+import * as ClientAuth from "./ClientAuth.ts";
+import * as Discovery from "./Discovery.ts";
+import * as Grant from "./Grant.ts";
 import * as Ownership from "./internal/ownership.ts";
 import * as Transport from "./internal/transport.ts";
 import * as V from "./internal/validation.ts";
 import * as OAuthError from "./OAuthError.ts";
+import * as Pkce from "./Pkce.ts";
 
-export const JsonObject = V.JsonObject;
-export type JsonObject = typeof JsonObject.Type;
+/**
+ * Authorization callback delivery mode.
+ *
+ * @stability unstable
+ * @category models
+ * @since 4.1.4
+ */
+export type ResponseMode = "query" | "form_post";
 
-/** HTTP loopback endpoints require an HTTP loopback issuer. Remote issuers
- * cannot downgrade endpoints to HTTP, including through discovery. */
-export const Metadata = Schema.Struct({
+/**
+ * RFC 9207 authorization-response `iss` parameter policy.
+ *
+ * @stability unstable
+ * @category models
+ * @since 4.1.4
+ */
+export type IssuerIdentificationMode = "required" | "optional" | "unsupported";
+
+/**
+ * Schema for a serializable authorization ceremony transaction.
+ *
+ * Uses `Schema.RedactedFromValue`, `DateTimeUtcFromMillis`, and
+ * `DurationFromMillis` so transactions can be sealed directly with `Jwt.encrypt`.
+ *
+ * @stability unstable
+ * @category schemas
+ * @since 4.1.4
+ */
+export const Transaction: Schema.Struct<{
+  readonly issuer: Schema.String;
+  readonly clientId: Schema.String;
+  readonly state: Schema.RedactedFromValue<Schema.String>;
+  readonly redirectUri: Schema.String;
+  readonly responseMode: Schema.Literals<readonly ["query", "form_post"]>;
+  readonly issuerIdentification: Schema.Literals<readonly ["required", "optional", "unsupported"]>;
+  readonly scopes: Schema.$Array<Schema.String>;
+  readonly requestedAt: Schema.DateTimeUtcFromMillis;
+  readonly expiresAt: Schema.DateTimeUtcFromMillis;
+  readonly pkceVerifier: Schema.optionalKey<Schema.RedactedFromValue<Schema.String>>;
+  readonly nonce: Schema.optionalKey<Schema.RedactedFromValue<Schema.String>>;
+  readonly maxAge: Schema.optionalKey<Schema.DurationFromMillis>;
+  readonly resources: Schema.optionalKey<Schema.$Array<Schema.String>>;
+}> = Schema.Struct({
   issuer: V.Issuer,
-  authorization_endpoint: V.ProtocolEndpoint,
-  token_endpoint: V.ProtocolEndpoint,
-  jwks_uri: Schema.optionalKey(V.Endpoint),
-  userinfo_endpoint: Schema.optionalKey(V.Endpoint),
-  revocation_endpoint: Schema.optionalKey(V.ProtocolEndpoint),
-  code_challenge_methods_supported: Schema.optionalKey(
-    Schema.Array(V.text(64)).check(Schema.isMaxLength(64)),
-  ),
-  response_types_supported: Schema.optionalKey(
-    Schema.Array(V.text(64)).check(Schema.isMaxLength(64)),
-  ),
-  grant_types_supported: Schema.optionalKey(
-    Schema.Array(V.text(128)).check(Schema.isMaxLength(64)),
-  ),
-  id_token_signing_alg_values_supported: Schema.optionalKey(
-    Schema.Array(V.text(64)).check(Schema.isMaxLength(64)),
-  ),
-  token_endpoint_auth_methods_supported: Schema.optionalKey(
-    Schema.Array(V.text(64)).check(Schema.isMaxLength(64)),
-  ),
-  revocation_endpoint_auth_methods_supported: Schema.optionalKey(
-    Schema.Array(V.text(64)).check(Schema.isMaxLength(64)),
-  ),
-  authorization_response_iss_parameter_supported: Schema.optionalKey(Schema.Boolean),
-}).check(
-  Schema.makeFilter((metadata) =>
-    [
-      metadata.authorization_endpoint,
-      metadata.token_endpoint,
-      metadata.jwks_uri,
-      metadata.userinfo_endpoint,
-      metadata.revocation_endpoint,
-    ].every(
-      (endpoint) => endpoint === undefined || V.endpointMatchesIssuer(metadata.issuer, endpoint),
-    ),
-  ),
-);
-
-export type Metadata = typeof Metadata.Type;
-
-export const Authentication = Schema.Union([
-  Schema.Struct({ method: Schema.Literal("client_secret_basic"), secret: V.secret(4096) }),
-  Schema.Struct({
-    method: Schema.Literal("client_secret_post"),
-    /** Omit when each token request supplies clientSecret. */
-    secret: Schema.optionalKey(V.secret(4096)),
-  }),
-  Schema.Struct({ method: Schema.Literal("none"), publicClient: Schema.Literal(true) }),
-]);
-
-export type Authentication = typeof Authentication.Type;
-
-/** Uninterpreted private receipt. Inspect provider extensions before calling tokens. */
-export const TokenReceipt = Schema.Struct({
-  status: V.integer(100, 599),
-  contentType: Schema.NullOr(Schema.String.check(Schema.isMaxLength(512))),
-  body: Schema.Redacted(JsonObject, { disallowJsonEncode: true }),
+  clientId: V.text(1024),
+  state: Schema.RedactedFromValue(V.text(256)),
+  redirectUri: V.Callback,
+  responseMode: Schema.Literals(["query", "form_post"]),
+  issuerIdentification: Schema.Literals(["required", "optional", "unsupported"]),
+  scopes: V.Scopes,
+  requestedAt: Schema.DateTimeUtcFromMillis,
+  expiresAt: Schema.DateTimeUtcFromMillis,
+  pkceVerifier: Schema.optionalKey(Pkce.Verifier),
+  nonce: Schema.optionalKey(Schema.RedactedFromValue(V.text(256))),
+  maxAge: Schema.optionalKey(Schema.DurationFromMillis),
+  resources: Schema.optionalKey(V.Resources),
 });
 
-export type TokenReceipt = typeof TokenReceipt.Type;
+/**
+ * A prepared OAuth 2.1 authorization transaction bound to an issuer and client.
+ *
+ * @stability unstable
+ * @category models
+ * @since 4.1.4
+ */
+export type Transaction = typeof Transaction.Type;
 
-export const TokenSet = Schema.Struct({
-  tokenType: Schema.Literal("bearer"),
-  accessToken: V.secret(16384),
-  refreshToken: Schema.optionalKey(V.secret(16384)),
-  idToken: Schema.optionalKey(V.secret(65536)),
-  expiresIn: Schema.optionalKey(Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0))),
-  scope: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(16447))),
-});
-
-export type TokenSet = typeof TokenSet.Type;
-
-export interface RequestOptions {
-  readonly timeoutMs: number;
-  readonly maxResponseBytes?: number;
+/**
+ * Output of {@link Client} `prepareAuthorization`, {@link authorize}, and
+ * `Oidc.authorize`: a redacted authorization URL and its matching
+ * {@link Transaction}.
+ *
+ * @stability unstable
+ * @category models
+ * @since 4.1.4
+ */
+export interface Authorization {
+  readonly url: Redacted.Redacted<string>;
+  readonly transaction: Transaction;
 }
 
-export interface ClientOptions extends RequestOptions {
-  readonly metadata: Metadata;
-  readonly clientId: string;
-  readonly authentication: Authentication;
-  readonly revocationAuthentication?: Authentication;
-}
-
-export interface Parameters {
-  readonly parameters?: Readonly<Record<string, string>>;
-  readonly resources?: ReadonlyArray<string>;
-}
-
-export interface AuthorizationInput extends Parameters {
+/**
+ * Options for building a low-level authorization URL via
+ * `client.authorizationUrl`.
+ *
+ * @stability unstable
+ * @category models
+ * @since 4.1.4
+ */
+export interface AuthorizationUrlOptions {
   readonly redirectUri: string;
   readonly scopes: ReadonlyArray<string>;
-  readonly state: Redacted.Redacted<string>;
-  readonly codeChallenge?: string;
-  readonly nonce?: Redacted.Redacted<string>;
-  readonly maxAgeSeconds?: number;
-  readonly prompt?: "none" | "login" | "consent" | "select_account";
-  readonly loginHint?: string;
-  /** Defaults to query. form_post is required by some issuers when name or
-   * email scopes are requested. */
-  readonly responseMode?: "query" | "form_post";
+  readonly state: string | Redacted.Redacted<string>;
+  readonly codeChallenge?: string | undefined;
+  readonly nonce?: string | Redacted.Redacted<string> | undefined;
+  readonly maxAge?: Duration.Input | undefined;
+  readonly prompt?: "none" | "login" | "consent" | "select_account" | undefined;
+  readonly loginHint?: string | undefined;
+  readonly responseMode?: ResponseMode | undefined;
+  readonly resources?: ReadonlyArray<string> | undefined;
+  readonly parameters?: Readonly<Record<string, string>> | undefined;
 }
 
-export interface CodeGrantInput extends Parameters {
-  readonly code: Redacted.Redacted<string>;
+/**
+ * Options for `client.prepareAuthorization`, accepting caller-supplied `state`,
+ * optional PKCE pair, and optional `nonce`.
+ *
+ * @stability unstable
+ * @category models
+ * @since 4.1.4
+ */
+export interface PrepareAuthorizationOptions {
   readonly redirectUri: string;
-  readonly pkceVerifier?: Redacted.Redacted<string>;
-  /** Used when client_secret_post has no stored secret. */
-  readonly clientSecret?: Redacted.Redacted<string>;
+  readonly scopes: ReadonlyArray<string>;
+  readonly state: string | Redacted.Redacted<string>;
+  readonly pkce?:
+    | {
+        readonly verifier: string | Redacted.Redacted<string>;
+        readonly challenge: string;
+      }
+    | undefined;
+  readonly nonce?: string | Redacted.Redacted<string> | undefined;
+  readonly requireAdvertisedPkce?: boolean | undefined;
+  readonly maxAge?: Duration.Input | undefined;
+  readonly lifetime?: Duration.Input | undefined;
+  readonly issuerIdentification?: IssuerIdentificationMode | undefined;
+  readonly prompt?: "none" | "login" | "consent" | "select_account" | undefined;
+  readonly loginHint?: string | undefined;
+  readonly responseMode?: ResponseMode | undefined;
+  readonly resources?: ReadonlyArray<string> | undefined;
+  readonly parameters?: Readonly<Record<string, string>> | undefined;
 }
 
-export interface RefreshGrantInput extends Parameters {
-  readonly refreshToken: Redacted.Redacted<string>;
-  readonly scopes?: ReadonlyArray<string>;
-  /** Used when client_secret_post has no stored secret. */
-  readonly clientSecret?: Redacted.Redacted<string>;
+/**
+ * Options for {@link authorize}.
+ *
+ * @stability unstable
+ * @category models
+ * @since 4.1.4
+ */
+export interface AuthorizeOptions {
+  readonly redirectUri: string;
+  readonly scopes: ReadonlyArray<string>;
+  readonly pkce?: boolean | undefined;
+  readonly requireAdvertisedPkce?: boolean | undefined;
+  readonly maxAge?: Duration.Input | undefined;
+  readonly lifetime?: Duration.Input | undefined;
+  readonly issuerIdentification?: IssuerIdentificationMode | undefined;
+  readonly prompt?: "none" | "login" | "consent" | "select_account" | undefined;
+  readonly loginHint?: string | undefined;
+  readonly responseMode?: ResponseMode | undefined;
+  readonly resources?: ReadonlyArray<string> | undefined;
+  readonly parameters?: Readonly<Record<string, string>> | undefined;
 }
 
-export interface RevocationInput {
-  readonly token: Redacted.Redacted<string>;
-  readonly tokenTypeHint: "access_token" | "refresh_token";
-  /** Used when client_secret_post has no stored secret. */
-  readonly clientSecret?: Redacted.Redacted<string>;
+/**
+ * Configuration for {@link make} and {@link layer}.
+ *
+ * @stability unstable
+ * @category models
+ * @since 4.1.4
+ */
+export interface ClientOptions<out R = never, out RR = never> {
+  readonly clientId: string;
+  readonly clientAuth: ClientAuth.Method<R>;
+  readonly revocationAuth?: ClientAuth.Method<RR> | undefined;
+  readonly allowUnauthenticatedClientCredentials?: boolean | undefined;
+  readonly timeout?: Duration.Input | undefined;
+  readonly maxResponseBytes?: number | undefined;
 }
 
-export interface Client {
-  readonly metadata: Metadata;
-  readonly authorizationUrl: (
-    input: AuthorizationInput,
-  ) => Effect.Effect<Redacted.Redacted<string>, OAuthError.OAuthError>;
-  readonly codeGrant: (input: CodeGrantInput) => Effect.Effect<TokenReceipt, OAuthError.OAuthError>;
-  readonly refreshGrant: (
-    input: RefreshGrantInput,
-  ) => Effect.Effect<TokenReceipt, OAuthError.OAuthError>;
-  readonly revoke: (input: RevocationInput) => Effect.Effect<void, OAuthError.OAuthError>;
-}
+/**
+ * Scoped OAuth 2.1 client service bound to `Discovery`, `HttpClient`, and
+ * client authentication methods captured at construction.
+ *
+ * @stability unstable
+ * @category services
+ * @since 4.1.4
+ */
+export class Client extends Context.Service<
+  Client,
+  {
+    readonly clientId: string;
+    readonly clientAuthName: string;
+    readonly authorizationUrl: (
+      options: AuthorizationUrlOptions,
+    ) => Effect.Effect<Redacted.Redacted<string>, OAuthError.OAuthError>;
+    readonly prepareAuthorization: (
+      options: PrepareAuthorizationOptions,
+    ) => Effect.Effect<Authorization, OAuthError.OAuthError>;
+    readonly exchangeRaw: (
+      grant: Grant.Grant,
+    ) => Effect.Effect<Grant.TokenReceipt, OAuthError.OAuthError>;
+    readonly exchange: (grant: Grant.Grant) => Effect.Effect<Grant.TokenSet, OAuthError.OAuthError>;
+    readonly revoke: (options: {
+      readonly token: string | Redacted.Redacted<string>;
+      readonly tokenTypeHint?: "access_token" | "refresh_token" | undefined;
+    }) => Effect.Effect<void, OAuthError.OAuthError>;
+  }
+>()("effect/oauth/OAuth/Client") {}
 
-const ClientOptionsSchema = Schema.Struct({
-  metadata: Metadata,
-  clientId: V.text(1024),
-  authentication: Authentication,
-  ...V.RequestOptions.fields,
-  revocationAuthentication: Schema.optionalKey(Authentication),
-});
+const utf8Encoder = new TextEncoder();
+const maxTokenRequestBytes = 131072;
+const maxAuthorizationUrlLength = 16384;
+const defaultMaxResponseBytes = 1048576;
 
-const additional = {
-  parameters: Schema.optionalKey(V.Parameters),
-  resources: Schema.optionalKey(V.Resources),
-};
+const forbiddenAuthHeaders: ReadonlySet<string> = new Set([
+  "cookie",
+  "host",
+  "content-length",
+  "content-type",
+  "transfer-encoding",
+  "connection",
+  "upgrade",
+  "trailer",
+  "te",
+  "traceparent",
+  "tracestate",
+  "baggage",
+]);
 
-const Authorization = Schema.Struct({
-  ...additional,
-  redirectUri: V.Callback,
-  scopes: V.Scopes,
-  state: V.secret(256),
-  codeChallenge: Schema.optionalKey(V.Challenge),
-  nonce: Schema.optionalKey(V.secret(256)),
-  maxAgeSeconds: Schema.optionalKey(V.integer(0, 86400)),
-  prompt: Schema.optionalKey(Schema.Literals(["none", "login", "consent", "select_account"])),
-  loginHint: Schema.optionalKey(V.text(1024)),
-  responseMode: Schema.optionalKey(Schema.Literals(["query", "form_post"])),
-});
+const headerNamePattern = /^[!#$%&'*+.^_`|~0-9A-Za-z-]{1,64}$/;
 
-const requestSecret = Schema.optionalKey(V.secret(8192));
-
-const CodeGrant = Schema.Struct({
-  ...additional,
-  code: V.secret(16384),
-  redirectUri: V.Callback,
-  pkceVerifier: Schema.optionalKey(V.Verifier),
-  clientSecret: requestSecret,
-});
-
-const RefreshGrant = Schema.Struct({
-  ...additional,
-  refreshToken: V.secret(16384),
-  scopes: Schema.optionalKey(V.Scopes),
-  clientSecret: requestSecret,
-});
-
-const Revocation = Schema.Struct({
-  token: V.secret(16384),
-  tokenTypeHint: Schema.Literals(["access_token", "refresh_token"]),
-  clientSecret: requestSecret,
-});
-
-const ExpiresIn = Schema.Union([
-  Schema.Finite,
-  Schema.String.check(Schema.isPattern(/^(?:0|[1-9][0-9]*)(?:\.[0-9]+)?$/u)).pipe(
-    Schema.decodeTo(Schema.FiniteFromString),
-  ),
-]).check(Schema.isGreaterThanOrEqualTo(0));
-
-const RawToken = Schema.Struct({
-  access_token: V.text(16384),
-  token_type: Schema.String.check(Schema.isPattern(/^[Bb][Ee][Aa][Rr][Ee][Rr]$/)),
-  refresh_token: Schema.optionalKey(Schema.NullOr(V.text(16384))),
-  id_token: Schema.optionalKey(V.text(65536)),
-  expires_in: Schema.optionalKey(ExpiresIn),
-  scope: Schema.optionalKey(
-    Schema.Union([
-      Schema.String.check(Schema.isMaxLength(16447)),
-      Schema.Array(Schema.String.check(Schema.isMaxLength(1024))).check(Schema.isMaxLength(128)),
-    ]),
-  ),
-});
+const PromptSchema = Schema.Literals(["none", "login", "consent", "select_account"]);
+const ResponseModeSchema = Schema.Literals(["query", "form_post"]);
+const IssuerIdentificationSchema = Schema.Literals(["required", "optional", "unsupported"]);
+const TokenTypeHintSchema = Schema.Literals(["access_token", "refresh_token"]);
 
 const Terminal = Schema.Struct({
   error: V.text(128),
@@ -231,16 +279,13 @@ const Terminal = Schema.Struct({
   error_uri: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(2048))),
 });
 
-const successFields = [
-  "access_token",
-  "refresh_token",
-  "id_token",
-  "token_type",
-  "scope",
-  "expires_in",
-  "refresh_expires_in",
-  "refresh_token_expires_in",
-];
+const clientAuthFailed = (description: string, cause?: unknown): OAuthError.OAuthError =>
+  new OAuthError.OAuthError({
+    reason: new OAuthError.ClientAuthFailed({
+      description,
+      ...(cause === undefined ? {} : { cause }),
+    }),
+  });
 
 const invalidResponse = (
   endpoint: OAuthError.InvalidResponse["endpoint"],
@@ -251,150 +296,258 @@ const invalidResponse = (
     reason: new OAuthError.InvalidResponse({ endpoint, status, description }),
   });
 
-const clientAuthFailed = (description: string, cause?: unknown): OAuthError.OAuthError =>
-  new OAuthError.OAuthError({
-    reason: new OAuthError.ClientAuthFailed({ description, cause }),
-  });
-
-/** Parse once provider-specific receipt checks have succeeded. expires_in accepts
- * finite nonnegative numbers and whole decimal strings (for example "60.5").
- * Whitespace, exponent/prefix syntax and nonfinite values are rejected. Raw
- * receipt extensions stay untouched. A null refresh token is omitted, and an
- * array scope is joined with spaces. No request, retry or claim verification. */
-export const tokens = Effect.fnUntraced(function* (
-  input: TokenReceipt,
-): Effect.fn.Return<TokenSet, OAuthError.OAuthError> {
-  const receipt = yield* V.decode(TokenReceipt, input, () =>
-    V.invalidArgument("Invalid OAuth token receipt"),
+const decodeNonEmptySecret = (
+  value: string | Redacted.Redacted<string>,
+  maxLength: number,
+  name: string,
+): Effect.Effect<string, OAuthError.OAuthError> =>
+  V.revealString(
+    value,
+    () => V.invalidArgument(`${name} is unavailable`),
+    () => V.invalidArgument(`Invalid ${name}`),
+  ).pipe(
+    Effect.filterOrFail(
+      (item) => item.length > 0 && item.length <= maxLength,
+      () => V.invalidArgument(`Invalid ${name}`),
+    ),
   );
 
-  if (!Transport.isJson(receipt.contentType))
-    return yield* invalidResponse(
-      "token",
-      receipt.status,
-      "Expected application/json token receipt",
-    );
+const buildAuthorizationUrl = Effect.fnUntraced(function* (
+  authorizationEndpoint: string,
+  clientId: string,
+  input: {
+    readonly redirectUri: string;
+    readonly scopes: ReadonlyArray<string>;
+    readonly state: string;
+    readonly codeChallenge?: string | undefined;
+    readonly nonce?: string | undefined;
+    readonly maxAgeSeconds?: number | undefined;
+    readonly prompt?: "none" | "login" | "consent" | "select_account" | undefined;
+    readonly loginHint?: string | undefined;
+    readonly responseMode?: ResponseMode | undefined;
+    readonly resources?: ReadonlyArray<string> | undefined;
+    readonly parameters?: Readonly<Record<string, string>> | undefined;
+  },
+): Effect.fn.Return<Redacted.Redacted<string>, OAuthError.OAuthError> {
+  const url = new URL(authorizationEndpoint);
+  const body = new URLSearchParams(input.parameters);
 
-  const raw = yield* V.reveal(receipt.body, () =>
-    V.invalidArgument("Token receipt body is unavailable"),
-  );
+  for (const resource of input.resources ?? []) body.append("resource", resource);
 
-  if (Object.hasOwn(raw, "error")) {
-    if (successFields.some((key) => Object.hasOwn(raw, key)))
-      return yield* invalidResponse(
-        "token",
-        receipt.status,
-        "Token error response must not include token fields",
-      );
-
-    const terminal = yield* V.decode(Terminal, raw, () =>
-      invalidResponse("token", receipt.status, "Invalid OAuth token error payload"),
-    );
-
-    if (receipt.status >= 400 && receipt.status < 500) {
-      return yield* new OAuthError.OAuthError({
-        reason: new OAuthError.EndpointError({
-          endpoint: "token",
-          status: receipt.status,
-          ...V.normalizeOAuthErrorCode(terminal.error),
-        }),
-      });
-    }
-
-    return yield* invalidResponse(
-      "token",
-      receipt.status,
-      "Token error payload returned with non-4xx HTTP status",
-    );
+  body.set("client_id", clientId);
+  body.set("redirect_uri", input.redirectUri);
+  body.set("response_type", "code");
+  if (input.responseMode === "form_post") body.set("response_mode", "form_post");
+  if (input.scopes.length > 0) body.set("scope", input.scopes.join(" "));
+  body.set("state", input.state);
+  if (input.codeChallenge !== undefined) {
+    body.set("code_challenge", input.codeChallenge);
+    body.set("code_challenge_method", "S256");
   }
-  if (
-    receipt.status !== 200 ||
-    Object.hasOwn(raw, "error_description") ||
-    Object.hasOwn(raw, "error_uri")
-  )
-    return yield* invalidResponse("token", receipt.status, "Unexpected OAuth token response");
+  if (input.nonce !== undefined) body.set("nonce", input.nonce);
+  if (input.maxAgeSeconds !== undefined) body.set("max_age", String(input.maxAgeSeconds));
+  if (input.prompt !== undefined) body.set("prompt", input.prompt);
+  if (input.loginHint !== undefined) body.set("login_hint", input.loginHint);
 
-  const value = yield* V.decode(RawToken, raw, () =>
-    invalidResponse("token", receipt.status, "Invalid OAuth token response payload"),
+  for (const [key, item] of body) url.searchParams.append(key, item);
+  if (url.href.length > maxAuthorizationUrlLength) {
+    return yield* V.invalidArgument("Authorization URL exceeds maximum length");
+  }
+
+  return Redacted.make(url.href);
+});
+
+const parseSharedAuthOptions = Effect.fnUntraced(function* (
+  options: AuthorizationUrlOptions | PrepareAuthorizationOptions,
+) {
+  if (!Predicate.isObject(options)) {
+    return yield* V.invalidArgument("Invalid authorization parameters");
+  }
+
+  const redirectUri = yield* V.configuration(
+    V.Callback,
+    options.redirectUri,
+    "Invalid redirectUri",
   );
 
-  const scope: string | undefined =
-    typeof value.scope === "string"
-      ? value.scope
-      : value.scope === undefined
-        ? undefined
-        : value.scope.join(" ");
+  const scopes = yield* V.configuration(V.Scopes, options.scopes, "Invalid authorization scopes");
+  const state = yield* decodeNonEmptySecret(options.state, 256, "state");
 
-  if (scope !== undefined && scope.length > 16447)
-    return yield* invalidResponse("token", receipt.status, "Token scope exceeds maximum length");
+  const nonce =
+    options.nonce === undefined
+      ? undefined
+      : yield* decodeNonEmptySecret(options.nonce, 256, "nonce");
+
+  const maxAgeSeconds =
+    options.maxAge === undefined ? undefined : yield* V.wholeSeconds("maxAge", options.maxAge);
+
+  const prompt =
+    options.prompt === undefined
+      ? undefined
+      : yield* V.configuration(PromptSchema, options.prompt, "Invalid prompt");
+
+  const loginHint =
+    options.loginHint === undefined
+      ? undefined
+      : yield* V.configuration(V.text(1024), options.loginHint, "Invalid loginHint");
+
+  const responseMode =
+    options.responseMode === undefined
+      ? undefined
+      : yield* V.configuration(ResponseModeSchema, options.responseMode, "Invalid responseMode");
+
+  const resources =
+    options.resources === undefined
+      ? undefined
+      : yield* V.configuration(V.Resources, options.resources, "Invalid authorization resources");
+
+  const parameters =
+    options.parameters === undefined
+      ? undefined
+      : yield* V.configuration(
+          V.Parameters,
+          options.parameters,
+          "Invalid authorization parameters",
+        );
 
   return {
-    tokenType: "bearer",
-    accessToken: Redacted.make(value.access_token),
-    ...(value.refresh_token === undefined || value.refresh_token === null
-      ? {}
-      : { refreshToken: Redacted.make(value.refresh_token) }),
-    ...(value.id_token === undefined ? {} : { idToken: Redacted.make(value.id_token) }),
-    ...(value.expires_in === undefined ? {} : { expiresIn: value.expires_in }),
-    ...(scope === undefined ? {} : { scope }),
+    redirectUri,
+    scopes,
+    state,
+    nonce,
+    maxAgeSeconds,
+    prompt,
+    loginHint,
+    responseMode,
+    resources,
+    parameters,
   };
 });
 
-const parameters = (input: Parameters) => {
-  const values = new URLSearchParams(input.parameters);
-
-  for (const resource of input.resources ?? []) values.append("resource", resource);
-
-  return values;
-};
-
-// RFC6749 Appendix B: encode client credentials before joining with the colon.
-// Adapted from oauth4webapi 3.8.8 src/index.ts::formUrlEncode (MIT, Filip Skokan).
-// Exact source commit and license: ../THIRD_PARTY_NOTICES.md.
-const basicComponent = (value: string) =>
-  encodeURIComponent(value).replace(/[-_.!~*'()]|%20/gu, (part) =>
-    part === "%20" ? "+" : `%${part.charCodeAt(0).toString(16).toUpperCase()}`,
-  );
-
-const authenticated = Effect.fnUntraced(function* (
-  url: string,
+const assembleAuthenticatedRequest = Effect.fnUntraced(function* (
+  endpointUrl: string,
   clientId: string,
-  authentication: Authentication,
-  body: URLSearchParams,
-  clientSecret?: Redacted.Redacted<string>,
-) {
-  let request = HttpClientRequest.post(url).pipe(HttpClientRequest.acceptJson);
+  applied: ClientAuth.Applied,
+  baseParams: ReadonlyArray<readonly [string, string]>,
+  forbidGrantTypeInAuth: boolean,
+): Effect.fn.Return<HttpClientRequest.HttpClientRequest, OAuthError.OAuthError> {
+  if (
+    !Predicate.isObject(applied) ||
+    !Predicate.isObject(applied.headers) ||
+    !Array.isArray(applied.form)
+  ) {
+    return yield* clientAuthFailed("Client authentication method returned an invalid result");
+  }
 
-  if (authentication.method === "client_secret_basic") {
-    const secret = yield* V.reveal(authentication.secret, () =>
-      clientAuthFailed("Client secret is unavailable"),
+  const headers: Record<string, string> = {};
+  const seenHeaders = new Set<string>();
+  let hasBasicAuthorization = false;
+
+  for (const name of Object.keys(applied.headers)) {
+    const lower = name.toLowerCase();
+
+    if (
+      !headerNamePattern.test(name) ||
+      forbiddenAuthHeaders.has(lower) ||
+      seenHeaders.has(lower)
+    ) {
+      return yield* clientAuthFailed("Client authentication method emitted a disallowed header");
+    }
+
+    const descriptor = Object.getOwnPropertyDescriptor(applied.headers, name);
+
+    if (descriptor === undefined || !("value" in descriptor)) {
+      return yield* clientAuthFailed("Client authentication method header is unreadable");
+    }
+
+    const headerValue = yield* V.revealString(
+      descriptor.value as string | Redacted.Redacted<string>,
+      () => clientAuthFailed("Client authentication header credential is unavailable"),
+      () => clientAuthFailed("Client authentication header value must be a string"),
     );
 
-    const credential = yield* Effect.try({
-      try: () => Base64.encode(`${basicComponent(clientId)}:${basicComponent(secret)}`),
-      catch: (cause) => clientAuthFailed("Could not encode HTTP Basic client credentials", cause),
-    });
-
-    request = HttpClientRequest.setHeader(request, "authorization", `Basic ${credential}`);
-  } else {
-    body.set("client_id", clientId);
-    if (authentication.method === "client_secret_post") {
-      const secret = authentication.secret ?? clientSecret;
-
-      if (secret === undefined)
-        return yield* clientAuthFailed("Missing client secret for client_secret_post");
-      body.set(
-        "client_secret",
-        yield* V.reveal(secret, () => clientAuthFailed("Client secret is unavailable")),
+    if (/[\r\n]/u.test(headerValue)) {
+      return yield* clientAuthFailed(
+        "Client authentication header value contains control characters",
       );
-      if (authentication.secret === undefined) Redacted.wipeUnsafe(secret);
     }
+
+    seenHeaders.add(lower);
+    if (lower === "authorization" && /^\s*Basic\s+/i.test(headerValue)) {
+      hasBasicAuthorization = true;
+    }
+
+    Object.defineProperty(headers, name, {
+      value: headerValue,
+      enumerable: true,
+      configurable: true,
+      writable: true,
+    });
+  }
+
+  const body = new URLSearchParams();
+  const reservedBaseKeys = new Set<string>();
+
+  for (const [key, value] of baseParams) {
+    reservedBaseKeys.add(key.toLowerCase());
+    body.append(key, value);
+  }
+
+  let hasClientIdInForm = false;
+
+  for (const entry of applied.form) {
+    if (!Array.isArray(entry) || entry.length !== 2) {
+      return yield* clientAuthFailed("Client authentication method emitted an invalid form field");
+    }
+
+    const key: unknown = entry[0];
+    const value: unknown = entry[1];
+
+    if (
+      typeof key !== "string" ||
+      key.length === 0 ||
+      key.length > 256 ||
+      // oxlint-disable-next-line no-control-regex -- Reject control characters in auth form field names.
+      /[\r\n\u0000-\u001f\u007f]/u.test(key)
+    ) {
+      return yield* clientAuthFailed("Client authentication method emitted an invalid form field");
+    }
+
+    const lower = key.toLowerCase();
+
+    if ((forbidGrantTypeInAuth && lower === "grant_type") || reservedBaseKeys.has(lower)) {
+      return yield* clientAuthFailed(
+        forbidGrantTypeInAuth
+          ? "Client authentication method cannot override grant parameters"
+          : "Client authentication method cannot override revocation parameters",
+      );
+    }
+
+    const revealed = yield* V.revealString(
+      value as string | Redacted.Redacted<string>,
+      () => clientAuthFailed("Client authentication form credential is unavailable"),
+      () => clientAuthFailed("Client authentication form value must be a string"),
+    );
+
+    if (lower === "client_id") hasClientIdInForm = true;
+    body.append(key, revealed);
+  }
+
+  if (!hasBasicAuthorization && !hasClientIdInForm) {
+    body.append("client_id", clientId);
   }
 
   const encoded = body.toString();
 
-  if (new TextEncoder().encode(encoded).length > 131072)
+  if (utf8Encoder.encode(encoded).length > maxTokenRequestBytes) {
     return yield* V.invalidArgument("Encoded token request body exceeds maximum size");
+  }
+
+  let request = HttpClientRequest.post(endpointUrl).pipe(HttpClientRequest.acceptJson);
+
+  for (const [name, value] of Object.entries(headers)) {
+    request = HttpClientRequest.setHeader(request, name, value);
+  }
 
   return HttpClientRequest.bodyText(
     request,
@@ -403,163 +556,379 @@ const authenticated = Effect.fnUntraced(function* (
   );
 });
 
-/** One installed client, exact endpoints, private credentials and owning Scope.
- * Supply an HttpClient without retry/redirect/cookie middleware. Fetch injection
- * active at construction is captured. Owner closure cancels and joins active
- * operations, then rejects their results as unavailable; caller interruption
- * cancels and joins its operation without closing the client. Unexpected
- * cleanup failures remain observable in the operation's Cause. */
-export const make = Effect.fnUntraced(function* (
-  input: ClientOptions,
-): Effect.fn.Return<Client, OAuthError.OAuthError, HttpClient.HttpClient | Scope.Scope> {
-  const options = yield* V.configuration(
-    ClientOptionsSchema,
-    input,
-    "Invalid OAuth client options",
+const validateMetadataEndpoints = Effect.fnUntraced(function* (
+  metadata: Discovery.Metadata,
+  requiredEndpoint: "authorization" | "token" | "revocation",
+): Effect.fn.Return<{ readonly issuer: string; readonly endpoint: string }, OAuthError.OAuthError> {
+  if (!Predicate.isObject(metadata)) {
+    return yield* V.invalidArgument("Discovery metadata is invalid");
+  }
+
+  const issuer = yield* V.decode(V.Issuer, metadata.issuer, () =>
+    V.invalidArgument("Discovery metadata issuer is invalid"),
   );
 
-  const authentication = yield* detachAuthentication(options.authentication);
+  const rawEndpoint =
+    requiredEndpoint === "authorization"
+      ? metadata.authorization_endpoint
+      : requiredEndpoint === "token"
+        ? metadata.token_endpoint
+        : metadata.revocation_endpoint;
 
-  const revocationAuthentication =
-    options.revocationAuthentication === undefined
-      ? authentication
-      : yield* detachAuthentication(options.revocationAuthentication);
+  if (rawEndpoint === undefined) {
+    return yield* V.invalidArgument(
+      `Discovery metadata does not include ${requiredEndpoint}_endpoint`,
+    );
+  }
 
-  const metadata = V.freeze(options.metadata);
+  const endpoint = yield* V.decode(V.ProtocolEndpoint, rawEndpoint, () =>
+    V.invalidArgument(`Discovery metadata ${requiredEndpoint}_endpoint is invalid`),
+  );
 
-  const supported =
-    metadata.token_endpoint_auth_methods_supported ??
-    (metadata.jwks_uri === undefined ? undefined : ["client_secret_basic"]);
+  if (!V.endpointMatchesIssuer(issuer, endpoint)) {
+    return yield* V.invalidArgument(
+      `Discovery metadata ${requiredEndpoint}_endpoint scheme does not match issuer`,
+    );
+  }
 
-  const revokeSupported =
-    metadata.revocation_endpoint_auth_methods_supported ??
-    (metadata.jwks_uri === undefined ? undefined : ["client_secret_basic"]);
+  return { issuer, endpoint };
+});
+
+/**
+ * Builds a scoped OAuth 2.1 {@link Client} service.
+ *
+ * Options are validated eagerly with zero network I/O during construction.
+ * Supply an `HttpClient` without retry, redirect, or cookie middleware.
+ * Closing the owning `Scope` cancels and joins active operations and rejects
+ * later calls with `TransportFailed`.
+ *
+ * @stability unstable
+ * @category constructors
+ * @since 4.1.4
+ */
+export const make: <R = never, RR = never>(
+  options: ClientOptions<R, RR>,
+) => Effect.Effect<
+  Client["Service"],
+  OAuthError.OAuthError,
+  Discovery.Discovery | HttpClient.HttpClient | Scope.Scope | R | RR
+> = Effect.fnUntraced(function* <R = never, RR = never>(
+  options: ClientOptions<R, RR>,
+): Effect.fn.Return<
+  Client["Service"],
+  OAuthError.OAuthError,
+  Discovery.Discovery | HttpClient.HttpClient | Scope.Scope | R | RR
+> {
+  if (!Predicate.isObject(options)) {
+    return yield* V.invalidArgument("Invalid OAuth client options");
+  }
+
+  const clientId = yield* V.configuration(V.text(1024), options.clientId, "Invalid OAuth clientId");
+
+  if (!ClientAuth.isMethod(options.clientAuth)) {
+    return yield* V.invalidArgument("Invalid clientAuth method");
+  }
+
+  const clientAuthName = yield* V.configuration(
+    V.text(64),
+    options.clientAuth.name,
+    "Invalid clientAuth method name",
+  );
+
+  const clientAuth = options.clientAuth;
+
+  let revocationAuth: ClientAuth.Method<R | RR> = clientAuth;
+
+  if (options.revocationAuth !== undefined) {
+    if (!ClientAuth.isMethod(options.revocationAuth)) {
+      return yield* V.invalidArgument("Invalid revocationAuth method");
+    }
+    yield* V.configuration(
+      V.text(64),
+      options.revocationAuth.name,
+      "Invalid revocationAuth method name",
+    );
+    revocationAuth = options.revocationAuth;
+  }
 
   if (
-    (supported !== undefined && !supported.includes(authentication.method)) ||
-    (options.revocationAuthentication !== undefined &&
-      metadata.revocation_endpoint !== undefined &&
-      revokeSupported !== undefined &&
-      !revokeSupported.includes(revocationAuthentication.method))
-  )
-    return yield* V.invalidArgument("Client authentication method is not supported by metadata");
-  const { available, use } = yield* Ownership.make("token");
-  const http = yield* Transport.capture;
+    options.allowUnauthenticatedClientCredentials !== undefined &&
+    typeof options.allowUnauthenticatedClientCredentials !== "boolean"
+  ) {
+    return yield* V.invalidArgument("allowUnauthenticatedClientCredentials must be a boolean");
+  }
 
-  yield* Effect.addFinalizer(() =>
-    Effect.sync(() => {
-      if (authentication.method !== "none" && authentication.secret !== undefined)
-        Redacted.wipeUnsafe(authentication.secret);
-      if (
-        revocationAuthentication.method !== "none" &&
-        revocationAuthentication.secret !== undefined
-      )
-        Redacted.wipeUnsafe(revocationAuthentication.secret);
-    }),
+  const allowUnauthenticatedClientCredentials =
+    options.allowUnauthenticatedClientCredentials ?? false;
+
+  const timeoutMs = yield* V.positiveFiniteMillis("timeout", options.timeout ?? "10 seconds");
+
+  const maxResponseBytes = yield* V.positiveInteger(
+    "maxResponseBytes",
+    options.maxResponseBytes ?? defaultMaxResponseBytes,
   );
 
-  const send = Effect.fnUntraced(function* (
-    body: URLSearchParams,
-    clientSecret?: Redacted.Redacted<string>,
-  ) {
-    yield* available;
-
-    const request = yield* authenticated(
-      new URL(metadata.token_endpoint).href,
-      options.clientId,
-      authentication,
-      body,
-      clientSecret,
+  if (maxResponseBytes > defaultMaxResponseBytes) {
+    return yield* V.invalidArgument(
+      `maxResponseBytes must not exceed ${defaultMaxResponseBytes} bytes`,
     );
+  }
 
-    return yield* Transport.json(
-      yield* Transport.request(http, request, options, "token"),
-      "token",
-    );
-  });
+  const requestLimits: Transport.Options = { timeoutMs, maxResponseBytes };
+  const discovery = yield* Discovery.Discovery;
+  const http = yield* Transport.capture;
+  const authContext = yield* Effect.context<R | RR>();
+  const tokenOwnership = yield* Ownership.make("token");
+  const revocationOwnership = yield* Ownership.make("revocation");
 
-  const authorizationUrl = Effect.fnUntraced(function* (input: AuthorizationInput) {
-    yield* available;
-    const value = yield* V.configuration(Authorization, input, "Invalid authorization parameters");
-    const url = new URL(metadata.authorization_endpoint);
-    const body = parameters(value);
+  const authorizationUrl = Effect.fnUntraced(function* (
+    input: AuthorizationUrlOptions,
+  ): Effect.fn.Return<Redacted.Redacted<string>, OAuthError.OAuthError> {
+    yield* tokenOwnership.available;
 
-    body.set("client_id", options.clientId);
-    body.set("redirect_uri", value.redirectUri);
-    body.set("response_type", "code");
-    body.set("response_mode", value.responseMode === "form_post" ? "form_post" : "query");
-    if (value.scopes.length > 0) body.set("scope", value.scopes.join(" "));
-    body.set("state", yield* V.reveal(value.state));
-    if (value.codeChallenge !== undefined) {
-      body.set("code_challenge", value.codeChallenge);
-      body.set("code_challenge_method", "S256");
+    const shared = yield* parseSharedAuthOptions(input);
+
+    const codeChallenge =
+      input.codeChallenge === undefined
+        ? undefined
+        : yield* V.configuration(V.Challenge, input.codeChallenge, "Invalid codeChallenge");
+
+    const metadata = yield* discovery.resolve;
+    const { endpoint } = yield* validateMetadataEndpoints(metadata, "authorization");
+
+    return yield* buildAuthorizationUrl(endpoint, clientId, {
+      ...shared,
+      codeChallenge,
+    });
+  }, tokenOwnership.use);
+
+  const prepareAuthorization = Effect.fnUntraced(function* (
+    input: PrepareAuthorizationOptions,
+  ): Effect.fn.Return<Authorization, OAuthError.OAuthError> {
+    yield* tokenOwnership.available;
+
+    const shared = yield* parseSharedAuthOptions(input);
+
+    if (
+      input.requireAdvertisedPkce !== undefined &&
+      typeof input.requireAdvertisedPkce !== "boolean"
+    ) {
+      return yield* V.invalidArgument("requireAdvertisedPkce must be a boolean");
     }
-    if (value.nonce !== undefined) body.set("nonce", yield* V.reveal(value.nonce));
-    if (value.maxAgeSeconds !== undefined) body.set("max_age", String(value.maxAgeSeconds));
-    if (value.prompt !== undefined) body.set("prompt", value.prompt);
-    if (value.loginHint !== undefined) body.set("login_hint", value.loginHint);
-    for (const [key, item] of body) url.searchParams.append(key, item);
-    if (url.href.length > 16384)
-      return yield* V.invalidArgument("Authorization URL exceeds maximum length");
 
-    return Redacted.make(url.href);
-  }, use);
+    const requireAdvertisedPkce = input.requireAdvertisedPkce ?? false;
 
-  const codeGrant = Effect.fnUntraced(function* (input: CodeGrantInput) {
-    yield* available;
+    const requestedIssuerIdentification =
+      input.issuerIdentification === undefined
+        ? undefined
+        : yield* V.configuration(
+            IssuerIdentificationSchema,
+            input.issuerIdentification,
+            "Invalid issuerIdentification",
+          );
 
-    const value = yield* V.configuration(
-      CodeGrant,
-      input,
-      "Invalid authorization code grant input",
-    );
+    const lifetimeMs = yield* V.positiveFiniteMillis("lifetime", input.lifetime ?? "10 minutes");
 
-    const body = parameters(value);
+    let pkceVerifier: string | undefined;
+    let codeChallenge: string | undefined;
 
-    body.set("grant_type", "authorization_code");
-    body.set("code", yield* V.reveal(value.code));
-    if (value.pkceVerifier !== undefined)
-      body.set("code_verifier", yield* V.reveal(value.pkceVerifier));
-    body.set("redirect_uri", value.redirectUri);
+    if (input.pkce === undefined) {
+      if (clientAuthName === "none") {
+        return yield* V.invalidArgument("Public clients require PKCE");
+      }
+    } else {
+      if (!Predicate.isObject(input.pkce)) {
+        return yield* V.invalidArgument("Invalid PKCE pair");
+      }
 
-    return yield* send(body, value.clientSecret);
-  }, use);
+      const rawVerifier = yield* V.revealString(
+        input.pkce.verifier,
+        () => V.invalidArgument("PKCE verifier is unavailable"),
+        () => V.invalidArgument("Invalid PKCE verifier"),
+      );
 
-  const refreshGrant = Effect.fnUntraced(function* (input: RefreshGrantInput) {
-    yield* available;
-    const value = yield* V.configuration(RefreshGrant, input, "Invalid refresh token grant input");
-    const body = parameters(value);
+      yield* V.configuration(V.Verifier, Redacted.make(rawVerifier), "Invalid PKCE verifier");
+      codeChallenge = yield* V.configuration(
+        V.Challenge,
+        input.pkce.challenge,
+        "Invalid PKCE challenge",
+      );
+      pkceVerifier = rawVerifier;
+    }
 
-    body.set("grant_type", "refresh_token");
-    body.set("refresh_token", yield* V.reveal(value.refreshToken));
-    if (value.scopes !== undefined && value.scopes.length > 0)
-      body.set("scope", value.scopes.join(" "));
+    // Resolve discovery metadata once so URL and Transaction derive from the
+    // exact same snapshot.
+    const metadata = yield* discovery.resolve;
+    const { issuer, endpoint } = yield* validateMetadataEndpoints(metadata, "authorization");
 
-    return yield* send(body, value.clientSecret);
-  }, use);
+    if (pkceVerifier !== undefined) {
+      const supportedPkce = metadata.code_challenge_methods_supported;
 
-  const revoke = Effect.fnUntraced(function* (input: RevocationInput) {
-    yield* available;
-    if (metadata.revocation_endpoint === undefined)
-      return yield* V.invalidArgument("No revocation endpoint is configured");
-    if (revokeSupported !== undefined && !revokeSupported.includes(revocationAuthentication.method))
+      if (supportedPkce !== undefined) {
+        if (!Array.isArray(supportedPkce) || !supportedPkce.includes("S256")) {
+          return yield* V.invalidArgument("Authorization server does not support S256 PKCE");
+        }
+      } else if (requireAdvertisedPkce) {
+        return yield* V.invalidArgument(
+          "Authorization server does not advertise S256 PKCE support",
+        );
+      }
+    }
+
+    let issuerIdentification: IssuerIdentificationMode;
+
+    if (metadata.authorization_response_iss_parameter_supported === true) {
+      if (
+        requestedIssuerIdentification !== undefined &&
+        requestedIssuerIdentification !== "required"
+      ) {
+        return yield* V.invalidArgument(
+          "Cannot downgrade issuerIdentification when server advertises iss support",
+        );
+      }
+      issuerIdentification = "required";
+    } else {
+      issuerIdentification = requestedIssuerIdentification ?? "unsupported";
+    }
+
+    const responseMode: ResponseMode = shared.responseMode ?? "query";
+
+    const url = yield* buildAuthorizationUrl(endpoint, clientId, {
+      ...shared,
+      responseMode,
+      codeChallenge,
+    });
+
+    const nowMillis = yield* Clock.currentTimeMillis;
+
+    const transaction: Transaction = {
+      issuer,
+      clientId,
+      state: Redacted.make(shared.state),
+      redirectUri: shared.redirectUri,
+      responseMode,
+      issuerIdentification,
+      scopes: [...shared.scopes],
+      requestedAt: DateTime.makeUnsafe(nowMillis),
+      expiresAt: DateTime.makeUnsafe(nowMillis + lifetimeMs),
+      ...(pkceVerifier === undefined ? {} : { pkceVerifier: Redacted.make(pkceVerifier) }),
+      ...(shared.nonce === undefined ? {} : { nonce: Redacted.make(shared.nonce) }),
+      ...(shared.maxAgeSeconds === undefined
+        ? {}
+        : { maxAge: Duration.seconds(shared.maxAgeSeconds) }),
+      ...(shared.resources === undefined ? {} : { resources: [...shared.resources] }),
+    };
+
+    return { url, transaction };
+  }, tokenOwnership.use);
+
+  const exchangeRaw = Effect.fnUntraced(function* (
+    grant: Grant.Grant,
+  ): Effect.fn.Return<Grant.TokenReceipt, OAuthError.OAuthError> {
+    yield* tokenOwnership.available;
+
+    const resolved = yield* Grant.resolveGrant(grant);
+
+    if (
+      resolved.grantType.trim() === "client_credentials" &&
+      clientAuthName === "none" &&
+      !allowUnauthenticatedClientCredentials
+    ) {
+      return yield* V.invalidArgument("client_credentials grant requires client authentication");
+    }
+
+    if (resolved.clientId !== undefined && resolved.clientId !== clientId) {
+      return yield* V.invalidArgument("Grant clientId does not match OAuth client");
+    }
+
+    const metadata = yield* discovery.resolve;
+    const { issuer, endpoint } = yield* validateMetadataEndpoints(metadata, "token");
+
+    if (resolved.issuer !== undefined && resolved.issuer !== issuer) {
+      return yield* V.invalidArgument("Grant issuer does not match authorization server");
+    }
+
+    const supported =
+      metadata.token_endpoint_auth_methods_supported ??
+      (metadata.jwks_uri === undefined ? undefined : ["client_secret_basic"]);
+
+    if (supported !== undefined && !supported.includes(clientAuthName)) {
+      return yield* V.invalidArgument("Client authentication method is not supported by metadata");
+    }
+
+    const endpointUrl = new URL(endpoint).href;
+
+    const applied = yield* clientAuth
+      .apply({ clientId, endpoint: endpointUrl, issuer })
+      .pipe(Effect.provideContext(authContext));
+
+    const request = yield* assembleAuthenticatedRequest(
+      endpointUrl,
+      clientId,
+      applied,
+      [["grant_type", resolved.grantType], ...resolved.parameters],
+      true,
+    ).pipe(Effect.ensuring(Effect.sync(() => ClientAuth.wipeApplied(applied))));
+
+    const response = yield* Transport.request(http, request, requestLimits, "token");
+
+    return yield* Transport.json(response, "token");
+  }, tokenOwnership.use);
+
+  const exchange = (grant: Grant.Grant): Effect.Effect<Grant.TokenSet, OAuthError.OAuthError> =>
+    Effect.flatMap(exchangeRaw(grant), Grant.parseTokens);
+
+  const revoke = Effect.fnUntraced(function* (input: {
+    readonly token: string | Redacted.Redacted<string>;
+    readonly tokenTypeHint?: "access_token" | "refresh_token" | undefined;
+  }): Effect.fn.Return<void, OAuthError.OAuthError> {
+    yield* revocationOwnership.available;
+
+    if (!Predicate.isObject(input)) {
+      return yield* V.invalidArgument("Invalid revocation input");
+    }
+
+    const token = yield* decodeNonEmptySecret(input.token, 16384, "token");
+
+    const tokenTypeHint =
+      input.tokenTypeHint === undefined
+        ? undefined
+        : yield* V.configuration(TokenTypeHintSchema, input.tokenTypeHint, "Invalid tokenTypeHint");
+
+    const metadata = yield* discovery.resolve;
+    const { issuer, endpoint } = yield* validateMetadataEndpoints(metadata, "revocation");
+
+    const revokeSupported =
+      metadata.revocation_endpoint_auth_methods_supported ??
+      (metadata.jwks_uri === undefined ? undefined : ["client_secret_basic"]);
+
+    if (revokeSupported !== undefined && !revokeSupported.includes(revocationAuth.name)) {
       return yield* V.invalidArgument(
         "Revocation authentication method is not supported by metadata",
       );
-    const value = yield* V.configuration(Revocation, input, "Invalid revocation input");
+    }
 
-    const request = yield* authenticated(
-      new URL(metadata.revocation_endpoint).href,
-      options.clientId,
-      revocationAuthentication,
-      new URLSearchParams({
-        token: yield* V.reveal(value.token),
-        token_type_hint: value.tokenTypeHint,
-      }),
-      value.clientSecret,
-    );
+    const endpointUrl = new URL(endpoint).href;
 
-    const response = yield* Transport.request(http, request, options, "revocation");
+    const applied = yield* revocationAuth
+      .apply({ clientId, endpoint: endpointUrl, issuer })
+      .pipe(Effect.provideContext(authContext));
+
+    const baseParams: Array<readonly [string, string]> = [["token", token]];
+
+    if (tokenTypeHint !== undefined) {
+      baseParams.push(["token_type_hint", tokenTypeHint]);
+    }
+
+    const request = yield* assembleAuthenticatedRequest(
+      endpointUrl,
+      clientId,
+      applied,
+      baseParams,
+      false,
+    ).pipe(Effect.ensuring(Effect.sync(() => ClientAuth.wipeApplied(applied))));
+
+    const response = yield* Transport.request(http, request, requestLimits, "revocation");
 
     if (response.status === 200) return;
 
@@ -586,26 +955,87 @@ export const make = Effect.fnUntraced(function* (
       response.status,
       "Unexpected revocation response status",
     );
-  }, use);
+  }, revocationOwnership.use);
 
-  return { metadata, authorizationUrl, codeGrant, refreshGrant, revoke };
+  return Client.of({
+    clientId,
+    clientAuthName,
+    authorizationUrl,
+    prepareAuthorization,
+    exchangeRaw,
+    exchange,
+    revoke,
+  });
 });
 
-const detachAuthentication = Effect.fnUntraced(function* (
-  authentication: Authentication,
-): Effect.fn.Return<Authentication, OAuthError.OAuthError> {
-  if (authentication.method === "none") return { ...authentication };
-  if (authentication.method === "client_secret_post" && authentication.secret === undefined)
-    return { method: "client_secret_post" };
-  if (authentication.secret === undefined)
-    return yield* clientAuthFailed("Missing client secret for configured authentication method");
+/**
+ * Layer that provides {@link Client} built by {@link make}. Closing the layer
+ * cancels and joins any in-flight token or revocation requests.
+ *
+ * @stability unstable
+ * @category layers
+ * @since 4.1.4
+ */
+export const layer: <R = never, RR = never>(
+  options: ClientOptions<R, RR>,
+) => Layer.Layer<
+  Client,
+  OAuthError.OAuthError,
+  Discovery.Discovery | HttpClient.HttpClient | R | RR
+> = (options) => Layer.effect(Client, make(options));
 
-  return {
-    ...authentication,
-    secret: Redacted.make(
-      yield* V.reveal(authentication.secret, () =>
-        clientAuthFailed("Client secret is unavailable"),
-      ),
-    ),
-  };
+/**
+ * Generates fresh `state` and optional PKCE `S256` entropy (`pkce` defaults to
+ * `true`) and prepares an {@link Authorization} through the registered
+ * {@link Client} service.
+ *
+ * @stability unstable
+ * @category authorization
+ * @since 4.1.4
+ */
+export const authorize: (
+  options: AuthorizeOptions,
+) => Effect.Effect<
+  Authorization,
+  OAuthError.OAuthError,
+  Client | Digest.Digest | SecureRandom.SecureRandom
+> = Effect.fnUntraced(function* (
+  options: AuthorizeOptions,
+): Effect.fn.Return<
+  Authorization,
+  OAuthError.OAuthError,
+  Client | Digest.Digest | SecureRandom.SecureRandom
+> {
+  if (!Predicate.isObject(options)) {
+    return yield* V.invalidArgument("Invalid authorization options");
+  }
+  if (options.pkce !== undefined && typeof options.pkce !== "boolean") {
+    return yield* V.invalidArgument("pkce must be a boolean");
+  }
+
+  const client = yield* Client;
+  const usePkce = options.pkce ?? true;
+
+  if (!usePkce && client.clientAuthName === "none") {
+    return yield* V.invalidArgument("Public clients require PKCE");
+  }
+
+  const random = yield* SecureRandom.SecureRandom;
+  const stateBytes = yield* random.randomBytes(32);
+
+  if (stateBytes.length !== 32) {
+    return yield* Effect.die(
+      new RangeError("SecureRandom.randomBytes(32) returned an unexpected byte length"),
+    );
+  }
+
+  const state = Redacted.make(Base64Url.encode(stateBytes));
+  const pkce = usePkce ? yield* Pkce.generate : undefined;
+  const { pkce: _pkce, ...rest } = options;
+
+  return yield* client.prepareAuthorization({
+    ...rest,
+    state,
+    ...(pkce === undefined ? {} : { pkce }),
+  });
 });

@@ -1,8 +1,11 @@
+import type * as ClientAuth from "@yielded/oauth/ClientAuth";
+import * as Grant from "@yielded/oauth/Grant";
 import * as OAuth from "@yielded/oauth/OAuth";
 import * as OAuthError from "@yielded/oauth/OAuthError";
 import * as Cause from "effect/Cause";
+import type * as Digest from "effect/crypto/Digest";
+import type * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
-import * as Base64 from "effect/encoding/Base64";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
@@ -16,9 +19,9 @@ import * as Tracer from "effect/Tracer";
 import { makeScopedOperation } from "../../../internal/scoped-operation";
 import { timeoutOrElseWithCause } from "../../../internal/timeout";
 
-export const defaultMaxResponseBytes = 1_048_576;
-export const maxTokenRequestBytes = 131_072;
-export const maxAuthorizationUrlLength = 16_384;
+const defaultMaxResponseBytes = 1_048_576;
+const maxTokenRequestBytes = 131_072;
+const maxAuthorizationUrlLength = 16_384;
 
 const utf8Encoder = new TextEncoder();
 
@@ -61,14 +64,12 @@ const clientAuthFailed = (description: string, cause?: unknown): OAuthError.OAut
     }),
   });
 
-// Mirror of `@yielded/oauth` `internal/validation.ts`; keep in sync until M4b.
 export const text = (maximum: number) => Schema.NonEmptyString.check(Schema.isMaxLength(maximum));
 
 const integer = (minimum: number, maximum: number) =>
   Schema.Int.check(Schema.isBetween({ minimum, maximum }));
 
-export const secret = (maximum: number) =>
-  Schema.Redacted(text(maximum), { disallowJsonEncode: true });
+const secret = (maximum: number) => Schema.Redacted(text(maximum), { disallowJsonEncode: true });
 
 /** HTTPS, or HTTP on an exact loopback host for local development. */
 const validUrl = (value: string): boolean => {
@@ -109,9 +110,9 @@ const Callback = text(2048).check(
 );
 
 // oxlint-disable-next-line no-control-regex -- RFC6749 scope-token permits these visible ASCII ranges.
-export const ScopeName = Schema.String.check(Schema.isPattern(/^[\x21\x23-\x5b\x5d-\x7e]{1,256}$/));
+const ScopeName = Schema.String.check(Schema.isPattern(/^[\x21\x23-\x5b\x5d-\x7e]{1,256}$/));
 
-export const Scopes = Schema.Array(ScopeName).check(
+const Scopes = Schema.Array(ScopeName).check(
   Schema.isMaxLength(64),
   Schema.makeFilter((values) => new Set(values).size === values.length),
 );
@@ -220,8 +221,25 @@ const forbiddenHeaders: ReadonlySet<string> = new Set([
   "baggage",
 ]);
 
+const forbiddenAuthHeaders: ReadonlySet<string> = new Set([
+  "cookie",
+  "host",
+  "content-length",
+  "content-type",
+  "transfer-encoding",
+  "connection",
+  "upgrade",
+  "trailer",
+  "te",
+  "traceparent",
+  "tracestate",
+  "baggage",
+]);
+
+const headerNamePattern = /^[!#$%&'*+.^_`|~0-9A-Za-z-]{1,64}$/;
+
 export const Headers = Schema.Record(
-  Schema.String.check(Schema.isPattern(/^[!#$%&'*+.^_`|~0-9A-Za-z-]{1,64}$/)),
+  Schema.String.check(Schema.isPattern(headerNamePattern)),
   Schema.String.check(Schema.isMaxLength(2048)),
 ).check(
   Schema.makeFilter((value) => {
@@ -252,6 +270,18 @@ export const reveal = <A>(
     invalidArgument("Redacted OAuth value is unavailable"),
 ) => Effect.try({ try: () => Redacted.value(value), catch: onError });
 
+const revealString = (
+  value: string | Redacted.Redacted<string>,
+  onError: () => OAuthError.OAuthError,
+): Effect.Effect<string, OAuthError.OAuthError> =>
+  Redacted.isRedacted(value)
+    ? reveal(value, onError).pipe(
+        Effect.filterOrFail((item): item is string => typeof item === "string", onError),
+      )
+    : typeof value === "string"
+      ? Effect.succeed(value)
+      : Effect.fail(onError());
+
 /** Iteratively freeze freshly parsed wire JSON or owned configuration snapshots
  * without copying properties. */
 export const freezePlainJson = <A>(value: A): A => {
@@ -270,7 +300,7 @@ export const freezePlainJson = <A>(value: A): A => {
   return value;
 };
 
-export const isJsonContentType = (contentType: string | null): boolean =>
+const isJsonContentType = (contentType: string | null): boolean =>
   contentType?.split(";", 1)[0]?.trim().toLowerCase() === "application/json";
 
 /** Capture `HttpClient` and optional `FetchHttpClient.Fetch` once with manual
@@ -298,9 +328,9 @@ export interface HttpResponse {
   readonly bytes: Redacted.Redacted<Uint8Array>;
 }
 
-// Mirror of `@yielded/oauth` `internal/transport.ts`; keep in sync until M4b.
 /** Single-attempt bounded HTTP request with manual redirect rejection,
- * `response.url` verification, `Scope`-owned byte folding, and cause-preserving timeout. */
+ * `response.url` verification, `5xx` transport classification, `Scope`-owned
+ * byte folding, and cause-preserving timeout. */
 export const sendRequest = Effect.fnUntraced(
   function* (
     client: HttpClient.HttpClient,
@@ -316,6 +346,12 @@ export const sendRequest = Effect.fnUntraced(
         "Redirects and unexpected response URLs are not allowed",
         { status: response.status },
       );
+    }
+
+    if (response.status >= 500) {
+      return yield* transportFailed(endpoint, "Upstream endpoint returned a server error", {
+        status: response.status,
+      });
     }
 
     const announced = response.headers["content-length"];
@@ -391,14 +427,14 @@ export const sendRequest = Effect.fnUntraced(
     ),
 );
 
-const JsonObjectFromString = Schema.fromJsonString(OAuth.JsonObject);
+const JsonObjectFromString = Schema.fromJsonString(Grant.TokenReceiptFromJson.fields.body.from);
 
 /** Parse a bounded `application/json` object response reusing `@yielded/oauth`'s
  * plain-JSON schema validation. */
 export const parseJsonResponse = Effect.fnUntraced(function* (
   response: HttpResponse,
   endpoint: OAuthError.InvalidResponse["endpoint"],
-): Effect.fn.Return<OAuth.TokenReceipt, OAuthError.OAuthError> {
+): Effect.fn.Return<Grant.TokenReceipt, OAuthError.OAuthError> {
   if (!isJsonContentType(response.contentType)) {
     return yield* invalidResponse(endpoint, response.status, "Expected application/json response");
   }
@@ -423,25 +459,10 @@ export const parseJsonResponse = Effect.fnUntraced(function* (
   };
 });
 
-/** Build an authorization URL whose `scope` query parameter is comma-delimited.
- * Validates individual `ScopeName` entries first so multi-scope lists whose
- * joined wire string exceeds 256 characters still succeed under the 16,384-char
- * final URL cap. */
-export const authorizationUrlWithCommaScopes = Effect.fnUntraced(function* (
-  client: OAuth.Client,
-  input: OAuth.AuthorizationInput,
+const rewriteUrlCommaScope = Effect.fnUntraced(function* (
+  base: Redacted.Redacted<string>,
+  scopes: ReadonlyArray<string>,
 ): Effect.fn.Return<Redacted.Redacted<string>, OAuthError.OAuthError> {
-  const scopes = yield* decode(Scopes, input.scopes, () =>
-    invalidArgument("Invalid authorization scopes"),
-  );
-
-  const first = scopes[0];
-
-  if (first === undefined) return yield* client.authorizationUrl({ ...input, scopes: [] });
-
-  // Reserve `scope`'s exact query-parameter slot before rewriting its value in place.
-  const base = yield* client.authorizationUrl({ ...input, scopes: [first] });
-
   const url = new URL(
     yield* reveal(base, () => invalidArgument("Authorization URL is unavailable")),
   );
@@ -455,20 +476,97 @@ export const authorizationUrlWithCommaScopes = Effect.fnUntraced(function* (
   return Redacted.make(url.href);
 });
 
-// Mirror of `@yielded/oauth` `OAuth.ts` auth and grant assembly; keep in sync until M4b.
-const TokenSenderOptionsSchema = Schema.Struct({
+/** Build an authorization URL whose `scope` query parameter is comma-delimited.
+ * Validates individual `ScopeName` entries first so multi-scope lists whose
+ * joined wire string exceeds 256 characters still succeed under the 16,384-char
+ * final URL cap. */
+export const authorizationUrlWithCommaScopes = Effect.fnUntraced(function* (
+  client: OAuth.Client["Service"],
+  input: OAuth.AuthorizationUrlOptions,
+): Effect.fn.Return<Redacted.Redacted<string>, OAuthError.OAuthError> {
+  const scopes = yield* decode(Scopes, input.scopes, () =>
+    invalidArgument("Invalid authorization scopes"),
+  );
+
+  const first = scopes[0];
+
+  if (first === undefined) return yield* client.authorizationUrl({ ...input, scopes: [] });
+
+  // Reserve `scope`'s exact query-parameter slot before rewriting its value in place.
+  const base = yield* client.authorizationUrl({ ...input, scopes: [first] });
+
+  return yield* rewriteUrlCommaScope(base, scopes);
+});
+
+/** Run `OAuth.authorize` for a comma-scope provider, keeping the original
+ * `scopes` array on `transaction.scopes` and serializing comma-delimited
+ * `scope` only on the authorization URL under the 16,384-char cap. */
+export const authorizeWithCommaScopes = Effect.fnUntraced(function* (
+  options: OAuth.AuthorizeOptions,
+): Effect.fn.Return<
+  OAuth.Authorization,
+  OAuthError.OAuthError,
+  OAuth.Client | Digest.Digest | SecureRandom.SecureRandom
+> {
+  const scopes = yield* decode(Scopes, options.scopes, () =>
+    invalidArgument("Invalid authorization scopes"),
+  );
+
+  const first = scopes[0];
+
+  if (first === undefined) return yield* OAuth.authorize({ ...options, scopes: [] });
+
+  const authorized = yield* OAuth.authorize({ ...options, scopes: [first] });
+  const url = yield* rewriteUrlCommaScope(authorized.url, scopes);
+
+  return {
+    url,
+    transaction: {
+      ...authorized.transaction,
+      scopes: [...scopes],
+    },
+  };
+});
+
+/** Construct a form-encoded `refresh_token` `Grant` with comma-delimited
+ * `scope` for dispatch through `OAuth.Client.exchangeRaw`, validating each
+ * individual `ScopeName` before joining so multi-scope lists exceeding 256
+ * wire characters succeed under the 131,072-byte encoded body limit. */
+export const commaScopeRefreshGrant = Effect.fnUntraced(function* (input: {
+  readonly refreshToken: Redacted.Redacted<string>;
+  readonly scopes?: ReadonlyArray<string>;
+  readonly resources?: ReadonlyArray<string>;
+  readonly parameters?: Readonly<Record<string, string>>;
+}): Effect.fn.Return<Grant.Grant, OAuthError.OAuthError> {
+  const value = yield* decode(RefreshGrantSchema, input, () =>
+    invalidArgument("Invalid refresh token grant input"),
+  );
+
+  const params: Array<readonly [string, string | Redacted.Redacted<string>]> = [];
+
+  for (const [key, item] of Object.entries(value.parameters ?? {})) {
+    params.push([key, item]);
+  }
+  for (const resource of value.resources ?? []) {
+    params.push(["resource", resource]);
+  }
+  params.push(["refresh_token", value.refreshToken]);
+  if (value.scopes !== undefined && value.scopes.length > 0) {
+    params.push(["scope", value.scopes.join(",")]);
+  }
+
+  return Grant.make("refresh_token", params);
+});
+
+const JsonTokenSenderOptionsSchema = Schema.Struct({
   issuer: Issuer,
   tokenEndpoint: ProtocolEndpoint,
   clientId: text(1024),
-  authentication: OAuth.Authentication,
   ...RequestOptions.fields,
-  tokenBodyFormat: Schema.optionalKey(Schema.Literals(["form", "json"])),
   scopeSeparator: Schema.optionalKey(Schema.Literals([" ", ","])),
 }).check(
   Schema.makeFilter((options) => endpointMatchesIssuer(options.issuer, options.tokenEndpoint)),
 );
-
-const requestSecret = Schema.optionalKey(secret(8192));
 
 const CodeGrantSchema = Schema.Struct({
   parameters: Schema.optionalKey(Parameters),
@@ -476,7 +574,6 @@ const CodeGrantSchema = Schema.Struct({
   code: secret(16384),
   redirectUri: Callback,
   pkceVerifier: Schema.optionalKey(Verifier),
-  clientSecret: requestSecret,
 });
 
 const RefreshGrantSchema = Schema.Struct({
@@ -484,43 +581,7 @@ const RefreshGrantSchema = Schema.Struct({
   resources: Schema.optionalKey(Resources),
   refreshToken: secret(16384),
   scopes: Schema.optionalKey(Scopes),
-  clientSecret: requestSecret,
 });
-
-// RFC6749 Appendix B: encode client credentials before joining with the colon.
-// Adapted from oauth4webapi 3.8.8 src/index.ts::formUrlEncode (MIT, Filip Skokan).
-// Exact source commit and license: ../../../../THIRD_PARTY_NOTICES.md.
-const basicComponent = (value: string): string =>
-  encodeURIComponent(value).replace(/[-_.!~*'()]|%20/gu, (part) =>
-    part === "%20" ? "+" : `%${part.charCodeAt(0).toString(16).toUpperCase()}`,
-  );
-
-const detachAuthentication = Effect.fnUntraced(function* (
-  authentication: OAuth.Authentication,
-): Effect.fn.Return<OAuth.Authentication, OAuthError.OAuthError> {
-  if (authentication.method === "none") return { ...authentication };
-  if (authentication.method === "client_secret_post" && authentication.secret === undefined) {
-    return { method: "client_secret_post" };
-  }
-  if (authentication.secret === undefined) {
-    return yield* clientAuthFailed("Missing client secret for configured authentication method");
-  }
-
-  return {
-    ...authentication,
-    secret: Redacted.make(
-      yield* reveal(authentication.secret, () => clientAuthFailed("Client secret is unavailable")),
-    ),
-  };
-});
-
-const assembleParameters = (input: OAuth.Parameters): URLSearchParams => {
-  const values = new URLSearchParams(input.parameters);
-
-  for (const resource of input.resources ?? []) values.append("resource", resource);
-
-  return values;
-};
 
 const JsonStringRecord = Schema.fromJsonString(Schema.Record(Schema.String, Schema.String));
 
@@ -546,120 +607,154 @@ const encodeJsonObject = Effect.fnUntraced(function* (
   );
 });
 
-const buildAuthenticatedTokenRequest = Effect.fnUntraced(function* (
+const buildJsonTokenRequest = Effect.fnUntraced(function* (
   url: string,
+  issuer: string,
   clientId: string,
-  authentication: OAuth.Authentication,
-  body: URLSearchParams,
-  format: "form" | "json",
-  clientSecret?: Redacted.Redacted<string>,
+  clientAuth: ClientAuth.Method<never>,
+  bodyEntries: ReadonlyArray<readonly [string, string]>,
 ): Effect.fn.Return<HttpClientRequest.HttpClientRequest, OAuthError.OAuthError> {
-  let request = HttpClientRequest.post(url).pipe(HttpClientRequest.acceptJson);
+  const applied = yield* clientAuth.apply({ clientId, endpoint: url, issuer });
 
-  if (authentication.method === "client_secret_basic") {
-    const revealed = yield* reveal(authentication.secret, () =>
-      clientAuthFailed("Client secret is unavailable"),
+  const headers: Record<string, string> = {};
+  const seenHeaders = new Set<string>();
+  let hasBasicAuthorization = false;
+
+  for (const name of Object.keys(applied.headers)) {
+    const lower = name.toLowerCase();
+
+    if (
+      !headerNamePattern.test(name) ||
+      forbiddenAuthHeaders.has(lower) ||
+      seenHeaders.has(lower)
+    ) {
+      return yield* clientAuthFailed("Client authentication method emitted a disallowed header");
+    }
+
+    const descriptor = Object.getOwnPropertyDescriptor(applied.headers, name);
+
+    if (descriptor === undefined || !("value" in descriptor)) {
+      return yield* clientAuthFailed("Client authentication method header is unreadable");
+    }
+
+    const value = yield* revealString(descriptor.value as string | Redacted.Redacted<string>, () =>
+      clientAuthFailed("Client authentication header credential is unavailable"),
     );
 
-    const credential = yield* Effect.try({
-      try: () => Base64.encode(`${basicComponent(clientId)}:${basicComponent(revealed)}`),
-      catch: (cause) => clientAuthFailed("Could not encode HTTP Basic client credentials", cause),
-    });
-
-    request = HttpClientRequest.setHeader(request, "authorization", `Basic ${credential}`);
-  } else {
-    body.set("client_id", clientId);
-    if (authentication.method === "client_secret_post") {
-      const resolvedSecret = authentication.secret ?? clientSecret;
-
-      if (resolvedSecret === undefined) {
-        return yield* clientAuthFailed("Missing client secret for client_secret_post");
-      }
-
-      body.set(
-        "client_secret",
-        yield* reveal(resolvedSecret, () => clientAuthFailed("Client secret is unavailable")),
+    if (/[\r\n]/u.test(value)) {
+      return yield* clientAuthFailed(
+        "Client authentication header value contains control characters",
       );
-      if (authentication.secret === undefined) Redacted.wipeUnsafe(resolvedSecret);
     }
+
+    seenHeaders.add(lower);
+    if (lower === "authorization" && /^\s*Basic\s+/i.test(value)) {
+      hasBasicAuthorization = true;
+    }
+
+    Object.defineProperty(headers, name, {
+      value,
+      enumerable: true,
+      configurable: true,
+      writable: true,
+    });
   }
 
-  const encoded = format === "json" ? yield* encodeJsonObject(body.entries()) : body.toString();
+  const allEntries: Array<readonly [string, string]> = [...bodyEntries];
+  let hasClientIdInForm = false;
+
+  for (const [key, raw] of applied.form) {
+    if (key.toLowerCase() === "grant_type") {
+      return yield* clientAuthFailed("Client authentication method cannot set grant_type");
+    }
+    if (key.toLowerCase() === "client_id") hasClientIdInForm = true;
+    allEntries.push([
+      key,
+      yield* revealString(raw, () =>
+        clientAuthFailed("Client authentication form credential is unavailable"),
+      ),
+    ]);
+  }
+
+  if (!hasBasicAuthorization && !hasClientIdInForm) {
+    allEntries.push(["client_id", clientId]);
+  }
+
+  const encoded = yield* encodeJsonObject(allEntries);
 
   if (utf8Encoder.encode(encoded).length > maxTokenRequestBytes) {
     return yield* invalidArgument("Encoded token request body exceeds maximum size");
   }
 
-  return HttpClientRequest.bodyText(
-    request,
-    encoded,
-    format === "json" ? "application/json" : "application/x-www-form-urlencoded;charset=UTF-8",
-  );
+  let request = HttpClientRequest.post(url).pipe(HttpClientRequest.acceptJson);
+
+  for (const [name, value] of Object.entries(headers)) {
+    request = HttpClientRequest.setHeader(request, name, value);
+  }
+
+  return HttpClientRequest.bodyText(request, encoded, "application/json");
 });
 
-export interface AuthenticatedTokenSenderOptions {
+export interface JsonTokenCodeGrantInput {
+  readonly code: Redacted.Redacted<string>;
+  readonly redirectUri: string;
+  readonly pkceVerifier?: Redacted.Redacted<string>;
+  readonly resources?: ReadonlyArray<string>;
+  readonly parameters?: Readonly<Record<string, string>>;
+}
+
+export interface JsonTokenRefreshGrantInput {
+  readonly refreshToken: Redacted.Redacted<string>;
+  readonly scopes?: ReadonlyArray<string>;
+  readonly resources?: ReadonlyArray<string>;
+  readonly parameters?: Readonly<Record<string, string>>;
+}
+
+export interface JsonTokenSenderOptions {
   readonly issuer: string;
   readonly tokenEndpoint: string;
   readonly clientId: string;
-  readonly authentication: OAuth.Authentication;
+  readonly clientAuth: ClientAuth.Method<never>;
   readonly timeoutMs: number;
   readonly maxResponseBytes?: number;
-  readonly tokenBodyFormat?: "form" | "json";
   readonly scopeSeparator?: " " | ",";
 }
 
-export interface AuthenticatedTokenSender {
+export interface JsonTokenSender {
   readonly codeGrant: (
-    input: OAuth.CodeGrantInput,
-  ) => Effect.Effect<OAuth.TokenReceipt, OAuthError.OAuthError>;
+    input: JsonTokenCodeGrantInput,
+  ) => Effect.Effect<Grant.TokenReceipt, OAuthError.OAuthError>;
   readonly refreshGrant: (
-    input: OAuth.RefreshGrantInput,
-  ) => Effect.Effect<OAuth.TokenReceipt, OAuthError.OAuthError>;
+    input: JsonTokenRefreshGrantInput,
+  ) => Effect.Effect<Grant.TokenReceipt, OAuthError.OAuthError>;
 }
 
-/** Scoped, single-attempt token endpoint sender supporting vendor wire formats
- * (JSON token bodies and comma-delimited refresh scopes) across all client
- * authentication methods (`client_secret_basic`, `client_secret_post`, `none`). */
-export const makeAuthenticatedTokenSender = Effect.fnUntraced(function* (
-  input: AuthenticatedTokenSenderOptions,
-): Effect.fn.Return<
-  AuthenticatedTokenSender,
-  OAuthError.OAuthError,
-  HttpClient.HttpClient | Scope.Scope
-> {
-  const options = yield* decode(TokenSenderOptionsSchema, input, () =>
-    invalidArgument("Invalid OAuth token sender options"),
+/** Scoped, single-attempt JSON token endpoint sender (for providers such as
+ * Notion that require `application/json` token requests) delegating client
+ * authentication to `ClientAuth.Method`. */
+export const makeJsonTokenSender = Effect.fnUntraced(function* (
+  input: JsonTokenSenderOptions,
+): Effect.fn.Return<JsonTokenSender, OAuthError.OAuthError, HttpClient.HttpClient | Scope.Scope> {
+  const options = yield* decode(JsonTokenSenderOptionsSchema, input, () =>
+    invalidArgument("Invalid OAuth JSON token sender options"),
   );
 
-  const authentication = yield* detachAuthentication(options.authentication);
   const tokenUrl = new URL(options.tokenEndpoint).href;
-  const format = options.tokenBodyFormat === "json" ? ("json" as const) : ("form" as const);
   const scopeSeparator = options.scopeSeparator === "," ? "," : " ";
+  const clientAuth = input.clientAuth;
   const http = yield* captureHardenedHttp;
 
   const run = yield* makeScopedOperation(() =>
     transportFailed("token", "The owning scope is closed"),
   );
 
-  yield* Effect.addFinalizer(() =>
-    Effect.sync(() => {
-      if (authentication.method !== "none" && authentication.secret !== undefined) {
-        Redacted.wipeUnsafe(authentication.secret);
-      }
-    }),
-  );
-
-  const dispatch = Effect.fnUntraced(function* (
-    body: URLSearchParams,
-    clientSecret?: Redacted.Redacted<string>,
-  ) {
-    const request = yield* buildAuthenticatedTokenRequest(
+  const dispatch = Effect.fnUntraced(function* (entries: ReadonlyArray<readonly [string, string]>) {
+    const request = yield* buildJsonTokenRequest(
       tokenUrl,
+      options.issuer,
       options.clientId,
-      authentication,
-      body,
-      format,
-      clientSecret,
+      clientAuth,
+      entries,
     );
 
     const response = yield* sendRequest(http, request, options, "token");
@@ -667,42 +762,54 @@ export const makeAuthenticatedTokenSender = Effect.fnUntraced(function* (
     return yield* parseJsonResponse(response, "token");
   });
 
-  const codeGrant = (grantInput: OAuth.CodeGrantInput) =>
+  const codeGrant = (grantInput: JsonTokenCodeGrantInput) =>
     run(
       Effect.gen(function* () {
         const value = yield* decode(CodeGrantSchema, grantInput, () =>
           invalidArgument("Invalid authorization code grant input"),
         );
 
-        const body = assembleParameters(value);
+        const entries: Array<readonly [string, string]> = [];
 
-        body.set("grant_type", "authorization_code");
-        body.set("code", yield* reveal(value.code));
-        if (value.pkceVerifier !== undefined) {
-          body.set("code_verifier", yield* reveal(value.pkceVerifier));
+        for (const [key, item] of Object.entries(value.parameters ?? {})) {
+          entries.push([key, item]);
         }
-        body.set("redirect_uri", value.redirectUri);
+        for (const resource of value.resources ?? []) {
+          entries.push(["resource", resource]);
+        }
+        entries.push(["grant_type", "authorization_code"]);
+        entries.push(["code", yield* reveal(value.code)]);
+        if (value.pkceVerifier !== undefined) {
+          entries.push(["code_verifier", yield* reveal(value.pkceVerifier)]);
+        }
+        entries.push(["redirect_uri", value.redirectUri]);
 
-        return yield* dispatch(body, value.clientSecret);
+        return yield* dispatch(entries);
       }),
     );
 
-  const refreshGrant = (grantInput: OAuth.RefreshGrantInput) =>
+  const refreshGrant = (grantInput: JsonTokenRefreshGrantInput) =>
     run(
       Effect.gen(function* () {
         const value = yield* decode(RefreshGrantSchema, grantInput, () =>
           invalidArgument("Invalid refresh token grant input"),
         );
 
-        const body = assembleParameters(value);
+        const entries: Array<readonly [string, string]> = [];
 
-        body.set("grant_type", "refresh_token");
-        body.set("refresh_token", yield* reveal(value.refreshToken));
+        for (const [key, item] of Object.entries(value.parameters ?? {})) {
+          entries.push([key, item]);
+        }
+        for (const resource of value.resources ?? []) {
+          entries.push(["resource", resource]);
+        }
+        entries.push(["grant_type", "refresh_token"]);
+        entries.push(["refresh_token", yield* reveal(value.refreshToken)]);
         if (value.scopes !== undefined && value.scopes.length > 0) {
-          body.set("scope", value.scopes.join(scopeSeparator));
+          entries.push(["scope", value.scopes.join(scopeSeparator)]);
         }
 
-        return yield* dispatch(body, value.clientSecret);
+        return yield* dispatch(entries);
       }),
     );
 

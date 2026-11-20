@@ -1,3 +1,4 @@
+import * as ClientAuth from "@yielded/oauth/ClientAuth";
 import * as OAuthError from "@yielded/oauth/OAuthError";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
@@ -147,3 +148,29 @@ export class PrivateKeyClientSecret extends Context.Service<
 
   static readonly layer = Layer.effect(PrivateKeyClientSecret, PrivateKeyClientSecret.make);
 }
+
+/** Wrap a per-request private-key JWT signer (such as Apple `.p8`) as a named
+ * `client_secret_post` `ClientAuth.Method` via `ClientAuth.unwrap`, wiping the
+ * minted secret on every exit. */
+export const makePrivateKeyClientAuth = (
+  authentication: Extract<OpenIdConnectAuthentication, { readonly privateKeyJwt: PrivateKeyJwt }>,
+  clientSecrets: PrivateKeyClientSecret["Service"],
+): ClientAuth.Method<never> =>
+  ClientAuth.make("client_secret_post", (request) =>
+    Effect.uninterruptibleMask((restore) =>
+      Effect.gen(function* () {
+        const secret = yield* restore(clientSecrets.mint(authentication));
+
+        if (secret === undefined) {
+          return yield* clientAuthFailed("Missing client secret for private-key JWT");
+        }
+
+        return yield* restore(
+          ClientAuth.unwrap(
+            "client_secret_post",
+            Effect.succeed(ClientAuth.secretPost(secret)),
+          ).apply(request),
+        ).pipe(Effect.ensuring(Effect.sync(() => Redacted.wipeUnsafe(secret))));
+      }),
+    ),
+  );

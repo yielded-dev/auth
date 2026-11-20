@@ -1,5 +1,4 @@
 import type * as Discovery from "@yielded/oauth/Discovery";
-import type * as OAuth from "@yielded/oauth/OAuth";
 import * as Effect from "effect/Effect";
 import * as Predicate from "effect/Predicate";
 import * as Redacted from "effect/Redacted";
@@ -37,6 +36,7 @@ import {
 } from "../models";
 import { install, type NativeProvider } from "../native";
 import { resolveOptions } from "../options";
+import { PrivateKeyClientSecret } from "../privateKeyJwt";
 import type {
   OpenIdConnectConnectedOAuthProvider,
   OpenIdConnectConnectedOidcProvider,
@@ -245,7 +245,7 @@ export type ConnectedProvider<R> =
 
 export interface InstalledConnectedProvider<R> extends NativeProvider {
   readonly provider: ConnectedProvider<R>;
-  readonly metadata: OAuth.Metadata;
+  readonly metadata: Discovery.Metadata;
 }
 
 const metadataSchema = Schema.Struct({
@@ -337,14 +337,24 @@ export const prepareConnectedConfigurations = Effect.fn(
       const privateKey = saved.privateKeyJwt.privateKey;
 
       yield* Effect.addFinalizer(() => Effect.sync(() => Redacted.wipeUnsafe(privateKey)));
+    } else if (hasStaticSecret(saved)) {
+      const staticSecret = saved.secret;
+
+      yield* Effect.addFinalizer(() => Effect.sync(() => Redacted.wipeUnsafe(staticSecret)));
     }
 
     const revocation = provider.revocation;
 
-    if (revocation.mode === "rfc7009" && isPrivateKeyAuthentication(revocation.authentication)) {
-      const privateKey = revocation.authentication.privateKeyJwt.privateKey;
+    if (revocation.mode === "rfc7009") {
+      if (isPrivateKeyAuthentication(revocation.authentication)) {
+        const privateKey = revocation.authentication.privateKeyJwt.privateKey;
 
-      yield* Effect.addFinalizer(() => Effect.sync(() => Redacted.wipeUnsafe(privateKey)));
+        yield* Effect.addFinalizer(() => Effect.sync(() => Redacted.wipeUnsafe(privateKey)));
+      } else if (hasStaticSecret(revocation.authentication)) {
+        const staticSecret = revocation.authentication.secret;
+
+        yield* Effect.addFinalizer(() => Effect.sync(() => Redacted.wipeUnsafe(staticSecret)));
+      }
     }
   }
 
@@ -555,19 +565,24 @@ export const installConnectedProvider = Effect.fn("OpenIdConnect.installConnecte
         if (reserved.has(key.toLowerCase())) return yield* configurationError("parameters");
     }
 
+    const clientSecrets = yield* PrivateKeyClientSecret;
+
     const native = yield* install(
       {
         metadata,
         clientId: provider.clientId,
-        authentication: nativeAuthentication(provider.authentication),
+        clientAuth: nativeAuthentication(provider.authentication, clientSecrets),
         timeoutMs: timeoutSeconds * 1000,
         ...(provider.revocation.mode === "rfc7009"
-          ? { revocationAuthentication: nativeAuthentication(provider.revocation.authentication) }
+          ? {
+              revocationAuth: nativeAuthentication(
+                provider.revocation.authentication,
+                clientSecrets,
+              ),
+            }
           : {}),
       },
-      provider.protocol === "oauth"
-        ? { ...nativeVendorOptions(provider), supportsRefresh: true }
-        : undefined,
+      provider.protocol === "oauth" ? nativeVendorOptions(provider) : undefined,
     );
 
     return { provider, metadata, ...native };
@@ -593,6 +608,8 @@ export const installOAuthConnectedConfigurations = Effect.fn(
           issuer: provider.issuer,
           authorization_endpoint: provider.authorizationEndpoint,
           token_endpoint: provider.tokenEndpoint,
+          response_types_supported: ["code"],
+          ...(provider.pkceS256 ? { code_challenge_methods_supported: ["S256"] } : {}),
           authorization_response_iss_parameter_supported:
             provider.responseIssuerMode === "required",
           ...(provider.revocation.mode === "rfc7009"

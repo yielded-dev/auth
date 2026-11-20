@@ -1,5 +1,4 @@
 import * as Discovery from "@yielded/oauth/Discovery";
-import type * as OAuth from "@yielded/oauth/OAuth";
 import * as OAuthError from "@yielded/oauth/OAuthError";
 import * as Oidc from "@yielded/oauth/Oidc";
 import * as Cause from "effect/Cause";
@@ -231,7 +230,7 @@ const makeHmacVerifier = Effect.fn("OpenIdConnect.makeHmacVerifier")(function* (
 });
 
 const makeVerifier = Effect.fn("OpenIdConnect.makeVerifier")(function* (
-  metadata: OAuth.Metadata,
+  metadata: Discovery.Metadata,
   discovery: Discovery.Discovery["Service"],
   clientId: string,
   timeoutSeconds: number,
@@ -309,7 +308,7 @@ const makeVerifier = Effect.fn("OpenIdConnect.makeVerifier")(function* (
 });
 
 const makeNativeKeySet = Effect.fn("OpenIdConnect.makeNativeKeySet")(function* (
-  metadata: OAuth.Metadata,
+  metadata: Discovery.Metadata,
   timeoutSeconds: number,
   options: {
     readonly algorithms: ReadonlyArray<IdTokenSignedResponseAlg>;
@@ -404,6 +403,8 @@ export const installConfigurations = Effect.fn("OpenIdConnect.installConfigurati
         issuer: provider.issuer,
         authorization_endpoint: provider.authorizationEndpoint,
         token_endpoint: provider.tokenEndpoint,
+        response_types_supported: ["code"],
+        ...(provider.pkceS256 ? { code_challenge_methods_supported: ["S256"] } : {}),
         authorization_response_iss_parameter_supported: provider.responseIssuerMode === "required",
       };
     }
@@ -501,6 +502,8 @@ export const installConnectedConfigurations = Effect.fn(
         issuer: provider.issuer,
         authorization_endpoint: provider.authorizationEndpoint,
         token_endpoint: provider.tokenEndpoint,
+        response_types_supported: ["code"],
+        ...(provider.pkceS256 ? { code_challenge_methods_supported: ["S256"] } : {}),
         authorization_response_iss_parameter_supported: provider.responseIssuerMode === "required",
         ...(provider.revocation.mode === "rfc7009"
           ? { revocation_endpoint: provider.revocation.endpoint }

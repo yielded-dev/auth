@@ -408,6 +408,19 @@ export const reveal = <A>(
     invalidArgument("Redacted OAuth value is unavailable"),
 ) => Effect.try({ try: () => Redacted.value(value), catch: onError });
 
+export const revealString = (
+  value: string | Redacted.Redacted<string>,
+  onUnavailable: () => OAuthError.OAuthError,
+  onInvalid: () => OAuthError.OAuthError = onUnavailable,
+): Effect.Effect<string, OAuthError.OAuthError> =>
+  Redacted.isRedacted(value)
+    ? reveal(value, onUnavailable).pipe(
+        Effect.filterOrFail((item): item is string => typeof item === "string", onInvalid),
+      )
+    : typeof value === "string"
+      ? Effect.succeed(value)
+      : Effect.fail(onInvalid());
+
 export const Bearer = Schema.Redacted(
   text(16384).check(Schema.isPattern(/^[A-Za-z0-9._~+/-]+=*$/u)),
   { disallowJsonEncode: true },
