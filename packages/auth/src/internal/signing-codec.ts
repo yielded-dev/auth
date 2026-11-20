@@ -1,5 +1,4 @@
 import * as Cause from "effect/Cause";
-import type * as Context from "effect/Context";
 import * as Mac from "effect/crypto/Mac";
 import * as Effect from "effect/Effect";
 import * as Base64Url from "effect/encoding/Base64Url";
@@ -8,6 +7,7 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
 import { makeScopedOperation } from "./scoped-operation";
+import { withoutObservability } from "./without-observability";
 
 export interface SigningKeyring {
   readonly activeKeyId: string;
@@ -28,7 +28,6 @@ export interface SigningCodecOptions<ConfigError, InvalidError, UnavailableError
   readonly observeFailure?: (
     stage: "crypto" | "payload",
   ) => <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>;
-  readonly transformContext?: <R>(context: Context.Context<R>) => Context.Context<R>;
 }
 
 const keyIdSchema = Schema.String.check(Schema.isPattern(/^[A-Za-z0-9_-]{1,64}$/));
@@ -61,10 +60,10 @@ export const makeSigningCodec = Effect.fnUntraced(function* <
 
   const hmac = yield* Mac.Mac;
   const run = yield* makeScopedOperation(options.onUnavailable);
-  const rawServices = yield* Effect.context<S["DecodingServices"] | S["EncodingServices"]>();
 
-  const services =
-    options.transformContext === undefined ? rawServices : options.transformContext(rawServices);
+  const services = (yield* Effect.context<S["DecodingServices"] | S["EncodingServices"]>()).pipe(
+    withoutObservability,
+  );
 
   const observe = (stage: "crypto" | "payload") =>
     options.observeFailure === undefined ? identityEffect : options.observeFailure(stage);

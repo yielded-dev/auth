@@ -23,7 +23,7 @@ import {
   Client,
   ClientAssertion,
   ConfigurationError,
-  Persistence,
+  type PersistenceService,
   RedirectUri,
   Text,
   maximumClientAssertionLength,
@@ -223,6 +223,7 @@ export const makeClients = Effect.fnUntraced(function* (
   metadata: MetadataOptions | undefined,
   issuer: string,
   tokenEndpoint: string,
+  store: Pick<PersistenceService, "consumeAssertion">,
 ) {
   // Keys compare by identifier, so this is the server's `Clients` service.
   const registrations = yield* Effect.serviceOption(makeClientStore(id));
@@ -233,7 +234,6 @@ export const makeClients = Effect.fnUntraced(function* (
   const http = HttpClient.withScope(yield* HttpClient.HttpClient);
   const hmac = yield* Mac.Mac;
   const signatures = yield* Signature.Signature;
-  const store = yield* Persistence;
   const permits = new Set<{ readonly expires: bigint }>();
   const cache = new Map<string, Cached<Client>>();
   const keyCache = new Map<string, Cached<Jwks.Jwks["Service"]>>();

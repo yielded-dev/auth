@@ -56,7 +56,6 @@ export const makeAuthorization = <
       readonly server: Id;
       readonly kind: "authorization";
       readonly scopes: Types.Invariant<Scope>;
-      readonly subject: Types.Invariant<Subject>;
     },
     {
       readonly authorize: (
@@ -86,7 +85,6 @@ export const makeOpenIdAuthorization = <
       readonly server: Id;
       readonly kind: "openid-authorization";
       readonly scopes: Types.Invariant<Scope>;
-      readonly subject: Types.Invariant<Subject>;
     },
     {
       readonly authorize: (

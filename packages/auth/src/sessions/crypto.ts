@@ -10,11 +10,7 @@ import * as Schema from "effect/Schema";
 
 import { AuthConfig } from "../auth/AuthConfig";
 import { defaultLayer } from "../auth/defaults";
-import {
-  markAuthFailureReported,
-  reportAuthFailure,
-  withoutObservability,
-} from "../internal/diagnostics";
+import { markAuthFailureReported, reportAuthFailure } from "../internal/diagnostics";
 import { makeSigningCodec, type SigningKeyring } from "../internal/signing-codec";
 import { TokenDigest } from "../Schema";
 import { SessionConfigurationError, SessionInvalid, SessionUnavailable } from "./errors";
@@ -127,7 +123,6 @@ export const makeSessionSigningCodec = Effect.fn("makeSessionSigningCodec")(func
       sessionDiagnostics(
         stage === "payload" && purpose === "session-cache" ? "session-cache" : "session-crypto",
       ),
-    transformContext: withoutObservability,
   });
 
   return {

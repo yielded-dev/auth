@@ -3,10 +3,10 @@ import * as Console from "effect/Console";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Predicate from "effect/Predicate";
-import * as References from "effect/References";
 import * as Schema from "effect/Schema";
 import * as SqlError from "effect/sql/SqlError";
-import * as Tracer from "effect/Tracer";
+
+export { withoutObservability } from "./without-observability";
 
 export const AuthDiagnostic = Schema.Struct({
   stage: Schema.Literals([
@@ -46,27 +46,6 @@ export const reportAuthDiagnostic = Effect.fnUntraced(
   Effect.ignore({}),
   Effect.catchDefect(() => Effect.void),
 );
-
-/** Captured dependencies win; logging and tracing belong to the invoking fiber. */
-export const withoutObservability = <R>(context: Context.Context<R>): Context.Context<R> =>
-  Context.omit(
-    Tracer.ParentSpan,
-    Tracer.Tracer,
-    Tracer.CurrentTraceLevel,
-    Tracer.MinimumTraceLevel,
-    Console.Console,
-    References.CurrentLoggers,
-    References.CurrentLogLevel,
-    References.MinimumLogLevel,
-    References.LogToStderr,
-    References.CurrentLogAnnotations,
-    References.CurrentLogSpans,
-    References.CurrentStackFrame,
-    References.TracerEnabled,
-    References.TracerTimingEnabled,
-    References.TracerSpanAnnotations,
-    References.TracerSpanLinks,
-  )(context) as Context.Context<R>;
 
 type FailureStage =
   | "local"

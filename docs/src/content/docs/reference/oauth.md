@@ -11,9 +11,6 @@ Start with the [OAuth guide](../guide/oauth) for the flow and choice of API.
 `Service`, `routes`, `middleware(requiredScopes)`, `securityLayer(api)`, and `paths`. It supports
 authorization code with PKCE for MCP clients, including static registrations,
 registrations stored by your application, and Client ID Metadata Documents (CIMD).
-Pass optional `subject` (any string-encoded Effect Schema, defaulting to `SubjectId`) to
-type subjects throughout the server, and optional `onFailure` to customize unexpected
-boundary-failure reporting.
 Use the [OpenID profile](#shared-openid-sign-in) for shared browser sign-in.
 
 Declare scopes with `OAuthScope.make("documents:read")` from `@yielded/auth`. The result
@@ -26,18 +23,17 @@ request all of them at once.
 
 Provide these to `oauth.layer`:
 
-| Input                 | Purpose                                                                             |
-| --------------------- | ----------------------------------------------------------------------------------- |
-| `origin`              | Public issuer origin                                                                |
-| `resource`            | Exact protected resource URL on that origin                                         |
-| `clients`             | Static registrations; may be empty with CIMD or `oauth.Clients`                     |
-| `clientMetadata`      | Optional `{ allowedOrigins }` policy for metadata and JWKS discovery                |
-| `loginPath`           | Login route that returns to `oauth.paths.authorize`                                 |
-| `cookiePrefix`        | Optional consent cookie prefix (`${prefix}-${id}-consent`); defaults to `"yielded"` |
-| `keys`                | Signing keyring; use separate random material from session keys                     |
-| `oauth.Identity`      | Verify the current application session                                              |
-| `oauth.Clients`       | Optional client registrations from your storage                                     |
-| `oauth.Authorization` | Optional scope decision and claims at each token issue                              |
+| Input                 | Purpose                                                              |
+| --------------------- | -------------------------------------------------------------------- |
+| `origin`              | Public issuer origin                                                 |
+| `resource`            | Exact protected resource URL on that origin                          |
+| `clients`             | Static registrations; may be empty with CIMD or `oauth.Clients`      |
+| `clientMetadata`      | Optional `{ allowedOrigins }` policy for metadata and JWKS discovery |
+| `loginPath`           | Login route that returns to `oauth.paths.authorize`                  |
+| `keys`                | Signing keyring; use separate random material from session keys      |
+| `oauth.Identity`      | Verify the current application session                               |
+| `oauth.Clients`       | Optional client registrations from your storage                      |
+| `oauth.Authorization` | Optional scope decision and claims at each token issue               |
 
 Provide durable `OAuthServer.Persistence` plus `HttpClient`, `SecureRandom`, `Digest`, `Mac`, and
 `Signature`.
@@ -152,8 +148,8 @@ Denial stops new issuance, not existing access. Revoke the grant for immediate i
 
 Provide `oauth.middleware(scopes).layer` to protected router routes such as MCP; access
 must hold every listed scope. It verifies the bearer grant and supplies
-`oauth.CurrentAccess` with the declared scope union and subject type for that request. The shared
-`OAuthServer.CurrentAccess` remains available with string scopes and string subject IDs. Require a defined
+`oauth.CurrentAccess` with the declared scope union for that request. The shared
+`OAuthServer.CurrentAccess` remains available with string scopes. Require a defined
 value and apply your application's account and operation permissions.
 
 For an `HttpApi`, annotate groups or endpoints with `OAuthScope.Required` and attach
@@ -221,8 +217,7 @@ for a complete server composition.
 
 `OAuthServer.makeOpenId(id, { scopes })` adds discovery, authorization code with
 PKCE, RS256 ID tokens, JWKS, and UserInfo for registered applications. Optional
-`scopes` is an array of branded `OAuthScope` values; optional `subject` and `onFailure`
-match `OAuthServer.make`. The standard `openid`,
+`scopes` is an array of branded `OAuthScope` values. The standard `openid`,
 `profile`, and `email` scopes are included automatically.
 
 Supply the server options above without `clientMetadata`; `resource` is optional.
@@ -338,9 +333,7 @@ publicKeys })` needs only `Signature`. Reacquire it when the trusted keys rotate
 
 Pass `scopes: [ReadDocuments, OAuthScope.make("openid")]` to restrict verified access
 to those branded literals, including every accepted standard scope. Without this
-option, verified scopes have the broader `OAuthScope.OAuthScope` type. Pass optional
-`subject` to decode the JWT `sub` claim with a custom string-encoded Schema instead of
-the default `SubjectId`. Scope names remain
+option, verified scopes have the broader `OAuthScope.OAuthScope` type. Scope names remain
 strings on the wire and are never transformed during verification.
 
 Offline verification observes permission changes and revocation at access-token
