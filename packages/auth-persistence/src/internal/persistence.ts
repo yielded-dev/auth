@@ -861,10 +861,6 @@ export const createPersistence = <T extends object, R, Database extends object =
           context = Context.add(context, OAuthSignInPersistence, {
             issue: (input, prepare) =>
               Effect.flatMap(persistence(input.context.moduleId), (s) => s.issue(input, prepare)),
-            inspect: (input) =>
-              Effect.flatMap(persistence(input.moduleId), (s) =>
-                s.inspect === undefined ? Effect.fail(oauthUnavailable()) : s.inspect(input),
-              ),
             consume: (input, prepare) =>
               Effect.flatMap(persistence(input.moduleId), (s) => s.consume(input, prepare)),
             resolve: (input) =>
@@ -893,10 +889,6 @@ export const createPersistence = <T extends object, R, Database extends object =
               read: (input) => Effect.flatMap(persistence(input.moduleId), (s) => s.read(input)),
               issue: (input, prepare) =>
                 Effect.flatMap(persistence(input.context.moduleId), (s) => s.issue(input, prepare)),
-              inspect: (input) =>
-                Effect.flatMap(persistence(input.moduleId), (s) =>
-                  s.inspect === undefined ? Effect.fail(oauthUnavailable()) : s.inspect(input),
-                ),
               consume: (input, prepare) =>
                 Effect.flatMap(persistence(input.moduleId), (s) => s.consume(input, prepare)),
               settle: (input, prepare) =>
@@ -921,10 +913,6 @@ export const createPersistence = <T extends object, R, Database extends object =
                 Effect.flatMap(persistence(input.moduleId), (s) => s.cleanup(input, prepare)),
             }),
             Context.add(OAuthConnectedRevocations, {
-              peek: (input) =>
-                Effect.flatMap(revocations(input.moduleId), (s) =>
-                  s.peek === undefined ? Effect.fail(oauthUnavailable()) : s.peek(input),
-                ),
               claim: (input, prepare) =>
                 Effect.flatMap(revocations(input.moduleId), (s) => s.claim(input, prepare)),
               settle: (input, prepare) =>

@@ -16,7 +16,6 @@ import { reportAuthFailure, ReportedOperationDefect } from "../../internal/diagn
 import { httpsOrigin as Origin } from "../../internal/origin";
 import { timeoutWithCause } from "../../internal/timeout";
 import { providerCallbackParameters } from "../callback";
-import { preflightProtocol } from "../protocolPreflight";
 import type { ProviderDefinition } from "../providerDefinition";
 import { OAuthProviderKey } from "../schema";
 import {
@@ -434,11 +433,13 @@ export const layer = <E, R>(options: Options<E, R>) => {
         if (errorCode === undefined) {
           if (entry === undefined || response === undefined || response._tag !== "Code")
             return yield* Rejected.make({});
-          yield* preflightProtocol(entry.protocol, context.upstream).pipe(
-            Effect.mapError(() => Unavailable.make({})),
-          );
-          if (DateTime.toEpochMillis(yield* DateTime.now) >= context.expiresAtMillis) {
-            return yield* Rejected.make({});
+          if (entry.protocol.ready !== undefined) {
+            yield* entry.protocol
+              .ready({ provider: context.upstream.provider, kind: "web" })
+              .pipe(Effect.mapError(() => Unavailable.make({})));
+            if (DateTime.toEpochMillis(yield* DateTime.now) >= context.expiresAtMillis) {
+              return yield* Rejected.make({});
+            }
           }
         }
 

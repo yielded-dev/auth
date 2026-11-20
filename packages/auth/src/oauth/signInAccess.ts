@@ -26,7 +26,6 @@ import { OAuthConnectedPersistence } from "./OAuthConnectedPersistence";
 import { OAuthConnectedProtocol } from "./OAuthConnectedProtocol";
 import { OAuthConnectedTokenProtector } from "./OAuthConnectedTokenProtector";
 import type { OAuthProtocol } from "./OAuthProtocol";
-import { needsLazyConnectedProtocol, preflightConnectedProtocol } from "./protocolPreflight";
 import type { OAuthProviderKey } from "./schema";
 import { OAuthConfigurationError, OAuthRejected, OAuthUnavailable } from "./signInErrors";
 import {
@@ -219,16 +218,15 @@ const make = Effect.fnUntraced(function* (
     }).pipe(Effect.ensuring(Effect.sync(() => wipeConnectedMaterial(projected.material))));
   });
 
-  const ready = Effect.fn("OAuth.access.ready")(function* (flow: OAuthSignInFlow) {
-    const configuration = yield* configurationFor(flow);
+  const ready = Effect.fn("OAuth.access.ready")(function* (provider: OAuthProviderKey) {
+    if (protocol.ready === undefined) return;
 
-    yield* preflightConnectedProtocol(protocol, configuration);
+    yield* protocol.ready({ provider });
   });
 
   return {
     profile,
     prepare,
-    needsLazy: (provider: OAuthProviderKey) => needsLazyConnectedProtocol(protocol, provider),
     ready,
     exchange,
     retain,

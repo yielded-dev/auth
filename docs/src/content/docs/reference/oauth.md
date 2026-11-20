@@ -741,7 +741,8 @@ or revocation after a restart. Metadata-dependent checks (issuer matching,
 advertised authentication methods, PKCE, ID-token algorithms, verifier key
 setup, and `responseIssuerMode: "discovered"`) fail with `OAuthUnavailable`
 before any pending flow is consumed, active grant is settled, or revocation job
-is claimed; metadata-dependent configuration failures do not block startup. Run
+is claimed (one IdP outage delays revocation maintenance for that installation
+until recovery); metadata-dependent configuration failures do not block startup. Run
 `yield* ((yield* OAuthProtocol).ready?.() ?? Effect.void)` (and
 `yield* ((yield* OAuthConnectedProtocol).ready?.() ?? Effect.void)` for
 connected grants) during startup when fail-fast boot validation is required.

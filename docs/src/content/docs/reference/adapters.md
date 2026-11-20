@@ -505,13 +505,7 @@ Account mappings require a self-contained `metadataAccess` SQL predicate enforci
 current permission for the verified invocation. False returns an empty page.
 `OAuthAccountsPersistence.list` exposes credential IDs and provider/issuer/subject
 tuples, not application profiles. Retained-grant listing belongs to
-`OAuthConnectedPersistence`. Custom persistence services paired with lazy OIDC
-registrations must implement `inspect` (bound, non-consuming callback lookup)
-for lazy callbacks and `OAuthConnectedRevocations.peek` (non-consuming pending
-revocation lookup supporting `excludeJobIds` and `excludeConfigurations`) when
-any installed connected provider uses lazy OIDC discovery, or fail closed with
-`OAuthUnavailable`. Static OAuth providers (such as GitHub or Strava) do not
-require `inspect` or `peek`.
+`OAuthConnectedPersistence`.
 
 ### Kysely-owned schemas
 

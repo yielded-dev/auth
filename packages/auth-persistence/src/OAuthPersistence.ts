@@ -197,12 +197,6 @@ export const makeOAuthSignInServices = Effect.fnUntraced(function* <N>(
     oauthSignInPersistence: {
       issue: (input, prepare) =>
         Effect.flatMap(services, (s) => s.oauthSignInPersistence.issue(input, prepare)),
-      inspect: (input) =>
-        Effect.flatMap(services, (s) =>
-          s.oauthSignInPersistence.inspect === undefined
-            ? Effect.fail(OAuthUnavailable.make({}))
-            : s.oauthSignInPersistence.inspect(input),
-        ),
       consume: (input, prepare) =>
         Effect.flatMap(services, (s) => s.oauthSignInPersistence.consume(input, prepare)),
       resolve: (input) => Effect.flatMap(services, (s) => s.oauthSignInPersistence.resolve(input)),
@@ -245,12 +239,6 @@ export const makeOAuthAccountsServices = Effect.fnUntraced(function* <N>(
         Effect.flatMap(services, (s) => s.oauthAccountsPersistence.capture(input)),
       issue: (input, prepare) =>
         Effect.flatMap(services, (s) => s.oauthAccountsPersistence.issue(input, prepare)),
-      inspect: (input) =>
-        Effect.flatMap(services, (s) =>
-          s.oauthAccountsPersistence.inspect === undefined
-            ? Effect.fail(OAuthUnavailable.make({}))
-            : s.oauthAccountsPersistence.inspect(input),
-        ),
       consume: (input, prepare) =>
         Effect.flatMap(services, (s) => s.oauthAccountsPersistence.consume(input, prepare)),
       link: (input, prepare) =>
@@ -333,12 +321,6 @@ export const makeOAuthConnectedServices = Effect.fnUntraced(function* <N>(
       read: (input) => Effect.flatMap(services, (s) => s.oauthConnectedPersistence.read(input)),
       issue: (input, prepare) =>
         Effect.flatMap(services, (s) => s.oauthConnectedPersistence.issue(input, prepare)),
-      inspect: (input) =>
-        Effect.flatMap(services, (s) =>
-          s.oauthConnectedPersistence.inspect === undefined
-            ? Effect.fail(OAuthUnavailable.make({}))
-            : s.oauthConnectedPersistence.inspect(input),
-        ),
       consume: (input, prepare) =>
         Effect.flatMap(services, (s) => s.oauthConnectedPersistence.consume(input, prepare)),
       settle: (input, prepare) =>
@@ -384,12 +366,6 @@ export const makeOAuthConnectedRevocationServices = Effect.fnUntraced(function* 
 
   return {
     oauthConnectedRevocations: {
-      peek: (input) =>
-        Effect.flatMap(services, (s) =>
-          s.oauthConnectedRevocations.peek === undefined
-            ? Effect.fail(OAuthUnavailable.make({}))
-            : s.oauthConnectedRevocations.peek(input),
-        ),
       claim: (input, prepare) =>
         Effect.flatMap(services, (s) => s.oauthConnectedRevocations.claim(input, prepare)),
       settle: (input, prepare) =>

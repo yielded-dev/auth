@@ -52,7 +52,6 @@ import {
   type OAuthProviderProfiles,
   type ProfileOptions,
 } from "./profiles";
-import { needsLazyProtocol, preflightProtocol } from "./protocolPreflight";
 import { makeOAuthRegistration } from "./registration";
 import {
   OAuthRegistrationAuthentication,
@@ -457,18 +456,17 @@ export const makeOAuthMethod = <
         const access = yield* signInAccess(moduleId, policy, options.access);
         const { issue: issueBinding, verify: verifyBinding } = yield* binding.RequestBinding;
 
-        const protocol = yield* OAuthProtocol;
-
         const {
           prepareAuthorization,
           exchangeVerifiedIdentity,
           prepareNative,
           verifyNativeIdentity,
-        } = protocol;
+          ready,
+        } = yield* OAuthProtocol;
 
         const { resolve: returnTarget } = yield* OAuthReturnTargets;
         const { seal, open } = yield* OAuthTransactionProtector;
-        const { issue, inspect, consume, resolve } = yield* OAuthSignInPersistence;
+        const { issue, consume, resolve } = yield* OAuthSignInPersistence;
         const authenticate = yield* makeAuthentication;
         const crypto = yield* SecureRandom.SecureRandom;
         const digests = yield* Digest.Digest;
@@ -913,31 +911,12 @@ export const makeOAuthMethod = <
             };
 
             // Warm lazy provider metadata before consuming a valid code flow so a
-            // discovery outage or metadata mismatch leaves the flow pending.
-            const needsReady =
-              access !== undefined
-                ? access.needsLazy(request.provider)
-                : needsLazyProtocol(protocol, request.provider, "web");
-
-            if (response._tag === "Code" && needsReady) {
-              if (inspect === undefined) return yield* OAuthUnavailable.make({});
-              const pending = yield* inspect(accessInput);
-
-              if (pending === undefined) return yield* OAuthRejected.make({});
-              const pendingFlow = yield* snapshotOAuthSignInFlow.effect(pending);
-              const pendingRedirect = pendingFlow.context.redirectUri;
-
-              if (pendingRedirect === undefined) return yield* OAuthUnavailable.make({});
+            // discovery outage leaves the flow pending.
+            if (response._tag === "Code") {
               if (access !== undefined) {
-                yield* access.ready(pendingFlow);
-              } else {
-                yield* preflightProtocol(
-                  protocol,
-                  yield* snapshotOAuthProtocolConfiguration.effect({
-                    ...pendingFlow.context,
-                    redirectUri: pendingRedirect,
-                  }),
-                );
+                yield* access.ready(request.provider);
+              } else if (ready !== undefined) {
+                yield* ready({ provider: request.provider, kind: "web" });
               }
             }
 
@@ -1092,28 +1071,8 @@ export const makeOAuthMethod = <
               requestBindingExpiresAtMillis: binder.expiresAtMillis,
             };
 
-            if (needsLazyProtocol(protocol, request.provider, "native")) {
-              if (inspect === undefined) return yield* OAuthUnavailable.make({});
-              const pending = yield* inspect(nativeAccess);
-
-              if (pending === undefined) return yield* OAuthRejected.make({});
-              const pendingFlow = yield* snapshotOAuthSignInFlow.effect(pending);
-
-              if (
-                pendingFlow.context.redirectUri !== undefined ||
-                pendingFlow.context.responseMode !== undefined ||
-                pendingFlow.context.protocol !== "oidc" ||
-                pendingFlow.context.responseIssuerMode !== "unsupported"
-              )
-                return yield* OAuthUnavailable.make({});
-              yield* preflightProtocol(protocol, {
-                provider: pendingFlow.context.provider,
-                protocol: "oidc",
-                configurationGeneration: pendingFlow.context.configurationGeneration,
-                issuer: pendingFlow.context.issuer,
-                responseIssuerMode: "unsupported",
-                callbackId: OAuthNativeCallbackId,
-              });
+            if (ready !== undefined) {
+              yield* ready({ provider: request.provider, kind: "native" });
             }
 
             const decision = yield* consume(nativeAccess, (value, journal) =>
