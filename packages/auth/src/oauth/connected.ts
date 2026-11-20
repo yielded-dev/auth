@@ -157,6 +157,7 @@ export const makeOAuthConnected = <const Id extends string>(
       const {
         read,
         issue,
+        inspect,
         consume,
         settle,
         list: listRows,
@@ -165,7 +166,7 @@ export const makeOAuthConnected = <const Id extends string>(
 
       const { verify: verifyAction } = yield* OAuthConnectedActionEvidence;
       const { authorize: authorizeUse } = yield* OAuthConnectedUseAuthority;
-      const { prepareAuthorization, exchangeGrant } = yield* OAuthConnectedProtocol;
+      const { prepareAuthorization, exchangeGrant, ready } = yield* OAuthConnectedProtocol;
       const { seal: sealFlow, open: openFlow } = yield* OAuthConnectedTransactionProtector;
       const { seal: sealTokens } = yield* OAuthConnectedTokenProtector;
       const { resolve: resolveTarget } = yield* OAuthReturnTargets;
@@ -550,6 +551,34 @@ export const makeOAuthConnected = <const Id extends string>(
             ? { ...binding, formPostSubject: true as const }
             : { ...binding, subjectId: authenticated.subjectId },
         );
+
+        // Warm lazy provider metadata before consuming a valid code flow so a
+        // discovery outage or misconfiguration leaves the flow pending.
+        if (response._tag === "Code" && ready !== undefined) {
+          if (inspect !== undefined) {
+            const pending = yield* inspect(access);
+
+            if (pending === undefined) {
+              if (authenticated === undefined) return yield* AuthenticationRequired.make({});
+
+              return yield* OAuthRejected.make({});
+            }
+            const pendingFlow = yield* snapshotOAuthConnectedFlow.effect(pending);
+
+            yield* ready({
+              provider: pendingFlow.context.provider,
+              protocol: pendingFlow.context.protocol,
+              configurationGeneration: pendingFlow.context.configurationGeneration,
+              issuer: pendingFlow.context.issuer,
+              responseIssuerMode: pendingFlow.context.responseIssuerMode,
+              callbackId: pendingFlow.context.callbackId,
+              redirectUri: pendingFlow.context.redirectUri,
+              profile: pendingFlow.context.profile,
+            });
+          } else {
+            yield* ready({ provider: request.provider });
+          }
+        }
 
         const consumed = yield* consume(access, (value, journal) =>
           journal.prepare(snapshotOAuthConnectedConsumeDecision.sync(value)),

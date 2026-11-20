@@ -736,14 +736,16 @@ Sign-in accepts per-request `prompt` and `loginHint`. Public clients use
 `authentication: { method: "none", publicClient: true }`. Load secrets with
 `Config.Redacted`. Static settings (including shared-callback issuer checks)
 validate at Layer construction with zero network I/O. OpenID Connect providers
-resolve discovery lazily on first use through `Discovery.makeRemote`, caching
-valid metadata for the Layer's `Scope` and applying a 30-second cooldown after
-failures; metadata-dependent checks (issuer matching, advertised authentication
-methods, PKCE, ID-token algorithms, and `responseIssuerMode: "discovered"`)
-surface as `OAuthUnavailable` on the first flow rather than failing startup.
-Applications that want boot-time validation can warm up discovery during startup
-by running `Discovery.resolve` with `Discovery.layerRemote` from
-`@yielded/oauth/Discovery`.
+resolve discovery lazily on first use — including the first callback, refresh,
+or revocation after a restart — sharing one fetch per issuer within the Layer
+scope and enforcing a 30-second cooldown after failures. Metadata-dependent
+checks (issuer matching, advertised authentication methods, PKCE, ID-token
+algorithms, verifier key setup, and `responseIssuerMode: "discovered"`) fail
+with `OAuthUnavailable` before any pending flow is consumed, active grant is
+settled, or revocation job is claimed; misconfigured OIDC metadata does not
+block startup. Call `(yield* OAuthProtocol).ready?.()` (and
+`(yield* OAuthConnectedProtocol).ready?.()` for connected grants) during startup
+when fail-fast boot validation is required.
 
 ### Configuration rotation
 

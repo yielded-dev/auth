@@ -280,7 +280,7 @@ export const makeOAuthConnectedAccess = <const Id extends string>(
 
       const { read, claimRefresh, settleRefresh } = yield* OAuthConnectedPersistence;
 
-      const { refreshGrant } = yield* OAuthConnectedProtocol;
+      const { refreshGrant, ready } = yield* OAuthConnectedProtocol;
       const { seal, open } = yield* OAuthConnectedTokenProtector;
       const { randomBytes } = yield* SecureRandom.SecureRandom;
 
@@ -302,6 +302,12 @@ export const makeOAuthConnectedAccess = <const Id extends string>(
         grant: M.OAuthConnectedStoredGrant,
         authorization: M.OAuthConnectedUseAuthorization,
       ) {
+        // Warm lazy provider metadata before claiming the refresh so a
+        // discovery failure never settles a valid grant to ReauthorizationRequired.
+        if (ready !== undefined) {
+          yield* ready(grant.context.configuration);
+        }
+
         const claimId = yield* random(),
           nextTokenVersion = SecurityRevision.make(yield* random());
 

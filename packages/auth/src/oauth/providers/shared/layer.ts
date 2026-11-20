@@ -11,7 +11,12 @@ import type {
   OpenIdConnectOAuthProvider,
   OpenIdConnectOidcProvider,
 } from "./models";
-import { installConfigurations, installConnectedConfigurations, type Requirements } from "./oidc";
+import {
+  installConfigurations,
+  installConnectedConfigurations,
+  makeDiscoveryCache,
+  type Requirements,
+} from "./oidc";
 import {
   resolveOidcDefaults,
   resolveOptions,
@@ -71,9 +76,12 @@ const resolve = <R>(providers: ReadonlyArray<Provider<R>>) =>
 
 /** Declare an OIDC or OAuth provider for Http.layer. Static configuration is
  * validated when the Layer builds with zero network I/O; OIDC discovery and
- * metadata capability checks run lazily on first use via `Discovery.makeRemote`.
- * The HTTP host supplies the provider ID and callback URLs; client and
- * verification policy remain separate for each protocol and registration. */
+ * metadata capability checks run lazily on first use and are shared across
+ * generations and retained access for the same issuer. Call
+ * `OAuthProtocol.ready` or `OAuthConnectedProtocol.ready` at startup when
+ * fail-fast boot validation is required. The HTTP host supplies the provider
+ * ID and callback URLs; client and verification policy remain separate for
+ * each protocol and registration. */
 export const provider = <R = never>(
   options: ProviderOptions<R>,
 ): ProviderDefinition<OpenIdConnectConfigurationError | OAuthUnavailable, R | Requirements> => ({
@@ -87,11 +95,16 @@ export const provider = <R = never>(
       ),
     );
 
+    const discoveryCache = makeDiscoveryCache();
+
     const protocol = yield* makeOpenIdConnectOAuthProtocol(
-      installConfigurations<R>({
-        providers: registrations,
-        timeoutSeconds: options.timeoutSeconds ?? 10,
-      }),
+      installConfigurations<R>(
+        {
+          providers: registrations,
+          timeoutSeconds: options.timeoutSeconds ?? 10,
+        },
+        discoveryCache,
+      ),
     ).pipe(Effect.provideServiceEffect(PrivateKeyClientSecret, PrivateKeyClientSecret.make));
 
     const access = "registrations" in options ? options.registrations : [options];
@@ -105,10 +118,13 @@ export const provider = <R = never>(
     if (connectedProviders.length === 0) return protocol;
 
     const connected = yield* makeOpenIdConnectConnectedProtocol(
-      installConnectedConfigurations<R>({
-        providers: connectedProviders,
-        timeoutSeconds: options.timeoutSeconds ?? 10,
-      }),
+      installConnectedConfigurations<R>(
+        {
+          providers: connectedProviders,
+          timeoutSeconds: options.timeoutSeconds ?? 10,
+        },
+        discoveryCache,
+      ),
     ).pipe(Effect.provideServiceEffect(PrivateKeyClientSecret, PrivateKeyClientSecret.make));
 
     return { ...protocol, connected };
@@ -126,8 +142,8 @@ export const provider = <R = never>(
  * response_mode=query; set responseMode to form_post when the issuer POSTs the
  * callback. Static configuration errors fail when building the Layer with zero
  * network I/O; OIDC discovery and metadata capability checks run lazily on
- * first use via `Discovery.makeRemote` (warm up with `Discovery.resolve` at
- * startup if boot-time validation is required).
+ * first use and are shared across registrations of the same issuer. Call
+ * `OAuthProtocol.ready()` at startup when fail-fast boot validation is required.
  *
  * Keep retired generations in providers until their outstanding flows expire;
  * never reuse a generation for changed credentials or protocol configuration.

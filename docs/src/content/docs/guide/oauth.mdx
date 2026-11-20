@@ -293,9 +293,17 @@ with authorization-code PKCE and one identity GET.
 Use `OpenIdConnect.provider` for other OIDC issuers or plain OAuth endpoints.
 Configure identity decoding, scopes, and any retained-access contract explicitly;
 see [provider configuration](../reference/oauth#providers). OpenID Connect
-providers resolve discovery lazily on first use so server startup does not fail
-while an identity provider is unavailable; warm up `Discovery.resolve` from
-`@yielded/oauth/Discovery` at startup if you want boot-time validation.
+providers resolve discovery lazily on first use so server startup succeeds while
+an identity provider is unavailable. Call `ready?.()` on `OAuthProtocol` (and
+`OAuthConnectedProtocol` for retained access) during startup when you want
+fail-fast metadata validation:
+
+```ts
+const warmUp = Effect.gen(function* () {
+  const protocol = yield* OAuthProtocol;
+  yield* protocol.ready?.() ?? Effect.void;
+});
+```
 
 Declare a `profiles` schema map on the strategy for typed `providerData` in
 `SessionClaims.resolve`. Provider display data never authorizes account linking by

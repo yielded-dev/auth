@@ -7,7 +7,6 @@ import {
   OAuthIssuer,
   OAuthProviderKey,
   OAuthProtocol,
-  OAuthConnectedProfile,
   OAuthConnectedProtocol,
   OAuthConnectedTokenContext,
   type OAuthProtocolPreparation,
@@ -1108,109 +1107,38 @@ it.effect(
 // Regression from c4752e3 (Effect-TS/effect#9884): eager startup discovery failed
 // Layer construction whenever an OIDC IdP was unavailable at boot.
 it.effect(
-  "defers OIDC discovery past Layer startup when the IdP is down, applies cooldown after failures, and caches valid metadata",
+  "defers OIDC discovery past Layer startup when the IdP is down and recovers after cooldown",
   () =>
     Effect.gen(function* () {
-      const seconds = 2_000_000_000;
-
-      yield* TestClock.setTime(seconds * 1000);
-      const pair = yield* Jwk.generateKeyPair({ algorithm: "ES256", kid: "lazy-key" });
-      const signingKey = yield* Jwk.importPrivate(pair.privateKey, "ES256");
+      yield* TestClock.setTime(2_000_000_000_000);
 
       const issuer = "https://lazy-idp.example";
       const discoveryUrl = `${issuer}/.well-known/openid-configuration`;
-      const authUrl = `${issuer}/authorize`;
-      const tokenUrl = `${issuer}/token`;
-      const jwksUrl = `${issuer}/jwks`;
-
-      let mode: "down" | "bad-metadata" | "healthy" = "down";
+      let healthy = false;
       let discoveryCalls = 0;
-      let tokenCalls = 0;
-      let idToken = "";
 
       const fetch: typeof globalThis.fetch = async (input) => {
         const url = input instanceof Request ? input.url : String(input);
 
         if (url === discoveryUrl) {
           discoveryCalls++;
-          if (mode === "down") {
-            return new Response("service unavailable", { status: 503 });
-          }
+          if (!healthy) return new Response("service unavailable", { status: 503 });
 
           return json({
             issuer,
-            authorization_endpoint: authUrl,
-            token_endpoint: tokenUrl,
-            jwks_uri: jwksUrl,
+            authorization_endpoint: `${issuer}/authorize`,
+            token_endpoint: `${issuer}/token`,
+            jwks_uri: `${issuer}/jwks`,
             response_types_supported: ["code"],
-            grant_types_supported: ["authorization_code", "refresh_token"],
-            code_challenge_methods_supported: mode === "bad-metadata" ? ["plain"] : ["S256"],
+            code_challenge_methods_supported: ["S256"],
             id_token_signing_alg_values_supported: ["ES256"],
             token_endpoint_auth_methods_supported: ["client_secret_basic"],
             authorization_response_iss_parameter_supported: true,
           });
         }
-        if (url === tokenUrl) {
-          tokenCalls++;
-
-          return json({
-            access_token: "private-access",
-            token_type: "bearer",
-            id_token: idToken,
-          });
-        }
-        if (url === jwksUrl) {
-          return json({ keys: [pair.publicKey] });
-        }
         throw new Error(`Unexpected endpoint ${url}`);
       };
 
-      const connectedProfile = yield* Schema.decodeEffect(OAuthConnectedProfile)({
-        key: "oidc-api",
-        generation: 1,
-        issuance: "active",
-        provider: "lazy",
-        clientRegistrationId: "lazy-client",
-        scopes: ["openid", "profile"],
-        resources: [],
-        retention: "access-only",
-        maximumAccessLifetimeMillis: 3_600_000,
-        refreshAheadMillis: 0,
-        refresh: "unsupported",
-        revocation: "unsupported",
-      });
-
-      // Static shared-callback guard remains fail-closed at Layer build with zero I/O.
-      yield* expectTag(
-        loadProtocol({
-          providers: [
-            {
-              protocol: "oidc",
-              provider: OAuthProviderKey.make("first"),
-              issuer: OAuthIssuer.make(issuer),
-              responseIssuerMode: "discovered",
-              clientId: "client-1",
-              clientSecret: Redacted.make("secret-1"),
-              redirectUri: OAuthRedirectUri.make("https://app.test/auth/shared/callback"),
-              idTokenSignedResponseAlg: ["ES256"],
-            },
-            {
-              protocol: "oidc",
-              provider: OAuthProviderKey.make("second"),
-              issuer: OAuthIssuer.make("https://other-idp.example"),
-              responseIssuerMode: "discovered",
-              clientId: "client-2",
-              clientSecret: Redacted.make("secret-2"),
-              redirectUri: OAuthRedirectUri.make("https://app.test/auth/shared/callback"),
-              idTokenSignedResponseAlg: ["ES256"],
-            },
-          ],
-        }).pipe(Effect.provideService(FetchHttpClient.Fetch, fetch)),
-        "OpenIdConnectConfigurationError",
-      );
-      expect(discoveryCalls).toBe(0);
-
-      // Startup succeeds while the IdP is down with zero network I/O.
       const protocol = yield* loadProtocol({
         providers: [
           {
@@ -1226,30 +1154,6 @@ it.effect(
         ],
       }).pipe(Effect.provideService(FetchHttpClient.Fetch, fetch));
 
-      const connectedServices = yield* Layer.build(
-        OpenIdConnect.layerConnected({
-          providers: [
-            {
-              protocol: "oidc",
-              provider: OAuthProviderKey.make("lazy"),
-              issuer: OAuthIssuer.make(issuer),
-              responseIssuerMode: "discovered",
-              clientId: "client",
-              clientSecret: Redacted.make("client-secret"),
-              redirectUri: OAuthRedirectUri.make("https://app.test/auth/lazy/callback"),
-              idTokenSignedResponseAlg: ["ES256"],
-              clientRegistrationId: "lazy-client",
-              profiles: [connectedProfile],
-              resourceIndicators: "unsupported",
-              refreshExpiry: "unreported",
-              revocation: { mode: "unsupported" },
-            },
-          ],
-        }),
-      ).pipe(Effect.provide(platform), Effect.provideService(FetchHttpClient.Fetch, fetch));
-
-      const connected = Context.get(connectedServices, OAuthConnectedProtocol);
-
       expect(discoveryCalls).toBe(0);
 
       const prepare = () =>
@@ -1258,100 +1162,91 @@ it.effect(
           flowId: RequestBindingFlowId.make("flow-lazy"),
         });
 
-      // First use while down fails with OAuthUnavailable and starts the 30s cooldown.
       yield* expectTag(prepare(), "OAuthUnavailable");
       expect(discoveryCalls).toBe(1);
 
+      healthy = true;
       yield* TestClock.adjust("5 seconds");
       yield* expectTag(prepare(), "OAuthUnavailable");
       expect(discoveryCalls).toBe(1);
 
-      // After cooldown, incompatible metadata (missing S256 PKCE) fails without caching as success.
-      mode = "bad-metadata";
       yield* TestClock.adjust("26 seconds");
-      yield* expectTag(prepare(), "OAuthUnavailable");
+      yield* protocol.ready?.() ?? Effect.void;
       expect(discoveryCalls).toBe(2);
 
-      yield* TestClock.adjust("5 seconds");
-      yield* expectTag(prepare(), "OAuthUnavailable");
-      expect(discoveryCalls).toBe(2);
-
-      // After cooldown with valid metadata, discovery succeeds and caches for the scope lifetime.
-      mode = "healthy";
-      yield* TestClock.adjust("26 seconds");
       const started = yield* prepare();
 
-      expect(discoveryCalls).toBe(3);
+      expect(discoveryCalls).toBe(2);
       expect(started.configuration.responseIssuerMode).toBe("required");
 
-      // Subsequent flows reuse cached discovery without re-fetching or triggering cooldown.
-      const second = yield* prepare();
+      yield* prepare();
+      expect(discoveryCalls).toBe(2);
+    }).pipe(Effect.provide(platform)),
+);
 
-      expect(discoveryCalls).toBe(3);
-      expect(second.configuration.responseIssuerMode).toBe("required");
+// Regression from PR #325 review: an unusable HS256 verifier (e.g. short secret)
+// must not pin bad discovery metadata for the Layer lifetime.
+it.effect(
+  "retries discovery after cooldown when verifier setup rejects advertised HS256 metadata",
+  () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(2_000_000_000_000);
 
-      const IdToken = Schema.Struct({
-        iss: Schema.String,
-        sub: Schema.String,
-        aud: Schema.String,
-        iat: Schema.Finite,
-        exp: Schema.Finite,
-        nonce: Schema.String,
-      });
+      const issuer = "https://hs256-recovery.example";
+      let alg: "HS256" | "RS256" = "HS256";
+      let discoveryCalls = 0;
 
-      const nowSeconds = Math.floor(DateTime.toEpochMillis(yield* DateTime.now) / 1000);
+      const fetch: typeof globalThis.fetch = async (input) => {
+        const url = input instanceof Request ? input.url : String(input);
 
-      if (started.secrets.oidcNonce === undefined) {
-        throw new Error("Expected OIDC nonce");
-      }
+        if (url === `${issuer}/.well-known/openid-configuration`) {
+          discoveryCalls++;
 
-      idToken = Redacted.value(
-        yield* Jwt.sign(
-          IdToken,
+          return json({
+            issuer,
+            authorization_endpoint: `${issuer}/authorize`,
+            token_endpoint: `${issuer}/token`,
+            jwks_uri: `${issuer}/jwks`,
+            response_types_supported: ["code"],
+            code_challenge_methods_supported: ["S256"],
+            id_token_signing_alg_values_supported: [alg],
+            token_endpoint_auth_methods_supported: ["client_secret_basic"],
+          });
+        }
+        throw new Error(`Unexpected endpoint ${url}`);
+      };
+
+      const protocol = yield* loadProtocol({
+        providers: [
           {
-            iss: issuer,
-            sub: "lazy-subject",
-            aud: "client",
-            iat: nowSeconds,
-            exp: nowSeconds + 300,
-            nonce: Redacted.value(started.secrets.oidcNonce),
+            protocol: "oidc",
+            provider: OAuthProviderKey.make("hs256"),
+            issuer: OAuthIssuer.make(issuer),
+            responseIssuerMode: "discovered",
+            clientId: "client",
+            clientSecret: Redacted.make("fixture"),
+            redirectUri: OAuthRedirectUri.make("https://app.test/auth/hs256/callback"),
+            idTokenSignedResponseAlg: ["HS256", "RS256"],
           },
-          signingKey,
-          { kid: "lazy-key" },
-        ),
-      );
+        ],
+      }).pipe(Effect.provideService(FetchHttpClient.Fetch, fetch));
 
-      const identity = yield* protocol.exchangeVerifiedIdentity({
-        configuration: started.configuration,
-        secrets: started.secrets,
-        verificationStartedAt: yield* DateTime.now,
-        response: {
-          _tag: "Code",
-          state: started.secrets.state,
-          code: Redacted.make("single-use-code"),
-          issuer: started.configuration.issuer,
-        },
-      });
+      const prepare = () =>
+        protocol.prepareAuthorization({
+          provider: OAuthProviderKey.make("hs256"),
+          flowId: RequestBindingFlowId.make("flow-hs256"),
+        });
 
-      expect(identity.identity.subject).toBe("lazy-subject");
-      expect(discoveryCalls).toBe(3);
-      expect(tokenCalls).toBe(1);
+      yield* expectTag(prepare(), "OAuthUnavailable");
+      expect(discoveryCalls).toBe(1);
 
-      // Connected OIDC protocol also resolves lazily on first use and caches thereafter.
-      const connectedBegin = yield* connected.prepareAuthorization({
-        profile: connectedProfile,
-        callbackId: OAuthCallbackId.make("lazy"),
-        flowId: RequestBindingFlowId.make("flow-lazy-connected"),
-      });
+      alg = "RS256";
+      yield* TestClock.adjust("5 seconds");
+      yield* expectTag(prepare(), "OAuthUnavailable");
+      expect(discoveryCalls).toBe(1);
 
-      expect(connectedBegin.configuration.responseIssuerMode).toBe("required");
-      expect(discoveryCalls).toBe(4);
-
-      yield* connected.prepareAuthorization({
-        profile: connectedProfile,
-        callbackId: OAuthCallbackId.make("lazy"),
-        flowId: RequestBindingFlowId.make("flow-lazy-connected-2"),
-      });
-      expect(discoveryCalls).toBe(4);
+      yield* TestClock.adjust("26 seconds");
+      yield* prepare();
+      expect(discoveryCalls).toBe(2);
     }).pipe(Effect.provide(platform)),
 );

@@ -1,22 +1,30 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import * as SqliteClient from "@effect/sql-sqlite-node/SqliteClient";
 import { it } from "@effect/vitest";
-import { Auth, OAuth, Operations, Sessions } from "@yielded/auth";
+import { Auth, OAuth, OpenIdConnect, Operations, Sessions } from "@yielded/auth";
 import { OAuthPersistence } from "@yielded/auth-persistence";
 import type { CommitJournal, PreparedCommit } from "@yielded/auth/Hooks";
 import { SubjectId } from "@yielded/auth/Schema";
 import { getTableName } from "drizzle-orm";
+import * as Sqlite from "drizzle-orm/sqlite-core";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
+import * as Jwk from "effect/jose/Jwk";
+import * as Jwt from "effect/jose/Jwt";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import { expect } from "vite-plus/test";
 
+import { AuthPersistence as SqlitePersistence } from "../src/SqliteNode";
 import {
   configuration,
   Fitness,
   identity,
+  migrate,
   profile,
   requiredService,
   requirement,
@@ -521,6 +529,553 @@ it.live.each(backends)(
       ).toBe("Empty");
       expect(yield* fixture.signIn.resolve({ moduleId, identity })).toBeDefined();
       fixture.assertBatchExecution();
+    }),
+  { timeout: 30_000 },
+);
+
+// Regression from PR #325 review: cold-worker OIDC discovery failures on callback,
+// refresh, and revocation must leave durable flows pending, grants Active, and
+// revocation jobs Pending so retries succeed after recovery.
+it.live(
+  "preserves pending flows, active grants, and pending revocation jobs when cold OIDC discovery fails",
+  () =>
+    Effect.gen(function* () {
+      const oidcProfile = yield* Schema.decodeEffect(OAuth.OAuthConnectedProfile)({
+        ...profile,
+        scopes: ["openid", "activity:read"],
+      });
+
+      const OidcRetained = Auth.make("test/fitness", {
+        claims: Schema.Struct({ displayName: Schema.String }),
+        sessions: Sessions.stateful({ maxAge: "30 days" }),
+        strategies: { strava: OAuth.make({ namespace: "strava/oauth", access: oidcProfile }) },
+        defaultStrategy: "strava",
+      });
+
+      const subjects = Sqlite.sqliteTable("athletes", {
+        id: Sqlite.text("id").primaryKey(),
+        active: Sqlite.integer("active", { mode: "boolean" }).notNull(),
+        revision: Sqlite.text("revision").notNull(),
+      });
+
+      const persisted = SqlitePersistence.make(OidcRetained);
+
+      const managed = persisted.managed({
+        prefix: "auth",
+        subjects: {
+          table: subjects,
+          id: "id",
+          status: "active",
+          activeValue: true,
+          securityRevision: "revision",
+          idCodec: SubjectId,
+          requirements: () => Effect.succeed(requirement),
+        },
+      });
+
+      const sqlite = SqliteClient.layer({ filename: ":memory:" });
+
+      const context = yield* Layer.build(
+        Layer.merge(
+          persisted.layer.pipe(Layer.provide(persisted.Config.layer(managed))),
+          Layer.effect(SqlClient.SqlClient, SqlClient.SqlClient),
+        ).pipe(Layer.provide(sqlite), Layer.provideMerge(NodeCrypto.layer)),
+      );
+
+      yield* migrate([subjects, ...Object.values(managed.schema)]).pipe(Effect.provide(context));
+
+      const sql = Context.get(context, SqlClient.SqlClient);
+      const signInPersistence = requiredService(context, OAuth.OAuthSignInPersistence);
+      const importer = requiredService(context, OAuthPersistence.IdentityImports);
+      const connected = requiredService(context, OAuth.OAuthConnectedPersistence);
+      const flowTable = getTableName(managed.schema.oauthSignInFlows);
+      const revocationTable = getTableName(managed.schema.oauthConnectedRevocations);
+
+      yield* sql`insert into athletes (id, active, revision) values ('athlete', 1, 'subject-v1')`;
+
+      const imported = yield* importer.importIdentity(
+        yield* Schema.decodeEffect(OAuthPersistence.IdentityImport)({
+          moduleId,
+          subjectId: "athlete",
+          ...identity,
+        }),
+      );
+
+      const pair = yield* Jwk.generateKeyPair({ algorithm: "ES256", kid: "durable-key" }).pipe(
+        Effect.provide(NodeCrypto.layer),
+      );
+
+      const signingKey = yield* Jwk.importPrivate(pair.privateKey, "ES256").pipe(
+        Effect.provide(NodeCrypto.layer),
+      );
+
+      const issuer = "https://www.strava.com";
+      let healthy = true;
+      let tokenCalls = 0;
+      let revokeCalls = 0;
+      let idToken = "";
+
+      const fetch: typeof globalThis.fetch = async (input, init) => {
+        const url = input instanceof Request ? input.url : String(input);
+
+        if (url === `${issuer}/.well-known/openid-configuration`) {
+          return healthy
+            ? Response.json({
+                issuer,
+                authorization_endpoint: `${issuer}/authorize`,
+                token_endpoint: `${issuer}/token`,
+                jwks_uri: `${issuer}/jwks`,
+                revocation_endpoint: `${issuer}/revoke`,
+                response_types_supported: ["code"],
+                grant_types_supported: ["authorization_code", "refresh_token"],
+                id_token_signing_alg_values_supported: ["ES256"],
+                code_challenge_methods_supported: ["S256"],
+                token_endpoint_auth_methods_supported: ["client_secret_basic"],
+                revocation_endpoint_auth_methods_supported: ["client_secret_basic"],
+                authorization_response_iss_parameter_supported: true,
+              })
+            : new Response(null, { status: 503 });
+        }
+        if (url === `${issuer}/token` && init?.method === "POST") {
+          tokenCalls++;
+
+          const body =
+            typeof init.body === "string"
+              ? init.body
+              : init.body instanceof Uint8Array
+                ? new TextDecoder().decode(init.body)
+                : "";
+
+          const refreshing = body.includes("grant_type=refresh_token");
+
+          return Response.json({
+            access_token: refreshing ? "rotated-access" : "initial-access",
+            refresh_token: refreshing ? "rotated-refresh" : "initial-refresh",
+            token_type: "bearer",
+            expires_in: 3600,
+            scope: "openid activity:read",
+            ...(refreshing ? {} : { id_token: idToken }),
+          });
+        }
+        if (url === `${issuer}/jwks`) return Response.json({ keys: [pair.publicKey] });
+        if (url === `${issuer}/revoke` && init?.method === "POST") {
+          revokeCalls++;
+
+          return new Response(null, { status: 200 });
+        }
+        throw new Error(`Unexpected endpoint ${url}`);
+      };
+
+      const platform = Layer.mergeAll(NodeCrypto.layer, FetchHttpClient.layer).pipe(
+        Layer.provideMerge(Layer.succeed(FetchHttpClient.Fetch, fetch)),
+      );
+
+      const signInProtocol = () =>
+        OpenIdConnect.layer({
+          providers: [
+            {
+              protocol: "oidc",
+              provider: OAuth.OAuthProviderKey.make("strava"),
+              issuer: OAuth.OAuthIssuer.make(issuer),
+              responseIssuerMode: "discovered",
+              clientId: "client",
+              clientSecret: Redacted.make("client-secret"),
+              redirectUri: OAuth.OAuthRedirectUri.make(
+                "https://fitness.example/auth/strava/callback",
+              ),
+              idTokenSignedResponseAlg: ["ES256"],
+            },
+          ],
+        }).pipe(Layer.provide(platform));
+
+      const connectedProtocol = (connectedProfile: OAuth.OAuthConnectedProfile) =>
+        OpenIdConnect.layerConnected({
+          providers: [
+            {
+              protocol: "oidc",
+              provider: OAuth.OAuthProviderKey.make("strava"),
+              issuer: OAuth.OAuthIssuer.make(issuer),
+              responseIssuerMode: "discovered",
+              clientId: "client",
+              clientSecret: Redacted.make("client-secret"),
+              redirectUri: OAuth.OAuthRedirectUri.make(
+                "https://fitness.example/auth/strava/callback",
+              ),
+              idTokenSignedResponseAlg: ["ES256"],
+              clientRegistrationId: "fitness",
+              profiles: [connectedProfile],
+              resourceIndicators: "unsupported",
+              refreshExpiry: "unreported",
+              revocation: {
+                mode: "rfc7009",
+                scope: "cohort",
+                tokenTypes: "access-and-refresh",
+                authentication: {
+                  method: "client_secret_basic",
+                  secret: Redacted.make("revoke-secret"),
+                },
+              },
+            },
+          ],
+        }).pipe(Layer.provide(platform));
+
+      const keyring = {
+        activeKeyId: "test",
+        keys: [{ id: "test", material: Redacted.make("A".repeat(43)) }],
+      };
+
+      const buildSignInApp = () =>
+        Layer.build(
+          Layer.mergeAll(
+            Layer.succeedContext(context),
+            signInProtocol(),
+            OAuth.OAuthReturnTargets.exactRoutes(["/activities"]),
+            OAuth.OAuthTransactionProtector.layer(keyring).pipe(Layer.provide(NodeCrypto.layer)),
+            Auth.RequestBindingConfig.layer({ generation: 1, lifetimeMillis: 600_000, keyring }),
+            Layer.succeed(Fitness.strategies.strava.SessionClaims, {
+              resolve: () => Effect.succeed({ displayName: "Ada Athlete" }),
+            }),
+            Layer.succeed(Sessions.SessionSigningKeys, keyring),
+          ),
+        ).pipe(Effect.flatMap((services) => Fitness.make.pipe(Effect.provide(services))));
+
+      const delivered = new Map<string, Redacted.Redacted<string>>();
+
+      const request: Auth.AuthRequest["Service"] = {
+        invocation: Operations.guest,
+        credentials: {},
+        credentialCommandSink: (commands) =>
+          Effect.sync(() => {
+            for (const command of commands) {
+              if (command._tag === "Issue") delivered.set(command.slot, command.credential);
+            }
+          }),
+      };
+
+      // 1. Cold-worker sign-in callback during discovery outage preserves pending flow.
+      const warmApp = yield* buildSignInApp();
+
+      const started = yield* warmApp
+        .signIn({ provider: "strava", returnTarget: "/activities" })
+        .pipe(Effect.provideService(Auth.AuthRequest, request));
+
+      const authUrl = new URL(Redacted.value(started.authorizationUrl));
+      const state = authUrl.searchParams.get("state") ?? "";
+      const nonce = authUrl.searchParams.get("nonce") ?? "";
+      const binding = delivered.get("request-binding");
+
+      if (binding === undefined) throw new Error("Missing request binding");
+
+      const nowSeconds = Math.floor(DateTime.toEpochMillis(yield* DateTime.now) / 1000);
+
+      idToken = Redacted.value(
+        yield* Jwt.sign(
+          Schema.Struct({
+            iss: Schema.String,
+            sub: Schema.String,
+            aud: Schema.String,
+            iat: Schema.Finite,
+            exp: Schema.Finite,
+            nonce: Schema.String,
+          }),
+          {
+            iss: issuer,
+            sub: identity.subject,
+            aud: "client",
+            iat: nowSeconds,
+            exp: nowSeconds + 300,
+            nonce,
+          },
+          signingKey,
+          { kid: "durable-key" },
+        ).pipe(Effect.provide(NodeCrypto.layer)),
+      );
+
+      const callbackInput = {
+        provider: "strava",
+        callbackId: "strava",
+        flowId: started.flowId,
+        requestBinding: Redacted.value(binding),
+        response: {
+          _tag: "Code" as const,
+          state,
+          code: "auth-code",
+          issuer,
+        },
+      };
+
+      healthy = false;
+      const coldDownApp = yield* buildSignInApp();
+
+      const failedCallback = yield* coldDownApp
+        .completeSignIn(callbackInput)
+        .pipe(Effect.provideService(Auth.AuthRequest, request), Effect.result);
+
+      expect(failedCallback).toMatchObject({
+        _tag: "Failure",
+        failure: { _tag: "OAuthUnavailable" },
+      });
+      expect(tokenCalls).toBe(0);
+      expect(yield* sql`select count(*) as count from ${sql(flowTable)}`).toEqual([{ count: 1 }]);
+
+      healthy = true;
+      const coldRecoveredApp = yield* buildSignInApp();
+
+      const completed = yield* coldRecoveredApp
+        .completeSignIn(callbackInput)
+        .pipe(Effect.provideService(Auth.AuthRequest, request));
+
+      expect(completed).toMatchObject({
+        completion: { _tag: "Authenticated" },
+      });
+      expect(tokenCalls).toBe(1);
+
+      // 2. Cold-worker connected refresh during discovery outage leaves grant Active.
+      const credential = yield* signInPersistence.resolve({ moduleId, identity });
+
+      if (credential === undefined) throw new Error("Missing OAuth credential");
+      const now = DateTime.toEpochMillis(yield* DateTime.now);
+
+      const tokenServices = yield* Layer.build(
+        OAuth.OAuthConnectedTokenProtector.layer(keyring).pipe(Layer.provide(NodeCrypto.layer)),
+      );
+
+      const protector = Context.get(tokenServices, OAuth.OAuthConnectedTokenProtector);
+
+      const oidcConfig = yield* Schema.decodeEffect(OAuth.OAuthConnectedConfiguration)({
+        ...configuration,
+        protocol: "oidc",
+        responseIssuerMode: "required",
+        profile: oidcProfile,
+      });
+
+      const grantContext = yield* Schema.decodeEffect(OAuth.OAuthConnectedTokenContext)({
+        namespace: "effect-auth/oauth-connected-token-context/v1",
+        moduleId,
+        subjectId: "athlete",
+        identity,
+        configuration: oidcConfig,
+        grantId: "grant-oidc",
+        grantVersion: "gv-1",
+        tokenVersion: "tv-1",
+        metadata: {
+          scopes: ["openid", "activity:read"],
+          resources: [],
+          obtainedAtMillis: now - 10_000,
+          accessExpiresAtMillis: now + 150,
+          useUntilMillis: now + 150,
+          refreshUseUntilMillis: now + 600_000,
+        },
+      });
+
+      const grantMaterial = yield* Schema.decodeEffect(OAuth.OAuthConnectedTokenMaterial)({
+        namespace: "effect-auth/oauth-connected-token-material/v1",
+        accessToken: "expired-access",
+        refreshToken: "valid-refresh",
+        continuation: {
+          _tag: "Oidc",
+          clientId: "client",
+          nonce: "N".repeat(43),
+          subject: identity.subject,
+          issuer,
+          audience: ["client"],
+        },
+      });
+
+      const sealed = yield* protector.seal({ context: grantContext, material: grantMaterial });
+
+      const storedGrant: OAuth.OAuthConnectedStoredGrant = {
+        context: grantContext,
+        sealed,
+      };
+
+      const signInFlow = yield* Schema.decodeEffect(OAuth.OAuthSignInFlow)({
+        context: {
+          ...configuration,
+          protocol: "oidc",
+          responseIssuerMode: "required",
+          responseMode: "query",
+          namespace: "effect-auth/oauth-sign-in-context/v1",
+          moduleId,
+          generation: 1,
+          flowId: "oidc-retained-flow",
+          access: oidcProfile,
+          returnTarget: "/activities",
+          stateDigest: "A".repeat(43),
+          requestBindingVerifier: "B".repeat(43),
+          requestBindingExpiresAtMillis: now + 300_000,
+          issuedAtMillis: now - 20_000,
+          expiresAtMillis: now + 300_000,
+          exchangeTimeoutMillis: 30_000,
+        },
+        sealed: {
+          format: "oauth-xchacha20poly1305-v1",
+          keyId: "test",
+          nonce: "A".repeat(32),
+          ciphertext: "A".repeat(22),
+        },
+      });
+
+      const settled = yield* connected.settle(
+        { _tag: "SignIn", flow: signInFlow, credential, grant: storedGrant },
+        prepare,
+      );
+
+      expect((yield* settled.read)._tag).toBe("Connected");
+      yield* Effect.sleep("200 millis");
+
+      const accessModule = OidcRetained.strategies.strava.access;
+
+      const policyRevision = credential.revision.securityRevision;
+
+      const buildAccess = () =>
+        Layer.build(
+          accessModule.accessLayer.pipe(
+            Layer.provide(
+              Layer.succeed(OAuth.OAuthConnectedUseAuthority, {
+                authorize: (input) =>
+                  input.purpose === "use"
+                    ? Effect.succeed(
+                        OAuth.OAuthConnectedUseAuthorization.make({
+                          moduleId: input.moduleId,
+                          revision: input.captured.revision,
+                          policyRevision,
+                          expiresAtMillis: OAuth.OAuthInstant.make(now + 300_000),
+                          purpose: "use",
+                          grantId: input.grantId,
+                          profileKey: input.profileKey,
+                        }),
+                      )
+                    : Effect.fail(OAuth.OAuthUnavailable.make({})),
+              }),
+            ),
+            Layer.provide(connectedProtocol(oidcProfile)),
+            Layer.provide(Layer.succeedContext(Context.merge(context, tokenServices))),
+          ),
+        ).pipe(Effect.map(Context.get(accessModule.ConnectedAccess)));
+
+      const authenticated = {
+        _tag: "Authenticated" as const,
+        subjectId: SubjectId.make("athlete"),
+        assurance: Operations.AuthenticationAssurance.make({
+          method: "oauth",
+          factors: ["possession"],
+          authenticatedAt: DateTime.makeUnsafe(now),
+        }),
+      };
+
+      const key = {
+        moduleId,
+        subjectId: SubjectId.make("athlete"),
+        grantId: grantContext.grantId,
+      };
+
+      const read = {
+        moduleId,
+        subjectId: SubjectId.make("athlete"),
+        selector: { _tag: "Grant" as const, grantId: grantContext.grantId },
+      };
+
+      healthy = false;
+      const coldDownAccess = yield* buildAccess();
+
+      const failedRefresh = yield* coldDownAccess
+        .withAccessToken(
+          authenticated,
+          { grantId: grantContext.grantId, profileKey: profile.key },
+          (token) => Effect.succeed(Redacted.value(token)),
+        )
+        .pipe(Effect.result);
+
+      expect(failedRefresh).toMatchObject({
+        _tag: "Failure",
+        failure: { _tag: "OAuthUnavailable" },
+      });
+      expect((yield* connected.read(read))?.grant?.state).toBe("Active");
+      expect(tokenCalls).toBe(1);
+
+      healthy = true;
+      const coldRecoveredAccess = yield* buildAccess();
+
+      const refreshedToken = yield* coldRecoveredAccess.withAccessToken(
+        authenticated,
+        { grantId: grantContext.grantId, profileKey: profile.key },
+        (token) => Effect.succeed(Redacted.value(token)),
+      );
+
+      expect(refreshedToken).toBe("rotated-access");
+      expect((yield* connected.read(read))?.grant?.state).toBe("Active");
+      expect(tokenCalls).toBe(2);
+
+      // 3. Cold-worker revocation during discovery outage leaves job Pending and recovers.
+      const authorization = yield* Schema.decodeEffect(OAuth.OAuthConnectedActionAuthorization)({
+        challenge: {
+          moduleId,
+          action: "connected-disconnect",
+          flowId: "disconnect-oidc",
+          revision: credential.revision,
+          intentDigest: "A".repeat(43),
+          bindingDigest: "A".repeat(43),
+        },
+        source: { _tag: "Proof" },
+        requirement,
+        validUntilMillis: now + 300_000,
+        evidence: {
+          revision: credential.revision,
+          flowId: "disconnect-oidc",
+          bindingDigest: "A".repeat(43),
+          proofs: [
+            {
+              method: "oauth",
+              credentialId: imported.credentialId,
+              factors: ["possession"],
+              userVerified: false,
+              phishingResistant: false,
+              verifiedAt: now,
+            },
+          ],
+        },
+      });
+
+      const disconnected = yield* connected.disconnect(
+        { key, grantVersion: grantContext.grantVersion, authorization },
+        prepare,
+      );
+
+      expect((yield* disconnected.read)._tag).toBe("Disconnected");
+
+      const buildMaintenance = () =>
+        Layer.build(
+          accessModule.maintenanceLayer.pipe(
+            Layer.provide(connectedProtocol(oidcProfile)),
+            Layer.provide(Layer.succeedContext(Context.merge(context, tokenServices))),
+          ),
+        ).pipe(Effect.map(Context.get(accessModule.ConnectedMaintenance)));
+
+      healthy = false;
+      const coldDownMaint = yield* buildMaintenance();
+
+      const failedRevoke = yield* coldDownMaint
+        .runRevocation({ _tag: "System", authority: "test" })
+        .pipe(Effect.result);
+
+      expect(failedRevoke).toMatchObject({
+        _tag: "Failure",
+        failure: { _tag: "OAuthUnavailable" },
+      });
+      expect(revokeCalls).toBe(0);
+      expect(yield* sql`select state from ${sql(revocationTable)}`).toEqual([{ state: "Pending" }]);
+
+      healthy = true;
+      const coldRecoveredMaint = yield* buildMaintenance();
+
+      const confirmed = yield* coldRecoveredMaint.runRevocation({
+        _tag: "System",
+        authority: "test",
+      });
+
+      expect(confirmed).toEqual({ outcome: "Confirmed" });
+      expect(revokeCalls).toBe(2);
     }),
   { timeout: 30_000 },
 );

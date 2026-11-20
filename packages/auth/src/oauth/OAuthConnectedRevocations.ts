@@ -30,11 +30,17 @@ export const OAuthConnectedRevocationDecision = Schema.Union([
 export class OAuthConnectedRevocations extends Context.Service<
   OAuthConnectedRevocations,
   {
+    /** Non-consuming read of the next pending revocation job so callers can warm
+     * lazy provider discovery before claiming the job. */
+    readonly peek?: (input: {
+      readonly moduleId: typeof OAuthModuleId.Type;
+    }) => Effect.Effect<OAuthConnectedRevocationJob | undefined, OAuthUnavailable>;
     readonly claim: <A>(
       input: {
         readonly moduleId: typeof OAuthModuleId.Type;
         readonly claimId: typeof OAuthClaimId.Type;
         readonly lifetimeMillis: number;
+        readonly jobId?: typeof OAuthConnectedRevocationJob.fields.jobId.Type;
       },
       prepare: PrepareOAuthCommit<typeof OAuthConnectedRevocationDecision.Type, A>,
     ) => Effect.Effect<PreparedCommit<A>, OAuthUnavailable>;

@@ -369,7 +369,7 @@ export const makeRemote: (
 
   let cache: Snapshot | undefined;
   let pending: Deferred.Deferred<Snapshot, OAuthError.OAuthError> | undefined;
-  let lastAttempt = -Infinity;
+  let lastFailedAt = -Infinity;
   let lastFailed = false;
   let closed = false;
 
@@ -473,24 +473,26 @@ export const makeRemote: (
         if (closed) return closedExit;
         if (cache !== undefined && cache.expiresAt > now) return Effect.succeed(cache);
         if (pending !== undefined) return restore(Deferred.await(pending));
-        if (lastFailed && now - lastAttempt < cooldown) {
+        if (lastFailed && now - lastFailedAt < cooldown) {
           return Effect.fail(transportFailed("Discovery is cooling down after a failed fetch"));
         }
 
-        lastAttempt = now;
         const result = (pending = Deferred.makeUnsafe<Snapshot, OAuthError.OAuthError>());
 
         return fetchDocument.pipe(
           Effect.onExit((exit) =>
-            Effect.sync(() => {
-              pending = undefined;
-              lastFailed = Exit.isFailure(exit);
-              if (Exit.isSuccess(exit)) cache = exit.value;
-              Deferred.doneUnsafe(
-                result,
-                Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause) ? closedExit : exit,
-              );
-            }),
+            Effect.flatMap(Clock.currentTimeMillis, (finishedAt) =>
+              Effect.sync(() => {
+                pending = undefined;
+                lastFailed = Exit.isFailure(exit);
+                if (Exit.isSuccess(exit)) cache = exit.value;
+                else lastFailedAt = finishedAt;
+                Deferred.doneUnsafe(
+                  result,
+                  Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause) ? closedExit : exit,
+                );
+              }),
+            ),
           ),
           Effect.forkIn(scope, { uninterruptible: false }),
           Effect.andThen(restore(Deferred.await(result))),

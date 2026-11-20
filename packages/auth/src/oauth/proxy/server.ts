@@ -425,6 +425,21 @@ export const layer = <E, R>(options: Options<E, R>) => {
           }).pipe(Effect.mapError(() => Rejected.make({})));
         }
 
+        const entry =
+          errorCode === undefined
+            ? installed.find((candidate) => candidate.provider === provider)
+            : undefined;
+
+        if (errorCode === undefined) {
+          if (entry === undefined || response === undefined || response._tag !== "Code")
+            return yield* Rejected.make({});
+          if (entry.protocol.ready !== undefined) {
+            yield* entry.protocol
+              .ready(context.upstream)
+              .pipe(Effect.mapError(() => Unavailable.make({})));
+          }
+        }
+
         const exchanging: Record = { _tag: "Exchanging", version: yield* random, context };
 
         // No reset or lease takeover. Even interruption after CAS cannot re-exchange.
@@ -436,8 +451,6 @@ export const layer = <E, R>(options: Options<E, R>) => {
         if (errorCode !== undefined) {
           destination.searchParams.set("error", errorCode);
         } else {
-          const entry = installed.find((entry) => entry.provider === provider);
-
           if (entry === undefined || response === undefined || response._tag !== "Code")
             return yield* Rejected.make({});
           const started = yield* DateTime.now;

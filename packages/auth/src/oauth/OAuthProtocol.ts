@@ -3,7 +3,7 @@ import type * as DateTime from "effect/DateTime";
 import type * as Effect from "effect/Effect";
 
 import type { RequestBindingFlowId } from "../operations/requestBinding";
-import type { OAuthProviderKey } from "./schema";
+import type { OAuthGeneration, OAuthProviderKey } from "./schema";
 import type { OAuthProtocolRejected, OAuthRejected, OAuthUnavailable } from "./signInErrors";
 import type {
   OAuthCallbackId,
@@ -63,5 +63,19 @@ export class OAuthProtocol extends Context.Service<
       readonly verificationStartedAt: DateTime.Utc;
       readonly requestedAt?: DateTime.Utc;
     }) => Effect.Effect<OAuthVerifiedExternalIdentity, OAuthProtocolRejected | OAuthUnavailable>;
+    /** Resolve and validate lazy provider metadata without consuming durable state
+     * or contacting token/JWKS endpoints. Pass a captured configuration for one
+     * exact generation, a provider selector for matching registrations, or omit
+     * the target to warm every installed registration. */
+    readonly ready?: (
+      target?:
+        | OAuthProtocolConfiguration
+        | OAuthNativeProtocolConfiguration
+        | {
+            readonly provider: OAuthProviderKey;
+            readonly kind?: "web" | "native";
+            readonly configurationGeneration?: typeof OAuthGeneration.Type;
+          },
+    ) => Effect.Effect<void, OAuthUnavailable>;
   }
 >()("effect-auth/OAuthProtocol") {}

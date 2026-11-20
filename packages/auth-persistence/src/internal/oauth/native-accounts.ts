@@ -185,6 +185,8 @@ export const makeNativeOAuthAccountsServices = Effect.fnUntraced(function* (
         }),
         flow.mysql ? "transaction" : "statement",
       ),
+    inspect: (original) =>
+      read(Effect.suspend(() => flow.inspect(M.snapshotOAuthSync(M.OAuthLinkAccess, original)))),
     consume: (original, prepare) =>
       run(
         Effect.gen(function* () {

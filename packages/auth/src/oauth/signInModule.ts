@@ -461,11 +461,12 @@ export const makeOAuthMethod = <
           exchangeVerifiedIdentity,
           prepareNative,
           verifyNativeIdentity,
+          ready,
         } = yield* OAuthProtocol;
 
         const { resolve: returnTarget } = yield* OAuthReturnTargets;
         const { seal, open } = yield* OAuthTransactionProtector;
-        const { issue, consume, resolve } = yield* OAuthSignInPersistence;
+        const { issue, inspect, consume, resolve } = yield* OAuthSignInPersistence;
         const authenticate = yield* makeAuthentication;
         const crypto = yield* SecureRandom.SecureRandom;
         const digests = yield* Digest.Digest;
@@ -896,20 +897,49 @@ export const makeOAuthMethod = <
 
             const state = yield* stateDigest(request.flowId, request.provider, response.state);
 
-            const decision = yield* consume(
-              {
-                moduleId: id,
-                generation: policy.generation,
-                flowId: request.flowId,
-                provider: request.provider,
-                callbackId: request.callbackId,
-                stateDigest: state,
-                requestBindingVerifier: binder.verifier,
-                requestBindingExpiresAtMillis: binder.expiresAtMillis,
-                responseMode: observedMode,
-                ...(response.issuer === undefined ? {} : { responseIssuer: response.issuer }),
-              },
-              (value, journal) => journal.prepare(snapshotOAuthConsumeDecision.sync(value)),
+            const accessInput = {
+              moduleId: id,
+              generation: policy.generation,
+              flowId: request.flowId,
+              provider: request.provider,
+              callbackId: request.callbackId,
+              stateDigest: state,
+              requestBindingVerifier: binder.verifier,
+              requestBindingExpiresAtMillis: binder.expiresAtMillis,
+              responseMode: observedMode,
+              ...(response.issuer === undefined ? {} : { responseIssuer: response.issuer }),
+            };
+
+            // Warm lazy provider metadata before consuming a valid code flow so a
+            // discovery outage or misconfiguration leaves the flow pending.
+            if (response._tag === "Code") {
+              if (inspect !== undefined) {
+                const pending = yield* inspect(accessInput);
+
+                if (pending === undefined) return yield* OAuthRejected.make({});
+                const pendingFlow = yield* snapshotOAuthSignInFlow.effect(pending);
+                const pendingRedirect = pendingFlow.context.redirectUri;
+
+                if (pendingRedirect === undefined) return yield* OAuthUnavailable.make({});
+                if (access !== undefined) {
+                  yield* access.ready(pendingFlow);
+                } else if (ready !== undefined) {
+                  yield* ready(
+                    yield* snapshotOAuthProtocolConfiguration.effect({
+                      ...pendingFlow.context,
+                      redirectUri: pendingRedirect,
+                    }),
+                  );
+                }
+              } else if (access !== undefined) {
+                yield* access.readyProvider(request.provider);
+              } else if (ready !== undefined) {
+                yield* ready({ provider: request.provider, kind: "web" });
+              }
+            }
+
+            const decision = yield* consume(accessInput, (value, journal) =>
+              journal.prepare(snapshotOAuthConsumeDecision.sync(value)),
             ).pipe(Effect.flatMap(read));
 
             if (decision._tag !== "Consumed") return yield* OAuthRejected.make({});
@@ -1048,18 +1078,46 @@ export const makeOAuthMethod = <
               binder.verifier,
             );
 
-            const decision = yield* consume(
-              {
-                moduleId: id,
-                generation: policy.generation,
-                flowId: request.flowId,
-                provider: request.provider,
-                callbackId: OAuthNativeCallbackId,
-                stateDigest: state,
-                requestBindingVerifier: binder.verifier,
-                requestBindingExpiresAtMillis: binder.expiresAtMillis,
-              },
-              (value, journal) => journal.prepare(snapshotOAuthConsumeDecision.sync(value)),
+            const nativeAccess = {
+              moduleId: id,
+              generation: policy.generation,
+              flowId: request.flowId,
+              provider: request.provider,
+              callbackId: OAuthNativeCallbackId,
+              stateDigest: state,
+              requestBindingVerifier: binder.verifier,
+              requestBindingExpiresAtMillis: binder.expiresAtMillis,
+            };
+
+            if (inspect !== undefined) {
+              const pending = yield* inspect(nativeAccess);
+
+              if (pending === undefined) return yield* OAuthRejected.make({});
+              const pendingFlow = yield* snapshotOAuthSignInFlow.effect(pending);
+
+              if (
+                pendingFlow.context.redirectUri !== undefined ||
+                pendingFlow.context.responseMode !== undefined ||
+                pendingFlow.context.protocol !== "oidc" ||
+                pendingFlow.context.responseIssuerMode !== "unsupported"
+              )
+                return yield* OAuthUnavailable.make({});
+              if (ready !== undefined) {
+                yield* ready({
+                  provider: pendingFlow.context.provider,
+                  protocol: "oidc",
+                  configurationGeneration: pendingFlow.context.configurationGeneration,
+                  issuer: pendingFlow.context.issuer,
+                  responseIssuerMode: "unsupported",
+                  callbackId: OAuthNativeCallbackId,
+                });
+              }
+            } else if (ready !== undefined) {
+              yield* ready({ provider: request.provider, kind: "native" });
+            }
+
+            const decision = yield* consume(nativeAccess, (value, journal) =>
+              journal.prepare(snapshotOAuthConsumeDecision.sync(value)),
             ).pipe(Effect.flatMap(read));
 
             if (decision._tag !== "Consumed") return yield* OAuthRejected.make({});

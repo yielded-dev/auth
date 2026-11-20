@@ -79,7 +79,7 @@ export const makeOAuthConnectedMaintenance = <const Id extends string>(
       const { id, policy } = yield* validateConnectedPolicy(moduleId, captured);
       const { cleanup: clean } = yield* OAuthConnectedPersistence;
       const revocations = yield* Effect.serviceOption(OAuthConnectedRevocations);
-      const { revokeGrant } = yield* OAuthConnectedProtocol;
+      const { revokeGrant, ready } = yield* OAuthConnectedProtocol;
       const { open } = yield* OAuthConnectedTokenProtector;
       const { randomBytes } = yield* SecureRandom.SecureRandom;
 
@@ -116,7 +116,7 @@ export const makeOAuthConnectedMaintenance = <const Id extends string>(
       ) {
         yield* authorize(invocation);
         if (Option.isNone(revocations)) return yield* OAuthMethodUnsupported.make({});
-        const { claim, settle } = revocations.value;
+        const { peek, claim, settle } = revocations.value;
 
         const bytes = yield* randomBytes(32).pipe(
           Effect.catchCause((cause) =>
@@ -128,110 +128,145 @@ export const makeOAuthConnectedMaintenance = <const Id extends string>(
 
         bytes.fill(0);
 
-        return yield* Effect.uninterruptibleMask((restore) =>
-          Effect.gen(function* () {
-            const receipt = yield* restore(
-              claim(
-                { moduleId: id, claimId, lifetimeMillis: policy.refreshClaimLifetimeMillis },
-                (value, journal) =>
-                  journal.prepare(snapshotOAuthConnectedRevocationDecision.sync(value)),
-              ),
-            );
+        const runClaimed = (
+          jobId: typeof M.OAuthConnectedRevocationJob.fields.jobId.Type | undefined,
+        ) =>
+          Effect.uninterruptibleMask((restore) =>
+            Effect.gen(function* () {
+              const receipt = yield* restore(
+                claim(
+                  {
+                    moduleId: id,
+                    claimId,
+                    lifetimeMillis: policy.refreshClaimLifetimeMillis,
+                    ...(jobId === undefined ? {} : { jobId }),
+                  },
+                  (value, journal) =>
+                    journal.prepare(snapshotOAuthConnectedRevocationDecision.sync(value)),
+                ),
+              );
 
-            const decision = yield* connectedRead(receipt);
+              const decision = yield* connectedRead(receipt);
 
-            if (decision._tag === "Empty") return { outcome: "Empty" as const };
-            const owned = yield* snapshotOAuthConnectedRevocationClaim.effect(decision.claim);
-
-            if (
-              owned.claimId !== claimId ||
-              owned.job.grant.context.moduleId !== id ||
-              owned.claimExpiresAtMillis !==
-                owned.claimedAtMillis + policy.refreshClaimLifetimeMillis ||
-              owned.claimedAtMillis > DateTime.toEpochMillis(yield* DateTime.now)
-            )
-              return yield* OAuthUnavailable.make({});
-
-            const call = Effect.gen(function* () {
-              const context = owned.job.grant.context;
+              if (decision._tag === "Empty") {
+                return jobId === undefined ? { outcome: "Empty" as const } : undefined;
+              }
+              const owned = yield* snapshotOAuthConnectedRevocationClaim.effect(decision.claim);
 
               if (
-                context.configuration.profile.revocation !== "provider" ||
-                DateTime.toEpochMillis(yield* DateTime.now) >= owned.claimExpiresAtMillis
+                owned.claimId !== claimId ||
+                owned.job.grant.context.moduleId !== id ||
+                owned.claimExpiresAtMillis !==
+                  owned.claimedAtMillis + policy.refreshClaimLifetimeMillis ||
+                owned.claimedAtMillis > DateTime.toEpochMillis(yield* DateTime.now)
               )
                 return yield* OAuthUnavailable.make({});
 
-              const material = yield* open({
-                context: owned.job.grant.context,
-                sealed: owned.job.grant.sealed,
-              }).pipe(Effect.flatMap((value) => snapshotOAuthConnectedTokenMaterial.effect(value)));
+              const call = Effect.gen(function* () {
+                const context = owned.job.grant.context;
 
-              return yield* Effect.gen(function* () {
-                return yield* revokeGrant({
-                  context: yield* snapshotOAuthConnectedTokenContext.effect(context),
-                  material: yield* snapshotOAuthConnectedTokenMaterial.effect(material),
+                if (
+                  context.configuration.profile.revocation !== "provider" ||
+                  DateTime.toEpochMillis(yield* DateTime.now) >= owned.claimExpiresAtMillis
+                )
+                  return yield* OAuthUnavailable.make({});
+
+                const material = yield* open({
+                  context: owned.job.grant.context,
+                  sealed: owned.job.grant.sealed,
                 }).pipe(
-                  Effect.flatMap((value) =>
-                    Schema.decodeEffect(Schema.Literal("Confirmed"))(value),
-                  ),
+                  Effect.flatMap((value) => snapshotOAuthConnectedTokenMaterial.effect(value)),
                 );
-              }).pipe(Effect.ensuring(Effect.sync(() => wipeConnectedMaterial(material))));
-            });
 
-            const result = yield* Effect.exit(
-              restore(
-                connectedBounded(
-                  call,
-                  Math.max(
-                    1,
-                    owned.claimExpiresAtMillis - DateTime.toEpochMillis(yield* DateTime.now),
+                return yield* Effect.gen(function* () {
+                  return yield* revokeGrant({
+                    context: yield* snapshotOAuthConnectedTokenContext.effect(context),
+                    material: yield* snapshotOAuthConnectedTokenMaterial.effect(material),
+                  }).pipe(
+                    Effect.flatMap((value) =>
+                      Schema.decodeEffect(Schema.Literal("Confirmed"))(value),
+                    ),
+                  );
+                }).pipe(Effect.ensuring(Effect.sync(() => wipeConnectedMaterial(material))));
+              });
+
+              const result = yield* Effect.exit(
+                restore(
+                  connectedBounded(
+                    call,
+                    Math.max(
+                      1,
+                      owned.claimExpiresAtMillis - DateTime.toEpochMillis(yield* DateTime.now),
+                    ),
                   ),
                 ),
-              ),
-            );
-
-            const outcome =
-              Exit.isSuccess(result) &&
-              DateTime.toEpochMillis(yield* DateTime.now) < owned.claimExpiresAtMillis
-                ? ("Confirmed" as const)
-                : ("Unknown" as const);
-
-            // Request settlement cancellation after five seconds. Scoped driver
-            // cleanup may take longer; an unknown outcome permits no retry.
-            const final = yield* Effect.exit(
-              connectedBounded(
-                settle({ claim: owned, outcome }, (value, journal) =>
-                  journal.prepare(snapshotSettlement.sync(value)),
-                ).pipe(Effect.flatMap(connectedRead)),
-                5_000,
-              ),
-            );
-
-            if (Exit.isFailure(final)) {
-              const cause = Cause.map(final.cause, () => OAuthUnavailable.make({}));
-
-              return yield* Effect.failCause(
-                Exit.isFailure(result)
-                  ? Cause.combine(
-                      Cause.map(result.cause, () => OAuthUnavailable.make({})),
-                      cause,
-                    )
-                  : cause,
               );
-            }
 
-            if (Exit.isFailure(result)) {
-              if (Cause.hasInterrupts(result.cause) || Cause.hasDies(result.cause))
+              const outcome =
+                Exit.isSuccess(result) &&
+                DateTime.toEpochMillis(yield* DateTime.now) < owned.claimExpiresAtMillis
+                  ? ("Confirmed" as const)
+                  : ("Unknown" as const);
+
+              // Request settlement cancellation after five seconds. Scoped driver
+              // cleanup may take longer; an unknown outcome permits no retry.
+              const final = yield* Effect.exit(
+                connectedBounded(
+                  settle({ claim: owned, outcome }, (value, journal) =>
+                    journal.prepare(snapshotSettlement.sync(value)),
+                  ).pipe(Effect.flatMap(connectedRead)),
+                  5_000,
+                ),
+              );
+
+              if (Exit.isFailure(final)) {
+                const cause = Cause.map(final.cause, () => OAuthUnavailable.make({}));
+
                 return yield* Effect.failCause(
-                  Cause.map(result.cause, () => OAuthUnavailable.make({})),
+                  Exit.isFailure(result)
+                    ? Cause.combine(
+                        Cause.map(result.cause, () => OAuthUnavailable.make({})),
+                        cause,
+                      )
+                    : cause,
                 );
+              }
 
-              yield* reportAuthFailure("oauth-connected", result.cause);
-            }
+              if (Exit.isFailure(result)) {
+                if (Cause.hasInterrupts(result.cause) || Cause.hasDies(result.cause))
+                  return yield* Effect.failCause(
+                    Cause.map(result.cause, () => OAuthUnavailable.make({})),
+                  );
 
-            return { outcome: final.value.settled ? outcome : ("Unknown" as const) };
-          }),
-        );
+                yield* reportAuthFailure("oauth-connected", result.cause);
+              }
+
+              return { outcome: final.value.settled ? outcome : ("Unknown" as const) };
+            }),
+          );
+
+        if (peek === undefined) {
+          if (ready !== undefined) {
+            yield* ready();
+          }
+
+          return (yield* runClaimed(undefined)) ?? { outcome: "Empty" as const };
+        }
+
+        for (let attempt = 0; attempt < 4; attempt++) {
+          const pending = yield* peek({ moduleId: id });
+
+          if (pending === undefined) return { outcome: "Empty" as const };
+          if (ready !== undefined) {
+            yield* ready(pending.grant.context.configuration);
+          }
+
+          const outcome = yield* runClaimed(pending.jobId);
+
+          if (outcome !== undefined) return outcome;
+        }
+
+        return { outcome: "Empty" as const };
       });
 
       return ConnectedMaintenance.of({
