@@ -746,6 +746,19 @@ const guardKeySet = (jwks: Jwks.Jwks["Service"]): Jwks.Jwks["Service"] =>
       ),
   });
 
+const isAuthTimeTooOld = (
+  authTime: number,
+  referenceMillis: number,
+  maxAgeSeconds: number,
+  clockToleranceMillis: number,
+): boolean => {
+  const cutoffMillis = referenceMillis - maxAgeSeconds * 1000 - clockToleranceMillis;
+
+  return Number.isInteger(authTime)
+    ? authTime < Math.floor(cutoffMillis / 1000)
+    : authTime < cutoffMillis / 1000;
+};
+
 const verifyTokenPayload = Effect.fnUntraced(function* (
   verified: Jws.Verified,
   signingKey: Jwk.PublicKey | undefined,
@@ -859,10 +872,14 @@ const verifyTokenPayload = Effect.fnUntraced(function* (
         return yield* tokenFailed("maxAge");
       }
 
-      const referenceMillis = input.requestedAtMillis ?? nowMillis;
-      const maxAgeMillis = input.maxAgeSeconds * 1000;
-
-      if (claims.auth_time * 1000 < referenceMillis - maxAgeMillis - policy.clockToleranceMillis) {
+      if (
+        isAuthTimeTooOld(
+          claims.auth_time,
+          input.requestedAtMillis ?? nowMillis,
+          input.maxAgeSeconds,
+          policy.clockToleranceMillis,
+        )
+      ) {
         return yield* tokenFailed("maxAge");
       }
     }
@@ -941,8 +958,12 @@ const verifyTokenPayload = Effect.fnUntraced(function* (
     input.maxAgeSeconds !== undefined &&
     input.requestedAtMillis === undefined &&
     claims.auth_time !== undefined &&
-    claims.auth_time * 1000 <
-      finishedMillis - input.maxAgeSeconds * 1000 - policy.clockToleranceMillis
+    isAuthTimeTooOld(
+      claims.auth_time,
+      finishedMillis,
+      input.maxAgeSeconds,
+      policy.clockToleranceMillis,
+    )
   ) {
     return yield* tokenFailed("maxAge");
   }
@@ -1379,9 +1400,9 @@ export const makeVerifierRemote: (
 
       const normalizedUri = new URL(jwksUri).href;
 
-      const run: Effect.Effect<A, E | OAuthError.OAuthError, R> = Effect.uninterruptibleMask(
-        (restore) =>
-          Effect.gen(function* () {
+      return Effect.uninterruptibleMask((restore) =>
+        Effect.gen(function* () {
+          while (true) {
             if (closed) return yield* closedExit;
 
             if (current !== undefined && current.uri === normalizedUri) {
@@ -1401,7 +1422,7 @@ export const makeVerifierRemote: (
                 const cached = yield* restore(Deferred.await(activePending.deferred));
 
                 if (closed) return yield* closedExit;
-                if (cached.retired) return yield* run;
+                if (cached.retired) continue;
                 cached.active++;
 
                 return yield* restore(body(cached.service)).pipe(
@@ -1409,9 +1430,10 @@ export const makeVerifierRemote: (
                 );
               }
 
-              yield* Effect.ignore(restore(Deferred.await(activePending.deferred)));
-
-              return yield* run;
+              yield* restore(Deferred.await(activePending.deferred)).pipe(
+                Effect.catch(() => Effect.void),
+              );
+              continue;
             }
 
             const deferred = Deferred.makeUnsafe<CachedJwks, OAuthError.OAuthError>();
@@ -1493,14 +1515,13 @@ export const makeVerifierRemote: (
             const cached = yield* restore(Deferred.await(deferred));
 
             if (closed) return yield* closedExit;
-            if (cached.retired) return yield* run;
+            if (cached.retired) continue;
             cached.active++;
 
             return yield* restore(body(cached.service)).pipe(Effect.ensuring(releaseJwks(cached)));
-          }),
+          }
+        }),
       );
-
-      return run;
     });
 
   const verifyIdToken = Effect.fnUntraced(function* (
@@ -1628,8 +1649,11 @@ const isToken68Char = (code: number): boolean =>
   code === 0x2f;
 
 const validBearerErrorCode = (value: string): boolean =>
-  // oxlint-disable-next-line no-control-regex -- RFC 6750 §3.1 error syntax permits visible ASCII excluding quotes/backslash.
-  value.length > 0 && value.length <= 128 && /^[\x21\x23-\x5b\x5d-\x7e]+$/u.test(value);
+  // oxlint-disable-next-line no-control-regex -- RFC 6750 §3 permits ASCII NQCHAR (0x20-0x21, 0x23-0x5B, 0x5D-0x7E) in quoted error values.
+  value.length > 0 &&
+  value.length <= 128 &&
+  value.trim().length > 0 &&
+  /^[\x20\x21\x23-\x5b\x5d-\x7e]+$/u.test(value);
 
 // Strictly parses RFC 9110 §11.6.1 / RFC 6750 §3.1 WWW-Authenticate challenges
 // for a single unambiguous Bearer `error` auth-param.

@@ -18,7 +18,7 @@ import * as Tracer from "effect/Tracer";
 
 import { makeScopedOperation } from "../../../internal/scoped-operation";
 import { OAuthUnavailable } from "../../signInErrors";
-import { isTenantIssuerTemplate } from "../microsoft/discovery";
+import { concreteEntraTenantId, isTenantIssuerTemplate } from "../microsoft/discovery";
 import { makeEntraIssuerPolicy, makeEntraJwks } from "../microsoft/jwks";
 import { classifyOAuthConfigurationError } from "./classifyOAuthError";
 import {
@@ -114,7 +114,11 @@ export class ProviderDiscovery extends Context.Service<
             timeout: timeoutSeconds * 1000,
             ...(metadataUrl === undefined ? {} : { url: metadataUrl }),
             issuerMatcher: (configuredIssuer, discoveredIssuer) => {
-              const matched = matchEntraDiscoveryIssuer(configuredIssuer, discoveredIssuer);
+              const matched = matchEntraDiscoveryIssuer(
+                configuredIssuer,
+                discoveredIssuer,
+                profile === "microsoft",
+              );
 
               if (matched === undefined) {
                 return Effect.fail(
@@ -387,9 +391,15 @@ export const installConfigurations = Effect.fn("OpenIdConnect.installConfigurati
         provider[discoveryProfile],
       );
 
+      const concreteTenant = concreteEntraTenantId(
+        discovered.metadata.issuer,
+        provider[discoveryProfile] === "microsoft",
+      );
+
       raw = discovered.metadata;
-      signingKeyIssuerRequired = discovered.signingKeyIssuerRequired;
-      expectedTenantId = discovered.expectedTenantId;
+      signingKeyIssuerRequired =
+        discovered.signingKeyIssuerRequired || concreteTenant !== undefined;
+      expectedTenantId = discovered.expectedTenantId ?? concreteTenant;
       excludedTenantId = discovered.excludedTenantId;
     } else {
       raw = {
@@ -473,9 +483,12 @@ export const installConnectedConfigurations = Effect.fn(
         undefined,
       );
 
+      const concreteTenant = concreteEntraTenantId(discovered.metadata.issuer);
+
       raw = discovered.metadata;
-      signingKeyIssuerRequired = discovered.signingKeyIssuerRequired;
-      expectedTenantId = discovered.expectedTenantId;
+      signingKeyIssuerRequired =
+        discovered.signingKeyIssuerRequired || concreteTenant !== undefined;
+      expectedTenantId = discovered.expectedTenantId ?? concreteTenant;
       excludedTenantId = discovered.excludedTenantId;
     } else {
       raw = {

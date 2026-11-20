@@ -698,6 +698,7 @@ it.live("owns GitHub cohort revocation until its provider scope closes", () =>
 );
 
 const entraHost = "https://login.microsoftonline.com";
+const ciamHost = "https://contoso.ciamlogin.com";
 const entraTemplate = `${entraHost}/{tenantid}/v2.0`;
 const workTenant = "11111111-1111-1111-1111-111111111111";
 const otherWorkTenant = "22222222-2222-2222-2222-222222222222";
@@ -708,6 +709,7 @@ it.effect.each([
   // Regression at 25217c71: pinning a discovery template admitted an issuer-less key.
   {
     name: "requires key issuer authority for a pinned tenant template",
+    host: entraHost,
     authority: workTenant,
     discoveryIssuer: entraTemplate,
     tokenIssuer: `${entraHost}/${workTenant}/v2.0`,
@@ -721,6 +723,7 @@ it.effect.each([
   // Regression at 881f94d: organizations admitted a personal account after template matching.
   {
     name: "definitely rejects personal accounts on organizations",
+    host: entraHost,
     authority: "organizations",
     discoveryIssuer: entraTemplate,
     tokenIssuer: `${entraHost}/${uppercasePersonalTenant}/v2.0`,
@@ -731,6 +734,7 @@ it.effect.each([
   // Regression at 881f94d: concrete consumers discovery admitted an issuer-less key.
   {
     name: "requires key issuer authority for concrete consumers discovery",
+    host: entraHost,
     authority: "consumers",
     discoveryIssuer: `${entraHost}/${personalTenant}/v2.0`,
     tokenIssuer: `${entraHost}/${personalTenant}/v2.0`,
@@ -746,6 +750,7 @@ it.effect.each([
   // building the tenant-namespaced subject.
   {
     name: "rejects mismatched tid on pinned consumers discovery",
+    host: entraHost,
     authority: "consumers",
     discoveryIssuer: `${entraHost}/${personalTenant}/v2.0`,
     tokenIssuer: `${entraHost}/${personalTenant}/v2.0`,
@@ -757,6 +762,7 @@ it.effect.each([
   // a concrete JWK issuer never compared signed tid with the pinned tenant GUID.
   {
     name: "rejects mismatched tid on pinned single-tenant discovery",
+    host: entraHost,
     authority: workTenant,
     discoveryIssuer: entraTemplate,
     tokenIssuer: `${entraHost}/${workTenant}/v2.0`,
@@ -764,19 +770,53 @@ it.effect.each([
     expectedSubject: "provider-subject",
     keys: [{ keyIssuer: `${entraHost}/${workTenant}/v2.0`, accepted: false }],
   },
+  // Regression at 881f94d (still open on ba2baeb): exact-match concrete Entra
+  // authorities (including Microsoft.provider({ tenant: "consumers" }), which
+  // rewrites consumers to the personal-account GUID before discovery) returned
+  // pinned: false with no expectedTenantId, admitting issuer-less keys and forged tid.
+  {
+    name: "pins exact-match concrete Entra personal-account authority and checks tid case-insensitively",
+    host: entraHost,
+    authority: personalTenant,
+    discoveryIssuer: `${entraHost}/${personalTenant}/v2.0`,
+    tokenIssuer: `${entraHost}/${personalTenant}/v2.0`,
+    tid: uppercasePersonalTenant,
+    expectedSubject: "provider-subject",
+    keys: [
+      { keyIssuer: undefined, accepted: false },
+      { keyIssuer: `${entraHost}/${personalTenant}/v2.0`, tid: workTenant, accepted: false },
+      { keyIssuer: `${entraHost}/${personalTenant}/v2.0`, accepted: true },
+    ],
+  },
+  // Regression at 881f94d (still open on ba2baeb): exact-match Entra External ID
+  // (*.ciamlogin.com) concrete tenant authorities must also pin key authority and tid.
+  {
+    name: "pins exact-match CIAM concrete tenant authority",
+    host: ciamHost,
+    authority: workTenant,
+    discoveryIssuer: `${ciamHost}/${workTenant}/v2.0`,
+    tokenIssuer: `${ciamHost}/${workTenant}/v2.0`,
+    tid: workTenant,
+    expectedSubject: "provider-subject",
+    keys: [
+      { keyIssuer: undefined, accepted: false },
+      { keyIssuer: `${ciamHost}/${workTenant}/v2.0`, tid: otherWorkTenant, accepted: false },
+      { keyIssuer: `${ciamHost}/${workTenant}/v2.0`, accepted: true },
+    ],
+  },
 ])(
   "Entra discovery $name",
-  ({ authority, discoveryIssuer, tokenIssuer, tid, expectedSubject, keys }) =>
+  ({ host, authority, discoveryIssuer, tokenIssuer, tid, expectedSubject, keys }) =>
     Effect.gen(function* () {
       const seconds = 2_000_000_000;
 
       yield* TestClock.setTime(seconds * 1000);
       const pair = yield* Jwk.generateKeyPair({ algorithm: "ES256", kid: "key" });
       const signingKey = yield* Jwk.importPrivate(pair.privateKey, "ES256");
-      const configuredIssuer = `${entraHost}/${authority}/v2.0`;
+      const configuredIssuer = `${host}/${authority}/v2.0`;
       const discoveryUrl = `${configuredIssuer}/.well-known/openid-configuration`;
-      const tokenUrl = `${entraHost}/${authority}/oauth2/v2.0/token`;
-      const jwksUrl = `${entraHost}/${authority}/discovery/v2.0/keys`;
+      const tokenUrl = `${host}/${authority}/oauth2/v2.0/token`;
+      const jwksUrl = `${host}/${authority}/discovery/v2.0/keys`;
 
       const EntraIdToken = Schema.Struct({
         iss: Schema.String,
@@ -789,7 +829,9 @@ it.effect.each([
         tid: Schema.String,
       });
 
-      for (const { keyIssuer, accepted } of keys) {
+      for (const entry of keys) {
+        const { keyIssuer, accepted } = entry;
+        const tokenTid = "tid" in entry && entry.tid !== undefined ? entry.tid : tid;
         let idToken = "";
 
         const fetch: typeof globalThis.fetch = async (input) => {
@@ -799,7 +841,7 @@ it.effect.each([
             return json({
               issuer: discoveryIssuer,
               signing_key_issuer_required: false,
-              authorization_endpoint: `${entraHost}/${authority}/oauth2/v2.0/authorize`,
+              authorization_endpoint: `${host}/${authority}/oauth2/v2.0/authorize`,
               token_endpoint: tokenUrl,
               jwks_uri: jwksUrl,
               response_types_supported: ["code"],
@@ -863,7 +905,7 @@ it.effect.each([
               iat: seconds,
               exp: seconds + 300,
               nonce: Redacted.value(started.secrets.oidcNonce),
-              tid,
+              tid: tokenTid,
             },
             signingKey,
           ),

@@ -383,6 +383,7 @@ export const makeEntraIssuerPolicy = (options: {
 }): Oidc.IssuerPolicy =>
   Effect.fnUntraced(function* ({ configuredIssuer, tokenIssuer, claims, signingKey }) {
     const tenantTemplate = isTenantIssuerTemplate(configuredIssuer);
+    const expectedTenantId = options.expectedTenantId?.toLowerCase();
     const excludedTenantId = options.excludedTenantId?.toLowerCase();
 
     if (tenantTemplate) {
@@ -401,12 +402,12 @@ export const makeEntraIssuerPolicy = (options: {
       return yield* issuerFailed();
     }
 
-    if (options.expectedTenantId !== undefined) {
+    if (expectedTenantId !== undefined) {
       const tenant = yield* Schema.decodeUnknownEffect(TenantClaim)(claims).pipe(
         Effect.mapError(issuerFailed),
       );
 
-      if (tenant.tid !== options.expectedTenantId) {
+      if (tenant.tid.toLowerCase() !== expectedTenantId) {
         return yield* issuerFailed();
       }
     }

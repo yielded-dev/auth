@@ -384,6 +384,40 @@ it.effect(
       );
 
       expect(exactCutoff.subject).toBe("provider-subject");
+
+      // Integer auth_time covers its whole second even when requestedAt has sub-second millis.
+      const sameSecondInteger = yield* verifier.verify(
+        yield* sign(keys.privateKey, { ...claims, auth_time: seconds - 5 }),
+        {
+          ...verification,
+          requestedAt: DateTime.makeUnsafe((seconds - 5) * 1000 + 750),
+          maxAge: 0,
+        },
+      );
+
+      expect(sameSecondInteger.subject).toBe("provider-subject");
+
+      // Exact fractional equality does not suffer from float multiplication rounding (2038-02-01T00:00:00.002Z).
+      const y2038Millis = 2_148_595_200_002;
+      const y2038Seconds = 2_148_595_200.002;
+
+      yield* TestClock.setTime(y2038Millis);
+
+      const exactY2038 = yield* verifier.verify(
+        yield* sign(keys.privateKey, {
+          ...claims,
+          iat: 2_148_595_200,
+          exp: 2_148_595_500,
+          auth_time: y2038Seconds,
+        }),
+        {
+          ...verification,
+          requestedAt: DateTime.makeUnsafe(y2038Millis),
+          maxAge: 0,
+        },
+      );
+
+      expect(exactY2038.authTime).toBe(y2038Seconds);
     }).pipe(Effect.scoped, Effect.provide(cryptoLayer)),
 );
 

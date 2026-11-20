@@ -11,6 +11,32 @@ export const entraTenantId = Schema.String.check(
 /** Commercial personal-account tenant; `consumers` is this GUID's nickname. */
 export const personalMicrosoftAccountTenant = "9188040d-6c67-4c5b-b112-36a304b66dad";
 
+const entraTenantHosts: ReadonlySet<string> = new Set([
+  "login.microsoftonline.com",
+  "login.microsoftonline.us",
+  "login.partner.microsoftonline.cn",
+  "login.chinacloudapi.cn",
+  "sts.windows.net",
+]);
+
+const isEntraTenantHost = (origin: string): boolean => {
+  let url: URL;
+
+  try {
+    url = new URL(origin);
+  } catch {
+    return false;
+  }
+
+  if (url.protocol !== "https:" || url.port !== "") return false;
+  const host = url.hostname.toLowerCase();
+
+  return (
+    entraTenantHosts.has(host) ||
+    (host.endsWith(".ciamlogin.com") && host.length > ".ciamlogin.com".length)
+  );
+};
+
 const issuerOriginAndPath = (value: string) => {
   const match = /^(https:\/\/[^/?#]+)(\/[^?#]*)?$/u.exec(value);
 
@@ -19,6 +45,33 @@ const issuerOriginAndPath = (value: string) => {
   const origin = match[1];
 
   return origin === undefined ? undefined : { origin, path: match[2] ?? "" };
+};
+
+/** Extract the concrete tenant GUID from an Entra / CIAM single-tenant
+ * authority (`/<tenantId>/v2.0`, or `/<tenantId>/` on `sts.windows.net`). */
+export const concreteEntraTenantId = (
+  issuer: string,
+  isMicrosoftProfile = false,
+): string | undefined => {
+  const parts = issuerOriginAndPath(issuer);
+
+  if (parts === undefined) return undefined;
+  if (!isMicrosoftProfile && !isEntraTenantHost(parts.origin)) return undefined;
+
+  const segments = parts.path.split("/");
+
+  if (
+    segments.length === 3 &&
+    segments[0] === "" &&
+    segments[1] !== undefined &&
+    Schema.is(entraTenantId)(segments[1]) &&
+    (segments[2] === "v2.0" ||
+      (parts.origin.toLowerCase() === "https://sts.windows.net" && segments[2] === ""))
+  ) {
+    return segments[1];
+  }
+
+  return undefined;
 };
 
 /** True when `issuer` has exactly one `{tenantid}` path segment. The URL parser
@@ -100,16 +153,17 @@ const templateTenantSegment = (configured: string, discovered: string): string |
 
 /** Match an exact issuer, commercial `consumers` personal-account alias, or an
  * Entra `{tenantid}` template whose remaining origin and path match the
- * configured authority. Template matches for single-tenant GUIDs and both forms
- * of `consumers` discovery pin the issuer, report `pinned: true` so
- * verification keeps requiring signing-key issuer authority, and carry
- * `expectedTenantId` so signed `tid` must match the pinned tenant GUID.
- * `common` and `organizations` stay on the template, with the personal-account
- * tenant excluded for `organizations`. Other segments, including tenant
- * domains, are rejected. */
+ * configured authority. Concrete Entra / CIAM tenant authorities, template
+ * matches for single-tenant GUIDs, and both forms of `consumers` discovery pin
+ * the issuer, report `pinned: true` so verification keeps requiring signing-key
+ * issuer authority, and carry `expectedTenantId` so signed `tid` must match the
+ * pinned tenant GUID. `common` and `organizations` stay on the template, with
+ * the personal-account tenant excluded for `organizations`. Other segments,
+ * including tenant domains, are rejected. */
 export const matchEntraDiscoveryIssuer = (
   configured: string,
   discovered: string,
+  isMicrosoftProfile = false,
 ):
   | {
       readonly issuer: string;
@@ -119,7 +173,11 @@ export const matchEntraDiscoveryIssuer = (
     }
   | undefined => {
   if (configured === discovered) {
-    return { issuer: discovered, pinned: false };
+    const concreteTenant = concreteEntraTenantId(discovered, isMicrosoftProfile);
+
+    return concreteTenant === undefined
+      ? { issuer: discovered, pinned: false }
+      : { issuer: discovered, pinned: true, expectedTenantId: concreteTenant };
   }
 
   const personal = personalAccountIssuer(configured);
