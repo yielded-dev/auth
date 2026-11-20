@@ -30,9 +30,7 @@ prevents reuse.
 Check the provider-specific receipt, then call `OAuth.tokens`. A JSON null
 refresh token is omitted, and an array scope is joined with spaces. A receipt
 alone does not establish a successful grant or authenticated identity. Tokens
-stay redacted. Profile fetches default to GET; POST and a JSON body are
-available, and identity can instead be taken from the token receipt. JSON token
-requests reject a repeated parameter name before the request is sent. Authorization
+stay redacted. Authorization
 defaults to `response_mode=query`; `form_post` is available when the issuer POSTs
 the callback. `client_secret_post` may omit its stored secret and take `clientSecret`
 on that token request. For initial OIDC sign-in, require an ID token and verify it

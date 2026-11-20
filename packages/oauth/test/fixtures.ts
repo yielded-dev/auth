@@ -28,7 +28,6 @@ export const options: OAuth.ClientOptions = {
   clientId: "client",
   authentication: { method: "client_secret_post", secret: Redacted.make("client-secret") },
   timeoutMs: 1000,
-  profile: { url: "https://api.example/user", headers: { "X-Api-Version": "2026" } },
 };
 
 export const codeInput = {

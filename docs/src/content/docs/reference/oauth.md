@@ -544,7 +544,10 @@ your own atomic import; the key alone does not create login authority. See the
 Callbacks use HTTPS, with HTTP loopback support for local development.
 Auth provider configuration requires HTTPS endpoints. The lower-level `@yielded/oauth` package provides `Discovery` (`makeLocal`/`layerLocal`
 and lazy, scoped `makeRemote`/`layerRemote`), `OAuthError` with a closed `reason` union,
-and `Pkce` (`generate`/`challenge`). It accepts HTTP endpoints and discovery URLs on
+`Pkce` (`generate`/`challenge`), and generic form-encoded OAuth token/revocation requests
+with space-separated scopes (plain-OAuth profile fetches, JSON token bodies, and
+comma-separated scopes live in `@yielded/auth`'s provider adapters). It accepts HTTP
+endpoints and discovery URLs on
 `localhost`, `127.0.0.1`, or `[::1]` only with an explicitly configured HTTP loopback
 issuer. Asymmetric OIDC verification still requires an HTTPS JWKS URL.
 

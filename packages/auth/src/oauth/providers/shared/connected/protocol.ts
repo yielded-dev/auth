@@ -35,6 +35,7 @@ import { isTenantIssuerTemplate } from "../../microsoft/discovery";
 import { classifyOAuthError } from "../classifyOAuthError";
 import { type ConnectedCompatibility } from "../compatibility";
 import { discoveryProfile } from "../discovery";
+import { authorizationUrlWithCommaScopes } from "../http";
 import {
   persistedResponseIssuerMode,
   type OpenIdConnectAuthentication,
@@ -414,39 +415,43 @@ export const makeConnectedProtocolWithCompatibility = Effect.fn(
         ? yield* randomSecret.pipe(Effect.provideService(SecureRandom.SecureRandom, crypto))
         : undefined;
 
-    const authorizationUrl = yield* entry.client
-      .authorizationUrl({
-        redirectUri: callback.redirectUri,
-        scopes:
-          compatibility?.authorizationScopes(
-            request.profile.scopes,
-            request.profile.retention === "access-and-refresh",
-          ) ?? request.profile.scopes,
-        state,
-        ...(pkce === undefined ? {} : { codeChallenge: pkce.challenge }),
-        ...(nonce === undefined ? {} : { nonce }),
-        ...(entry.provider.authorizationParameters === undefined
-          ? {}
-          : { parameters: entry.provider.authorizationParameters }),
-        resources: request.profile.resources,
-        ...(entry.provider.protocol === "oidc" && entry.provider.maxAgeSeconds !== undefined
-          ? { maxAgeSeconds: entry.provider.maxAgeSeconds }
-          : {}),
-        ...(request.prompt === undefined ? {} : { prompt: request.prompt }),
-        ...(request.loginHint === undefined ? {} : { loginHint: request.loginHint }),
-        ...(entry.provider.responseMode === undefined
-          ? {}
-          : { responseMode: entry.provider.responseMode }),
-      })
-      .pipe(
-        Effect.catchCause((cause) =>
-          Effect.failCause(
-            Cause.map(cause, (error) =>
-              classifyOAuthError(error, { operation: "authorization_code", phase: "preSend" }),
-            ),
+    const authInput = {
+      redirectUri: callback.redirectUri,
+      scopes:
+        compatibility?.authorizationScopes(
+          request.profile.scopes,
+          request.profile.retention === "access-and-refresh",
+        ) ?? request.profile.scopes,
+      state,
+      ...(pkce === undefined ? {} : { codeChallenge: pkce.challenge }),
+      ...(nonce === undefined ? {} : { nonce }),
+      ...(entry.provider.authorizationParameters === undefined
+        ? {}
+        : { parameters: entry.provider.authorizationParameters }),
+      resources: request.profile.resources,
+      ...(entry.provider.protocol === "oidc" && entry.provider.maxAgeSeconds !== undefined
+        ? { maxAgeSeconds: entry.provider.maxAgeSeconds }
+        : {}),
+      ...(request.prompt === undefined ? {} : { prompt: request.prompt }),
+      ...(request.loginHint === undefined ? {} : { loginHint: request.loginHint }),
+      ...(entry.provider.responseMode === undefined
+        ? {}
+        : { responseMode: entry.provider.responseMode }),
+    };
+
+    const authorizationUrl = yield* (
+      entry.provider.protocol === "oauth" && entry.provider.scopeSeparator === ","
+        ? authorizationUrlWithCommaScopes(entry.client, authInput)
+        : entry.client.authorizationUrl(authInput)
+    ).pipe(
+      Effect.catchCause((cause) =>
+        Effect.failCause(
+          Cause.map(cause, (error) =>
+            classifyOAuthError(error, { operation: "authorization_code", phase: "preSend" }),
           ),
         ),
-      );
+      ),
+    );
 
     const responseIssuerMode = persistedResponseIssuerMode(
       entry.provider.responseIssuerMode,
@@ -506,31 +511,29 @@ export const makeConnectedProtocolWithCompatibility = Effect.fn(
 
     const clientSecret = yield* requestSecret(provider.authentication, "authorization_code");
 
-    const receipt = yield* entry.client
-      .codeGrant({
-        code: request.response.code,
-        redirectUri: saved.redirectUri,
-        ...(request.secrets.pkceVerifier === undefined
-          ? {}
-          : { pkceVerifier: request.secrets.pkceVerifier }),
-        ...(provider.tokenParameters === undefined ? {} : { parameters: provider.tokenParameters }),
-        resources: saved.profile.resources,
-        ...(clientSecret === undefined ? {} : { clientSecret }),
-      })
-      .pipe(
-        Effect.catchCause((cause) =>
-          Effect.failCause(
-            Cause.map(cause, (error) =>
-              classifyOAuthError(error, { operation: "authorization_code", phase: "token" }),
-            ),
+    const receipt = yield* (entry.codeTokenSender ?? entry.client.codeGrant)({
+      code: request.response.code,
+      redirectUri: saved.redirectUri,
+      ...(request.secrets.pkceVerifier === undefined
+        ? {}
+        : { pkceVerifier: request.secrets.pkceVerifier }),
+      ...(provider.tokenParameters === undefined ? {} : { parameters: provider.tokenParameters }),
+      resources: saved.profile.resources,
+      ...(clientSecret === undefined ? {} : { clientSecret }),
+    }).pipe(
+      Effect.catchCause((cause) =>
+        Effect.failCause(
+          Cause.map(cause, (error) =>
+            classifyOAuthError(error, { operation: "authorization_code", phase: "token" }),
           ),
         ),
-        Effect.ensuring(
-          Effect.sync(() => {
-            if (clientSecret !== undefined) Redacted.wipeUnsafe(clientSecret);
-          }),
-        ),
-      );
+      ),
+      Effect.ensuring(
+        Effect.sync(() => {
+          if (clientSecret !== undefined) Redacted.wipeUnsafe(clientSecret);
+        }),
+      ),
+    );
 
     const grant = yield* tokens(receipt, compatibility, {
       scopes: saved.profile.scopes,
@@ -609,19 +612,21 @@ export const makeConnectedProtocolWithCompatibility = Effect.fn(
         })
       : provider.identitySource.from === "token"
         ? decodeIdentity(entry, Redacted.value(receipt.body), grant.accessToken)
-        : entry.client.fetchProfile(grant.accessToken).pipe(
-            Effect.catchCause((cause) =>
-              Effect.failCause(
-                Cause.map(cause, (error) =>
-                  classifyOAuthError(error, {
-                    operation: "authorization_code",
-                    phase: "userInfo",
-                  }),
+        : entry.fetchProfile === undefined
+          ? Effect.fail(unavailable())
+          : entry.fetchProfile(grant.accessToken).pipe(
+              Effect.catchCause((cause) =>
+                Effect.failCause(
+                  Cause.map(cause, (error) =>
+                    classifyOAuthError(error, {
+                      operation: "authorization_code",
+                      phase: "userInfo",
+                    }),
+                  ),
                 ),
               ),
-            ),
-            Effect.flatMap((body) => decodeIdentity(entry, body, grant.accessToken)),
-          );
+              Effect.flatMap((body) => decodeIdentity(entry, body, grant.accessToken)),
+            );
 
     const refreshToken =
       saved.profile.retention === "access-and-refresh" ? grant.refreshToken : undefined;
@@ -682,30 +687,28 @@ export const makeConnectedProtocolWithCompatibility = Effect.fn(
 
     const clientSecret = yield* requestSecret(provider.authentication, "refresh_token");
 
-    const receipt = yield* entry.client
-      .refreshGrant({
-        refreshToken: request.material.refreshToken,
-        ...(compatibility?.includeRefreshScope === false ? {} : { scopes: saved.profile.scopes }),
-        ...(provider.refreshParameters === undefined
-          ? {}
-          : { parameters: provider.refreshParameters }),
-        resources: saved.profile.resources,
-        ...(clientSecret === undefined ? {} : { clientSecret }),
-      })
-      .pipe(
-        Effect.catchCause((cause) =>
-          Effect.failCause(
-            Cause.map(cause, (error) =>
-              classifyOAuthError(error, { operation: "refresh_token", phase: "token" }),
-            ),
+    const receipt = yield* (entry.refreshTokenSender ?? entry.client.refreshGrant)({
+      refreshToken: request.material.refreshToken,
+      ...(compatibility?.includeRefreshScope === false ? {} : { scopes: saved.profile.scopes }),
+      ...(provider.refreshParameters === undefined
+        ? {}
+        : { parameters: provider.refreshParameters }),
+      resources: saved.profile.resources,
+      ...(clientSecret === undefined ? {} : { clientSecret }),
+    }).pipe(
+      Effect.catchCause((cause) =>
+        Effect.failCause(
+          Cause.map(cause, (error) =>
+            classifyOAuthError(error, { operation: "refresh_token", phase: "token" }),
           ),
         ),
-        Effect.ensuring(
-          Effect.sync(() => {
-            if (clientSecret !== undefined) Redacted.wipeUnsafe(clientSecret);
-          }),
-        ),
-      );
+      ),
+      Effect.ensuring(
+        Effect.sync(() => {
+          if (clientSecret !== undefined) Redacted.wipeUnsafe(clientSecret);
+        }),
+      ),
+    );
 
     const grant = yield* tokens(receipt, compatibility, {
       scopes: saved.profile.scopes,
@@ -769,7 +772,9 @@ export const makeConnectedProtocolWithCompatibility = Effect.fn(
       if (identity.identity.subject !== request.context.identity.subject)
         return yield* unavailable();
     } else {
-      const body = yield* entry.client
+      if (entry.fetchProfile === undefined) return yield* unavailable();
+
+      const body = yield* entry
         .fetchProfile(grant.accessToken)
         .pipe(
           Effect.catchCause((cause) =>

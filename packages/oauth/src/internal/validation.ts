@@ -374,39 +374,6 @@ export const Parameters = Schema.Record(
   ),
 );
 
-const forbiddenHeaders = new Set([
-  "authorization",
-  "proxy-authorization",
-  "cookie",
-  "host",
-  "content-length",
-  "content-type",
-  "transfer-encoding",
-  "connection",
-  "upgrade",
-  "trailer",
-  "te",
-  "traceparent",
-  "tracestate",
-  "baggage",
-]);
-
-export const Headers = Schema.Record(
-  Schema.String.check(Schema.isPattern(/^[!#$%&'*+.^_`|~0-9A-Za-z-]{1,64}$/)),
-  Schema.String.check(Schema.isMaxLength(2048)),
-).check(
-  Schema.makeFilter((value) => {
-    const names = Object.keys(value).map((name) => name.toLowerCase());
-
-    return (
-      names.length <= 16 &&
-      new Set(names).size === names.length &&
-      names.every((name) => !forbiddenHeaders.has(name)) &&
-      Object.values(value).every((value) => !/[\r\n]/u.test(value))
-    );
-  }),
-);
-
 export const ProtocolEndpoint = Endpoint.check(
   Schema.makeFilter((value) =>
     Array.from(new URL(value).searchParams.keys()).every((key) => !reserved.has(key.toLowerCase())),

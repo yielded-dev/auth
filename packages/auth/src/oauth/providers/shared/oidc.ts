@@ -14,7 +14,6 @@ import * as HttpClient from "effect/http/HttpClient";
 import * as Jwk from "effect/jose/Jwk";
 import * as Jwks from "effect/jose/Jwks";
 import * as Redacted from "effect/Redacted";
-import * as Tracer from "effect/Tracer";
 
 import { makeScopedOperation } from "../../../internal/scoped-operation";
 import { OAuthUnavailable } from "../../signInErrors";
@@ -44,6 +43,7 @@ import {
   supplementDiscovery,
   type DiscoveryProfile,
 } from "./discovery";
+import { captureHardenedHttp } from "./http";
 import {
   advertisedIdTokenAlgorithms,
   hasStaticSecret,
@@ -176,23 +176,6 @@ export class ProviderDiscovery extends Context.Service<
     });
   });
 }
-
-const captureHardenedHttp = Effect.gen(function* () {
-  const client = yield* HttpClient.HttpClient;
-  const fetch = yield* FetchHttpClient.Fetch;
-
-  return HttpClient.transformResponse(client, (effect) =>
-    effect.pipe(
-      Effect.provideService(FetchHttpClient.Fetch, fetch),
-      Effect.provideService(FetchHttpClient.RequestInit, {
-        redirect: "manual",
-        credentials: "omit",
-        cache: "no-store",
-      }),
-      Effect.provideService(Tracer.DisablePropagation, true),
-    ),
-  );
-});
 
 const asymmetricAlgorithmsOf = (
   advertised: ReadonlyArray<IdTokenSignedResponseAlg>,
