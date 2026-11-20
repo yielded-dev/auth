@@ -183,6 +183,53 @@ it.effect("binds HTTP loopback endpoints to an explicitly local issuer", () =>
   }).pipe(Effect.scoped),
 );
 
+// Explicit human test request on PR #318, 2026-11-19: guard against prototype pollution in discovery metadata.
+it.effect("rejects __proto__ members in remote and local discovery metadata", () =>
+  Effect.gen(function* () {
+    const polluted = {
+      userinfo_endpoint: "http://localhost:9999/pwned",
+      jwks_uri: "http://localhost:9999/jwks",
+      authorization_response_iss_parameter_supported: "not-a-boolean",
+    };
+
+    const hostileJson =
+      '{"issuer":"https://issuer.example","token_endpoint":"https://issuer.example/token","__proto__":' +
+      '{"userinfo_endpoint":"http://localhost:9999/pwned","jwks_uri":"http://localhost:9999/jwks","authorization_response_iss_parameter_supported":"not-a-boolean"}}';
+
+    const http = transport(
+      () =>
+        new Response(hostileJson, {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+    );
+
+    const remote = yield* Discovery.makeRemote({
+      issuer: "https://issuer.example",
+      timeout: "1 second",
+    }).pipe(Effect.provideService(HttpClient.HttpClient, http));
+
+    expect(yield* remote.resolve.pipe(Effect.flip)).toMatchObject({
+      _tag: "OAuthError",
+      reason: { _tag: "DiscoveryFailed" },
+    });
+
+    const hostileLocal = Object.defineProperty(
+      {
+        issuer: "https://issuer.example",
+        token_endpoint: "https://issuer.example/token",
+      },
+      "__proto__",
+      { value: polluted, enumerable: true, configurable: true, writable: true },
+    ) as unknown as Discovery.Metadata;
+
+    expect(yield* Discovery.makeLocal(hostileLocal).pipe(Effect.flip)).toMatchObject({
+      _tag: "OAuthError",
+      reason: { _tag: "InvalidArgument" },
+    });
+  }).pipe(Effect.scoped),
+);
+
 // Requested verifier seam: HTTP JWKS is a permanent configuration error.
 it.effect("rejects HTTP JWKS before constructing an asymmetric verifier", () =>
   Effect.gen(function* () {
