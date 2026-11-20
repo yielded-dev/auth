@@ -20,6 +20,8 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
+import * as Jwk from "effect/jose/Jwk";
+import * as Jwt from "effect/jose/Jwt";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
@@ -693,4 +695,136 @@ it.live("owns GitHub cohort revocation until its provider scope closes", () =>
     yield* expectTag(revoke, "OAuthUnavailable");
     expect(deletes).toBe(2);
   }),
+);
+
+// Regression at 25217c71 (relocated from packages/oauth/test/oidc.test.ts):
+// pinning a discovery template admitted an issuer-less signing key. Provider
+// JWKS cannot be made to omit issuer in a live workflow. The same signed token
+// must fail without key authority and pass with it, independently of any
+// untrusted remote fields.
+it.effect("requires signing-key issuer authority after pinning Entra discovery metadata", () =>
+  Effect.gen(function* () {
+    const seconds = 2_000_000_000;
+
+    yield* TestClock.setTime(seconds * 1000);
+    const pair = yield* Jwk.generateKeyPair({ algorithm: "ES256", kid: "key" });
+    const signingKey = yield* Jwk.importPrivate(pair.privateKey, "ES256");
+    const tenant = "11111111-1111-1111-1111-111111111111";
+    const issuer = `https://login.microsoftonline.com/${tenant}/v2.0`;
+    const template = "https://login.microsoftonline.com/{tenantid}/v2.0";
+    const discoveryUrl = `${issuer}/.well-known/openid-configuration`;
+    const tokenUrl = `https://login.microsoftonline.com/${tenant}/oauth2/v2.0/token`;
+    const jwksUrl = `https://login.microsoftonline.com/${tenant}/discovery/v2.0/keys`;
+
+    const EntraIdToken = Schema.Struct({
+      iss: Schema.String,
+      sub: Schema.String,
+      aud: Schema.String,
+      azp: Schema.String,
+      iat: Schema.Finite,
+      exp: Schema.Finite,
+      nonce: Schema.String,
+      tid: Schema.String,
+    });
+
+    for (const keyIssuer of [undefined, template]) {
+      let idToken = "";
+
+      const fetch: typeof globalThis.fetch = async (input) => {
+        const url = input instanceof Request ? input.url : String(input);
+
+        if (url === discoveryUrl) {
+          return json({
+            issuer: template,
+            signing_key_issuer_required: false,
+            authorization_endpoint: `https://login.microsoftonline.com/${tenant}/oauth2/v2.0/authorize`,
+            token_endpoint: tokenUrl,
+            jwks_uri: jwksUrl,
+            response_types_supported: ["code"],
+            code_challenge_methods_supported: ["S256"],
+            id_token_signing_alg_values_supported: ["ES256"],
+            token_endpoint_auth_methods_supported: ["client_secret_basic"],
+          });
+        }
+        if (url === tokenUrl) {
+          return json({
+            access_token: "private-access",
+            token_type: "bearer",
+            id_token: idToken,
+          });
+        }
+        if (url === jwksUrl) {
+          return json({
+            keys: [
+              {
+                ...pair.publicKey,
+                ...(keyIssuer === undefined ? {} : { issuer: keyIssuer }),
+              },
+            ],
+          });
+        }
+        throw new Error(`Unexpected endpoint ${url}`);
+      };
+
+      const protocol = yield* loadProtocol({
+        providers: [
+          {
+            protocol: "oidc",
+            provider: OAuthProviderKey.make("entra"),
+            issuer: OAuthIssuer.make(issuer),
+            responseIssuerMode: "unsupported",
+            clientId: "client",
+            clientSecret: Redacted.make("client-secret"),
+            redirectUri: OAuthRedirectUri.make("https://app.test/auth/entra/callback"),
+            idTokenSignedResponseAlg: ["ES256"],
+          },
+        ],
+      }).pipe(Effect.provideService(FetchHttpClient.Fetch, fetch));
+
+      const started = yield* protocol.prepareAuthorization({
+        provider: OAuthProviderKey.make("entra"),
+        flowId: RequestBindingFlowId.make("flow-entra"),
+      });
+
+      if (started.secrets.oidcNonce === undefined) {
+        throw new Error("Expected OIDC nonce");
+      }
+
+      idToken = Redacted.value(
+        yield* Jwt.sign(
+          EntraIdToken,
+          {
+            iss: issuer,
+            sub: "provider-subject",
+            aud: "client",
+            azp: "client",
+            iat: seconds,
+            exp: seconds + 300,
+            nonce: Redacted.value(started.secrets.oidcNonce),
+            tid: tenant,
+          },
+          signingKey,
+        ),
+      );
+
+      const completed = yield* protocol
+        .exchangeVerifiedIdentity({
+          configuration: started.configuration,
+          secrets: started.secrets,
+          verificationStartedAt: DateTime.makeUnsafe(seconds * 1000),
+          response: {
+            _tag: "Code",
+            state: started.secrets.state,
+            code: Redacted.make("single-use-code"),
+          },
+        })
+        .pipe(Effect.provideService(FetchHttpClient.Fetch, fetch), Effect.result);
+
+      expect(completed).toMatchObject(
+        keyIssuer === undefined
+          ? { _tag: "Failure", failure: { _tag: "OAuthProtocolRejected" } }
+          : { _tag: "Success", success: { identity: { subject: "provider-subject", issuer } } },
+      );
+    }
+  }).pipe(Effect.provide(platform)),
 );

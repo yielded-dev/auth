@@ -15,7 +15,7 @@ import * as Redacted from "effect/Redacted";
 import * as Scope from "effect/Scope";
 import { expect } from "vite-plus/test";
 
-import { OAuth, OAuthError, Oidc, Pkce } from "../src/index";
+import { Discovery, OAuth, OAuthError, Oidc, Pkce } from "../src/index";
 import {
   codeInput,
   cryptoLayer,
@@ -51,11 +51,11 @@ it.effect("uses RFC7636 S256 and fresh private 32-byte PKCE verifiers", () =>
 );
 
 it.effect(
-  "discovers the exact issuer including its trailing slash and rejects substituted metadata",
+  "discovers the exact issuer including its trailing slash, supports RFC 8414 and local metadata, and rejects substituted metadata",
   () =>
     Effect.gen(function* () {
       const requests: string[] = [];
-      let document = metadata;
+      let document: Discovery.Metadata = { ...metadata, custom_extension: { nested: true } };
 
       const client = transport((request) => {
         requests.push(request.url);
@@ -63,26 +63,49 @@ it.effect(
         return Response.json(document);
       });
 
-      expect(
-        yield* Oidc.discover(metadata.issuer, { timeoutMs: 1000 }).pipe(
-          Effect.provideService(HttpClient.HttpClient, client),
-        ),
-      ).toEqual(metadata);
+      const local = yield* Discovery.makeLocal(document);
+
+      expect(yield* local.resolve).toEqual(document);
+
+      const oidcRemote = yield* Discovery.makeRemote({
+        issuer: metadata.issuer,
+        timeout: "1 second",
+      }).pipe(Effect.provideService(HttpClient.HttpClient, client));
+
+      expect(requests).toEqual([]);
+      expect(yield* oidcRemote.resolve).toEqual(document);
+      expect(yield* oidcRemote.resolve).toEqual(document);
       expect(requests).toEqual(["https://issuer.example/tenant/.well-known/openid-configuration"]);
+
+      const rfc8414Remote = yield* Discovery.makeRemote({
+        issuer: metadata.issuer,
+        wellKnown: "oauth-authorization-server",
+        timeout: "1 second",
+      }).pipe(Effect.provideService(HttpClient.HttpClient, client));
+
+      expect(yield* rfc8414Remote.resolve).toEqual(document);
+      expect(requests[1]).toBe(
+        "https://issuer.example/.well-known/oauth-authorization-server/tenant",
+      );
+
       document = { ...metadata, issuer: metadata.issuer.slice(0, -1) };
+
+      const mismatched = yield* Discovery.makeRemote({
+        issuer: metadata.issuer,
+        timeout: "1 second",
+      }).pipe(Effect.provideService(HttpClient.HttpClient, client));
+
+      expect(yield* mismatched.resolve.pipe(Effect.flip)).toMatchObject({
+        _tag: "OAuthError",
+        reason: { _tag: "DiscoveryFailed" },
+      });
       expect(
-        yield* Oidc.discover(metadata.issuer, { timeoutMs: 1000 }).pipe(
-          Effect.provideService(HttpClient.HttpClient, client),
-          Effect.flip,
-        ),
-      ).toMatchObject({ _tag: "OAuthError", reason: { _tag: "DiscoveryFailed" } });
-      expect(
-        yield* Oidc.discover("http://issuer.example", { timeoutMs: 1000 }).pipe(
-          Effect.provideService(HttpClient.HttpClient, client),
-          Effect.flip,
-        ),
+        yield* Discovery.makeRemote({
+          issuer: "http://issuer.example",
+          timeout: "1 second",
+        }).pipe(Effect.provideService(HttpClient.HttpClient, client), Effect.flip),
       ).toMatchObject({ _tag: "OAuthError", reason: { _tag: "InvalidArgument" } });
-      expect(requests).toHaveLength(2);
+      expect(requests).toHaveLength(3);
 
       const loopback = {
         ...metadata,
@@ -92,13 +115,15 @@ it.effect(
       };
 
       document = loopback;
-      expect(
-        yield* Oidc.discover(loopback.issuer, { timeoutMs: 1000 }).pipe(
-          Effect.provideService(HttpClient.HttpClient, client),
-        ),
-      ).toEqual(loopback);
-      expect(requests[2]).toBe("http://127.0.0.1:8080/.well-known/openid-configuration");
-    }),
+
+      const loopbackRemote = yield* Discovery.makeRemote({
+        issuer: loopback.issuer,
+        timeout: "1 second",
+      }).pipe(Effect.provideService(HttpClient.HttpClient, client));
+
+      expect(yield* loopbackRemote.resolve).toEqual(loopback);
+      expect(requests[3]).toBe("http://127.0.0.1:8080/.well-known/openid-configuration");
+    }).pipe(Effect.scoped),
 );
 
 // Requested security seam: remote issuers cannot select HTTP loopback endpoints.
@@ -118,16 +143,20 @@ it.effect("binds HTTP loopback endpoints to an explicitly local issuer", () =>
       return Response.json(remote);
     });
 
+    const remoteDiscovery = yield* Discovery.makeRemote({
+      issuer: metadata.issuer,
+      timeout: "1 second",
+    }).pipe(Effect.provideService(HttpClient.HttpClient, http));
+
+    expect(yield* remoteDiscovery.resolve.pipe(Effect.flip)).toMatchObject({
+      _tag: "OAuthError",
+      reason: { _tag: "DiscoveryFailed" },
+    });
     expect(
-      yield* Oidc.discover(metadata.issuer, { timeoutMs: 1000 }).pipe(
-        Effect.provideService(HttpClient.HttpClient, http),
-        Effect.flip,
-      ),
-    ).toMatchObject({ _tag: "OAuthError", reason: { _tag: "DiscoveryFailed" } });
-    expect(
-      yield* Oidc.discover(metadata.issuer, {
-        timeoutMs: 1000,
-        metadataUrl: "http://localhost:8080/discovery",
+      yield* Discovery.makeRemote({
+        issuer: metadata.issuer,
+        timeout: "1 second",
+        url: "http://localhost:8080/discovery",
       }).pipe(Effect.provideService(HttpClient.HttpClient, http), Effect.flip),
     ).toMatchObject({ _tag: "OAuthError", reason: { _tag: "InvalidArgument" } });
     expect(

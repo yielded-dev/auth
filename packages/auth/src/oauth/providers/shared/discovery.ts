@@ -1,8 +1,11 @@
-import type { Metadata } from "@yielded/oauth/OAuth";
+import type { Metadata } from "@yielded/oauth/Discovery";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
+import { discoveredIssuerMatches, matchEntraDiscoveryIssuer } from "../microsoft/discovery";
 import { OpenIdConnectConfigurationError } from "./models";
+
+export { discoveredIssuerMatches, matchEntraDiscoveryIssuer };
 
 /** Private, first-party discovery supplements; generic OIDC remains strict. */
 export const discoveryProfile = Symbol("effect-auth/OpenIdConnect/discoveryProfile");
@@ -72,15 +75,16 @@ export const supplementDiscovery = Effect.fnUntraced(function* (
     )
       return yield* OpenIdConnectConfigurationError.make({ reason: "metadata" });
   } else if (profile === "microsoft") {
+    const authorizationEndpoint = metadata.authorization_endpoint;
     const jwksUri = metadata.jwks_uri;
 
-    if (jwksUri === undefined)
+    if (authorizationEndpoint === undefined || jwksUri === undefined)
       return yield* OpenIdConnectConfigurationError.make({ reason: "metadata" });
 
     const sameOrigin = yield* Effect.try({
       try: () => {
         const issuer = new URL(metadata.issuer);
-        const authorization = new URL(metadata.authorization_endpoint);
+        const authorization = new URL(authorizationEndpoint);
         const token = new URL(metadata.token_endpoint);
         const jwks = new URL(jwksUri);
 

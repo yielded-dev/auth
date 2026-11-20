@@ -5,7 +5,6 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Base64Url from "effect/encoding/Base64Url";
 import type * as HttpClient from "effect/http/HttpClient";
-import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as Jwk from "effect/jose/Jwk";
 import * as Jwks from "effect/jose/Jwks";
 import type * as Jws from "effect/jose/Jws";
@@ -16,7 +15,6 @@ import type * as Scope from "effect/Scope";
 
 import * as OidcJwks from "./internal/jwks.ts";
 import * as Ownership from "./internal/ownership.ts";
-import * as Transport from "./internal/transport.ts";
 import * as V from "./internal/validation.ts";
 import { JsonObject, Metadata, type RequestOptions } from "./OAuth.ts";
 import * as OAuthError from "./OAuthError.ts";
@@ -38,13 +36,6 @@ const idTokenAlgorithms: readonly IdTokenAlgorithm[] = [
   "EdDSA",
   "HS256",
 ];
-
-export interface DiscoverOptions extends RequestOptions {
-  /** Fetch this document instead of issuer + `/.well-known/openid-configuration`.
-   * The document issuer must still equal the trusted issuer identifier.
-   * HTTP loopback discovery requires an HTTP loopback issuer. */
-  readonly metadataUrl?: string;
-}
 
 export interface VerifierOptions extends RequestOptions {
   readonly metadata: Metadata;
@@ -206,99 +197,6 @@ export const substituteTenantIssuer = (template: string, tenantId: string): stri
   return `${parts.origin}${segments.join("/")}`;
 };
 
-/** Commercial personal-account tenant. `consumers` is this GUID's nickname. */
-const personalMicrosoftAccountTenant = "9188040d-6c67-4c5b-b112-36a304b66dad";
-
-const multiTenantAlias = (segment: string) => segment === "common" || segment === "organizations";
-
-/** Replace one `consumers` segment on the commercial host with its tenant GUID. */
-const personalAccountIssuer = (configured: string): string | undefined => {
-  const parts = issuerOriginAndPath(configured);
-
-  if (parts === undefined || parts.origin !== "https://login.microsoftonline.com") return undefined;
-
-  const segments = parts.path.split("/");
-  const index = segments.indexOf("consumers");
-
-  if (index < 0 || segments.filter((segment) => segment === "consumers").length !== 1)
-    return undefined;
-
-  segments[index] = personalMicrosoftAccountTenant;
-
-  return `${parts.origin}${segments.join("/")}`;
-};
-
-/** Tenant segment when `discovered` is a `{tenantid}` template of `configured`. */
-const templateTenantSegment = (configured: string, discovered: string): string | undefined => {
-  if (configured === discovered || !isTenantIssuerTemplate(discovered)) return undefined;
-
-  const configuredParts = issuerOriginAndPath(configured);
-  const discoveredParts = issuerOriginAndPath(discovered);
-
-  if (configuredParts === undefined || discoveredParts === undefined) return undefined;
-  if (configuredParts.origin !== discoveredParts.origin) return undefined;
-
-  const configuredSegments = configuredParts.path.split("/");
-  const discoveredSegments = discoveredParts.path.split("/");
-
-  if (configuredSegments.length !== discoveredSegments.length) return undefined;
-
-  const index = discoveredSegments.indexOf(tenantPlaceholder);
-  const tenant = configuredSegments[index];
-
-  if (tenant === undefined || tenant === "" || tenant === tenantPlaceholder) return undefined;
-
-  const filled = discoveredSegments.map((segment) =>
-    segment === tenantPlaceholder ? tenant : segment,
-  );
-
-  return filled.every((segment, segmentIndex) => segment === configuredSegments[segmentIndex]) &&
-    `${discoveredParts.origin}${filled.join("/")}` === configured
-    ? tenant
-    : undefined;
-};
-
-/** Exact issuer match, or a `{tenantid}` template whose remaining path and origin
- * equal the configured authority once that segment is filled from the authority.
- * `common` and `organizations` may use that template. A GUID segment, and
- * commercial `consumers`, stay restricted to one tenant. Other segments,
- * including a tenant domain, do not match. */
-export const discoveredIssuerMatches = (configured: string, discovered: string): boolean => {
-  if (configured === discovered) return true;
-
-  const personal = personalAccountIssuer(configured);
-
-  if (personal !== undefined && personal === discovered) return true;
-
-  const tenant = templateTenantSegment(configured, discovered);
-
-  return (
-    tenant !== undefined &&
-    (Schema.is(TenantId)(tenant) || multiTenantAlias(tenant) || personal !== undefined)
-  );
-};
-
-/** A single-tenant authority that matched a broader `{tenantid}` document.
- * `common` and `organizations` stay on the template. */
-const pinnedConcreteIssuer = (configured: string, discovered: string): string | undefined => {
-  const tenant = templateTenantSegment(configured, discovered);
-
-  if (tenant === undefined || multiTenantAlias(tenant)) return undefined;
-  if (Schema.is(TenantId)(tenant)) return configured;
-
-  return personalAccountIssuer(configured);
-};
-
-const DiscoverConfiguration = Schema.Struct({
-  ...V.RequestOptions.fields,
-  metadataUrl: Schema.optionalKey(V.Endpoint),
-});
-
-const discoveryFailed = (description: string): OAuthError.OAuthError =>
-  new OAuthError.OAuthError({
-    reason: new OAuthError.DiscoveryFailed({ description }),
-  });
-
 const tokenFailed = (
   reason: OAuthError.TokenVerificationFailed["reason"],
   cause?: unknown,
@@ -306,90 +204,6 @@ const tokenFailed = (
   new OAuthError.OAuthError({
     reason: new OAuthError.TokenVerificationFailed({ reason, cause }),
   });
-
-/** OIDC discovery uses the trusted issuer identifier, retaining its exact
- * spelling for claim comparison even if its network URL normalizes. A discovered
- * `{tenantid}` path segment is accepted when it templates this same authority.
- * A GUID authority keeps that issuer. Commercial `consumers` keeps the
- * personal-account issuer. `common` and `organizations` stay on the template.
- * Any other segment is rejected, so a tenant domain does not become common. */
-export const discover = Effect.fnUntraced(function* (
-  input: string,
-  inputOptions: DiscoverOptions,
-): Effect.fn.Return<Metadata, OAuthError.OAuthError, HttpClient.HttpClient> {
-  const issuer = yield* V.configuration(V.Issuer, input, "Invalid OIDC issuer");
-
-  const options = yield* V.configuration(
-    DiscoverConfiguration,
-    inputOptions,
-    "Invalid OIDC discovery options",
-  );
-
-  if (options.metadataUrl !== undefined && !V.endpointMatchesIssuer(issuer, options.metadataUrl))
-    return yield* V.invalidArgument(
-      "Discovery metadata URL does not match configured issuer scheme",
-    );
-  const url = new URL(options.metadataUrl ?? issuer);
-
-  if (options.metadataUrl === undefined) {
-    url.pathname = `${url.pathname.replace(/\/$/u, "")}/.well-known/openid-configuration`;
-  }
-
-  const http = yield* Transport.capture;
-
-  const response = yield* Transport.request(
-    http,
-    HttpClientRequest.get(url.href).pipe(HttpClientRequest.acceptJson),
-    options,
-    "discovery",
-  );
-
-  if (response.status !== 200)
-    return yield* new OAuthError.OAuthError({
-      reason: new OAuthError.TransportFailed({
-        endpoint: "discovery",
-        status: response.status,
-        description: "Unexpected discovery response status",
-      }),
-    });
-  const document = yield* Transport.json(response, "discovery");
-
-  const body = yield* V.reveal(
-    document.body,
-    () =>
-      new OAuthError.OAuthError({
-        reason: new OAuthError.TransportFailed({
-          endpoint: "discovery",
-          status: response.status,
-          description: "Discovery response body is unavailable",
-        }),
-      }),
-  );
-
-  const metadata = yield* V.decode(Metadata, body, () =>
-    discoveryFailed("Invalid OIDC discovery metadata"),
-  );
-
-  if (!discoveredIssuerMatches(issuer, metadata.issuer))
-    return yield* discoveryFailed("Discovered issuer does not match configured issuer");
-
-  const segment = templateTenantSegment(issuer, metadata.issuer);
-  const pinned = pinnedConcreteIssuer(issuer, metadata.issuer);
-
-  if (segment !== undefined && !multiTenantAlias(segment) && pinned === undefined)
-    return yield* discoveryFailed("Discovered issuer template does not match configured authority");
-
-  const accepted =
-    pinned === undefined
-      ? metadata
-      : yield* V.decode(
-          Metadata,
-          { ...metadata, issuer: pinned, signing_key_issuer_required: true },
-          () => discoveryFailed("Pinned OIDC discovery metadata is invalid"),
-        );
-
-  return V.freeze(accepted);
-});
 
 const mapJwtError = (error: Jwt.JwtError): OAuthError.OAuthError => {
   if (error._tag !== "JoseError") return tokenFailed("malformed", error);

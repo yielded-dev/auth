@@ -1,21 +1,26 @@
 # @yielded/oauth
 
-Effect OAuth authorization-code and refresh flows, PKCE S256, and signed OpenID
-Connect. Effect is its only runtime dependency; applications own registered
-callbacks, provider configuration, permissions, identity, and grant storage.
+Effect OAuth authorization-code and refresh flows, PKCE S256, authorization-server
+discovery, and signed OpenID Connect. Effect is its only runtime dependency;
+applications own registered callbacks, provider configuration, permissions,
+identity, and grant storage.
+
+Use `Discovery.makeLocal` / `Discovery.layerLocal` for fixed metadata and
+`Discovery.makeRemote` / `Discovery.layerRemote` for lazy, scoped remote discovery
+from an OIDC (`/.well-known/openid-configuration`) or RFC 8414
+(`/.well-known/oauth-authorization-server`) endpoint or explicit `url`. Remote
+discovery validates options eagerly without network I/O, coalesces concurrent
+fetches, caches the document for the `Scope` lifetime by default (`timeToLive: "Infinity"`),
+throttles failed fetches with `cooldown`, enforces exact issuer matching unless an
+`issuerMatcher` is supplied, and re-validates issuer and endpoint constraints after
+any `supplement` hook.
 
 Use `OAuth.make` for an installed client and `Oidc.makeVerifier` for its OIDC
 verifier. Both require `HttpClient` and an owning `Scope`; keep that scope open
-for their lifetime. `Pkce.generate` and `Pkce.challenge` require Effect `SecureRandom` and `Digest`; verification also requires
-`Signature` from `effect/crypto`. `Oidc.discover` retrieves metadata from the
-exact trusted issuer, or from an explicit `metadataUrl`. A discovered issuer
-may use a `{tenantid}` path segment when that template matches the configured
-authority. A concrete GUID pinned from that document keeps its token issuer
-and requires a matching signing-key issuer. Commercial
-`consumers` pins the personal-account issuer. A tenant domain does not match
-that template. `common` and `organizations` stay multi-tenant.
-Verification then substitutes the verified `tid` and checks the
-selected signing key's issuer. Generic issuers still require an exact match. Closing a factory's scope cancels its work and prevents reuse.
+for their lifetime. `Pkce.generate` and `Pkce.challenge` require Effect
+`SecureRandom` and `Digest`; verification also requires `Signature` from
+`effect/crypto`. Closing a service or factory's scope cancels its work and
+prevents reuse.
 
 `client.codeGrant` and `client.refreshGrant` return private `TokenReceipt` values.
 Check the provider-specific receipt, then call `OAuth.tokens`. A JSON null
@@ -25,28 +30,33 @@ stay redacted. Profile fetches default to GET; POST and a JSON body are
 available, and identity can instead be taken from the token receipt. JSON token
 requests reject a repeated parameter name before the request is sent. Authorization
 defaults to `response_mode=query`; `form_post` is available when the issuer POSTs
-the callback. `client_secret_post` may omit its stored secret and take `clientSecret` on that token request. For initial OIDC sign-in, require an ID token and call `verifier.verify`
-with the captured verification time, nonce, access token, and authorization code.
-On refresh, verify any returned ID token against the previous identity; accepting
-an omitted ID token is application policy.
+the callback. `client_secret_post` may omit its stored secret and take `clientSecret`
+on that token request. For initial OIDC sign-in, require an ID token and call
+`verifier.verify` with the captured verification time, nonce, access token, and
+authorization code. On refresh, verify any returned ID token against the previous
+identity; accepting an omitted ID token is application policy.
 
 Each exchange, refresh, or revocation makes one request. An uncertain outcome
 requires application recovery, not an automatic retry. Provider endpoints require
 HTTPS. HTTP endpoints and discovery URLs on `localhost`, `127.0.0.1`, or `[::1]`
 are accepted only with an explicitly configured HTTP loopback issuer. Applications
-must validate issuer input; require HTTPS for untrusted
-tenant-supplied issuers to prevent plain-HTTP loopback requests. Custom
-HttpClients must preserve cancellation and disable retries, redirects, and ambient
-cookies. Bound the complete workflow as well as individual requests; keep token
-receipts out of logs and telemetry.
+must validate issuer input; require HTTPS for untrusted tenant-supplied issuers
+to prevent plain-HTTP loopback requests. Custom HttpClients must preserve
+cancellation and disable retries, redirects, and ambient cookies. Bound the
+complete workflow as well as individual requests; keep token receipts out of logs
+and telemetry.
 
 Asymmetric OIDC verification still requires an HTTPS JWKS URL, even for a loopback
-issuer; an HTTP JWKS URL fails with `OAuthError` (`InvalidArgument`). All protocol failures surface as `OAuthError` with a closed `reason` union (`InvalidArgument`, `ClientAuthFailed`, `DiscoveryFailed`, `TransportFailed`, `InvalidResponse`, `CallbackRejected`, `AuthorizationDenied`, `EndpointError`, or `TokenVerificationFailed`). Each verifier owns a scoped JWKS cache. It never
+issuer; an HTTP JWKS URL fails with `OAuthError` (`InvalidArgument`). All protocol
+failures surface as `OAuthError` with a closed `reason` union (`InvalidArgument`,
+`ClientAuthFailed`, `DiscoveryFailed`, `TransportFailed`, `InvalidResponse`,
+`CallbackRejected`, `AuthorizationDenied`, `EndpointError`, or
+`TokenVerificationFailed`). Each verifier owns a scoped JWKS cache. It never
 takes a key endpoint from a token or serves expired keys after refresh failure.
-Configure the issuer's advertised
-code flow and signing algorithms. HS256 is accepted only with a client secret of
-at least 32 bytes. Keep S256 PKCE enabled unless the issuer cannot
-support it. Other OAuth grants are outside this package's profile.
+Configure the issuer's advertised code flow and signing algorithms. HS256 is
+accepted only with a client secret of at least 32 bytes. Keep S256 PKCE enabled
+unless the issuer cannot support it. Other OAuth grants are outside this package's
+profile.
 
-See the [public API comments](src/OAuth.ts), [OIDC options](src/Oidc.ts), and
-[third-party notices](THIRD_PARTY_NOTICES.md).
+See the [public API comments](src/Discovery.ts), [OAuth client](src/OAuth.ts),
+[OIDC options](src/Oidc.ts), and [third-party notices](THIRD_PARTY_NOTICES.md).

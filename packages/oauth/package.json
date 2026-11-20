@@ -21,6 +21,7 @@
   "sideEffects": [],
   "exports": {
     ".": "./src/index.ts",
+    "./Discovery": "./src/Discovery.ts",
     "./OAuth": "./src/OAuth.ts",
     "./OAuthError": "./src/OAuthError.ts",
     "./Oidc": "./src/Oidc.ts",

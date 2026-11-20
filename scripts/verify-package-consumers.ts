@@ -122,7 +122,7 @@ const checkReusableOperations = Effect.fn("packageConsumers.reusableOperations")
 import { Effect, Layer, Redacted } from "effect";
 import { Digest, SecureRandom } from "effect/crypto";
 import { FetchHttpClient } from "effect/http";
-import { OAuth, OAuthError, Pkce } from "@yielded/oauth";
+import { Discovery, OAuth, OAuthError, Pkce } from "@yielded/oauth";
 const text = (value) => new TextDecoder().decode(value);
 const effectCrypto = Layer.merge(SecureRandom.layerWebCrypto, Digest.layerWebCrypto);
 let requests = 0;
@@ -144,8 +144,18 @@ await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
   const invalid = yield* Pkce.challenge("short").pipe(Effect.flip);
   assert.equal(OAuthError.isOAuthError(invalid), true);
   assert.equal(invalid.reason._tag, "InvalidArgument");
+  const localDiscovery = yield* Discovery.makeLocal({
+    issuer: "https://issuer.example",
+    authorization_endpoint: "https://issuer.example/authorize",
+    token_endpoint: "https://issuer.example/token",
+  });
+  const metadata = yield* localDiscovery.resolve;
   const client = yield* OAuth.make({
-    metadata: { issuer: "https://issuer.example", authorization_endpoint: "https://issuer.example/authorize", token_endpoint: "https://issuer.example/token" },
+    metadata: {
+      issuer: metadata.issuer,
+      authorization_endpoint: metadata.authorization_endpoint,
+      token_endpoint: metadata.token_endpoint,
+    },
     clientId: "client", authentication: { method: "client_secret_basic", secret: Redacted.make("secret") }, timeoutMs: 1000,
   });
   const receipt = yield* client.codeGrant({ code: Redacted.make("single-use-code"), redirectUri: "https://app.example/callback", pkceVerifier: verifier });
@@ -568,7 +578,7 @@ const checkReusableConsumers = Effect.fn("packageConsumers.reusable")(function* 
 
   yield* fs.symlink(effectSource, path.join(stage, "node_modules/effect"));
 
-  const oauthNamespaces = ["OAuth", "OAuthError", "Oidc", "Pkce"];
+  const oauthNamespaces = ["Discovery", "OAuth", "OAuthError", "Oidc", "Pkce"];
 
   // Only OAuth and Effect exist throughout this stage.
   yield* withPublishManifests(stage, () =>

@@ -1,4 +1,6 @@
+import * as Discovery from "@yielded/oauth/Discovery";
 import type * as OAuth from "@yielded/oauth/OAuth";
+import * as OAuthError from "@yielded/oauth/OAuthError";
 import * as Oidc from "@yielded/oauth/Oidc";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
@@ -21,7 +23,13 @@ import {
   type InstalledConnectedProvider,
 } from "./connected/configuration";
 import type { OpenIdConnectConnectedProtocolOptions } from "./connected/models";
-import { discoveryMetadataUrl, discoveryProfile, supplementDiscovery } from "./discovery";
+import {
+  discoveryMetadataUrl,
+  discoveryProfile,
+  matchEntraDiscoveryIssuer,
+  supplementDiscovery,
+  type DiscoveryProfile,
+} from "./discovery";
 import {
   hasStaticSecret,
   type OpenIdConnectConfigurationError,
@@ -31,7 +39,14 @@ import type { Requirements as OAuthRequirements } from "./native";
 
 export type Requirements = OAuthRequirements | Signature.Signature | Mac.Mac;
 
-/** Inward discovery port. One initialization owns the successful raw responses;
+export interface DiscoveredProviderMetadata {
+  readonly metadata: Discovery.Metadata;
+  /** Local policy flag set only when discovery pinned a `{tenantid}` document
+   * to a single-tenant GUID or commercial `consumers` authority. */
+  readonly signingKeyIssuerRequired: boolean;
+}
+
+/** Inward discovery port. One initialization owns the successful responses;
  * exact discovery policy and effective transport identities stay independent. */
 export class ProviderDiscovery extends Context.Service<
   ProviderDiscovery,
@@ -40,8 +55,9 @@ export class ProviderDiscovery extends Context.Service<
       issuer: string,
       timeoutSeconds: number,
       metadataUrl: string | undefined,
+      profile?: typeof DiscoveryProfile.Type,
     ) => Effect.Effect<
-      OAuth.Metadata,
+      DiscoveredProviderMetadata,
       OpenIdConnectConfigurationError | OAuthUnavailable,
       HttpClient.HttpClient
     >;
@@ -54,7 +70,7 @@ export class ProviderDiscovery extends Context.Service<
       {
         readonly client: HttpClient.HttpClient;
         readonly fetch: typeof globalThis.fetch;
-        readonly metadata: OAuth.Metadata;
+        readonly discovered: DiscoveredProviderMetadata;
       }
     >();
 
@@ -63,27 +79,70 @@ export class ProviderDiscovery extends Context.Service<
         issuer: string,
         timeoutSeconds: number,
         metadataUrl: string | undefined,
+        profile?: typeof DiscoveryProfile.Type,
       ) {
         const client = yield* HttpClient.HttpClient;
         const fetch = yield* FetchHttpClient.Fetch;
         // oxlint-disable-next-line no-restricted-properties -- Collision-free tuple of bounded, validated discovery configuration.
-        const key = JSON.stringify([issuer, timeoutSeconds, metadataUrl ?? null]);
+        const key = JSON.stringify([issuer, timeoutSeconds, metadataUrl ?? null, profile ?? null]);
         const found = cache.get(key);
 
-        if (found?.client === client && found.fetch === fetch) return found.metadata;
+        if (found?.client === client && found.fetch === fetch) return found.discovered;
 
-        const metadata = yield* Oidc.discover(issuer, {
-          timeoutMs: timeoutSeconds * 1000,
-          ...(metadataUrl === undefined ? {} : { metadataUrl }),
-        }).pipe(
+        let pinned = false;
+
+        const metadata = yield* Effect.scoped(
+          Discovery.makeRemote({
+            issuer,
+            timeout: timeoutSeconds * 1000,
+            ...(metadataUrl === undefined ? {} : { url: metadataUrl }),
+            issuerMatcher: (configuredIssuer, discoveredIssuer) => {
+              const matched = matchEntraDiscoveryIssuer(configuredIssuer, discoveredIssuer);
+
+              if (matched === undefined) {
+                return Effect.fail(
+                  new OAuthError.OAuthError({
+                    reason: new OAuthError.DiscoveryFailed({
+                      description: "Discovered issuer does not match configured issuer",
+                    }),
+                  }),
+                );
+              }
+
+              pinned = matched.pinned;
+
+              return Effect.succeed(matched.issuer);
+            },
+            ...(profile === undefined
+              ? {}
+              : {
+                  supplement: (normalized) =>
+                    supplementDiscovery(normalized, profile).pipe(
+                      Effect.mapError(
+                        () =>
+                          new OAuthError.OAuthError({
+                            reason: new OAuthError.DiscoveryFailed({
+                              description: "Discovered metadata failed provider profile validation",
+                            }),
+                          }),
+                      ),
+                    ),
+                }),
+          }).pipe(Effect.flatMap((service) => service.resolve)),
+        ).pipe(
           Effect.catchCause((cause) =>
             Effect.failCause(Cause.map(cause, classifyOAuthConfigurationError)),
           ),
         );
 
-        cache.set(key, { client, fetch, metadata });
+        const discovered: DiscoveredProviderMetadata = {
+          metadata,
+          signingKeyIssuerRequired: pinned,
+        };
 
-        return metadata;
+        cache.set(key, { client, fetch, discovered });
+
+        return discovered;
       }),
     });
   });
@@ -135,26 +194,27 @@ export const installConfigurations = Effect.fn("OpenIdConnect.installConfigurati
   const installed: InstalledProvider<R>[] = [];
 
   for (const provider of providers) {
-    const raw =
-      provider.protocol === "oidc"
-        ? yield* discovery
-            .discover(
-              provider.issuer,
-              timeoutSeconds,
-              discoveryMetadataUrl(provider[discoveryProfile]),
-            )
-            .pipe(
-              Effect.flatMap((metadata) =>
-                supplementDiscovery(metadata, provider[discoveryProfile]),
-              ),
-            )
-        : {
-            issuer: provider.issuer,
-            authorization_endpoint: provider.authorizationEndpoint,
-            token_endpoint: provider.tokenEndpoint,
-            authorization_response_iss_parameter_supported:
-              provider.responseIssuerMode === "required",
-          };
+    let raw: Discovery.Metadata;
+    let signingKeyIssuerRequired = false;
+
+    if (provider.protocol === "oidc") {
+      const discovered = yield* discovery.discover(
+        provider.issuer,
+        timeoutSeconds,
+        discoveryMetadataUrl(provider[discoveryProfile]),
+        provider[discoveryProfile],
+      );
+
+      raw = discovered.metadata;
+      signingKeyIssuerRequired = discovered.signingKeyIssuerRequired;
+    } else {
+      raw = {
+        issuer: provider.issuer,
+        authorization_endpoint: provider.authorizationEndpoint,
+        token_endpoint: provider.tokenEndpoint,
+        authorization_response_iss_parameter_supported: provider.responseIssuerMode === "required",
+      };
+    }
 
     const entry = yield* installProvider(provider, raw, timeoutSeconds);
 
@@ -162,16 +222,23 @@ export const installConfigurations = Effect.fn("OpenIdConnect.installConfigurati
       provider.protocol === "oidc"
         ? {
             ...entry,
-            verifier: yield* makeVerifier(entry.metadata, provider.clientId, timeoutSeconds, {
-              algorithms: provider.idTokenSignedResponseAlg,
-              pkceS256: provider.pkceS256,
-              ...(hasStaticSecret(provider.authentication)
-                ? { clientSecret: provider.authentication.secret }
-                : {}),
-              ...(provider[nativeAudiences] === undefined
-                ? {}
-                : { audiences: provider[nativeAudiences] }),
-            }),
+            verifier: yield* makeVerifier(
+              signingKeyIssuerRequired
+                ? { ...entry.metadata, signing_key_issuer_required: true }
+                : entry.metadata,
+              provider.clientId,
+              timeoutSeconds,
+              {
+                algorithms: provider.idTokenSignedResponseAlg,
+                pkceS256: provider.pkceS256,
+                ...(hasStaticSecret(provider.authentication)
+                  ? { clientSecret: provider.authentication.secret }
+                  : {}),
+                ...(provider[nativeAudiences] === undefined
+                  ? {}
+                  : { audiences: provider[nativeAudiences] }),
+              },
+            ),
           }
         : entry,
     );
@@ -188,19 +255,30 @@ export const installConnectedConfigurations = Effect.fn(
   const installed: InstalledConnectedProvider<R>[] = [];
 
   for (const provider of providers) {
-    const raw =
-      provider.protocol === "oidc"
-        ? yield* discovery.discover(provider.issuer, timeoutSeconds, undefined)
-        : {
-            issuer: provider.issuer,
-            authorization_endpoint: provider.authorizationEndpoint,
-            token_endpoint: provider.tokenEndpoint,
-            authorization_response_iss_parameter_supported:
-              provider.responseIssuerMode === "required",
-            ...(provider.revocation.mode === "rfc7009"
-              ? { revocation_endpoint: provider.revocation.endpoint }
-              : {}),
-          };
+    let raw: Discovery.Metadata;
+    let signingKeyIssuerRequired = false;
+
+    if (provider.protocol === "oidc") {
+      const discovered = yield* discovery.discover(
+        provider.issuer,
+        timeoutSeconds,
+        undefined,
+        undefined,
+      );
+
+      raw = discovered.metadata;
+      signingKeyIssuerRequired = discovered.signingKeyIssuerRequired;
+    } else {
+      raw = {
+        issuer: provider.issuer,
+        authorization_endpoint: provider.authorizationEndpoint,
+        token_endpoint: provider.tokenEndpoint,
+        authorization_response_iss_parameter_supported: provider.responseIssuerMode === "required",
+        ...(provider.revocation.mode === "rfc7009"
+          ? { revocation_endpoint: provider.revocation.endpoint }
+          : {}),
+      };
+    }
 
     const entry = yield* installConnectedProvider(provider, raw, timeoutSeconds);
 
@@ -208,13 +286,20 @@ export const installConnectedConfigurations = Effect.fn(
       provider.protocol === "oidc"
         ? {
             ...entry,
-            verifier: yield* makeVerifier(entry.metadata, provider.clientId, timeoutSeconds, {
-              algorithms: provider.idTokenSignedResponseAlg,
-              pkceS256: provider.pkceS256,
-              ...(hasStaticSecret(provider.authentication)
-                ? { clientSecret: provider.authentication.secret }
-                : {}),
-            }),
+            verifier: yield* makeVerifier(
+              signingKeyIssuerRequired
+                ? { ...entry.metadata, signing_key_issuer_required: true }
+                : entry.metadata,
+              provider.clientId,
+              timeoutSeconds,
+              {
+                algorithms: provider.idTokenSignedResponseAlg,
+                pkceS256: provider.pkceS256,
+                ...(hasStaticSecret(provider.authentication)
+                  ? { clientSecret: provider.authentication.secret }
+                  : {}),
+              },
+            ),
           }
         : entry,
     );

@@ -542,12 +542,11 @@ your own atomic import; the key alone does not create login authority. See the
 
 `Http` derives `/auth/{provider}/callback` from the origin and contract base path.
 Callbacks use HTTPS, with HTTP loopback support for local development.
-Auth provider configuration requires HTTPS endpoints. The lower-level
-`@yielded/oauth` package accepts HTTP endpoints and discovery URLs on `localhost`,
-`127.0.0.1`, or `[::1]` only with an explicitly configured HTTP loopback issuer.
-Asymmetric OIDC verification still requires an HTTPS JWKS URL. Protocol failures
-surface as `OAuthError` with a closed `reason` union, and `Pkce.generate` and
-`Pkce.challenge` handle RFC 7636 `S256` verifiers and challenges.
+Auth provider configuration requires HTTPS endpoints. The lower-level `@yielded/oauth` package provides `Discovery` (`makeLocal`/`layerLocal`
+and lazy, scoped `makeRemote`/`layerRemote`), `OAuthError` with a closed `reason` union,
+and `Pkce` (`generate`/`challenge`). It accepts HTTP endpoints and discovery URLs on
+`localhost`, `127.0.0.1`, or `[::1]` only with an explicitly configured HTTP loopback
+issuer. Asymmetric OIDC verification still requires an HTTPS JWKS URL.
 
 ```ts
 const AuthRoutes = Http.layer(AppAuth, {

@@ -8,20 +8,15 @@ import { provider as oidcProvider } from "../shared/layer";
 import { OpenIdConnectConfigurationError } from "../shared/models";
 import type { Requirements } from "../shared/oidc";
 import { resolveOptions } from "../shared/options";
+import { entraTenantId, personalMicrosoftAccountTenant } from "./discovery";
 import { MicrosoftUserProfile } from "./profile";
 
-const entraId = Schema.String.check(
-  Schema.isPattern(
-    /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/u,
-  ),
-);
-
-const Tenant = Schema.Union([Schema.Literals(["common", "organizations", "consumers"]), entraId]);
+const Tenant = Schema.Union([
+  Schema.Literals(["common", "organizations", "consumers"]),
+  entraTenantId,
+]);
 
 const Scope = Schema.Literals(["openid", "profile", "email", "offline_access"]);
-
-/** Personal Microsoft account tenant; `consumers` is this GUID's nickname. */
-const personalMicrosoftAccountTenant = "9188040d-6c67-4c5b-b112-36a304b66dad";
 
 const identityScopes = (scopes: ReadonlyArray<typeof Scope.Type> | undefined) => [
   "openid" as const,
@@ -48,7 +43,7 @@ export type ProviderOptions = {
   readonly timeoutSeconds?: number;
 } & (ProviderRegistration | { readonly registrations: ReadonlyArray<ProviderRegistration> });
 
-const MicrosoftIdentity = Schema.Struct({ oid: entraId, tid: entraId });
+const MicrosoftIdentity = Schema.Struct({ oid: entraTenantId, tid: entraTenantId });
 
 const decodeSubject = (claims: unknown) =>
   Schema.decodeUnknownEffect(MicrosoftIdentity)(claims).pipe(

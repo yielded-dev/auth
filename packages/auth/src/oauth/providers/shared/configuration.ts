@@ -1,5 +1,5 @@
+import type * as Discovery from "@yielded/oauth/Discovery";
 import type * as OAuth from "@yielded/oauth/OAuth";
-import * as Oidc from "@yielded/oauth/Oidc";
 import * as Effect from "effect/Effect";
 import * as Predicate from "effect/Predicate";
 import * as Redacted from "effect/Redacted";
@@ -19,7 +19,7 @@ import {
   githubVerifiedPrimaryEmail,
   nativeAudiences,
 } from "./compatibility";
-import { DiscoveryProfile, discoveryProfile } from "./discovery";
+import { discoveredIssuerMatches, DiscoveryProfile, discoveryProfile } from "./discovery";
 import {
   advertisedIdTokenAlgorithms,
   hasStaticSecret,
@@ -374,7 +374,6 @@ export interface InstalledProvider<R> extends Omit<NativeProvider, "client"> {
 
 const metadataSchema = Schema.Struct({
   issuer: OAuthIssuer,
-  signing_key_issuer_required: Schema.optionalKey(Schema.Literal(true)),
   authorization_endpoint: boundedString(2048),
   token_endpoint: boundedString(2048),
   jwks_uri: Schema.optionalKey(boundedString(2048)),
@@ -496,15 +495,15 @@ export const prepareConfigurations = Effect.fn("OpenIdConnect.prepareConfigurati
 
 export const installProvider = Effect.fn("OpenIdConnect.installProvider")(function* <R>(
   provider: Provider<R>,
-  raw: OAuth.Metadata,
+  raw: Discovery.Metadata,
   timeoutSeconds: number,
 ) {
   // oxlint-disable-next-line no-restricted-properties -- Discovered foreign metadata is not yet validated for this adapter profile.
-  const metadata = yield* Schema.decodeEffect(metadataSchema)(raw).pipe(
+  const metadata = yield* Schema.decodeUnknownEffect(metadataSchema)(raw).pipe(
     Effect.mapError(() => configError("metadata")),
   );
 
-  if (!Oidc.discoveredIssuerMatches(provider.issuer, metadata.issuer))
+  if (!discoveredIssuerMatches(provider.issuer, metadata.issuer))
     return yield* configError("issuer");
   if (
     provider.responseIssuerMode !== "discovered" &&
