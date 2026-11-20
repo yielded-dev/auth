@@ -6,6 +6,7 @@ import * as Schema from "effect/Schema";
 
 import { OAuthConnectedProfile } from "../../../permissionProfile";
 import { OAuthProviderKey, OAuthGeneration } from "../../../schema";
+import { type OAuthUnavailable } from "../../../signInErrors";
 import { OAuthCallbackId, OAuthIssuer, OAuthRedirectUri } from "../../../signInModels";
 import { freezeOAuth } from "../../../signInSnapshot";
 import {
@@ -243,9 +244,14 @@ export type ConnectedProvider<R> =
         | ProviderConnectedOAuth<R>["revocation"];
     });
 
-export interface InstalledConnectedProvider<R> extends NativeProvider {
+export interface ResolvedConnectedProvider<R> extends NativeProvider {
   readonly provider: ConnectedProvider<R>;
   readonly metadata: Discovery.Metadata;
+}
+
+export interface InstalledConnectedProvider<R> {
+  readonly provider: ConnectedProvider<R>;
+  readonly resolve: Effect.Effect<ResolvedConnectedProvider<R>, OAuthUnavailable>;
 }
 
 const metadataSchema = Schema.Struct({
@@ -489,82 +495,97 @@ export const prepareConnectedConfigurations = Effect.fn(
   return { providers, timeoutSeconds: options.timeoutSeconds };
 });
 
-export const installConnectedProvider = Effect.fn("OpenIdConnect.installConnectedProvider")(
-  function* <R>(provider: ConnectedProvider<R>, raw: Discovery.Metadata, timeoutSeconds: number) {
-    // oxlint-disable-next-line no-restricted-properties -- Validate foreign discovery metadata at this adapter's bounded boundary.
-    const metadata = yield* Schema.decodeUnknownEffect(metadataSchema)(raw).pipe(
-      Effect.mapError(() => configurationError("metadata")),
+export const validateConnectedProviderMetadata = Effect.fn(
+  "OpenIdConnect.validateConnectedProviderMetadata",
+)(function* <R>(provider: ConnectedProvider<R>, raw: Discovery.Metadata) {
+  // oxlint-disable-next-line no-restricted-properties -- Validate foreign discovery metadata at this adapter's bounded boundary.
+  const metadata = yield* Schema.decodeUnknownEffect(metadataSchema)(raw).pipe(
+    Effect.mapError(() => configurationError("metadata")),
+  );
+
+  if (!discoveredIssuerMatches(provider.issuer, metadata.issuer))
+    return yield* configurationError("issuer");
+  if (
+    provider.responseIssuerMode !== "discovered" &&
+    (metadata.authorization_response_iss_parameter_supported === true) !==
+      (provider.responseIssuerMode === "required")
+  )
+    return yield* configurationError("metadata");
+  const authorization = yield* endpoint(metadata.authorization_endpoint);
+
+  for (const key of authorization.searchParams.keys())
+    if (reserved.has(key.toLowerCase())) return yield* configurationError("parameters");
+  const token = yield* endpoint(metadata.token_endpoint);
+
+  for (const key of token.searchParams.keys())
+    if (reserved.has(key.toLowerCase())) return yield* configurationError("parameters");
+
+  const tokenAuthentication =
+    metadata.token_endpoint_auth_methods_supported ??
+    (provider.protocol === "oidc" ? ["client_secret_basic"] : undefined);
+
+  if (tokenAuthentication && !tokenAuthentication.includes(provider.authentication.method))
+    return yield* configurationError("authentication");
+  if (provider.protocol === "oidc") {
+    const algorithms = advertisedIdTokenAlgorithms(
+      metadata.id_token_signing_alg_values_supported,
+      provider.idTokenSignedResponseAlg,
     );
 
-    if (!discoveredIssuerMatches(provider.issuer, metadata.issuer))
-      return yield* configurationError("issuer");
+    const usesHmac = algorithms?.includes("HS256") === true;
+    const usesAsymmetric = algorithms?.some((algorithm) => algorithm !== "HS256") === true;
+
+    if (usesHmac && usesAsymmetric) return yield* configurationError("parameters");
+    if (usesHmac && !hasStaticSecret(provider.authentication))
+      return yield* configurationError("authentication");
     if (
-      provider.responseIssuerMode !== "discovered" &&
-      (metadata.authorization_response_iss_parameter_supported === true) !==
-        (provider.responseIssuerMode === "required")
+      algorithms === undefined ||
+      !metadata.response_types_supported?.includes("code") ||
+      (usesAsymmetric && metadata.jwks_uri === undefined) ||
+      (provider.pkceS256 && !metadata.code_challenge_methods_supported?.includes("S256")) ||
+      (provider.userInfo === "merge" && metadata.userinfo_endpoint === undefined) ||
+      (provider.profiles.some((profile) => profile.retention === "access-and-refresh") &&
+        !metadata.grant_types_supported?.includes("refresh_token"))
     )
       return yield* configurationError("metadata");
-    const authorization = yield* endpoint(metadata.authorization_endpoint);
+    if (metadata.jwks_uri !== undefined) yield* endpoint(metadata.jwks_uri);
+    if (metadata.userinfo_endpoint !== undefined) yield* endpoint(metadata.userinfo_endpoint);
+  } else if (provider.identitySource.from !== "token") yield* endpoint(provider.identitySource.url);
+  if (provider.revocation.mode === "rfc7009") {
+    if (
+      !metadata.revocation_endpoint ||
+      (provider.revocation.endpoint !== undefined &&
+        provider.revocation.endpoint !== metadata.revocation_endpoint)
+    )
+      return yield* configurationError("metadata");
 
-    for (const key of authorization.searchParams.keys())
-      if (reserved.has(key.toLowerCase())) return yield* configurationError("parameters");
-    const token = yield* endpoint(metadata.token_endpoint);
-
-    for (const key of token.searchParams.keys())
-      if (reserved.has(key.toLowerCase())) return yield* configurationError("parameters");
-
-    const tokenAuthentication =
-      metadata.token_endpoint_auth_methods_supported ??
+    const auth =
+      metadata.revocation_endpoint_auth_methods_supported ??
       (provider.protocol === "oidc" ? ["client_secret_basic"] : undefined);
 
-    if (tokenAuthentication && !tokenAuthentication.includes(provider.authentication.method))
+    if (auth && !auth.includes(provider.revocation.authentication.method))
       return yield* configurationError("authentication");
-    if (provider.protocol === "oidc") {
-      const algorithms = advertisedIdTokenAlgorithms(
-        metadata.id_token_signing_alg_values_supported,
-        provider.idTokenSignedResponseAlg,
-      );
+    const revoke = yield* endpoint(metadata.revocation_endpoint);
 
-      const usesHmac = algorithms?.includes("HS256") === true;
-      const usesAsymmetric = algorithms?.some((algorithm) => algorithm !== "HS256") === true;
+    for (const key of revoke.searchParams.keys())
+      if (reserved.has(key.toLowerCase())) return yield* configurationError("parameters");
+  }
+  freezeOAuth(metadata);
 
-      if (usesHmac && usesAsymmetric) return yield* configurationError("parameters");
-      if (usesHmac && !hasStaticSecret(provider.authentication))
-        return yield* configurationError("authentication");
-      if (
-        algorithms === undefined ||
-        !metadata.response_types_supported?.includes("code") ||
-        (usesAsymmetric && metadata.jwks_uri === undefined) ||
-        (provider.pkceS256 && !metadata.code_challenge_methods_supported?.includes("S256")) ||
-        (provider.userInfo === "merge" && metadata.userinfo_endpoint === undefined) ||
-        (provider.profiles.some((profile) => profile.retention === "access-and-refresh") &&
-          !metadata.grant_types_supported?.includes("refresh_token"))
-      )
-        return yield* configurationError("metadata");
-      if (metadata.jwks_uri !== undefined) yield* endpoint(metadata.jwks_uri);
-      if (metadata.userinfo_endpoint !== undefined) yield* endpoint(metadata.userinfo_endpoint);
-    } else if (provider.identitySource.from !== "token")
-      yield* endpoint(provider.identitySource.url);
-    if (provider.revocation.mode === "rfc7009") {
-      if (
-        !metadata.revocation_endpoint ||
-        (provider.revocation.endpoint !== undefined &&
-          provider.revocation.endpoint !== metadata.revocation_endpoint)
-      )
-        return yield* configurationError("metadata");
+  return metadata;
+});
 
-      const auth =
-        metadata.revocation_endpoint_auth_methods_supported ??
-        (provider.protocol === "oidc" ? ["client_secret_basic"] : undefined);
-
-      if (auth && !auth.includes(provider.revocation.authentication.method))
-        return yield* configurationError("authentication");
-      const revoke = yield* endpoint(metadata.revocation_endpoint);
-
-      for (const key of revoke.searchParams.keys())
-        if (reserved.has(key.toLowerCase())) return yield* configurationError("parameters");
-    }
-
+export const installConnectedProvider = Effect.fn("OpenIdConnect.installConnectedProvider")(
+  function* <R>(
+    provider: ConnectedProvider<R>,
+    raw: Discovery.Metadata,
+    timeoutSeconds: number,
+  ): Effect.fn.Return<
+    ResolvedConnectedProvider<R>,
+    OpenIdConnectConfigurationError | OAuthUnavailable,
+    Effect.Services<ReturnType<typeof install>> | PrivateKeyClientSecret
+  > {
+    const metadata = yield* validateConnectedProviderMetadata(provider, raw);
     const clientSecrets = yield* PrivateKeyClientSecret;
 
     const native = yield* install(
@@ -601,24 +622,24 @@ export const installOAuthConnectedConfigurations = Effect.fn(
 
   for (const provider of providers) {
     if (provider.protocol !== "oauth") return yield* configurationError("provider");
-    installed.push(
-      yield* installConnectedProvider(
-        provider,
-        {
-          issuer: provider.issuer,
-          authorization_endpoint: provider.authorizationEndpoint,
-          token_endpoint: provider.tokenEndpoint,
-          response_types_supported: ["code"],
-          ...(provider.pkceS256 ? { code_challenge_methods_supported: ["S256"] } : {}),
-          authorization_response_iss_parameter_supported:
-            provider.responseIssuerMode === "required",
-          ...(provider.revocation.mode === "rfc7009"
-            ? { revocation_endpoint: provider.revocation.endpoint }
-            : {}),
-        },
-        timeoutSeconds,
-      ),
+
+    const resolved = yield* installConnectedProvider(
+      provider,
+      {
+        issuer: provider.issuer,
+        authorization_endpoint: provider.authorizationEndpoint,
+        token_endpoint: provider.tokenEndpoint,
+        response_types_supported: ["code"],
+        ...(provider.pkceS256 ? { code_challenge_methods_supported: ["S256"] } : {}),
+        authorization_response_iss_parameter_supported: provider.responseIssuerMode === "required",
+        ...(provider.revocation.mode === "rfc7009"
+          ? { revocation_endpoint: provider.revocation.endpoint }
+          : {}),
+      },
+      timeoutSeconds,
     );
+
+    installed.push({ provider, resolve: Effect.succeed(resolved) });
   }
 
   return { installed, timeoutSeconds };

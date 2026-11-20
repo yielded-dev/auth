@@ -44,7 +44,7 @@ import { subjectInTenant } from "../tenantSubject";
 import {
   sameConnectedProfile,
   type InstalledConnectedConfiguration,
-  type InstalledConnectedProvider,
+  type ResolvedConnectedProvider,
 } from "./configuration";
 
 const unavailable = () => OAuthUnavailable.make({});
@@ -105,7 +105,7 @@ interface GrantMetadata {
 }
 
 const receiptMetadata = Effect.fnUntraced(function* <R>(
-  entry: InstalledConnectedProvider<R>,
+  entry: ResolvedConnectedProvider<R>,
   receipt: Grant.TokenReceipt,
 ): Effect.fn.Return<GrantMetadata, Schema.SchemaError> {
   const body = Redacted.value(receipt.body);
@@ -174,10 +174,8 @@ export const makeConnectedProtocolWithCompatibility = Effect.fn(
       !provider ||
       provider.protocol !== saved.protocol ||
       provider.issuer !== saved.issuer ||
-      persistedResponseIssuerMode(
-        provider.responseIssuerMode,
-        entry.metadata.authorization_response_iss_parameter_supported,
-      ) !== saved.responseIssuerMode ||
+      (provider.responseIssuerMode !== "discovered" &&
+        provider.responseIssuerMode !== saved.responseIssuerMode) ||
       provider.clientRegistrationId !== saved.profile.clientRegistrationId ||
       !provider.profiles.some((profile) => sameConnectedProfile(profile, saved.profile)) ||
       provider.callbacks.find((callback) => callback.callbackId === saved.callbackId)
@@ -185,7 +183,17 @@ export const makeConnectedProtocolWithCompatibility = Effect.fn(
     )
       return yield* unavailable();
 
-    return entry;
+    const resolved = yield* entry.resolve;
+
+    if (
+      persistedResponseIssuerMode(
+        provider.responseIssuerMode,
+        resolved.metadata.authorization_response_iss_parameter_supported,
+      ) !== saved.responseIssuerMode
+    )
+      return yield* unavailable();
+
+    return resolved;
   });
 
   const checkedStart = Effect.fn("OpenIdConnectConnected.startedAt")(function* (
@@ -252,7 +260,7 @@ export const makeConnectedProtocolWithCompatibility = Effect.fn(
   });
 
   const oidcIdentity = Effect.fn("OpenIdConnectConnected.oidcIdentity")(function* (
-    entry: InstalledConnectedProvider<R>,
+    entry: ResolvedConnectedProvider<R>,
     verified: Oidc.VerifiedIdToken,
     originalNonce: Redacted.Redacted<string>,
     previous?: {
@@ -318,7 +326,7 @@ export const makeConnectedProtocolWithCompatibility = Effect.fn(
   });
 
   const decodeIdentity = Effect.fn("OpenIdConnectConnected.decodeIdentity")(function* (
-    entry: InstalledConnectedProvider<R>,
+    entry: ResolvedConnectedProvider<R>,
     body: unknown,
     accessToken?: Redacted.Redacted<string>,
   ) {
@@ -373,9 +381,11 @@ export const makeConnectedProtocolWithCompatibility = Effect.fn(
 
     if (!entry || !callback || request.profile.issuance !== "active") return yield* rejected();
 
+    const resolved = yield* entry.resolve;
+
     const responseIssuerMode = persistedResponseIssuerMode(
-      entry.provider.responseIssuerMode,
-      entry.metadata.authorization_response_iss_parameter_supported,
+      resolved.provider.responseIssuerMode,
+      resolved.metadata.authorization_response_iss_parameter_supported,
     );
 
     const authOptions = {
@@ -385,30 +395,30 @@ export const makeConnectedProtocolWithCompatibility = Effect.fn(
           request.profile.scopes,
           request.profile.retention === "access-and-refresh",
         ) ?? request.profile.scopes,
-      pkce: entry.provider.pkceS256,
+      pkce: resolved.provider.pkceS256,
       issuerIdentification: responseIssuerMode,
-      ...(entry.provider.authorizationParameters === undefined
+      ...(resolved.provider.authorizationParameters === undefined
         ? {}
-        : { parameters: entry.provider.authorizationParameters }),
+        : { parameters: resolved.provider.authorizationParameters }),
       resources: request.profile.resources,
-      ...(entry.provider.protocol === "oidc" && entry.provider.maxAgeSeconds !== undefined
-        ? { maxAge: `${entry.provider.maxAgeSeconds} seconds` as const }
+      ...(resolved.provider.protocol === "oidc" && resolved.provider.maxAgeSeconds !== undefined
+        ? { maxAge: `${resolved.provider.maxAgeSeconds} seconds` as const }
         : {}),
       ...(request.prompt === undefined ? {} : { prompt: request.prompt }),
       ...(request.loginHint === undefined ? {} : { loginHint: request.loginHint }),
-      ...(entry.provider.responseMode === undefined
+      ...(resolved.provider.responseMode === undefined
         ? {}
-        : { responseMode: entry.provider.responseMode }),
+        : { responseMode: resolved.provider.responseMode }),
     };
 
     const authorized = yield* (
-      entry.provider.protocol === "oidc"
+      resolved.provider.protocol === "oidc"
         ? Oidc.authorize(authOptions)
-        : entry.provider.scopeSeparator === ","
+        : resolved.provider.scopeSeparator === ","
           ? authorizeWithCommaScopes(authOptions)
           : OAuth.authorize(authOptions)
     ).pipe(
-      Effect.provideService(OAuth.Client, entry.client),
+      Effect.provideService(OAuth.Client, resolved.client),
       Effect.provideService(SecureRandom.SecureRandom, crypto),
       Effect.provideService(Digest.Digest, digests),
       Effect.catchCause((cause) =>

@@ -734,7 +734,16 @@ against a template issuer).
 
 Sign-in accepts per-request `prompt` and `loginHint`. Public clients use
 `authentication: { method: "none", publicClient: true }`. Load secrets with
-`Config.Redacted`; invalid settings fail Layer construction.
+`Config.Redacted`. Static settings (including shared-callback issuer checks)
+validate at Layer construction with zero network I/O. OpenID Connect providers
+resolve discovery lazily on first use through `Discovery.makeRemote`, caching
+valid metadata for the Layer's `Scope` and applying a 30-second cooldown after
+failures; metadata-dependent checks (issuer matching, advertised authentication
+methods, PKCE, ID-token algorithms, and `responseIssuerMode: "discovered"`)
+surface as `OAuthUnavailable` on the first flow rather than failing startup.
+Applications that want boot-time validation can warm up discovery during startup
+by running `Discovery.resolve` with `Discovery.layerRemote` from
+`@yielded/oauth/Discovery`.
 
 ### Configuration rotation
 

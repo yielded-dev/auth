@@ -1,18 +1,21 @@
 import * as Discovery from "@yielded/oauth/Discovery";
+import * as OAuth from "@yielded/oauth/OAuth";
 import * as OAuthError from "@yielded/oauth/OAuthError";
 import * as Oidc from "@yielded/oauth/Oidc";
 import * as Cause from "effect/Cause";
-import * as Context from "effect/Context";
 import * as Digest from "effect/crypto/Digest";
 import * as Mac from "effect/crypto/Mac";
 import * as Signature from "effect/crypto/Signature";
 import * as Effect from "effect/Effect";
 import * as Base64Url from "effect/encoding/Base64Url";
+import * as Exit from "effect/Exit";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
 import * as Jwk from "effect/jose/Jwk";
 import * as Jwks from "effect/jose/Jwks";
 import * as Redacted from "effect/Redacted";
+import * as Scope from "effect/Scope";
+import * as Semaphore from "effect/Semaphore";
 
 import { makeScopedOperation } from "../../../internal/scoped-operation";
 import { OAuthUnavailable } from "../../signInErrors";
@@ -22,17 +25,23 @@ import {
   isTenantIssuerTemplate,
 } from "../microsoft/discovery";
 import { makeEntraIssuerPolicy, makeEntraJwks } from "../microsoft/jwks";
-import { classifyOAuthConfigurationError } from "./classifyOAuthError";
+import { classifyOAuthConfigurationError, classifyOAuthError } from "./classifyOAuthError";
 import {
   installProvider,
+  nativeAuthentication,
   prepareConfigurations,
   registrationKind,
+  validateCallbackAuthorizationUrls,
+  validateProviderMetadata,
   type InstalledProvider,
+  type ResolvedProvider,
 } from "./configuration";
 import {
   installConnectedProvider,
   prepareConnectedConfigurations,
+  validateConnectedProviderMetadata,
   type InstalledConnectedProvider,
+  type ResolvedConnectedProvider,
 } from "./connected/configuration";
 import type { OpenIdConnectConnectedProtocolOptions } from "./connected/models";
 import {
@@ -51,130 +60,24 @@ import {
   type OpenIdConnectOAuthProtocolOptions,
 } from "./models";
 import type { NativeKeySet, Requirements as OAuthRequirements } from "./native";
+import { PrivateKeyClientSecret } from "./privateKeyJwt";
 
 export type Requirements = OAuthRequirements | Signature.Signature | Mac.Mac;
 
-export interface DiscoveredProviderMetadata {
-  readonly metadata: Discovery.Metadata;
-  /** Local policy flag set when discovery pinned a template or `consumers` issuer. */
+interface EntraPolicy {
   readonly signingKeyIssuerRequired: boolean;
-  /** Pinned tenant GUID that signed `tid` must match when discovery pinned a tenant or `consumers`. */
   readonly expectedTenantId: string | undefined;
-  /** Local tenant exclusion for the matched issuer template. */
   readonly excludedTenantId: string | undefined;
+  readonly caseInsensitiveTenantId: boolean;
 }
 
-/** Inward discovery port. One initialization owns the successful responses;
- * exact discovery policy and effective transport identities stay independent. */
-export class ProviderDiscovery extends Context.Service<
-  ProviderDiscovery,
-  {
-    readonly discover: (
-      issuer: string,
-      timeoutSeconds: number,
-      metadataUrl: string | undefined,
-      profile?: typeof DiscoveryProfile.Type,
-    ) => Effect.Effect<
-      DiscoveredProviderMetadata,
-      OpenIdConnectConfigurationError | OAuthUnavailable,
-      HttpClient.HttpClient
-    >;
-  }
->()("effect-auth/oauth/providers/ProviderDiscovery") {
-  /** Evaluate once at each initialization root, never at module or declaration scope. */
-  static readonly make = Effect.sync(() => {
-    const cache = new Map<
-      string,
-      {
-        readonly client: HttpClient.HttpClient;
-        readonly fetch: typeof globalThis.fetch;
-        readonly discovered: DiscoveredProviderMetadata;
-      }
-    >();
-
-    return ProviderDiscovery.of({
-      discover: Effect.fnUntraced(function* (
-        issuer: string,
-        timeoutSeconds: number,
-        metadataUrl: string | undefined,
-        profile?: typeof DiscoveryProfile.Type,
-      ) {
-        const client = yield* HttpClient.HttpClient;
-        const fetch = yield* FetchHttpClient.Fetch;
-        // oxlint-disable-next-line no-restricted-properties -- Collision-free tuple of bounded, validated discovery configuration.
-        const key = JSON.stringify([issuer, timeoutSeconds, metadataUrl ?? null, profile ?? null]);
-        const found = cache.get(key);
-
-        if (found?.client === client && found.fetch === fetch) return found.discovered;
-
-        let pinned = false;
-        let expectedTenantId: string | undefined;
-        let excludedTenantId: string | undefined;
-
-        const metadata = yield* Effect.scoped(
-          Discovery.makeRemote({
-            issuer,
-            timeout: timeoutSeconds * 1000,
-            ...(metadataUrl === undefined ? {} : { url: metadataUrl }),
-            issuerMatcher: (configuredIssuer, discoveredIssuer) => {
-              const matched = matchEntraDiscoveryIssuer(
-                configuredIssuer,
-                discoveredIssuer,
-                profile === "microsoft",
-              );
-
-              if (matched === undefined) {
-                return Effect.fail(
-                  new OAuthError.OAuthError({
-                    reason: new OAuthError.DiscoveryFailed({
-                      description: "Discovered issuer does not match configured issuer",
-                    }),
-                  }),
-                );
-              }
-
-              pinned = matched.pinned;
-              expectedTenantId = matched.expectedTenantId;
-              excludedTenantId = matched.excludedTenantId;
-
-              return Effect.succeed(matched.issuer);
-            },
-            ...(profile === undefined
-              ? {}
-              : {
-                  supplement: (normalized) =>
-                    supplementDiscovery(normalized, profile).pipe(
-                      Effect.mapError(
-                        () =>
-                          new OAuthError.OAuthError({
-                            reason: new OAuthError.DiscoveryFailed({
-                              description: "Discovered metadata failed provider profile validation",
-                            }),
-                          }),
-                      ),
-                    ),
-                }),
-          }).pipe(Effect.flatMap((service) => service.resolve)),
-        ).pipe(
-          Effect.catchCause((cause) =>
-            Effect.failCause(Cause.map(cause, classifyOAuthConfigurationError)),
-          ),
-        );
-
-        const discovered: DiscoveredProviderMetadata = {
-          metadata,
-          signingKeyIssuerRequired: pinned,
-          expectedTenantId,
-          excludedTenantId,
-        };
-
-        cache.set(key, { client, fetch, discovered });
-
-        return discovered;
-      }),
-    });
+const discoveryFailed = (description: string, cause?: unknown): OAuthError.OAuthError =>
+  new OAuthError.OAuthError({
+    reason: new OAuthError.DiscoveryFailed({
+      description,
+      ...(cause === undefined ? {} : { cause }),
+    }),
   });
-}
 
 const asymmetricAlgorithmsOf = (
   advertised: ReadonlyArray<IdTokenSignedResponseAlg>,
@@ -182,6 +85,225 @@ const asymmetricAlgorithmsOf = (
   advertised.filter(
     (algorithm): algorithm is Exclude<IdTokenSignedResponseAlg, "HS256"> => algorithm !== "HS256",
   );
+
+const validateVerifierPolicy = Effect.fnUntraced(function* (
+  metadata: Discovery.Metadata,
+  policy: EntraPolicy,
+  options: {
+    readonly algorithms: ReadonlyArray<IdTokenSignedResponseAlg>;
+    readonly native: boolean;
+    readonly hasStaticSecret: boolean;
+  },
+) {
+  const advertised = advertisedIdTokenAlgorithms(
+    metadata.id_token_signing_alg_values_supported,
+    options.algorithms,
+  );
+
+  if (advertised === undefined) {
+    return yield* OpenIdConnectConfigurationError.make({ reason: "metadata" });
+  }
+
+  if (options.native) {
+    const algorithms = asymmetricAlgorithmsOf(advertised);
+
+    if (algorithms.length === 0 || metadata.jwks_uri === undefined) {
+      return yield* OpenIdConnectConfigurationError.make({ reason: "metadata" });
+    }
+
+    return;
+  }
+
+  const hmacOnly = advertised.length === 1 && advertised[0] === "HS256";
+
+  if (hmacOnly) {
+    if (
+      policy.signingKeyIssuerRequired ||
+      policy.expectedTenantId !== undefined ||
+      isTenantIssuerTemplate(metadata.issuer)
+    ) {
+      return yield* OpenIdConnectConfigurationError.make({ reason: "metadata" });
+    }
+    if (!options.hasStaticSecret) {
+      return yield* OpenIdConnectConfigurationError.make({ reason: "authentication" });
+    }
+
+    return;
+  }
+
+  if (metadata.jwks_uri === undefined) {
+    return yield* OpenIdConnectConfigurationError.make({ reason: "metadata" });
+  }
+});
+
+const makeLazyOidcDiscovery = Effect.fnUntraced(function* (options: {
+  readonly issuer: string;
+  readonly timeoutSeconds: number;
+  readonly metadataUrl: string | undefined;
+  readonly profile: typeof DiscoveryProfile.Type | undefined;
+  readonly validate: (
+    metadata: Discovery.Metadata,
+    policy: EntraPolicy,
+  ) => Effect.Effect<void, OpenIdConnectConfigurationError | OAuthUnavailable>;
+}) {
+  const isMicrosoftProfile = options.profile === "microsoft";
+  let inFlightPolicy: EntraPolicy | undefined;
+  const policyByMetadata = new WeakMap<Discovery.Metadata, EntraPolicy>();
+
+  const remote = yield* Discovery.makeRemote({
+    issuer: options.issuer,
+    timeout: options.timeoutSeconds * 1000,
+    ...(options.metadataUrl === undefined ? {} : { url: options.metadataUrl }),
+    issuerMatcher: (configuredIssuer, discoveredIssuer) => {
+      const matched = matchEntraDiscoveryIssuer(
+        configuredIssuer,
+        discoveredIssuer,
+        isMicrosoftProfile,
+      );
+
+      if (matched === undefined) {
+        return Effect.fail(discoveryFailed("Discovered issuer does not match configured issuer"));
+      }
+
+      const concrete = concreteEntraAuthority(matched.issuer, isMicrosoftProfile);
+
+      inFlightPolicy = {
+        signingKeyIssuerRequired: matched.pinned || (concrete?.signingKeyIssuerRequired ?? false),
+        expectedTenantId: matched.expectedTenantId ?? concrete?.tenantId,
+        excludedTenantId: matched.excludedTenantId,
+        caseInsensitiveTenantId: isKnownEntraAuthority(matched.issuer, isMicrosoftProfile),
+      };
+
+      return Effect.succeed(matched.issuer);
+    },
+    supplement: Effect.fnUntraced(function* (normalized) {
+      const supplemented =
+        options.profile === undefined
+          ? normalized
+          : yield* supplementDiscovery(normalized, options.profile).pipe(
+              Effect.mapError((error) =>
+                discoveryFailed("Discovered metadata failed provider profile validation", error),
+              ),
+            );
+
+      const policy = inFlightPolicy;
+
+      if (policy === undefined) {
+        return yield* discoveryFailed("Missing discovery issuer policy");
+      }
+
+      yield* options
+        .validate(supplemented, policy)
+        .pipe(
+          Effect.mapError((error) =>
+            discoveryFailed("Discovered metadata failed provider capability validation", error),
+          ),
+        );
+
+      return supplemented;
+    }),
+  }).pipe(
+    Effect.catchCause((cause) =>
+      Effect.failCause(Cause.map(cause, classifyOAuthConfigurationError)),
+    ),
+  );
+
+  const resolve: Effect.Effect<
+    { readonly metadata: Discovery.Metadata; readonly policy: EntraPolicy },
+    OAuthError.OAuthError
+  > = Effect.flatMap(remote.resolve, (metadata) => {
+    let policy = policyByMetadata.get(metadata);
+
+    if (policy === undefined) {
+      if (inFlightPolicy === undefined) {
+        return Effect.fail(discoveryFailed("Missing discovery issuer policy"));
+      }
+      policy = inFlightPolicy;
+      policyByMetadata.set(metadata, policy);
+    }
+
+    return Effect.succeed({ metadata, policy });
+  });
+
+  return { service: remote, resolve };
+});
+
+const makeLazyResolved = Effect.fnUntraced(function* <A>(
+  resolveDiscovery: Effect.Effect<
+    { readonly metadata: Discovery.Metadata; readonly policy: EntraPolicy },
+    OAuthError.OAuthError
+  >,
+  build: (
+    metadata: Discovery.Metadata,
+    policy: EntraPolicy,
+  ) => Effect.Effect<A, OpenIdConnectConfigurationError | OAuthUnavailable, Scope.Scope>,
+) {
+  const layerScope = yield* Effect.scope;
+  const semaphore = yield* Semaphore.make(1);
+  let closed = false;
+
+  let cached:
+    | {
+        readonly metadata: Discovery.Metadata;
+        readonly value: A;
+        readonly scope: Scope.Closeable;
+      }
+    | undefined;
+
+  yield* Effect.addFinalizer(() =>
+    Effect.sync(() => {
+      closed = true;
+    }),
+  );
+
+  return {
+    resolve: Effect.gen(function* () {
+      if (closed) return yield* OAuthUnavailable.make({});
+
+      const { metadata, policy } = yield* resolveDiscovery.pipe(
+        Effect.mapError((error) =>
+          classifyOAuthError(error, { operation: "authorization_code", phase: "preSend" }),
+        ),
+      );
+
+      if (cached !== undefined && cached.metadata === metadata) {
+        return cached.value;
+      }
+
+      return yield* semaphore.withPermits(1)(
+        Effect.gen(function* () {
+          if (closed) return yield* OAuthUnavailable.make({});
+          if (cached !== undefined && cached.metadata === metadata) {
+            return cached.value;
+          }
+
+          const childScope = yield* Scope.fork(layerScope, "sequential");
+
+          const value = yield* build(metadata, policy).pipe(
+            Effect.provideService(Scope.Scope, childScope),
+            Effect.onError(() => Scope.close(childScope, Exit.void).pipe(Effect.ignore)),
+            Effect.mapError(() => OAuthUnavailable.make({})),
+          );
+
+          if (closed) {
+            yield* Scope.close(childScope, Exit.void).pipe(Effect.ignore);
+
+            return yield* OAuthUnavailable.make({});
+          }
+
+          const previous = cached;
+
+          cached = { metadata, value, scope: childScope };
+          if (previous !== undefined) {
+            yield* Scope.close(previous.scope, Exit.void).pipe(Effect.ignore);
+          }
+
+          return value;
+        }),
+      );
+    }),
+  };
+});
 
 const makeHmacVerifier = Effect.fn("OpenIdConnect.makeHmacVerifier")(function* (
   issuer: string,
@@ -320,7 +442,7 @@ const makeNativeKeySet = Effect.fn("OpenIdConnect.makeNativeKeySet")(function* (
 ): Effect.fn.Return<
   NativeKeySet,
   OpenIdConnectConfigurationError | OAuthUnavailable,
-  HttpClient.HttpClient | Signature.Signature | Digest.Digest | OAuthRequirements
+  HttpClient.HttpClient | Signature.Signature | Digest.Digest | Scope.Scope
 > {
   const advertised = advertisedIdTokenAlgorithms(
     metadata.id_token_signing_alg_values_supported,
@@ -362,101 +484,140 @@ const makeNativeKeySet = Effect.fn("OpenIdConnect.makeNativeKeySet")(function* (
   };
 });
 
-/** Only the OIDC adapter installs discovery and signed ID-token verification. */
+/** Only the OIDC adapter installs lazy remote discovery and signed ID-token verification. */
 export const installConfigurations = Effect.fn("OpenIdConnect.installConfigurations")(function* <R>(
   input: OpenIdConnectOAuthProtocolOptions<R>,
 ) {
-  const discovery = yield* ProviderDiscovery;
-  const http = yield* captureHardenedHttp;
+  const baseHttp = yield* HttpClient.HttpClient;
+  const fetch = yield* FetchHttpClient.Fetch;
+  const hardenedHttp = yield* captureHardenedHttp;
+  const signature = yield* Signature.Signature;
+  const digest = yield* Digest.Digest;
+  const mac = yield* Mac.Mac;
+  const clientSecrets = yield* PrivateKeyClientSecret;
   const { providers, timeoutSeconds } = yield* prepareConfigurations(input);
   const installed: InstalledProvider<R>[] = [];
 
   for (const provider of providers) {
-    let raw: Discovery.Metadata;
-    let signingKeyIssuerRequired = false;
-    let expectedTenantId: string | undefined;
-    let excludedTenantId: string | undefined;
-    let caseInsensitiveTenantId = false;
-
-    if (provider.protocol === "oidc") {
-      const discovered = yield* discovery.discover(
-        provider.issuer,
-        timeoutSeconds,
-        discoveryMetadataUrl(provider[discoveryProfile]),
-        provider[discoveryProfile],
-      );
-
-      const isMicrosoftProfile = provider[discoveryProfile] === "microsoft";
-      const concrete = concreteEntraAuthority(discovered.metadata.issuer, isMicrosoftProfile);
-
-      raw = discovered.metadata;
-      signingKeyIssuerRequired =
-        discovered.signingKeyIssuerRequired || (concrete?.signingKeyIssuerRequired ?? false);
-      expectedTenantId = discovered.expectedTenantId ?? concrete?.tenantId;
-      excludedTenantId = discovered.excludedTenantId;
-      caseInsensitiveTenantId = isKnownEntraAuthority(
-        discovered.metadata.issuer,
-        isMicrosoftProfile,
-      );
-    } else {
-      raw = {
-        issuer: provider.issuer,
-        authorization_endpoint: provider.authorizationEndpoint,
-        token_endpoint: provider.tokenEndpoint,
-        response_types_supported: ["code"],
-        ...(provider.pkceS256 ? { code_challenge_methods_supported: ["S256"] } : {}),
-        authorization_response_iss_parameter_supported: provider.responseIssuerMode === "required",
-      };
-    }
-
-    const entry = yield* installProvider(provider, raw, timeoutSeconds);
-
     if (provider.protocol !== "oidc") {
-      installed.push(entry);
+      const resolved = yield* installProvider(
+        provider,
+        {
+          issuer: provider.issuer,
+          authorization_endpoint: provider.authorizationEndpoint,
+          token_endpoint: provider.tokenEndpoint,
+          response_types_supported: ["code"],
+          ...(provider.pkceS256 ? { code_challenge_methods_supported: ["S256"] } : {}),
+          authorization_response_iss_parameter_supported:
+            provider.responseIssuerMode === "required",
+        },
+        timeoutSeconds,
+      );
+
+      installed.push({ provider, resolve: Effect.succeed(resolved) });
       continue;
     }
 
-    if (registrationKind(provider) === "native") {
-      installed.push({
-        ...entry,
-        nativeKeySet: yield* makeNativeKeySet(entry.metadata, timeoutSeconds, {
+    const isNative = registrationKind(provider) === "native";
+    const clientAuth = nativeAuthentication(provider.authentication, clientSecrets);
+
+    const remoteDiscovery = yield* makeLazyOidcDiscovery({
+      issuer: provider.issuer,
+      timeoutSeconds,
+      metadataUrl: discoveryMetadataUrl(provider[discoveryProfile]),
+      profile: provider[discoveryProfile],
+      validate: Effect.fnUntraced(function* (metadata, policy) {
+        const validated = yield* validateProviderMetadata(provider, metadata);
+
+        yield* validateVerifierPolicy(validated, policy, {
           algorithms: provider.idTokenSignedResponseAlg,
-          signingKeyIssuerRequired,
-          expectedTenantId,
-          excludedTenantId,
-          caseInsensitiveTenantId,
-        }),
-      });
+          native: isNative,
+          hasStaticSecret: hasStaticSecret(provider.authentication),
+        });
+
+        if (!isNative) {
+          yield* Effect.scoped(
+            Effect.gen(function* () {
+              const localDiscovery = yield* Discovery.makeLocal(validated).pipe(
+                Effect.mapError(() => OpenIdConnectConfigurationError.make({ reason: "metadata" })),
+              );
+
+              const tempClient = yield* OAuth.make({
+                clientId: provider.clientId,
+                clientAuth,
+                timeout: timeoutSeconds * 1000,
+              }).pipe(
+                Effect.provideService(Discovery.Discovery, localDiscovery),
+                Effect.provideService(HttpClient.HttpClient, baseHttp),
+                Effect.provideService(FetchHttpClient.Fetch, fetch),
+                Effect.mapError(() => OpenIdConnectConfigurationError.make({ reason: "metadata" })),
+              );
+
+              yield* validateCallbackAuthorizationUrls(provider, tempClient);
+            }),
+          );
+        }
+      }),
+    });
+
+    if (isNative) {
+      const { resolve } = yield* makeLazyResolved<ResolvedProvider<R>>(
+        remoteDiscovery.resolve,
+        (metadata, policy) =>
+          makeNativeKeySet(metadata, timeoutSeconds, {
+            algorithms: provider.idTokenSignedResponseAlg,
+            ...policy,
+          }).pipe(
+            Effect.provideService(HttpClient.HttpClient, baseHttp),
+            Effect.provideService(FetchHttpClient.Fetch, fetch),
+            Effect.provideService(Signature.Signature, signature),
+            Effect.provideService(Digest.Digest, digest),
+            Effect.map((nativeKeySet) => ({ provider, metadata, nativeKeySet })),
+          ),
+      );
+
+      installed.push({ provider, resolve });
       continue;
     }
 
-    const localDiscovery = yield* Discovery.makeLocal(entry.metadata).pipe(
+    const client = yield* OAuth.make({
+      clientId: provider.clientId,
+      clientAuth,
+      timeout: timeoutSeconds * 1000,
+    }).pipe(
+      Effect.provideService(Discovery.Discovery, remoteDiscovery.service),
       Effect.catchCause((cause) =>
         Effect.failCause(Cause.map(cause, classifyOAuthConfigurationError)),
       ),
     );
 
-    installed.push({
-      ...entry,
-      discovery: localDiscovery,
-      http,
-      verifier: yield* makeVerifier(
-        entry.metadata,
-        localDiscovery,
-        provider.clientId,
-        timeoutSeconds,
-        {
+    const { resolve } = yield* makeLazyResolved<ResolvedProvider<R>>(
+      remoteDiscovery.resolve,
+      (metadata, policy) =>
+        makeVerifier(metadata, remoteDiscovery.service, provider.clientId, timeoutSeconds, {
           algorithms: provider.idTokenSignedResponseAlg,
-          signingKeyIssuerRequired,
-          expectedTenantId,
-          excludedTenantId,
-          caseInsensitiveTenantId,
+          ...policy,
           ...(hasStaticSecret(provider.authentication)
             ? { clientSecret: provider.authentication.secret }
             : {}),
-        },
-      ),
-    });
+        }).pipe(
+          Effect.provideService(HttpClient.HttpClient, baseHttp),
+          Effect.provideService(FetchHttpClient.Fetch, fetch),
+          Effect.provideService(Signature.Signature, signature),
+          Effect.provideService(Digest.Digest, digest),
+          Effect.provideService(Mac.Mac, mac),
+          Effect.map((verifier) => ({
+            provider,
+            metadata,
+            client,
+            discovery: remoteDiscovery.service,
+            http: hardenedHttp,
+            verifier,
+          })),
+        ),
+    );
+
+    installed.push({ provider, resolve });
   }
 
   return { installed, timeoutSeconds };
@@ -465,86 +626,98 @@ export const installConfigurations = Effect.fn("OpenIdConnect.installConfigurati
 export const installConnectedConfigurations = Effect.fn(
   "OpenIdConnect.installConnectedConfigurations",
 )(function* <R>(input: OpenIdConnectConnectedProtocolOptions<R>) {
-  const discovery = yield* ProviderDiscovery;
-  const http = yield* captureHardenedHttp;
+  const baseHttp = yield* HttpClient.HttpClient;
+  const fetch = yield* FetchHttpClient.Fetch;
+  const hardenedHttp = yield* captureHardenedHttp;
+  const signature = yield* Signature.Signature;
+  const digest = yield* Digest.Digest;
+  const mac = yield* Mac.Mac;
+  const clientSecrets = yield* PrivateKeyClientSecret;
   const { providers, timeoutSeconds } = yield* prepareConnectedConfigurations(input);
   const installed: InstalledConnectedProvider<R>[] = [];
 
   for (const provider of providers) {
-    let raw: Discovery.Metadata;
-    let signingKeyIssuerRequired = false;
-    let expectedTenantId: string | undefined;
-    let excludedTenantId: string | undefined;
-    let caseInsensitiveTenantId = false;
-
-    if (provider.protocol === "oidc") {
-      const discovered = yield* discovery.discover(
-        provider.issuer,
-        timeoutSeconds,
-        undefined,
-        undefined,
-      );
-
-      const isMicrosoftProfile = provider[discoveryProfile] === "microsoft";
-      const concrete = concreteEntraAuthority(discovered.metadata.issuer, isMicrosoftProfile);
-
-      raw = discovered.metadata;
-      signingKeyIssuerRequired =
-        discovered.signingKeyIssuerRequired || (concrete?.signingKeyIssuerRequired ?? false);
-      expectedTenantId = discovered.expectedTenantId ?? concrete?.tenantId;
-      excludedTenantId = discovered.excludedTenantId;
-      caseInsensitiveTenantId = isKnownEntraAuthority(
-        discovered.metadata.issuer,
-        isMicrosoftProfile,
-      );
-    } else {
-      raw = {
-        issuer: provider.issuer,
-        authorization_endpoint: provider.authorizationEndpoint,
-        token_endpoint: provider.tokenEndpoint,
-        response_types_supported: ["code"],
-        ...(provider.pkceS256 ? { code_challenge_methods_supported: ["S256"] } : {}),
-        authorization_response_iss_parameter_supported: provider.responseIssuerMode === "required",
-        ...(provider.revocation.mode === "rfc7009"
-          ? { revocation_endpoint: provider.revocation.endpoint }
-          : {}),
-      };
-    }
-
-    const entry = yield* installConnectedProvider(provider, raw, timeoutSeconds);
-
     if (provider.protocol !== "oidc") {
-      installed.push(entry);
+      const resolved = yield* installConnectedProvider(
+        provider,
+        {
+          issuer: provider.issuer,
+          authorization_endpoint: provider.authorizationEndpoint,
+          token_endpoint: provider.tokenEndpoint,
+          response_types_supported: ["code"],
+          ...(provider.pkceS256 ? { code_challenge_methods_supported: ["S256"] } : {}),
+          authorization_response_iss_parameter_supported:
+            provider.responseIssuerMode === "required",
+          ...(provider.revocation.mode === "rfc7009"
+            ? { revocation_endpoint: provider.revocation.endpoint }
+            : {}),
+        },
+        timeoutSeconds,
+      );
+
+      installed.push({ provider, resolve: Effect.succeed(resolved) });
       continue;
     }
 
-    const localDiscovery = yield* Discovery.makeLocal(entry.metadata).pipe(
+    const remoteDiscovery = yield* makeLazyOidcDiscovery({
+      issuer: provider.issuer,
+      timeoutSeconds,
+      metadataUrl: undefined,
+      profile: undefined,
+      validate: Effect.fnUntraced(function* (metadata, policy) {
+        const validated = yield* validateConnectedProviderMetadata(provider, metadata);
+
+        yield* validateVerifierPolicy(validated, policy, {
+          algorithms: provider.idTokenSignedResponseAlg,
+          native: false,
+          hasStaticSecret: hasStaticSecret(provider.authentication),
+        });
+      }),
+    });
+
+    const client = yield* OAuth.make({
+      clientId: provider.clientId,
+      clientAuth: nativeAuthentication(provider.authentication, clientSecrets),
+      timeout: timeoutSeconds * 1000,
+      ...(provider.revocation.mode === "rfc7009"
+        ? {
+            revocationAuth: nativeAuthentication(provider.revocation.authentication, clientSecrets),
+          }
+        : {}),
+    }).pipe(
+      Effect.provideService(Discovery.Discovery, remoteDiscovery.service),
       Effect.catchCause((cause) =>
         Effect.failCause(Cause.map(cause, classifyOAuthConfigurationError)),
       ),
     );
 
-    installed.push({
-      ...entry,
-      discovery: localDiscovery,
-      http,
-      verifier: yield* makeVerifier(
-        entry.metadata,
-        localDiscovery,
-        provider.clientId,
-        timeoutSeconds,
-        {
+    const { resolve } = yield* makeLazyResolved<ResolvedConnectedProvider<R>>(
+      remoteDiscovery.resolve,
+      (metadata, policy) =>
+        makeVerifier(metadata, remoteDiscovery.service, provider.clientId, timeoutSeconds, {
           algorithms: provider.idTokenSignedResponseAlg,
-          signingKeyIssuerRequired,
-          expectedTenantId,
-          excludedTenantId,
-          caseInsensitiveTenantId,
+          ...policy,
           ...(hasStaticSecret(provider.authentication)
             ? { clientSecret: provider.authentication.secret }
             : {}),
-        },
-      ),
-    });
+        }).pipe(
+          Effect.provideService(HttpClient.HttpClient, baseHttp),
+          Effect.provideService(FetchHttpClient.Fetch, fetch),
+          Effect.provideService(Signature.Signature, signature),
+          Effect.provideService(Digest.Digest, digest),
+          Effect.provideService(Mac.Mac, mac),
+          Effect.map((verifier) => ({
+            provider,
+            metadata,
+            client,
+            discovery: remoteDiscovery.service,
+            http: hardenedHttp,
+            verifier,
+          })),
+        ),
+    );
+
+    installed.push({ provider, resolve });
   }
 
   return { installed, timeoutSeconds };

@@ -11,12 +11,7 @@ import type {
   OpenIdConnectOAuthProvider,
   OpenIdConnectOidcProvider,
 } from "./models";
-import {
-  installConfigurations,
-  installConnectedConfigurations,
-  ProviderDiscovery,
-  type Requirements,
-} from "./oidc";
+import { installConfigurations, installConnectedConfigurations, type Requirements } from "./oidc";
 import {
   resolveOidcDefaults,
   resolveOptions,
@@ -74,52 +69,50 @@ const resolve = <R>(providers: ReadonlyArray<Provider<R>>) =>
     }),
   );
 
-/** Declare an OIDC or OAuth provider for Http.layer. No I/O runs until its
- * Layer builds. The HTTP host supplies the provider ID and callback URLs. One
- * initialization shares equivalent discovery responses; client and verification
- * policy remain separate for each protocol and registration. */
+/** Declare an OIDC or OAuth provider for Http.layer. Static configuration is
+ * validated when the Layer builds with zero network I/O; OIDC discovery and
+ * metadata capability checks run lazily on first use via `Discovery.makeRemote`.
+ * The HTTP host supplies the provider ID and callback URLs; client and
+ * verification policy remain separate for each protocol and registration. */
 export const provider = <R = never>(
   options: ProviderOptions<R>,
 ): ProviderDefinition<OpenIdConnectConfigurationError | OAuthUnavailable, R | Requirements> => ({
-  configure: Effect.fnUntraced(
-    function* (binding) {
-      const registrations = yield* resolveOptions(() =>
-        resolve(
-          ("registrations" in options ? options.registrations : [options]).map((registration) => ({
-            ...registration,
-            ...binding,
-          })),
-        ),
-      );
+  configure: Effect.fnUntraced(function* (binding) {
+    const registrations = yield* resolveOptions(() =>
+      resolve(
+        ("registrations" in options ? options.registrations : [options]).map((registration) => ({
+          ...registration,
+          ...binding,
+        })),
+      ),
+    );
 
-      const protocol = yield* makeOpenIdConnectOAuthProtocol(
-        installConfigurations<R>({
-          providers: registrations,
-          timeoutSeconds: options.timeoutSeconds ?? 10,
-        }),
-      ).pipe(Effect.provideServiceEffect(PrivateKeyClientSecret, PrivateKeyClientSecret.make));
+    const protocol = yield* makeOpenIdConnectOAuthProtocol(
+      installConfigurations<R>({
+        providers: registrations,
+        timeoutSeconds: options.timeoutSeconds ?? 10,
+      }),
+    ).pipe(Effect.provideServiceEffect(PrivateKeyClientSecret, PrivateKeyClientSecret.make));
 
-      const access = "registrations" in options ? options.registrations : [options];
+    const access = "registrations" in options ? options.registrations : [options];
 
-      const connectedProviders = registrations.flatMap((registration, index) => {
-        const configuration = access[index]?.access;
+    const connectedProviders = registrations.flatMap((registration, index) => {
+      const configuration = access[index]?.access;
 
-        return configuration === undefined ? [] : [{ ...registration, ...configuration }];
-      });
+      return configuration === undefined ? [] : [{ ...registration, ...configuration }];
+    });
 
-      if (connectedProviders.length === 0) return protocol;
+    if (connectedProviders.length === 0) return protocol;
 
-      const connected = yield* makeOpenIdConnectConnectedProtocol(
-        installConnectedConfigurations<R>({
-          providers: connectedProviders,
-          timeoutSeconds: options.timeoutSeconds ?? 10,
-        }),
-      ).pipe(Effect.provideServiceEffect(PrivateKeyClientSecret, PrivateKeyClientSecret.make));
+    const connected = yield* makeOpenIdConnectConnectedProtocol(
+      installConnectedConfigurations<R>({
+        providers: connectedProviders,
+        timeoutSeconds: options.timeoutSeconds ?? 10,
+      }),
+    ).pipe(Effect.provideServiceEffect(PrivateKeyClientSecret, PrivateKeyClientSecret.make));
 
-      return { ...protocol, connected };
-    },
-    Effect.provideServiceEffect(ProviderDiscovery, ProviderDiscovery.make),
-  ),
+    return { ...protocol, connected };
+  }),
 });
 
 /** One protocol Layer for all OAuth/OIDC hosts. Each provider defaults to
@@ -131,8 +124,10 @@ export const provider = <R = never>(
  * PKCE. Plain OAuth defaults to no scopes. clientSecret uses client_secret_basic
  * unless tokenEndpointAuthMethod is supplied. Authorization defaults to
  * response_mode=query; set responseMode to form_post when the issuer POSTs the
- * callback. Discovery must confirm the host's capabilities. Invalid
- * configuration fails when building the Layer.
+ * callback. Static configuration errors fail when building the Layer with zero
+ * network I/O; OIDC discovery and metadata capability checks run lazily on
+ * first use via `Discovery.makeRemote` (warm up with `Discovery.resolve` at
+ * startup if boot-time validation is required).
  *
  * Keep retired generations in providers until their outstanding flows expire;
  * never reuse a generation for changed credentials or protocol configuration.
@@ -151,7 +146,6 @@ export const layer = <R = never>(options: Options<R>) =>
       Effect.flatMap((configuration) =>
         makeOpenIdConnectOAuthProtocol(installConfigurations<R>(configuration)).pipe(
           Effect.provideServiceEffect(PrivateKeyClientSecret, PrivateKeyClientSecret.make),
-          Effect.provideServiceEffect(ProviderDiscovery, ProviderDiscovery.make),
         ),
       ),
     ),

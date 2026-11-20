@@ -292,7 +292,10 @@ with authorization-code PKCE and one identity GET.
 
 Use `OpenIdConnect.provider` for other OIDC issuers or plain OAuth endpoints.
 Configure identity decoding, scopes, and any retained-access contract explicitly;
-see [provider configuration](../reference/oauth#providers).
+see [provider configuration](../reference/oauth#providers). OpenID Connect
+providers resolve discovery lazily on first use so server startup does not fail
+while an identity provider is unavailable; warm up `Discovery.resolve` from
+`@yielded/oauth/Discovery` at startup if you want boot-time validation.
 
 Declare a `profiles` schema map on the strategy for typed `providerData` in
 `SessionClaims.resolve`. Provider display data never authorizes account linking by
