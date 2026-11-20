@@ -51,6 +51,8 @@ export interface VerifierOptions extends RequestOptions {
   /** Require advertised S256 PKCE. Defaults to true. Set false only for issuers
    * that cannot complete authorization-code + PKCE. */
   readonly pkceS256?: boolean;
+  /** Reject this tenant GUID case-insensitively when verifying a `{tenantid}` issuer. */
+  readonly excludedTenantId?: string | undefined;
   /** Channel or client secret used as the HS256 HMAC key. Required when the
    * advertised algorithm set is HS256. */
   readonly clientSecret?: Redacted.Redacted<string>;
@@ -87,6 +89,12 @@ export interface Verifier {
   ) => Effect.Effect<Verified, OAuthError.OAuthError, VerificationRequirements>;
 }
 
+const TenantId = Schema.String.check(
+  Schema.isPattern(
+    /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/u,
+  ),
+);
+
 const Configuration = Schema.Struct({
   metadata: Metadata,
   clientId: V.text(1024),
@@ -98,6 +106,7 @@ const Configuration = Schema.Struct({
     Schema.Array(IdTokenAlgorithm).check(Schema.isMinLength(1), Schema.isMaxLength(5)),
   ),
   pkceS256: Schema.optionalKey(Schema.Boolean),
+  excludedTenantId: Schema.optional(TenantId),
   clientSecret: Schema.optionalKey(V.secret(4096)),
 });
 
@@ -151,12 +160,6 @@ const tokenHash = (algorithm: string) =>
       : undefined;
 
 const tenantPlaceholder = "{tenantid}";
-
-const TenantId = Schema.String.check(
-  Schema.isPattern(
-    /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/u,
-  ),
-);
 
 const issuerOriginAndPath = (value: string) => {
   const match = /^(https:\/\/[^/?#]+)(\/[^?#]*)?$/u.exec(value);
@@ -260,6 +263,7 @@ export const makeVerifier = Effect.fnUntraced(function* (
 
   const metadata = V.freeze(options.metadata);
   const audiences = V.freeze([...(options.audiences ?? [options.clientId])]);
+  const excludedTenantId = options.excludedTenantId?.toLowerCase();
 
   const algorithms = idTokenAlgorithms.filter((algorithm) =>
     (options.algorithms ?? defaultIdTokenAlgorithms).includes(algorithm),
@@ -399,6 +403,8 @@ export const makeVerifier = Effect.fnUntraced(function* (
       const tenant = yield* Schema.decodeUnknownEffect(Schema.Struct({ tid: TenantId }))(
         verified.claims,
       ).pipe(Effect.mapError(() => tokenFailed("issuer")));
+
+      if (tenant.tid.toLowerCase() === excludedTenantId) return yield* tokenFailed("issuer");
 
       const expected = substituteTenantIssuer(metadata.issuer, tenant.tid);
 

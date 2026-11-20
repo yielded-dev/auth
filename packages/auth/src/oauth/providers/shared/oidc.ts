@@ -41,9 +41,10 @@ export type Requirements = OAuthRequirements | Signature.Signature | Mac.Mac;
 
 export interface DiscoveredProviderMetadata {
   readonly metadata: Discovery.Metadata;
-  /** Local policy flag set only when discovery pinned a `{tenantid}` document
-   * to a single-tenant GUID or commercial `consumers` authority. */
+  /** Local policy flag set when discovery pinned a template or `consumers` issuer. */
   readonly signingKeyIssuerRequired: boolean;
+  /** Local tenant exclusion for the matched issuer template. */
+  readonly excludedTenantId: string | undefined;
 }
 
 /** Inward discovery port. One initialization owns the successful responses;
@@ -90,6 +91,7 @@ export class ProviderDiscovery extends Context.Service<
         if (found?.client === client && found.fetch === fetch) return found.discovered;
 
         let pinned = false;
+        let excludedTenantId: string | undefined;
 
         const metadata = yield* Effect.scoped(
           Discovery.makeRemote({
@@ -110,6 +112,7 @@ export class ProviderDiscovery extends Context.Service<
               }
 
               pinned = matched.pinned;
+              excludedTenantId = matched.excludedTenantId;
 
               return Effect.succeed(matched.issuer);
             },
@@ -138,6 +141,7 @@ export class ProviderDiscovery extends Context.Service<
         const discovered: DiscoveredProviderMetadata = {
           metadata,
           signingKeyIssuerRequired: pinned,
+          excludedTenantId,
         };
 
         cache.set(key, { client, fetch, discovered });
@@ -155,6 +159,7 @@ const makeVerifier = Effect.fn("OpenIdConnect.makeVerifier")(function* (
   options: {
     readonly algorithms: ReadonlyArray<Oidc.IdTokenAlgorithm>;
     readonly pkceS256: boolean;
+    readonly excludedTenantId: string | undefined;
     readonly clientSecret?: Redacted.Redacted<string>;
     readonly audiences?: ReadonlyArray<string>;
   },
@@ -171,6 +176,7 @@ const makeVerifier = Effect.fn("OpenIdConnect.makeVerifier")(function* (
     timeoutMs: timeoutSeconds * 1000,
     algorithms: options.algorithms,
     pkceS256: options.pkceS256,
+    excludedTenantId: options.excludedTenantId,
     ...(options.clientSecret === undefined ? {} : { clientSecret: options.clientSecret }),
     ...(options.audiences === undefined ? {} : { audiences: options.audiences }),
   }).pipe(
@@ -196,6 +202,7 @@ export const installConfigurations = Effect.fn("OpenIdConnect.installConfigurati
   for (const provider of providers) {
     let raw: Discovery.Metadata;
     let signingKeyIssuerRequired = false;
+    let excludedTenantId: string | undefined;
 
     if (provider.protocol === "oidc") {
       const discovered = yield* discovery.discover(
@@ -207,6 +214,7 @@ export const installConfigurations = Effect.fn("OpenIdConnect.installConfigurati
 
       raw = discovered.metadata;
       signingKeyIssuerRequired = discovered.signingKeyIssuerRequired;
+      excludedTenantId = discovered.excludedTenantId;
     } else {
       raw = {
         issuer: provider.issuer,
@@ -231,6 +239,7 @@ export const installConfigurations = Effect.fn("OpenIdConnect.installConfigurati
               {
                 algorithms: provider.idTokenSignedResponseAlg,
                 pkceS256: provider.pkceS256,
+                excludedTenantId,
                 ...(hasStaticSecret(provider.authentication)
                   ? { clientSecret: provider.authentication.secret }
                   : {}),
@@ -257,6 +266,7 @@ export const installConnectedConfigurations = Effect.fn(
   for (const provider of providers) {
     let raw: Discovery.Metadata;
     let signingKeyIssuerRequired = false;
+    let excludedTenantId: string | undefined;
 
     if (provider.protocol === "oidc") {
       const discovered = yield* discovery.discover(
@@ -268,6 +278,7 @@ export const installConnectedConfigurations = Effect.fn(
 
       raw = discovered.metadata;
       signingKeyIssuerRequired = discovered.signingKeyIssuerRequired;
+      excludedTenantId = discovered.excludedTenantId;
     } else {
       raw = {
         issuer: provider.issuer,
@@ -295,6 +306,7 @@ export const installConnectedConfigurations = Effect.fn(
               {
                 algorithms: provider.idTokenSignedResponseAlg,
                 pkceS256: provider.pkceS256,
+                excludedTenantId,
                 ...(hasStaticSecret(provider.authentication)
                   ? { clientSecret: provider.authentication.secret }
                   : {}),

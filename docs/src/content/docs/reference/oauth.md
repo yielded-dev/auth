@@ -710,9 +710,10 @@ omitted; custom claims are preserved for `profileSchema`. Discovery accepts a
 substitutes the signed `tid` and checks the selected signing key's issuer. A
 concrete GUID authority discovered from that template keeps its own issuer, and
 the signing key must still publish a matching issuer. Commercial `consumers` pins the
-personal-account issuer. A tenant domain does not match that template. `common`
-and `organizations` stay on it. Refresh against the template requires that
-original `iss`.
+personal-account issuer and requires a matching signing-key issuer. A tenant domain
+does not match that template. `common` and `organizations` stay on it, with
+`organizations` accepting only work and school accounts. Refresh against the
+template requires the original `iss`.
 
 Sign-in accepts per-request `prompt` and `loginHint`. Public clients use
 `authentication: { method: "none", publicClient: true }`. Load secrets with

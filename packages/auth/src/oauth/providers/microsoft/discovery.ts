@@ -11,8 +11,6 @@ export const entraTenantId = Schema.String.check(
 /** Commercial personal-account tenant; `consumers` is this GUID's nickname. */
 export const personalMicrosoftAccountTenant = "9188040d-6c67-4c5b-b112-36a304b66dad";
 
-const multiTenantAlias = (segment: string) => segment === "common" || segment === "organizations";
-
 const issuerOriginAndPath = (value: string) => {
   const match = /^(https:\/\/[^/?#]+)(\/[^?#]*)?$/u.exec(value);
 
@@ -83,14 +81,16 @@ const templateTenantSegment = (configured: string, discovered: string): string |
 
 /** Match an exact issuer, commercial `consumers` personal-account alias, or an
  * Entra `{tenantid}` template whose remaining origin and path match the
- * configured authority. Single-tenant GUIDs and commercial `consumers` pin the
- * template to their concrete issuer and report `pinned: true` so verification
- * keeps requiring signing-key issuer authority. `common` and `organizations`
- * stay on the template. Other segments, including tenant domains, are rejected. */
+ * configured authority. Template matches for single-tenant GUIDs and both
+ * forms of `consumers` discovery pin the issuer and require signing-key issuer
+ * authority. `common` and `organizations` stay on the template, with the
+ * personal-account tenant excluded for `organizations`. */
 export const matchEntraDiscoveryIssuer = (
   configured: string,
   discovered: string,
-): { readonly issuer: string; readonly pinned: boolean } | undefined => {
+):
+  | { readonly issuer: string; readonly pinned: boolean; readonly excludedTenantId?: string }
+  | undefined => {
   if (configured === discovered) {
     return { issuer: discovered, pinned: false };
   }
@@ -98,14 +98,15 @@ export const matchEntraDiscoveryIssuer = (
   const personal = personalAccountIssuer(configured);
 
   if (personal !== undefined && personal === discovered) {
-    return { issuer: discovered, pinned: false };
+    return { issuer: discovered, pinned: true };
   }
 
   const tenant = templateTenantSegment(configured, discovered);
 
   if (tenant === undefined) return undefined;
-  if (multiTenantAlias(tenant)) {
-    return { issuer: discovered, pinned: false };
+  if (tenant === "common") return { issuer: discovered, pinned: false };
+  if (tenant === "organizations") {
+    return { issuer: discovered, pinned: false, excludedTenantId: personalMicrosoftAccountTenant };
   }
   if (Schema.is(entraTenantId)(tenant)) {
     return { issuer: configured, pinned: true };

@@ -697,24 +697,52 @@ it.live("owns GitHub cohort revocation until its provider scope closes", () =>
   }),
 );
 
-// Regression at 25217c71 (relocated from packages/oauth/test/oidc.test.ts):
-// pinning a discovery template admitted an issuer-less signing key. Provider
-// JWKS cannot be made to omit issuer in a live workflow. The same signed token
-// must fail without key authority and pass with it, independently of any
-// untrusted remote fields.
-it.effect("requires signing-key issuer authority after pinning Entra discovery metadata", () =>
+const entraHost = "https://login.microsoftonline.com";
+const entraTemplate = `${entraHost}/{tenantid}/v2.0`;
+const workTenant = "11111111-1111-1111-1111-111111111111";
+const personalTenant = "9188040d-6c67-4c5b-b112-36a304b66dad";
+const uppercasePersonalTenant = personalTenant.toUpperCase();
+
+it.effect.each([
+  // Regression at 25217c71: pinning a discovery template admitted an issuer-less key.
+  {
+    name: "requires key issuer authority for a pinned tenant template",
+    authority: workTenant,
+    discoveryIssuer: entraTemplate,
+    tenant: workTenant,
+    keys: [
+      { keyIssuer: undefined, accepted: false },
+      { keyIssuer: entraTemplate, accepted: true },
+    ],
+  },
+  // Regression at 881f94d: organizations admitted a personal account after template matching.
+  {
+    name: "definitely rejects personal accounts on organizations",
+    authority: "organizations",
+    discoveryIssuer: entraTemplate,
+    tenant: uppercasePersonalTenant,
+    keys: [{ keyIssuer: `${entraHost}/${uppercasePersonalTenant}/v2.0`, accepted: false }],
+  },
+  // Regression at 881f94d: concrete consumers discovery admitted an issuer-less key.
+  {
+    name: "requires key issuer authority for concrete consumers discovery",
+    authority: "consumers",
+    discoveryIssuer: `${entraHost}/${personalTenant}/v2.0`,
+    tenant: personalTenant,
+    keys: [{ keyIssuer: undefined, accepted: false }],
+  },
+])("Entra discovery $name", ({ authority, discoveryIssuer, tenant, keys }) =>
   Effect.gen(function* () {
     const seconds = 2_000_000_000;
 
     yield* TestClock.setTime(seconds * 1000);
     const pair = yield* Jwk.generateKeyPair({ algorithm: "ES256", kid: "key" });
     const signingKey = yield* Jwk.importPrivate(pair.privateKey, "ES256");
-    const tenant = "11111111-1111-1111-1111-111111111111";
-    const issuer = `https://login.microsoftonline.com/${tenant}/v2.0`;
-    const template = "https://login.microsoftonline.com/{tenantid}/v2.0";
-    const discoveryUrl = `${issuer}/.well-known/openid-configuration`;
-    const tokenUrl = `https://login.microsoftonline.com/${tenant}/oauth2/v2.0/token`;
-    const jwksUrl = `https://login.microsoftonline.com/${tenant}/discovery/v2.0/keys`;
+    const issuer = `${entraHost}/${tenant}/v2.0`;
+    const configuredIssuer = `${entraHost}/${authority}/v2.0`;
+    const discoveryUrl = `${configuredIssuer}/.well-known/openid-configuration`;
+    const tokenUrl = `${entraHost}/${authority}/oauth2/v2.0/token`;
+    const jwksUrl = `${entraHost}/${authority}/discovery/v2.0/keys`;
 
     const EntraIdToken = Schema.Struct({
       iss: Schema.String,
@@ -727,7 +755,7 @@ it.effect("requires signing-key issuer authority after pinning Entra discovery m
       tid: Schema.String,
     });
 
-    for (const keyIssuer of [undefined, template]) {
+    for (const { keyIssuer, accepted } of keys) {
       let idToken = "";
 
       const fetch: typeof globalThis.fetch = async (input) => {
@@ -735,9 +763,9 @@ it.effect("requires signing-key issuer authority after pinning Entra discovery m
 
         if (url === discoveryUrl) {
           return json({
-            issuer: template,
+            issuer: discoveryIssuer,
             signing_key_issuer_required: false,
-            authorization_endpoint: `https://login.microsoftonline.com/${tenant}/oauth2/v2.0/authorize`,
+            authorization_endpoint: `${entraHost}/${authority}/oauth2/v2.0/authorize`,
             token_endpoint: tokenUrl,
             jwks_uri: jwksUrl,
             response_types_supported: ["code"],
@@ -771,7 +799,7 @@ it.effect("requires signing-key issuer authority after pinning Entra discovery m
           {
             protocol: "oidc",
             provider: OAuthProviderKey.make("entra"),
-            issuer: OAuthIssuer.make(issuer),
+            issuer: OAuthIssuer.make(configuredIssuer),
             responseIssuerMode: "unsupported",
             clientId: "client",
             clientSecret: Redacted.make("client-secret"),
@@ -807,7 +835,7 @@ it.effect("requires signing-key issuer authority after pinning Entra discovery m
         ),
       );
 
-      const completed = yield* protocol
+      const exchange = protocol
         .exchangeVerifiedIdentity({
           configuration: started.configuration,
           secrets: started.secrets,
@@ -818,13 +846,13 @@ it.effect("requires signing-key issuer authority after pinning Entra discovery m
             code: Redacted.make("single-use-code"),
           },
         })
-        .pipe(Effect.provideService(FetchHttpClient.Fetch, fetch), Effect.result);
+        .pipe(Effect.provideService(FetchHttpClient.Fetch, fetch));
 
-      expect(completed).toMatchObject(
-        keyIssuer === undefined
-          ? { _tag: "Failure", failure: { _tag: "OAuthProtocolRejected" } }
-          : { _tag: "Success", success: { identity: { subject: "provider-subject", issuer } } },
-      );
+      if (accepted) {
+        expect((yield* exchange).identity).toMatchObject({ subject: "provider-subject", issuer });
+      } else {
+        yield* expectTag(exchange, "OAuthProtocolRejected");
+      }
     }
   }).pipe(Effect.provide(platform)),
 );
