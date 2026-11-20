@@ -4,6 +4,7 @@ import * as Exit from "effect/Exit";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
 import type * as HttpClientRequest from "effect/http/HttpClientRequest";
+import * as Predicate from "effect/Predicate";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -16,6 +17,26 @@ export interface Options {
   readonly timeoutMs: number;
   readonly maxResponseBytes: number;
 }
+
+const sanitizeTransportCause = (error: unknown): unknown => {
+  if (
+    Predicate.isObject(error) &&
+    (error as { readonly _tag?: unknown })._tag === "HttpClientError"
+  ) {
+    const reason = (error as { readonly reason?: unknown }).reason;
+
+    const reasonTag =
+      Predicate.isObject(reason) && typeof (reason as { readonly _tag?: unknown })._tag === "string"
+        ? (reason as { readonly _tag: string })._tag
+        : undefined;
+
+    return reasonTag === undefined
+      ? { _tag: "HttpClientError" }
+      : { _tag: "HttpClientError", reason: reasonTag };
+  }
+
+  return undefined;
+};
 
 const transportFailed = (
   endpoint: OAuthError.TransportFailed["endpoint"],
@@ -118,7 +139,9 @@ export const request = Effect.fnUntraced(
             Cause.map(cause, (error) =>
               OAuthError.isOAuthError(error)
                 ? error
-                : transportFailed(endpoint, "HTTP transport request failed", { cause: error }),
+                : transportFailed(endpoint, "HTTP transport request failed", {
+                    cause: sanitizeTransportCause(error),
+                  }),
             ),
           ),
         ),

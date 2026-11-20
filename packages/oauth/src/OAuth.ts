@@ -31,6 +31,7 @@ import * as Base64Url from "effect/encoding/Base64Url";
 import type * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
@@ -39,6 +40,8 @@ import type * as Scope from "effect/Scope";
 import * as ClientAuth from "./ClientAuth.ts";
 import * as Discovery from "./Discovery.ts";
 import * as Grant from "./Grant.ts";
+import * as InternalClientAuth from "./internal/clientAuth.ts";
+import * as InternalGrant from "./internal/grant.ts";
 import * as Ownership from "./internal/ownership.ts";
 import * as Transport from "./internal/transport.ts";
 import * as V from "./internal/validation.ts";
@@ -251,23 +254,6 @@ const maxTokenRequestBytes = 131072;
 const maxAuthorizationUrlLength = 16384;
 const defaultMaxResponseBytes = 1048576;
 
-const forbiddenAuthHeaders: ReadonlySet<string> = new Set([
-  "cookie",
-  "host",
-  "content-length",
-  "content-type",
-  "transfer-encoding",
-  "connection",
-  "upgrade",
-  "trailer",
-  "te",
-  "traceparent",
-  "tracestate",
-  "baggage",
-]);
-
-const headerNamePattern = /^[!#$%&'*+.^_`|~0-9A-Za-z-]{1,64}$/;
-
 const PromptSchema = Schema.Literals(["none", "login", "consent", "select_account"]);
 const ResponseModeSchema = Schema.Literals(["query", "form_post"]);
 const IssuerIdentificationSchema = Schema.Literals(["required", "optional", "unsupported"]);
@@ -278,14 +264,6 @@ const Terminal = Schema.Struct({
   error_description: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(4096))),
   error_uri: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(2048))),
 });
-
-const clientAuthFailed = (description: string, cause?: unknown): OAuthError.OAuthError =>
-  new OAuthError.OAuthError({
-    reason: new OAuthError.ClientAuthFailed({
-      description,
-      ...(cause === undefined ? {} : { cause }),
-    }),
-  });
 
 const invalidResponse = (
   endpoint: OAuthError.InvalidResponse["endpoint"],
@@ -300,6 +278,7 @@ const decodeNonEmptySecret = (
   value: string | Redacted.Redacted<string>,
   maxLength: number,
   name: string,
+  requireWellFormedUnicode = false,
 ): Effect.Effect<string, OAuthError.OAuthError> =>
   V.revealString(
     value,
@@ -307,7 +286,10 @@ const decodeNonEmptySecret = (
     () => V.invalidArgument(`Invalid ${name}`),
   ).pipe(
     Effect.filterOrFail(
-      (item) => item.length > 0 && item.length <= maxLength,
+      (item) =>
+        item.length > 0 &&
+        item.length <= maxLength &&
+        (!requireWellFormedUnicode || V.isWellFormedUnicode(item)),
       () => V.invalidArgument(`Invalid ${name}`),
     ),
   );
@@ -371,12 +353,12 @@ const parseSharedAuthOptions = Effect.fnUntraced(function* (
   );
 
   const scopes = yield* V.configuration(V.Scopes, options.scopes, "Invalid authorization scopes");
-  const state = yield* decodeNonEmptySecret(options.state, 256, "state");
+  const state = yield* decodeNonEmptySecret(options.state, 256, "state", true);
 
   const nonce =
     options.nonce === undefined
       ? undefined
-      : yield* decodeNonEmptySecret(options.nonce, 256, "nonce");
+      : yield* decodeNonEmptySecret(options.nonce, 256, "nonce", true);
 
   const maxAgeSeconds =
     options.maxAge === undefined ? undefined : yield* V.wholeSeconds("maxAge", options.maxAge);
@@ -424,117 +406,14 @@ const parseSharedAuthOptions = Effect.fnUntraced(function* (
   };
 });
 
-const assembleAuthenticatedRequest = Effect.fnUntraced(function* (
+const encodeFormRequest = Effect.fnUntraced(function* (
   endpointUrl: string,
-  clientId: string,
-  applied: ClientAuth.Applied,
-  baseParams: ReadonlyArray<readonly [string, string]>,
-  forbidGrantTypeInAuth: boolean,
+  prepared: ClientAuth.PreparedRequest,
 ): Effect.fn.Return<HttpClientRequest.HttpClientRequest, OAuthError.OAuthError> {
-  if (
-    !Predicate.isObject(applied) ||
-    !Predicate.isObject(applied.headers) ||
-    !Array.isArray(applied.form)
-  ) {
-    return yield* clientAuthFailed("Client authentication method returned an invalid result");
-  }
-
-  const headers: Record<string, string> = {};
-  const seenHeaders = new Set<string>();
-  let hasBasicAuthorization = false;
-
-  for (const name of Object.keys(applied.headers)) {
-    const lower = name.toLowerCase();
-
-    if (
-      !headerNamePattern.test(name) ||
-      forbiddenAuthHeaders.has(lower) ||
-      seenHeaders.has(lower)
-    ) {
-      return yield* clientAuthFailed("Client authentication method emitted a disallowed header");
-    }
-
-    const descriptor = Object.getOwnPropertyDescriptor(applied.headers, name);
-
-    if (descriptor === undefined || !("value" in descriptor)) {
-      return yield* clientAuthFailed("Client authentication method header is unreadable");
-    }
-
-    const headerValue = yield* V.revealString(
-      descriptor.value as string | Redacted.Redacted<string>,
-      () => clientAuthFailed("Client authentication header credential is unavailable"),
-      () => clientAuthFailed("Client authentication header value must be a string"),
-    );
-
-    if (/[\r\n]/u.test(headerValue)) {
-      return yield* clientAuthFailed(
-        "Client authentication header value contains control characters",
-      );
-    }
-
-    seenHeaders.add(lower);
-    if (lower === "authorization" && /^\s*Basic\s+/i.test(headerValue)) {
-      hasBasicAuthorization = true;
-    }
-
-    Object.defineProperty(headers, name, {
-      value: headerValue,
-      enumerable: true,
-      configurable: true,
-      writable: true,
-    });
-  }
-
   const body = new URLSearchParams();
-  const reservedBaseKeys = new Set<string>();
 
-  for (const [key, value] of baseParams) {
-    reservedBaseKeys.add(key.toLowerCase());
+  for (const [key, value] of prepared.parameters) {
     body.append(key, value);
-  }
-
-  let hasClientIdInForm = false;
-
-  for (const entry of applied.form) {
-    if (!Array.isArray(entry) || entry.length !== 2) {
-      return yield* clientAuthFailed("Client authentication method emitted an invalid form field");
-    }
-
-    const key: unknown = entry[0];
-    const value: unknown = entry[1];
-
-    if (
-      typeof key !== "string" ||
-      key.length === 0 ||
-      key.length > 256 ||
-      // oxlint-disable-next-line no-control-regex -- Reject control characters in auth form field names.
-      /[\r\n\u0000-\u001f\u007f]/u.test(key)
-    ) {
-      return yield* clientAuthFailed("Client authentication method emitted an invalid form field");
-    }
-
-    const lower = key.toLowerCase();
-
-    if ((forbidGrantTypeInAuth && lower === "grant_type") || reservedBaseKeys.has(lower)) {
-      return yield* clientAuthFailed(
-        forbidGrantTypeInAuth
-          ? "Client authentication method cannot override grant parameters"
-          : "Client authentication method cannot override revocation parameters",
-      );
-    }
-
-    const revealed = yield* V.revealString(
-      value as string | Redacted.Redacted<string>,
-      () => clientAuthFailed("Client authentication form credential is unavailable"),
-      () => clientAuthFailed("Client authentication form value must be a string"),
-    );
-
-    if (lower === "client_id") hasClientIdInForm = true;
-    body.append(key, revealed);
-  }
-
-  if (!hasBasicAuthorization && !hasClientIdInForm) {
-    body.append("client_id", clientId);
   }
 
   const encoded = body.toString();
@@ -545,7 +424,7 @@ const assembleAuthenticatedRequest = Effect.fnUntraced(function* (
 
   let request = HttpClientRequest.post(endpointUrl).pipe(HttpClientRequest.acceptJson);
 
-  for (const [name, value] of Object.entries(headers)) {
+  for (const [name, value] of Object.entries(prepared.headers)) {
     request = HttpClientRequest.setHeader(request, name, value);
   }
 
@@ -625,7 +504,7 @@ export const make: <R = never, RR = never>(
 
   const clientId = yield* V.configuration(V.text(1024), options.clientId, "Invalid OAuth clientId");
 
-  if (!ClientAuth.isMethod(options.clientAuth)) {
+  if (!InternalClientAuth.isMethod(options.clientAuth)) {
     return yield* V.invalidArgument("Invalid clientAuth method");
   }
 
@@ -640,7 +519,7 @@ export const make: <R = never, RR = never>(
   let revocationAuth: ClientAuth.Method<R | RR> = clientAuth;
 
   if (options.revocationAuth !== undefined) {
-    if (!ClientAuth.isMethod(options.revocationAuth)) {
+    if (!InternalClientAuth.isMethod(options.revocationAuth)) {
       return yield* V.invalidArgument("Invalid revocationAuth method");
     }
     yield* V.configuration(
@@ -791,15 +670,50 @@ export const make: <R = never, RR = never>(
       issuerIdentification = requestedIssuerIdentification ?? "unsupported";
     }
 
+    // Bind the complete effective ordered resource list (endpoint query
+    // `resource`s, `parameters.resource`, and `options.resources`) so URL and
+    // Transaction cannot disagree.
+    const endpointResources = new URL(endpoint).searchParams.getAll("resource");
+    let parameterResource: string | undefined;
+
+    if (shared.parameters !== undefined) {
+      for (const [key, value] of Object.entries(shared.parameters)) {
+        if (key === "resource") {
+          parameterResource = value;
+        } else if (key.toLowerCase() === "resource") {
+          return yield* V.invalidArgument("Invalid authorization resource parameter");
+        }
+      }
+    }
+
+    const combinedResources = [
+      ...endpointResources,
+      ...(parameterResource === undefined ? [] : [parameterResource]),
+      ...(shared.resources ?? []),
+    ];
+
+    const effectiveResources =
+      combinedResources.length === 0
+        ? undefined
+        : yield* V.configuration(V.Resources, combinedResources, "Invalid authorization resources");
+
     const responseMode: ResponseMode = shared.responseMode ?? "query";
+
+    const nowMillis = yield* Clock.currentTimeMillis;
+    const requestedAt = DateTime.make(nowMillis);
+    const expiresAt = DateTime.make(nowMillis + lifetimeMs);
+
+    if (Option.isNone(requestedAt) || Option.isNone(expiresAt)) {
+      return yield* V.invalidArgument(
+        "Authorization transaction lifetime produces an invalid expiration",
+      );
+    }
 
     const url = yield* buildAuthorizationUrl(endpoint, clientId, {
       ...shared,
       responseMode,
       codeChallenge,
     });
-
-    const nowMillis = yield* Clock.currentTimeMillis;
 
     const transaction: Transaction = {
       issuer,
@@ -809,14 +723,14 @@ export const make: <R = never, RR = never>(
       responseMode,
       issuerIdentification,
       scopes: [...shared.scopes],
-      requestedAt: DateTime.makeUnsafe(nowMillis),
-      expiresAt: DateTime.makeUnsafe(nowMillis + lifetimeMs),
+      requestedAt: requestedAt.value,
+      expiresAt: expiresAt.value,
       ...(pkceVerifier === undefined ? {} : { pkceVerifier: Redacted.make(pkceVerifier) }),
       ...(shared.nonce === undefined ? {} : { nonce: Redacted.make(shared.nonce) }),
       ...(shared.maxAgeSeconds === undefined
         ? {}
         : { maxAge: Duration.seconds(shared.maxAgeSeconds) }),
-      ...(shared.resources === undefined ? {} : { resources: [...shared.resources] }),
+      ...(effectiveResources === undefined ? {} : { resources: [...effectiveResources] }),
     };
 
     return { url, transaction };
@@ -827,7 +741,7 @@ export const make: <R = never, RR = never>(
   ): Effect.fn.Return<Grant.TokenReceipt, OAuthError.OAuthError> {
     yield* tokenOwnership.available;
 
-    const resolved = yield* Grant.resolveGrant(grant);
+    const resolved = yield* InternalGrant.resolveGrant(grant);
 
     if (
       resolved.grantType.trim() === "client_credentials" &&
@@ -858,17 +772,17 @@ export const make: <R = never, RR = never>(
 
     const endpointUrl = new URL(endpoint).href;
 
-    const applied = yield* clientAuth
-      .apply({ clientId, endpoint: endpointUrl, issuer })
-      .pipe(Effect.provideContext(authContext));
-
-    const request = yield* assembleAuthenticatedRequest(
-      endpointUrl,
-      clientId,
-      applied,
-      [["grant_type", resolved.grantType], ...resolved.parameters],
-      true,
-    ).pipe(Effect.ensuring(Effect.sync(() => ClientAuth.wipeApplied(applied))));
+    const request = yield* ClientAuth.withPreparedRequest(
+      clientAuth,
+      { clientId, endpoint: endpointUrl, issuer },
+      [
+        ...resolved.leadingParameters,
+        ["grant_type", resolved.grantType],
+        ...resolved.trailingParameters,
+      ],
+      (prepared) => encodeFormRequest(endpointUrl, prepared),
+      { forbidGrantType: true },
+    ).pipe(Effect.provideContext(authContext));
 
     const response = yield* Transport.request(http, request, requestLimits, "token");
 
@@ -909,24 +823,19 @@ export const make: <R = never, RR = never>(
     }
 
     const endpointUrl = new URL(endpoint).href;
-
-    const applied = yield* revocationAuth
-      .apply({ clientId, endpoint: endpointUrl, issuer })
-      .pipe(Effect.provideContext(authContext));
-
     const baseParams: Array<readonly [string, string]> = [["token", token]];
 
     if (tokenTypeHint !== undefined) {
       baseParams.push(["token_type_hint", tokenTypeHint]);
     }
 
-    const request = yield* assembleAuthenticatedRequest(
-      endpointUrl,
-      clientId,
-      applied,
+    const request = yield* ClientAuth.withPreparedRequest(
+      revocationAuth,
+      { clientId, endpoint: endpointUrl, issuer },
       baseParams,
-      false,
-    ).pipe(Effect.ensuring(Effect.sync(() => ClientAuth.wipeApplied(applied))));
+      (prepared) => encodeFormRequest(endpointUrl, prepared),
+      { forbidGrantType: false },
+    ).pipe(Effect.provideContext(authContext));
 
     const response = yield* Transport.request(http, request, requestLimits, "revocation");
 
@@ -1030,6 +939,9 @@ export const authorize: (
   }
 
   const state = Redacted.make(Base64Url.encode(stateBytes));
+
+  stateBytes.fill(0);
+
   const pkce = usePkce ? yield* Pkce.generate : undefined;
   const { pkce: _pkce, ...rest } = options;
 

@@ -5,10 +5,11 @@ runtime dependency; applications own registered callbacks, provider configuratio
 permissions, identity, and grant storage.
 
 - **`ClientAuth`**: Extensible client authentication methods (`none`, `secretBasic`,
-  `secretPost`, `secretJwt`, `privateKeyJwt`, `make`, and name-bound `unwrap`).
+  `secretPost`, `secretJwt`, `privateKeyJwt`, `make`, name-bound `unwrap`, and
+  `withPreparedRequest`).
   `secretJwt` and `privateKeyJwt` follow RFC 10070 §4 by default: single-string `aud`
   equal to `request.issuer`, `typ: "client-authentication+jwt"`, 128-bit random `jti`,
-  and `"60 seconds"` lifetime.
+  and `"60 seconds"` lifetime (capped at `"1 hour"`, rounded up to whole seconds).
 - **`Discovery`**: `Discovery.makeLocal` / `layerLocal` for fixed metadata and lazy,
   scoped `Discovery.makeRemote` / `layerRemote` for OIDC (`/.well-known/openid-configuration`)
   or RFC 8414 (`/.well-known/oauth-authorization-server`) discovery with `"Infinity"`

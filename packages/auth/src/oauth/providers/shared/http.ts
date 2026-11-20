@@ -1,4 +1,4 @@
-import type * as ClientAuth from "@yielded/oauth/ClientAuth";
+import * as ClientAuth from "@yielded/oauth/ClientAuth";
 import * as Grant from "@yielded/oauth/Grant";
 import * as OAuth from "@yielded/oauth/OAuth";
 import * as OAuthError from "@yielded/oauth/OAuthError";
@@ -56,14 +56,28 @@ export const invalidResponse = (
     reason: new OAuthError.InvalidResponse({ endpoint, status, description }),
   });
 
-const clientAuthFailed = (description: string, cause?: unknown): OAuthError.OAuthError =>
-  new OAuthError.OAuthError({
-    reason: new OAuthError.ClientAuthFailed({
-      description,
-      ...(cause === undefined ? {} : { cause }),
-    }),
-  });
+const sanitizeTransportCause = (error: unknown): unknown => {
+  if (
+    Predicate.isObject(error) &&
+    (error as { readonly _tag?: unknown })._tag === "HttpClientError"
+  ) {
+    const reason = (error as { readonly reason?: unknown }).reason;
 
+    const reasonTag =
+      Predicate.isObject(reason) && typeof (reason as { readonly _tag?: unknown })._tag === "string"
+        ? (reason as { readonly _tag: string })._tag
+        : undefined;
+
+    return reasonTag === undefined
+      ? { _tag: "HttpClientError" }
+      : { _tag: "HttpClientError", reason: reasonTag };
+  }
+
+  return undefined;
+};
+
+// Mirror of `@yielded/oauth` `internal/validation.ts` bounds and schemas used
+// by plain-OAuth profile fetches and JSON token-body requests; keep in sync.
 export const text = (maximum: number) => Schema.NonEmptyString.check(Schema.isMaxLength(maximum));
 
 const integer = (minimum: number, maximum: number) =>
@@ -221,21 +235,6 @@ const forbiddenHeaders: ReadonlySet<string> = new Set([
   "baggage",
 ]);
 
-const forbiddenAuthHeaders: ReadonlySet<string> = new Set([
-  "cookie",
-  "host",
-  "content-length",
-  "content-type",
-  "transfer-encoding",
-  "connection",
-  "upgrade",
-  "trailer",
-  "te",
-  "traceparent",
-  "tracestate",
-  "baggage",
-]);
-
 const headerNamePattern = /^[!#$%&'*+.^_`|~0-9A-Za-z-]{1,64}$/;
 
 export const Headers = Schema.Record(
@@ -269,18 +268,6 @@ export const reveal = <A>(
   onError: () => OAuthError.OAuthError = () =>
     invalidArgument("Redacted OAuth value is unavailable"),
 ) => Effect.try({ try: () => Redacted.value(value), catch: onError });
-
-const revealString = (
-  value: string | Redacted.Redacted<string>,
-  onError: () => OAuthError.OAuthError,
-): Effect.Effect<string, OAuthError.OAuthError> =>
-  Redacted.isRedacted(value)
-    ? reveal(value, onError).pipe(
-        Effect.filterOrFail((item): item is string => typeof item === "string", onError),
-      )
-    : typeof value === "string"
-      ? Effect.succeed(value)
-      : Effect.fail(onError());
 
 /** Iteratively freeze freshly parsed wire JSON or owned configuration snapshots
  * without copying properties. */
@@ -328,9 +315,11 @@ export interface HttpResponse {
   readonly bytes: Redacted.Redacted<Uint8Array>;
 }
 
-/** Single-attempt bounded HTTP request with manual redirect rejection,
- * `response.url` verification, `5xx` transport classification, `Scope`-owned
- * byte folding, and cause-preserving timeout. */
+/** Mirror of `@yielded/oauth` `internal/transport.ts::request` for plain-OAuth
+ * profile fetches and JSON token-body requests; keep in sync. Single-attempt
+ * bounded HTTP request with manual redirect rejection, `response.url`
+ * verification, `5xx` transport classification, `Scope`-owned byte folding,
+ * and cause-preserving timeout. */
 export const sendRequest = Effect.fnUntraced(
   function* (
     client: HttpClient.HttpClient,
@@ -416,7 +405,9 @@ export const sendRequest = Effect.fnUntraced(
           Cause.map(cause, (error) =>
             OAuthError.isOAuthError(error)
               ? error
-              : transportFailed(endpoint, "HTTP transport request failed", { cause: error }),
+              : transportFailed(endpoint, "HTTP transport request failed", {
+                  cause: sanitizeTransportCause(error),
+                }),
           ),
         ),
       ),
@@ -429,8 +420,9 @@ export const sendRequest = Effect.fnUntraced(
 
 const JsonObjectFromString = Schema.fromJsonString(Grant.TokenReceiptFromJson.fields.body.from);
 
-/** Parse a bounded `application/json` object response reusing `@yielded/oauth`'s
- * plain-JSON schema validation. */
+/** Mirror of `@yielded/oauth` `internal/transport.ts::json` for plain-OAuth
+ * profile fetches and JSON token-body requests; keep in sync. Reuses
+ * `@yielded/oauth`'s plain-JSON schema validation. */
 export const parseJsonResponse = Effect.fnUntraced(function* (
   response: HttpResponse,
   endpoint: OAuthError.InvalidResponse["endpoint"],
@@ -607,93 +599,34 @@ const encodeJsonObject = Effect.fnUntraced(function* (
   );
 });
 
-const buildJsonTokenRequest = Effect.fnUntraced(function* (
+const buildJsonTokenRequest = (
   url: string,
   issuer: string,
   clientId: string,
   clientAuth: ClientAuth.Method<never>,
   bodyEntries: ReadonlyArray<readonly [string, string]>,
-): Effect.fn.Return<HttpClientRequest.HttpClientRequest, OAuthError.OAuthError> {
-  const applied = yield* clientAuth.apply({ clientId, endpoint: url, issuer });
+): Effect.Effect<HttpClientRequest.HttpClientRequest, OAuthError.OAuthError> =>
+  ClientAuth.withPreparedRequest(
+    clientAuth,
+    { clientId, endpoint: url, issuer },
+    bodyEntries,
+    Effect.fnUntraced(function* (prepared) {
+      const encoded = yield* encodeJsonObject(prepared.parameters);
 
-  const headers: Record<string, string> = {};
-  const seenHeaders = new Set<string>();
-  let hasBasicAuthorization = false;
+      if (utf8Encoder.encode(encoded).length > maxTokenRequestBytes) {
+        return yield* invalidArgument("Encoded token request body exceeds maximum size");
+      }
 
-  for (const name of Object.keys(applied.headers)) {
-    const lower = name.toLowerCase();
+      let request = HttpClientRequest.post(url).pipe(HttpClientRequest.acceptJson);
 
-    if (
-      !headerNamePattern.test(name) ||
-      forbiddenAuthHeaders.has(lower) ||
-      seenHeaders.has(lower)
-    ) {
-      return yield* clientAuthFailed("Client authentication method emitted a disallowed header");
-    }
+      for (const [name, value] of Object.entries(prepared.headers)) {
+        request = HttpClientRequest.setHeader(request, name, value);
+      }
 
-    const descriptor = Object.getOwnPropertyDescriptor(applied.headers, name);
-
-    if (descriptor === undefined || !("value" in descriptor)) {
-      return yield* clientAuthFailed("Client authentication method header is unreadable");
-    }
-
-    const value = yield* revealString(descriptor.value as string | Redacted.Redacted<string>, () =>
-      clientAuthFailed("Client authentication header credential is unavailable"),
-    );
-
-    if (/[\r\n]/u.test(value)) {
-      return yield* clientAuthFailed(
-        "Client authentication header value contains control characters",
-      );
-    }
-
-    seenHeaders.add(lower);
-    if (lower === "authorization" && /^\s*Basic\s+/i.test(value)) {
-      hasBasicAuthorization = true;
-    }
-
-    Object.defineProperty(headers, name, {
-      value,
-      enumerable: true,
-      configurable: true,
-      writable: true,
-    });
-  }
-
-  const allEntries: Array<readonly [string, string]> = [...bodyEntries];
-  let hasClientIdInForm = false;
-
-  for (const [key, raw] of applied.form) {
-    if (key.toLowerCase() === "grant_type") {
-      return yield* clientAuthFailed("Client authentication method cannot set grant_type");
-    }
-    if (key.toLowerCase() === "client_id") hasClientIdInForm = true;
-    allEntries.push([
-      key,
-      yield* revealString(raw, () =>
-        clientAuthFailed("Client authentication form credential is unavailable"),
-      ),
-    ]);
-  }
-
-  if (!hasBasicAuthorization && !hasClientIdInForm) {
-    allEntries.push(["client_id", clientId]);
-  }
-
-  const encoded = yield* encodeJsonObject(allEntries);
-
-  if (utf8Encoder.encode(encoded).length > maxTokenRequestBytes) {
-    return yield* invalidArgument("Encoded token request body exceeds maximum size");
-  }
-
-  let request = HttpClientRequest.post(url).pipe(HttpClientRequest.acceptJson);
-
-  for (const [name, value] of Object.entries(headers)) {
-    request = HttpClientRequest.setHeader(request, name, value);
-  }
-
-  return HttpClientRequest.bodyText(request, encoded, "application/json");
-});
+      return HttpClientRequest.bodyText(request, encoded, "application/json");
+    }),
+    { forbidGrantType: true },
+  );
 
 export interface JsonTokenCodeGrantInput {
   readonly code: Redacted.Redacted<string>;

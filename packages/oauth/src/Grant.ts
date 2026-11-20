@@ -17,11 +17,12 @@ import * as Predicate from "effect/Predicate";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 
+import * as InternalGrant from "./internal/grant.ts";
 import * as Transport from "./internal/transport.ts";
 import * as V from "./internal/validation.ts";
 import * as OAuthError from "./OAuthError.ts";
 
-const TypeId = "~effect/oauth/Grant" as const;
+const TypeId = InternalGrant.TypeId;
 
 const clientAuthOwnedKeys: ReadonlySet<string> = new Set([
   "grant_type",
@@ -129,20 +130,6 @@ export interface Grant {
   readonly clientId?: string | undefined;
 }
 
-/**
- * Validated, revealed grant parameters ready for form encoding.
- *
- * @internal
- */
-export interface ResolvedGrant {
-  readonly grantType: string;
-  readonly parameters: ReadonlyArray<readonly [string, string]>;
-  readonly issuer?: string | undefined;
-  readonly clientId?: string | undefined;
-}
-
-const validators = new WeakMap<Grant, () => Effect.Effect<ResolvedGrant, OAuthError.OAuthError>>();
-
 const ExpiresIn = Schema.Union([
   Schema.Finite,
   Schema.String.check(Schema.isPattern(/^(?:0|[1-9][0-9]*)(?:\.[0-9]+)?$/u)).pipe(
@@ -186,8 +173,16 @@ const invalidResponse = (status: number, description: string): OAuthError.OAuthE
     reason: new OAuthError.InvalidResponse({ endpoint: "token", status, description }),
   });
 
-const toRedacted = (value: string | Redacted.Redacted<string>): Redacted.Redacted<string> =>
-  Redacted.isRedacted(value) ? value : Redacted.make(value);
+const normalizeSecretHandle = (
+  value: unknown,
+):
+  | { readonly valid: true; readonly handle: Redacted.Redacted<string> }
+  | { readonly valid: false } =>
+  Redacted.isRedacted(value)
+    ? { valid: true, handle: value as Redacted.Redacted<string> }
+    : typeof value === "string"
+      ? { valid: true, handle: Redacted.make(value) }
+      : { valid: false };
 
 const recordFromEntries = (
   entries: ReadonlyArray<readonly [string, string]>,
@@ -230,7 +225,7 @@ const snapshotStrings = (
 const buildGrant = (
   grantType: string,
   parameters: ReadonlyArray<readonly [string, string | Redacted.Redacted<string>]>,
-  validate: () => Effect.Effect<ResolvedGrant, OAuthError.OAuthError>,
+  validate: () => Effect.Effect<InternalGrant.ResolvedGrant, OAuthError.OAuthError>,
   binding?: { readonly issuer: string; readonly clientId: string },
 ): Grant => {
   const frozenParams = Object.freeze(parameters.map(([k, v]) => Object.freeze([k, v] as const)));
@@ -242,26 +237,47 @@ const buildGrant = (
     ...(binding === undefined ? {} : { issuer: binding.issuer, clientId: binding.clientId }),
   });
 
-  validators.set(grant, validate);
+  InternalGrant.validators.set(grant, validate);
 
   return grant;
 };
 
-const decodeSecretValue = (
-  value: string | Redacted.Redacted<string>,
+const decodeSecretHandle = (
+  normalized:
+    | { readonly valid: true; readonly handle: Redacted.Redacted<string> }
+    | { readonly valid: false },
   maxLength: number,
   description: string,
 ): Effect.Effect<string, OAuthError.OAuthError> =>
-  V.revealString(
-    value,
-    () => V.invalidArgument(`${description} is unavailable`),
-    () => V.invalidArgument(`Invalid ${description}`),
-  ).pipe(
-    Effect.filterOrFail(
-      (item) => item.length > 0 && item.length <= maxLength,
-      () => V.invalidArgument(`Invalid ${description}`),
-    ),
-  );
+  !normalized.valid
+    ? Effect.fail(V.invalidArgument(`Invalid ${description}`))
+    : V.revealString(
+        normalized.handle,
+        () => V.invalidArgument(`${description} is unavailable`),
+        () => V.invalidArgument(`Invalid ${description}`),
+      ).pipe(
+        Effect.filterOrFail(
+          (item) => item.length > 0 && item.length <= maxLength,
+          () => V.invalidArgument(`Invalid ${description}`),
+        ),
+      );
+
+const decodeVerifierHandle = (
+  normalized:
+    | { readonly valid: true; readonly handle: Redacted.Redacted<string> }
+    | { readonly valid: false },
+): Effect.Effect<string, OAuthError.OAuthError> =>
+  !normalized.valid
+    ? Effect.fail(V.invalidArgument("Invalid PKCE verifier"))
+    : V.revealString(
+        normalized.handle,
+        () => V.invalidArgument("PKCE verifier is unavailable"),
+        () => V.invalidArgument("Invalid PKCE verifier"),
+      ).pipe(
+        Effect.tap((revealed) =>
+          V.configuration(V.Verifier, Redacted.make(revealed), "Invalid PKCE verifier"),
+        ),
+      );
 
 const decodeExtraAndResources = Effect.fnUntraced(function* (
   parameters: unknown,
@@ -277,6 +293,9 @@ const decodeExtraAndResources = Effect.fnUntraced(function* (
     );
 
     for (const [key, value] of Object.entries(validatedParams)) {
+      if (key.toLowerCase() === "resource") {
+        yield* V.configuration(V.Resource, value, "Invalid grant resource parameter");
+      }
       out.push([key, value]);
     }
   }
@@ -299,7 +318,7 @@ const decodeExtraAndResources = Effect.fnUntraced(function* (
 const validateRawParameters = Effect.fnUntraced(function* (
   grantType: unknown,
   parameters: unknown,
-): Effect.fn.Return<ResolvedGrant, OAuthError.OAuthError> {
+): Effect.fn.Return<InternalGrant.ResolvedGrant, OAuthError.OAuthError> {
   const validGrantType = yield* V.configuration(V.text(128), grantType, "Invalid grant_type");
 
   // oxlint-disable-next-line no-control-regex -- Reject control characters in grant_type.
@@ -344,29 +363,29 @@ const validateRawParameters = Effect.fnUntraced(function* (
     out.push([key, revealed]);
   }
 
-  return { grantType: validGrantType, parameters: out };
+  // Keep extras/resources placed ahead of the primary grant credential before
+  // `grant_type` for standard code/refresh grants constructed via `Grant.make`.
+  const primaryKey =
+    validGrantType === "refresh_token"
+      ? "refresh_token"
+      : validGrantType === "authorization_code"
+        ? "code"
+        : undefined;
+
+  const splitIndex = primaryKey === undefined ? -1 : out.findIndex(([key]) => key === primaryKey);
+
+  return splitIndex > 0
+    ? {
+        grantType: validGrantType,
+        leadingParameters: out.slice(0, splitIndex),
+        trailingParameters: out.slice(splitIndex),
+      }
+    : {
+        grantType: validGrantType,
+        leadingParameters: [],
+        trailingParameters: out,
+      };
 });
-
-/**
- * Checks whether a value is a `Grant` created by this module.
- *
- * @internal
- */
-export const isGrant = (u: unknown): u is Grant =>
-  Predicate.isObject(u) && Predicate.hasProperty(u, TypeId) && validators.has(u as Grant);
-
-/**
- * Validates and reveals a `Grant` before dispatch.
- *
- * @internal
- */
-export const resolveGrant = (grant: Grant): Effect.Effect<ResolvedGrant, OAuthError.OAuthError> => {
-  const validate = Predicate.isObject(grant) ? validators.get(grant) : undefined;
-
-  return validate === undefined
-    ? Effect.fail(V.invalidArgument("Invalid OAuth grant"))
-    : validate();
-};
 
 /**
  * Constructs a custom form-encoded token grant.
@@ -406,7 +425,7 @@ export const make: (
     ),
   });
 
-  validators.set(grant, () => validateRawParameters(grantType, copied));
+  InternalGrant.validators.set(grant, () => validateRawParameters(grantType, copied));
 
   return grant;
 };
@@ -524,9 +543,13 @@ export const authorizationCode: (options: {
   const rawResources = validObject ? options.resources : undefined;
   const paramEntries = snapshotRecord(rawParameters);
   const resourceSnapshot = snapshotStrings(rawResources);
-  const code = validObject ? options.code : undefined;
+  const rawCode = validObject ? options.code : undefined;
+  const codeHandle = normalizeSecretHandle(rawCode);
   const redirectUri = validObject ? options.redirectUri : undefined;
-  const pkceVerifier = validObject ? options.pkceVerifier : undefined;
+  const rawPkceVerifier = validObject ? options.pkceVerifier : undefined;
+
+  const pkceHandle =
+    rawPkceVerifier === undefined ? undefined : normalizeSecretHandle(rawPkceVerifier);
 
   const entries: Array<readonly [string, string | Redacted.Redacted<string>]> = [];
 
@@ -534,11 +557,11 @@ export const authorizationCode: (options: {
   if (resourceSnapshot !== undefined) {
     for (const resource of resourceSnapshot) entries.push(["resource", resource]);
   }
-  if (code !== undefined) {
-    entries.push(["code", toRedacted(code)]);
+  if (codeHandle.valid) {
+    entries.push(["code", codeHandle.handle]);
   }
-  if (pkceVerifier !== undefined) {
-    entries.push(["code_verifier", toRedacted(pkceVerifier)]);
+  if (pkceHandle !== undefined && pkceHandle.valid) {
+    entries.push(["code_verifier", pkceHandle.handle]);
   }
   if (redirectUri !== undefined) {
     entries.push(["redirect_uri", redirectUri]);
@@ -552,7 +575,7 @@ export const authorizationCode: (options: {
         return yield* V.invalidArgument("Invalid authorization code grant input");
       }
 
-      const out = yield* decodeExtraAndResources(
+      const leading = yield* decodeExtraAndResources(
         rawParameters === undefined
           ? undefined
           : paramEntries === undefined
@@ -561,27 +584,15 @@ export const authorizationCode: (options: {
         rawResources === undefined ? undefined : (resourceSnapshot ?? rawResources),
       );
 
-      const revealedCode = yield* decodeSecretValue(
-        code as string | Redacted.Redacted<string>,
-        16384,
-        "authorization code",
-      );
+      const trailing: Array<readonly [string, string]> = [];
+      const revealedCode = yield* decodeSecretHandle(codeHandle, 16384, "authorization code");
 
-      out.push(["code", revealedCode]);
+      trailing.push(["code", revealedCode]);
 
-      if (pkceVerifier !== undefined) {
-        const revealedVerifier = yield* V.revealString(
-          pkceVerifier,
-          () => V.invalidArgument("PKCE verifier is unavailable"),
-          () => V.invalidArgument("Invalid PKCE verifier"),
-        );
+      if (pkceHandle !== undefined) {
+        const revealedVerifier = yield* decodeVerifierHandle(pkceHandle);
 
-        yield* V.configuration(
-          V.Verifier,
-          Redacted.make(revealedVerifier),
-          "Invalid PKCE verifier",
-        );
-        out.push(["code_verifier", revealedVerifier]);
+        trailing.push(["code_verifier", revealedVerifier]);
       }
 
       if (redirectUri !== undefined) {
@@ -591,10 +602,14 @@ export const authorizationCode: (options: {
           "Invalid redirectUri",
         );
 
-        out.push(["redirect_uri", validRedirectUri]);
+        trailing.push(["redirect_uri", validRedirectUri]);
       }
 
-      return { grantType: "authorization_code", parameters: out };
+      return {
+        grantType: "authorization_code",
+        leadingParameters: leading,
+        trailingParameters: trailing,
+      };
     }),
   );
 };
@@ -629,7 +644,11 @@ export const fromTransaction: (
   const issuer = validTransaction ? transaction.issuer : "";
   const clientId = validTransaction ? transaction.clientId : "";
   const redirectUri = validTransaction ? transaction.redirectUri : undefined;
-  const pkceVerifier = validTransaction ? transaction.pkceVerifier : undefined;
+  const rawPkceVerifier = validTransaction ? transaction.pkceVerifier : undefined;
+  const codeHandle = normalizeSecretHandle(code);
+
+  const pkceHandle =
+    rawPkceVerifier === undefined ? undefined : normalizeSecretHandle(rawPkceVerifier);
 
   const entries: Array<readonly [string, string | Redacted.Redacted<string>]> = [];
 
@@ -637,9 +656,11 @@ export const fromTransaction: (
   if (resourceSnapshot !== undefined) {
     for (const resource of resourceSnapshot) entries.push(["resource", resource]);
   }
-  entries.push(["code", toRedacted(code)]);
-  if (pkceVerifier !== undefined) {
-    entries.push(["code_verifier", toRedacted(pkceVerifier)]);
+  if (codeHandle.valid) {
+    entries.push(["code", codeHandle.handle]);
+  }
+  if (pkceHandle !== undefined && pkceHandle.valid) {
+    entries.push(["code_verifier", pkceHandle.handle]);
   }
   if (redirectUri !== undefined) {
     entries.push(["redirect_uri", redirectUri]);
@@ -667,7 +688,7 @@ export const fromTransaction: (
         "Invalid transaction redirectUri",
       );
 
-      const out = yield* decodeExtraAndResources(
+      const leading = yield* decodeExtraAndResources(
         rawParameters === undefined
           ? undefined
           : paramEntries === undefined
@@ -676,30 +697,23 @@ export const fromTransaction: (
         rawResources === undefined ? undefined : (resourceSnapshot ?? rawResources),
       );
 
-      const revealedCode = yield* decodeSecretValue(code, 16384, "authorization code");
+      const trailing: Array<readonly [string, string]> = [];
+      const revealedCode = yield* decodeSecretHandle(codeHandle, 16384, "authorization code");
 
-      out.push(["code", revealedCode]);
+      trailing.push(["code", revealedCode]);
 
-      if (pkceVerifier !== undefined) {
-        const revealedVerifier = yield* V.revealString(
-          pkceVerifier,
-          () => V.invalidArgument("PKCE verifier is unavailable"),
-          () => V.invalidArgument("Invalid PKCE verifier"),
-        );
+      if (pkceHandle !== undefined) {
+        const revealedVerifier = yield* decodeVerifierHandle(pkceHandle);
 
-        yield* V.configuration(
-          V.Verifier,
-          Redacted.make(revealedVerifier),
-          "Invalid PKCE verifier",
-        );
-        out.push(["code_verifier", revealedVerifier]);
+        trailing.push(["code_verifier", revealedVerifier]);
       }
 
-      out.push(["redirect_uri", validRedirectUri]);
+      trailing.push(["redirect_uri", validRedirectUri]);
 
       return {
         grantType: "authorization_code",
-        parameters: out,
+        leadingParameters: leading,
+        trailingParameters: trailing,
         issuer: validIssuer,
         clientId: validClientId,
       };
@@ -729,7 +743,8 @@ export const refreshToken: (options: {
   const paramEntries = snapshotRecord(rawParameters);
   const resourceSnapshot = snapshotStrings(rawResources);
   const scopeSnapshot = snapshotStrings(rawScopes);
-  const token = validObject ? options.refreshToken : undefined;
+  const rawToken = validObject ? options.refreshToken : undefined;
+  const tokenHandle = normalizeSecretHandle(rawToken);
 
   const entries: Array<readonly [string, string | Redacted.Redacted<string>]> = [];
 
@@ -737,8 +752,8 @@ export const refreshToken: (options: {
   if (resourceSnapshot !== undefined) {
     for (const resource of resourceSnapshot) entries.push(["resource", resource]);
   }
-  if (token !== undefined) {
-    entries.push(["refresh_token", toRedacted(token)]);
+  if (tokenHandle.valid) {
+    entries.push(["refresh_token", tokenHandle.handle]);
   }
   if (scopeSnapshot !== undefined && scopeSnapshot.length > 0) {
     entries.push(["scope", scopeSnapshot.join(" ")]);
@@ -752,7 +767,7 @@ export const refreshToken: (options: {
         return yield* V.invalidArgument("Invalid refresh token grant input");
       }
 
-      const out = yield* decodeExtraAndResources(
+      const leading = yield* decodeExtraAndResources(
         rawParameters === undefined
           ? undefined
           : paramEntries === undefined
@@ -761,13 +776,10 @@ export const refreshToken: (options: {
         rawResources === undefined ? undefined : (resourceSnapshot ?? rawResources),
       );
 
-      const revealedToken = yield* decodeSecretValue(
-        token as string | Redacted.Redacted<string>,
-        16384,
-        "refresh token",
-      );
+      const trailing: Array<readonly [string, string]> = [];
+      const revealedToken = yield* decodeSecretHandle(tokenHandle, 16384, "refresh token");
 
-      out.push(["refresh_token", revealedToken]);
+      trailing.push(["refresh_token", revealedToken]);
 
       if (rawScopes !== undefined) {
         const validScopes = yield* V.configuration(
@@ -777,11 +789,15 @@ export const refreshToken: (options: {
         );
 
         if (validScopes.length > 0) {
-          out.push(["scope", validScopes.join(" ")]);
+          trailing.push(["scope", validScopes.join(" ")]);
         }
       }
 
-      return { grantType: "refresh_token", parameters: out };
+      return {
+        grantType: "refresh_token",
+        leadingParameters: leading,
+        trailingParameters: trailing,
+      };
     }),
   );
 };
@@ -803,11 +819,11 @@ export const clientCredentials: (options?: {
   readonly resources?: ReadonlyArray<string> | undefined;
   readonly parameters?: Readonly<Record<string, string>> | undefined;
 }) => Grant = (options) => {
-  const validObject = options === undefined || Predicate.isObject(options);
-  const rawParameters = validObject ? options?.parameters : undefined;
-  const rawResources = validObject ? options?.resources : undefined;
-  const rawScopes = validObject ? options?.scopes : undefined;
-  const paramEntries = snapshotRecord(rawParameters);
+  const validOptions = options === undefined || Predicate.isObject(options);
+  const rawParameters = validOptions ? options?.parameters : options;
+  const rawResources = validOptions ? options?.resources : undefined;
+  const rawScopes = validOptions ? options?.scopes : undefined;
+  const paramEntries = validOptions ? snapshotRecord(options?.parameters) : undefined;
   const resourceSnapshot = snapshotStrings(rawResources);
   const scopeSnapshot = snapshotStrings(rawScopes);
 
@@ -825,11 +841,11 @@ export const clientCredentials: (options?: {
     "client_credentials",
     entries,
     Effect.fnUntraced(function* () {
-      if (!validObject) {
+      if (!validOptions) {
         return yield* V.invalidArgument("Invalid client credentials grant input");
       }
 
-      const out = yield* decodeExtraAndResources(
+      const leading = yield* decodeExtraAndResources(
         rawParameters === undefined
           ? undefined
           : paramEntries === undefined
@@ -837,6 +853,8 @@ export const clientCredentials: (options?: {
             : recordFromEntries(paramEntries),
         rawResources === undefined ? undefined : (resourceSnapshot ?? rawResources),
       );
+
+      const trailing: Array<readonly [string, string]> = [];
 
       if (rawScopes !== undefined) {
         const validScopes = yield* V.configuration(
@@ -846,11 +864,15 @@ export const clientCredentials: (options?: {
         );
 
         if (validScopes.length > 0) {
-          out.push(["scope", validScopes.join(" ")]);
+          trailing.push(["scope", validScopes.join(" ")]);
         }
       }
 
-      return { grantType: "client_credentials", parameters: out };
+      return {
+        grantType: "client_credentials",
+        leadingParameters: leading,
+        trailingParameters: trailing,
+      };
     }),
   );
 };

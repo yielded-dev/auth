@@ -408,6 +408,23 @@ export const reveal = <A>(
     invalidArgument("Redacted OAuth value is unavailable"),
 ) => Effect.try({ try: () => Redacted.value(value), catch: onError });
 
+export const isWellFormedUnicode = (value: string): boolean => {
+  for (let i = 0; i < value.length; i++) {
+    const code = value.charCodeAt(i);
+
+    if (code >= 0xd800 && code <= 0xdbff) {
+      const next = value.charCodeAt(i + 1);
+
+      if (!(next >= 0xdc00 && next <= 0xdfff)) return false;
+      i++;
+    } else if (code >= 0xdc00 && code <= 0xdfff) {
+      return false;
+    }
+  }
+
+  return true;
+};
+
 export const revealString = (
   value: string | Redacted.Redacted<string>,
   onUnavailable: () => OAuthError.OAuthError,

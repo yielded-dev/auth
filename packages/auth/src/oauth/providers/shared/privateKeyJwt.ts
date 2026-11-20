@@ -31,9 +31,9 @@ const Claims = Schema.Struct({
   exp: Schema.Finite,
 });
 
-const clientAuthFailed = (description: string, cause?: unknown): OAuthError.OAuthError =>
+const clientAuthFailed = (description: string): OAuthError.OAuthError =>
   new OAuthError.OAuthError({
-    reason: new OAuthError.ClientAuthFailed({ description, cause }),
+    reason: new OAuthError.ClientAuthFailed({ description }),
   });
 
 /** Sign one ES256 client-secret JWT with an opaque Effect signing key. */
@@ -150,27 +150,21 @@ export class PrivateKeyClientSecret extends Context.Service<
 }
 
 /** Wrap a per-request private-key JWT signer (such as Apple `.p8`) as a named
- * `client_secret_post` `ClientAuth.Method` via `ClientAuth.unwrap`, wiping the
- * minted secret on every exit. */
+ * `client_secret_post` `ClientAuth.Method`, wiping the minted secret on every
+ * exit via `acquireUseRelease`. */
 export const makePrivateKeyClientAuth = (
   authentication: Extract<OpenIdConnectAuthentication, { readonly privateKeyJwt: PrivateKeyJwt }>,
   clientSecrets: PrivateKeyClientSecret["Service"],
 ): ClientAuth.Method<never> =>
   ClientAuth.make("client_secret_post", (request) =>
-    Effect.uninterruptibleMask((restore) =>
-      Effect.gen(function* () {
-        const secret = yield* restore(clientSecrets.mint(authentication));
-
-        if (secret === undefined) {
-          return yield* clientAuthFailed("Missing client secret for private-key JWT");
-        }
-
-        return yield* restore(
-          ClientAuth.unwrap(
-            "client_secret_post",
-            Effect.succeed(ClientAuth.secretPost(secret)),
-          ).apply(request),
-        ).pipe(Effect.ensuring(Effect.sync(() => Redacted.wipeUnsafe(secret))));
-      }),
+    Effect.acquireUseRelease(
+      clientSecrets.mint(authentication).pipe(
+        Effect.filterOrFail(
+          (secret): secret is Redacted.Redacted<string> => secret !== undefined,
+          () => clientAuthFailed("Missing client secret for private-key JWT"),
+        ),
+      ),
+      (secret) => ClientAuth.secretPost(secret).apply(request),
+      (secret) => Effect.sync(() => Redacted.wipeUnsafe(secret)),
     ),
   );
