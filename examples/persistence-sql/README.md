@@ -65,7 +65,7 @@ your server environment. The user ID is GitHub's numeric, stable ID (`gh api use
 --jq .id`), not a username. Then run:
 
 ```sh
-AUTH_DATA_DIR=/tmp/yielded-oauth-github \
+AUTH_DATA_DIR="$(vp node -p 'require("node:os").tmpdir()')/yielded-oauth-github" \
   vp -C examples/persistence-sql run start:oauth
 ```
 
@@ -135,10 +135,11 @@ see the [shared sign-in guide](../../docs/src/content/docs/guide/oauth.mdx#share
 Run a native CLI consumer with direct Effect SQL storage:
 
 ```sh
-AUTH_DATA_DIR=/tmp/yielded-oauth-sqlite PERSISTENCE_DIALECT=sqlite \
+temp_dir="$(vp node -p 'require("node:os").tmpdir()')"
+AUTH_DATA_DIR="$temp_dir/yielded-oauth-sqlite" PERSISTENCE_DIALECT=sqlite \
   vp -C examples/persistence-sql run example:oauth-lifecycle
 
-AUTH_DATA_DIR=/tmp/yielded-oauth-pg PERSISTENCE_DIALECT=pg \
+AUTH_DATA_DIR="$temp_dir/yielded-oauth-pg" PERSISTENCE_DIALECT=pg \
   vp -C examples/persistence-sql run example:oauth-lifecycle
 ```
 
