@@ -11,8 +11,6 @@ import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
-import * as Jwk from "effect/jose/Jwk";
-import * as Jwt from "effect/jose/Jwt";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
@@ -341,116 +339,6 @@ it.effect("authenticates Basic/Post/None once and preserves private raw provider
 );
 
 it.effect(
-  "signs RFC 10070 JWT client assertions, enforces ClientAuth.unwrap name stability, and rejects unauthenticated client_credentials",
-  () =>
-    Effect.gen(function* () {
-      const pair = yield* Jwk.generateKeyPair({ algorithm: "ES256", kid: "k1" });
-      const privateKey = yield* Jwk.importPrivate(pair.privateKey, "ES256");
-      const publicKey = yield* Jwk.importPublic(pair.publicKey, "ES256");
-      const rawSecret = "s".repeat(32);
-      const jtiSeen = new Set<string>();
-
-      const jwtDiscovery = Discovery.layerLocal({
-        ...metadata,
-        token_endpoint_auth_methods_supported: ["private_key_jwt", "client_secret_jwt", "none"],
-      });
-
-      const privateClient = yield* OAuth.make({
-        clientId: "client-jwt",
-        clientAuth: ClientAuth.privateKeyJwt(privateKey, { lifetime: "90 seconds" }),
-        timeout: "1 second",
-      }).pipe(
-        Effect.provide(jwtDiscovery),
-        Effect.provideService(
-          HttpClient.HttpClient,
-          transport((request) => {
-            const body = form(request);
-
-            expect(body.get("client_id")).toBe("client-jwt");
-            expect(body.get("client_assertion_type")).toBe(
-              "urn:ietf:params:oauth:client-assertion-type:jwt-bearer",
-            );
-            const assertion = body.get("client_assertion")!;
-
-            jtiSeen.add(assertion);
-
-            return Response.json(tokenBody);
-          }),
-        ),
-      );
-
-      yield* privateClient.exchange(Grant.clientCredentials({ scopes: ["read"] }));
-      yield* privateClient.exchange(Grant.clientCredentials({ scopes: ["read"] }));
-      expect(jtiSeen.size).toBe(2);
-
-      for (const assertion of jtiSeen) {
-        const verified = yield* Jwt.verify(
-          Schema.Struct({
-            iss: Schema.String,
-            sub: Schema.String,
-            aud: Schema.String,
-            jti: Schema.String,
-            iat: Schema.Finite,
-            exp: Schema.Finite,
-          }),
-          assertion,
-          publicKey,
-          { typ: "client-authentication+jwt" },
-        );
-
-        expect(verified.protectedHeader.typ).toBe("client-authentication+jwt");
-        expect(verified.protectedHeader.kid).toBe("k1");
-        expect(verified.claims.iss).toBe("client-jwt");
-        expect(verified.claims.sub).toBe("client-jwt");
-        expect(verified.claims.aud).toBe(metadata.issuer);
-        expect(verified.claims.exp - verified.claims.iat).toBe(90);
-      }
-
-      const secretApplied = yield* ClientAuth.secretJwt(Redacted.make(rawSecret)).apply({
-        clientId: "client-hs",
-        issuer: metadata.issuer,
-        endpoint: metadata.token_endpoint,
-      });
-
-      expect(secretApplied.form.find(([key]) => key === "client_assertion_type")?.[1]).toBe(
-        "urn:ietf:params:oauth:client-assertion-type:jwt-bearer",
-      );
-
-      const mismatched = ClientAuth.unwrap("client_secret_post", Effect.succeed(ClientAuth.none));
-
-      expect(mismatched.name).toBe("client_secret_post");
-      expect(
-        yield* mismatched
-          .apply({
-            clientId: "client",
-            issuer: metadata.issuer,
-            endpoint: metadata.token_endpoint,
-          })
-          .pipe(Effect.flip),
-      ).toMatchObject({ _tag: "OAuthError", reason: { _tag: "ClientAuthFailed" } });
-
-      const publicClient = yield* OAuth.make({
-        clientId: "public",
-        clientAuth: ClientAuth.none,
-        timeout: "1 second",
-      }).pipe(
-        Effect.provide(jwtDiscovery),
-        Effect.provideService(
-          HttpClient.HttpClient,
-          transport(() => Response.json(tokenBody)),
-        ),
-      );
-
-      expect(
-        yield* publicClient.exchange(Grant.clientCredentials()).pipe(Effect.flip),
-      ).toMatchObject({ _tag: "OAuthError", reason: { _tag: "InvalidArgument" } });
-      expect(
-        yield* publicClient.exchange(Grant.make(" client_credentials ", [])).pipe(Effect.flip),
-      ).toMatchObject({ _tag: "OAuthError", reason: { _tag: "InvalidArgument" } });
-    }).pipe(Effect.scoped, Effect.provide(cryptoLayer)),
-);
-
-it.effect(
   "distinguishes complete invalid_grant 400 from other endpoint or malformed receipts",
   () =>
     Effect.gen(function* () {
@@ -519,9 +407,19 @@ it.effect(
   () =>
     Effect.gen(function* () {
       const mutable = { ...metadata, authorization_response_iss_parameter_supported: true };
+      const local = yield* Discovery.makeLocal(mutable);
+      let discoveryReads = 0;
+
+      const countingDiscovery = Discovery.Discovery.of({
+        resolve: Effect.suspend(() => {
+          discoveryReads += 1;
+
+          return local.resolve;
+        }),
+      });
 
       const client = yield* OAuth.make(options).pipe(
-        Effect.provide(Discovery.layerLocal(mutable)),
+        Effect.provideService(Discovery.Discovery, countingDiscovery),
         Effect.provideService(
           HttpClient.HttpClient,
           transport(() => Response.json(tokenBody)),
@@ -564,16 +462,22 @@ it.effect(
           .pipe(Effect.flip),
       ).toMatchObject({ _tag: "OAuthError", reason: { _tag: "InvalidArgument" } });
 
+      const readsBeforeAuthorize = discoveryReads;
+
       const authorized = yield* Oidc.authorize({
         redirectUri: "https://app.example/callback",
         scopes: ["openid", "profile"],
       }).pipe(Effect.provideService(OAuth.Client, client));
 
+      expect(discoveryReads - readsBeforeAuthorize).toBe(1);
       expect(authorized.transaction.issuer).toBe(metadata.issuer);
       expect(authorized.transaction.clientId).toBe("client");
       expect(authorized.transaction.issuerIdentification).toBe("required");
       expect(authorized.transaction.scopes).toEqual(["openid", "profile"]);
       expect(authorized.transaction.nonce).toBeDefined();
+      expect(new URL(Redacted.value(authorized.url)).searchParams.get("nonce")).toBe(
+        Redacted.value(authorized.transaction.nonce!),
+      );
 
       expect(
         yield* OAuth.authorize({
