@@ -176,17 +176,16 @@ export const makeOpenIdConnectOAuthProtocol = Effect.fn("makeOpenIdConnectOAuthP
           ? undefined
           : selectCallback(provider.provider, provider.callbacks, request.callbackId);
 
-      if (
-        entry === undefined ||
-        entry.client === undefined ||
-        provider === undefined ||
-        callback === undefined
-      )
+      if (entry === undefined || provider === undefined || callback === undefined)
         return yield* OAuthRejected.make({});
+
+      const resolved = yield* entry.resolve;
+
+      if (resolved.client === undefined) return yield* OAuthRejected.make({});
 
       const responseIssuerMode = persistedResponseIssuerMode(
         provider.responseIssuerMode,
-        entry.metadata.authorization_response_iss_parameter_supported,
+        resolved.metadata.authorization_response_iss_parameter_supported,
       );
 
       const baseAuthOptions = {
@@ -212,7 +211,7 @@ export const makeOpenIdConnectOAuthProtocol = Effect.fn("makeOpenIdConnectOAuthP
             ? authorizeWithCommaScopes(baseAuthOptions)
             : OAuth.authorize(baseAuthOptions)
       ).pipe(
-        Effect.provideService(OAuth.Client, entry.client),
+        Effect.provideService(OAuth.Client, resolved.client),
         Effect.provideService(SecureRandom.SecureRandom, crypto),
         Effect.provideService(Digest.Digest, digests),
         Effect.catchCause((cause) =>
@@ -263,9 +262,8 @@ export const makeOpenIdConnectOAuthProtocol = Effect.fn("makeOpenIdConnectOAuthP
             registrationKind(provider) === "web",
         );
 
-        if (entry === undefined || entry.client === undefined) return yield* unavailable();
+        if (entry === undefined) return yield* unavailable();
         const provider = entry.provider;
-        const client = entry.client;
 
         const callback = provider.callbacks.find(
           (candidate) => candidate.callbackId === saved.callbackId,
@@ -273,23 +271,19 @@ export const makeOpenIdConnectOAuthProtocol = Effect.fn("makeOpenIdConnectOAuthP
 
         if (callback === undefined) return yield* unavailable();
 
-        const responseIssuerMode = persistedResponseIssuerMode(
-          provider.responseIssuerMode,
-          entry.metadata.authorization_response_iss_parameter_supported,
-        );
-
         if (
           provider.protocol !== saved.protocol ||
           provider.issuer !== saved.issuer ||
-          responseIssuerMode !== saved.responseIssuerMode ||
-          callback.redirectUri !== saved.redirectUri
+          callback.redirectUri !== saved.redirectUri ||
+          (provider.responseIssuerMode !== "discovered" &&
+            provider.responseIssuerMode !== saved.responseIssuerMode)
         )
           return yield* unavailable();
         if (
           (provider.protocol === "oidc") !== (request.secrets.oidcNonce !== undefined) ||
           provider.pkceS256 !== (request.secrets.pkceVerifier !== undefined) ||
           Redacted.value(request.response.state) !== Redacted.value(request.secrets.state) ||
-          (responseIssuerMode === "required"
+          (saved.responseIssuerMode === "required"
             ? request.response.issuer !== provider.issuer
             : request.response.issuer !== undefined)
         )
@@ -299,9 +293,21 @@ export const makeOpenIdConnectOAuthProtocol = Effect.fn("makeOpenIdConnectOAuthP
         if (startedAt < 0 || startedAt > DateTime.toEpochMillis(yield* DateTime.now))
           return yield* rejected();
 
+        const resolved = yield* entry.resolve;
+
+        if (resolved.client === undefined) return yield* unavailable();
+        const client = resolved.client;
+
+        const responseIssuerMode = persistedResponseIssuerMode(
+          provider.responseIssuerMode,
+          resolved.metadata.authorization_response_iss_parameter_supported,
+        );
+
+        if (responseIssuerMode !== saved.responseIssuerMode) return yield* unavailable();
+
         const receipt = yield* (
-          entry.jsonTokenSender !== undefined
-            ? entry.jsonTokenSender.codeGrant({
+          resolved.jsonTokenSender !== undefined
+            ? resolved.jsonTokenSender.codeGrant({
                 code: request.response.code,
                 redirectUri: saved.redirectUri,
                 ...(request.secrets.pkceVerifier === undefined
@@ -315,7 +321,7 @@ export const makeOpenIdConnectOAuthProtocol = Effect.fn("makeOpenIdConnectOAuthP
                 Grant.fromTransaction(
                   request.response.code,
                   {
-                    issuer: entry.metadata.issuer,
+                    issuer: resolved.metadata.issuer,
                     clientId: provider.clientId,
                     redirectUri: saved.redirectUri,
                     ...(request.secrets.pkceVerifier === undefined
@@ -351,13 +357,13 @@ export const makeOpenIdConnectOAuthProtocol = Effect.fn("makeOpenIdConnectOAuthP
           const oidcNonce = request.secrets.oidcNonce;
 
           if (
-            entry.verifier === undefined ||
+            resolved.verifier === undefined ||
             grant.idToken === undefined ||
             oidcNonce === undefined
           )
             return yield* unavailable();
 
-          const verified = yield* entry.verifier
+          const verified = yield* resolved.verifier
             .verify(grant.idToken, {
               nonce: oidcNonce,
               ...(request.requestedAt === undefined ? {} : { requestedAt: request.requestedAt }),
@@ -383,7 +389,7 @@ export const makeOpenIdConnectOAuthProtocol = Effect.fn("makeOpenIdConnectOAuthP
           const claims =
             provider.userInfo === "merge"
               ? yield* (function* () {
-                  if (entry.discovery === undefined || entry.http === undefined) {
+                  if (resolved.discovery === undefined || resolved.http === undefined) {
                     return yield* unavailable();
                   }
 
@@ -393,8 +399,8 @@ export const makeOpenIdConnectOAuthProtocol = Effect.fn("makeOpenIdConnectOAuthP
                     timeout: timeoutSeconds * 1000,
                     maxResponseBytes: 1_048_576,
                   }).pipe(
-                    Effect.provideService(Discovery.Discovery, entry.discovery),
-                    Effect.provideService(HttpClient.HttpClient, entry.http),
+                    Effect.provideService(Discovery.Discovery, resolved.discovery),
+                    Effect.provideService(HttpClient.HttpClient, resolved.http),
                     Effect.catchCause((cause) =>
                       Effect.failCause(
                         Cause.map(cause, (error) =>
@@ -424,9 +430,9 @@ export const makeOpenIdConnectOAuthProtocol = Effect.fn("makeOpenIdConnectOAuthP
         const body =
           provider.identitySource.from === "token"
             ? Redacted.value(receipt.body)
-            : entry.fetchProfile === undefined
+            : resolved.fetchProfile === undefined
               ? yield* unavailable()
-              : yield* entry.fetchProfile(grant.accessToken).pipe(
+              : yield* resolved.fetchProfile(grant.accessToken).pipe(
                   Effect.catchCause((cause) =>
                     Effect.failCause(
                       Cause.map(cause, (error) =>
@@ -453,9 +459,9 @@ export const makeOpenIdConnectOAuthProtocol = Effect.fn("makeOpenIdConnectOAuthP
         );
 
         const enriched =
-          entry.enrichIdentity === undefined
+          resolved.enrichIdentity === undefined
             ? decoded
-            : yield* entry.enrichIdentity(decoded, grant.accessToken);
+            : yield* resolved.enrichIdentity(decoded, grant.accessToken);
 
         const identity = yield* Schema.decodeEffect(plainIdentitySchema)(enriched).pipe(
           Effect.mapError(rejected),
@@ -488,6 +494,8 @@ export const makeOpenIdConnectOAuthProtocol = Effect.fn("makeOpenIdConnectOAuthP
       if (entry === undefined || entry.provider.protocol !== "oidc")
         return yield* OAuthRejected.make({});
       const provider = entry.provider;
+
+      yield* entry.resolve;
 
       const random = randomSecret.pipe(Effect.provideService(SecureRandom.SecureRandom, crypto));
 
@@ -526,14 +534,12 @@ export const makeOpenIdConnectOAuthProtocol = Effect.fn("makeOpenIdConnectOAuthP
 
         if (
           entry === undefined ||
-          entry.nativeKeySet === undefined ||
           entry.provider.protocol !== "oidc" ||
           entry.provider.issuer !== saved.issuer ||
           saved.callbackId !== OAuthNativeCallbackId
         )
           return yield* unavailable();
         const provider = entry.provider;
-        const nativeKeySet = entry.nativeKeySet;
         const nonce = request.secrets.oidcNonce;
 
         if (nonce === undefined || request.secrets.pkceVerifier !== undefined)
@@ -543,13 +549,18 @@ export const makeOpenIdConnectOAuthProtocol = Effect.fn("makeOpenIdConnectOAuthP
         if (startedAt < 0 || startedAt > DateTime.toEpochMillis(yield* DateTime.now))
           return yield* rejected();
 
+        const resolved = yield* entry.resolve;
+
+        if (resolved.nativeKeySet === undefined) return yield* unavailable();
+        const nativeKeySet = resolved.nativeKeySet;
+
         const alternativeClientIds = (provider[nativeAudiences] ?? []).filter(
           (audience) => audience !== provider.clientId,
         );
 
         // The platform token is the assertion. Its code only satisfies `c_hash`.
         const verified = yield* Oidc.verifyWithKeySet(request.credential.idToken, {
-          issuer: entry.metadata.issuer,
+          issuer: resolved.metadata.issuer,
           clientId: provider.clientId,
           ...(alternativeClientIds.length === 0 ? {} : { alternativeClientIds }),
           algorithms: nativeKeySet.algorithms,

@@ -7,6 +7,7 @@ import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 
 import { OAuthProviderKey, OAuthGeneration } from "../../schema";
+import { type OAuthUnavailable } from "../../signInErrors";
 import {
   OAuthAuthorizationUrl,
   OAuthCallbackId,
@@ -374,11 +375,16 @@ export type Provider<R> = OpenIdConnectOidcProvider | OpenIdConnectOAuthProvider
 export const registrationKind = <R>(provider: Provider<R>): "web" | "native" =>
   provider.protocol === "oidc" && provider[nativeAudiences] !== undefined ? "native" : "web";
 
-export interface InstalledProvider<R> extends Omit<NativeProvider, "client"> {
+export interface ResolvedProvider<R> extends Omit<NativeProvider, "client"> {
   /** Absent for native registrations, which only verify platform ID tokens. */
   readonly client?: NativeProvider["client"];
   readonly provider: Provider<R>;
   readonly metadata: Discovery.Metadata;
+}
+
+export interface InstalledProvider<R> {
+  readonly provider: Provider<R>;
+  readonly resolve: Effect.Effect<ResolvedProvider<R>, OAuthUnavailable>;
 }
 
 const metadataSchema = Schema.Struct({
@@ -506,68 +512,115 @@ export const prepareConfigurations = Effect.fn("OpenIdConnect.prepareConfigurati
   return { providers, timeoutSeconds: options.timeoutSeconds };
 });
 
+export const validateProviderMetadata = Effect.fn("OpenIdConnect.validateProviderMetadata")(
+  function* <R>(provider: Provider<R>, raw: Discovery.Metadata) {
+    // oxlint-disable-next-line no-restricted-properties -- Discovered foreign metadata is not yet validated for this adapter profile.
+    const metadata = yield* Schema.decodeUnknownEffect(metadataSchema)(raw).pipe(
+      Effect.mapError(() => configError("metadata")),
+    );
+
+    if (!discoveredIssuerMatches(provider.issuer, metadata.issuer))
+      return yield* configError("issuer");
+    if (
+      provider.responseIssuerMode !== "discovered" &&
+      (metadata.authorization_response_iss_parameter_supported === true) !==
+        (provider.responseIssuerMode === "required")
+    )
+      return yield* configError("metadata");
+    const auth = yield* endpoint(metadata.authorization_endpoint);
+
+    for (const key of auth.searchParams.keys()) {
+      if (reserved.has(key.toLowerCase())) return yield* configError("parameters");
+    }
+    yield* endpoint(metadata.token_endpoint);
+
+    const supportedAuthentication =
+      metadata.token_endpoint_auth_methods_supported ??
+      (provider.protocol === "oidc" ? ["client_secret_basic"] : undefined);
+
+    if (
+      registrationKind(provider) === "web" &&
+      supportedAuthentication !== undefined &&
+      !supportedAuthentication.includes(provider.authentication.method)
+    )
+      return yield* configError("authentication");
+
+    if (provider.protocol === "oidc") {
+      const algorithms = advertisedIdTokenAlgorithms(
+        metadata.id_token_signing_alg_values_supported,
+        provider.idTokenSignedResponseAlg,
+      );
+
+      const usesHmac = algorithms?.includes("HS256") === true;
+      const usesAsymmetric = algorithms?.some((algorithm) => algorithm !== "HS256") === true;
+
+      if (usesHmac && usesAsymmetric) return yield* configError("parameters");
+      if (usesHmac && !hasStaticSecret(provider.authentication))
+        return yield* configError("authentication");
+      if (
+        algorithms === undefined ||
+        !metadata.response_types_supported?.includes("code") ||
+        (usesAsymmetric && metadata.jwks_uri === undefined) ||
+        (provider.pkceS256 && !metadata.code_challenge_methods_supported?.includes("S256")) ||
+        (provider.userInfo === "merge" && metadata.userinfo_endpoint === undefined)
+      )
+        return yield* configError("metadata");
+      if (metadata.jwks_uri !== undefined) yield* endpoint(metadata.jwks_uri);
+      if (metadata.userinfo_endpoint !== undefined) yield* endpoint(metadata.userinfo_endpoint);
+    } else if (provider.identitySource.from !== "token") {
+      yield* endpoint(provider.identitySource.url);
+    }
+    freezeOAuth(metadata);
+
+    return metadata;
+  },
+);
+
+export const validateCallbackAuthorizationUrls = Effect.fnUntraced(
+  function* <R>(provider: Provider<R>, client: OAuth.Client["Service"]) {
+    const placeholder = Redacted.make("a".repeat(43));
+
+    for (const callback of provider.callbacks) {
+      const authInput: OAuth.AuthorizationUrlOptions = {
+        redirectUri: callback.redirectUri,
+        scopes: provider.scopes,
+        state: placeholder,
+        ...(provider.pkceS256 ? { codeChallenge: Redacted.value(placeholder) } : {}),
+        ...(provider.responseMode === undefined ? {} : { responseMode: provider.responseMode }),
+        ...(provider.authorizationParameters === undefined
+          ? {}
+          : { parameters: provider.authorizationParameters }),
+        ...(provider.protocol === "oidc"
+          ? {
+              nonce: placeholder,
+              ...(provider.maxAgeSeconds === undefined
+                ? {}
+                : { maxAge: `${provider.maxAgeSeconds} seconds` }),
+            }
+          : {}),
+      };
+
+      const url = yield* provider.protocol === "oauth" && provider.scopeSeparator === ","
+        ? authorizationUrlWithCommaScopes(client, authInput)
+        : client.authorizationUrl(authInput);
+
+      yield* Schema.decodeEffect(OAuthAuthorizationUrl)(Redacted.value(url));
+    }
+  },
+  Effect.mapError(() => configError("parameters")),
+);
+
 export const installProvider = Effect.fn("OpenIdConnect.installProvider")(function* <R>(
   provider: Provider<R>,
   raw: Discovery.Metadata,
   timeoutSeconds: number,
-) {
-  // oxlint-disable-next-line no-restricted-properties -- Discovered foreign metadata is not yet validated for this adapter profile.
-  const metadata = yield* Schema.decodeUnknownEffect(metadataSchema)(raw).pipe(
-    Effect.mapError(() => configError("metadata")),
-  );
+): Effect.fn.Return<
+  ResolvedProvider<R>,
+  OpenIdConnectConfigurationError | OAuthUnavailable,
+  Effect.Services<ReturnType<typeof install>> | PrivateKeyClientSecret
+> {
+  const metadata = yield* validateProviderMetadata(provider, raw);
 
-  if (!discoveredIssuerMatches(provider.issuer, metadata.issuer))
-    return yield* configError("issuer");
-  if (
-    provider.responseIssuerMode !== "discovered" &&
-    (metadata.authorization_response_iss_parameter_supported === true) !==
-      (provider.responseIssuerMode === "required")
-  )
-    return yield* configError("metadata");
-  const auth = yield* endpoint(metadata.authorization_endpoint);
-
-  for (const key of auth.searchParams.keys()) {
-    if (reserved.has(key.toLowerCase())) return yield* configError("parameters");
-  }
-  yield* endpoint(metadata.token_endpoint);
-
-  const supportedAuthentication =
-    metadata.token_endpoint_auth_methods_supported ??
-    (provider.protocol === "oidc" ? ["client_secret_basic"] : undefined);
-
-  if (
-    registrationKind(provider) === "web" &&
-    supportedAuthentication !== undefined &&
-    !supportedAuthentication.includes(provider.authentication.method)
-  )
-    return yield* configError("authentication");
-
-  if (provider.protocol === "oidc") {
-    const algorithms = advertisedIdTokenAlgorithms(
-      metadata.id_token_signing_alg_values_supported,
-      provider.idTokenSignedResponseAlg,
-    );
-
-    const usesHmac = algorithms?.includes("HS256") === true;
-    const usesAsymmetric = algorithms?.some((algorithm) => algorithm !== "HS256") === true;
-
-    if (usesHmac && usesAsymmetric) return yield* configError("parameters");
-    if (usesHmac && !hasStaticSecret(provider.authentication))
-      return yield* configError("authentication");
-    if (
-      algorithms === undefined ||
-      !metadata.response_types_supported?.includes("code") ||
-      (usesAsymmetric && metadata.jwks_uri === undefined) ||
-      (provider.pkceS256 && !metadata.code_challenge_methods_supported?.includes("S256")) ||
-      (provider.userInfo === "merge" && metadata.userinfo_endpoint === undefined)
-    )
-      return yield* configError("metadata");
-    if (metadata.jwks_uri !== undefined) yield* endpoint(metadata.jwks_uri);
-    if (metadata.userinfo_endpoint !== undefined) yield* endpoint(metadata.userinfo_endpoint);
-  } else if (provider.identitySource.from !== "token") {
-    yield* endpoint(provider.identitySource.url);
-  }
-  freezeOAuth(metadata);
   // Native registrations never call the token endpoint, so they install no client.
   if (registrationKind(provider) === "native") return { provider, metadata };
 
@@ -583,38 +636,7 @@ export const installProvider = Effect.fn("OpenIdConnect.installProvider")(functi
     provider.protocol === "oauth" ? nativeVendorOptions(provider) : undefined,
   );
 
-  const placeholder = Redacted.make("a".repeat(43));
-
-  for (const callback of provider.callbacks) {
-    const authInput: OAuth.AuthorizationUrlOptions = {
-      redirectUri: callback.redirectUri,
-      scopes: provider.scopes,
-      state: placeholder,
-      ...(provider.pkceS256 ? { codeChallenge: Redacted.value(placeholder) } : {}),
-      ...(provider.responseMode === undefined ? {} : { responseMode: provider.responseMode }),
-      ...(provider.authorizationParameters === undefined
-        ? {}
-        : { parameters: provider.authorizationParameters }),
-      ...(provider.protocol === "oidc"
-        ? {
-            nonce: placeholder,
-            ...(provider.maxAgeSeconds === undefined
-              ? {}
-              : { maxAge: `${provider.maxAgeSeconds} seconds` }),
-          }
-        : {}),
-    };
-
-    const url = yield* (
-      provider.protocol === "oauth" && provider.scopeSeparator === ","
-        ? authorizationUrlWithCommaScopes(native.client, authInput)
-        : native.client.authorizationUrl(authInput)
-    ).pipe(Effect.mapError(() => configError("parameters")));
-
-    yield* Schema.decodeEffect(OAuthAuthorizationUrl)(Redacted.value(url)).pipe(
-      Effect.mapError(() => configError("parameters")),
-    );
-  }
+  yield* validateCallbackAuthorizationUrls(provider, native.client);
 
   return { provider, metadata, ...native };
 });
@@ -630,21 +652,21 @@ export const installOAuthConfigurations = Effect.fn("OAuth.installConfigurations
 
   for (const provider of providers) {
     if (provider.protocol !== "oauth") return yield* configError("provider");
-    installed.push(
-      yield* installProvider(
-        provider,
-        {
-          issuer: provider.issuer,
-          authorization_endpoint: provider.authorizationEndpoint,
-          token_endpoint: provider.tokenEndpoint,
-          response_types_supported: ["code"],
-          ...(provider.pkceS256 ? { code_challenge_methods_supported: ["S256"] } : {}),
-          authorization_response_iss_parameter_supported:
-            provider.responseIssuerMode === "required",
-        },
-        timeoutSeconds,
-      ),
+
+    const resolved = yield* installProvider(
+      provider,
+      {
+        issuer: provider.issuer,
+        authorization_endpoint: provider.authorizationEndpoint,
+        token_endpoint: provider.tokenEndpoint,
+        response_types_supported: ["code"],
+        ...(provider.pkceS256 ? { code_challenge_methods_supported: ["S256"] } : {}),
+        authorization_response_iss_parameter_supported: provider.responseIssuerMode === "required",
+      },
+      timeoutSeconds,
     );
+
+    installed.push({ provider, resolve: Effect.succeed(resolved) });
   }
 
   return { installed, timeoutSeconds };

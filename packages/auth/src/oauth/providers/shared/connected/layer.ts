@@ -2,7 +2,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
 import { OAuthConnectedProtocol } from "../../../OAuthConnectedProtocol";
-import { installConnectedConfigurations, ProviderDiscovery } from "../oidc";
+import { installConnectedConfigurations } from "../oidc";
 import {
   resolveOidcDefaults,
   resolveOptions,
@@ -57,7 +57,6 @@ export const layer = <R = never>(options: Options<R>) =>
       Effect.flatMap((configuration) =>
         makeOpenIdConnectConnectedProtocol(installConnectedConfigurations<R>(configuration)).pipe(
           Effect.provideServiceEffect(PrivateKeyClientSecret, PrivateKeyClientSecret.make),
-          Effect.provideServiceEffect(ProviderDiscovery, ProviderDiscovery.make),
         ),
       ),
     ),
