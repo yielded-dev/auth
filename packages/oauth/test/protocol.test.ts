@@ -165,18 +165,11 @@ it.effect("binds HTTP loopback endpoints to an explicitly local issuer", () =>
         Effect.flip,
       ),
     ).toMatchObject({ _tag: "OAuthError", reason: { _tag: "InvalidArgument" } });
-    expect(
-      yield* OAuth.make({ ...options, profile: { url: "http://localhost:8080/user" } }).pipe(
-        Effect.provideService(HttpClient.HttpClient, http),
-        Effect.flip,
-      ),
-    ).toMatchObject({ _tag: "OAuthError", reason: { _tag: "InvalidArgument" } });
     expect(requests).toEqual(["https://issuer.example/tenant/.well-known/openid-configuration"]);
 
     const local = yield* OAuth.make({
       ...options,
       metadata: { ...remote, issuer: "http://127.0.0.1:8080" },
-      profile: { url: "http://localhost:8080/user" },
     }).pipe(Effect.provideService(HttpClient.HttpClient, http));
 
     expect(local.metadata.token_endpoint).toBe(remote.token_endpoint);
@@ -477,65 +470,52 @@ it.effect("keeps installed metadata arrays detached and immutable through revoca
   }).pipe(Effect.scoped),
 );
 
-it.effect(
-  "refreshes, fetches the installed profile and revokes with separately installed credentials",
-  () =>
-    Effect.gen(function* () {
-      const requests: string[] = [];
+it.effect("refreshes and revokes with separately installed credentials", () =>
+  Effect.gen(function* () {
+    const requests: string[] = [];
 
-      const client = yield* OAuth.make({
-        ...options,
-        revocationAuthentication: {
-          method: "client_secret_basic",
-          secret: Redacted.make("revocation-secret"),
-        },
-      }).pipe(
-        Effect.provideService(
-          HttpClient.HttpClient,
-          transport((request) => {
-            requests.push(request.url);
-            if (request.url === options.profile!.url) {
-              expect(request.headers.authorization).toBe("Bearer private-access");
-              expect(request.headers["x-api-version"]).toBe("2026");
+    const client = yield* OAuth.make({
+      ...options,
+      revocationAuthentication: {
+        method: "client_secret_basic",
+        secret: Redacted.make("revocation-secret"),
+      },
+    }).pipe(
+      Effect.provideService(
+        HttpClient.HttpClient,
+        transport((request) => {
+          requests.push(request.url);
+          const body = form(request);
 
-              return Response.json({ id: 42 });
-            }
-            const body = form(request);
+          if (request.url === metadata.token_endpoint) {
+            expect(body.get("grant_type")).toBe("refresh_token");
+            expect(body.get("refresh_token")).toBe("private-refresh");
+            expect(body.has("scope")).toBe(false);
 
-            if (request.url === metadata.token_endpoint) {
-              expect(body.get("grant_type")).toBe("refresh_token");
-              expect(body.get("refresh_token")).toBe("private-refresh");
-              expect(body.has("scope")).toBe(false);
+            return Response.json(tokenBody);
+          }
+          expect(body.get("token_type_hint")).toBe("refresh_token");
+          expect(body.get("token")).toBe("private-refresh");
+          expect(atob(request.headers.authorization.slice(6))).toBe("client:revocation%2Dsecret");
 
-              return Response.json(tokenBody);
-            }
-            expect(body.get("token_type_hint")).toBe("refresh_token");
-            expect(body.get("token")).toBe("private-refresh");
-            expect(atob(request.headers.authorization.slice(6))).toBe("client:revocation%2Dsecret");
+          return new Response(null, { status: 200 });
+        }),
+      ),
+    );
 
-            return new Response(null, { status: 200 });
-          }),
-        ),
-      );
-
-      yield* OAuth.tokens(
-        yield* client.refreshGrant({ refreshToken: Redacted.make("private-refresh") }),
-      );
-      expect(yield* client.fetchProfile(Redacted.make("private-access"))).toEqual({ id: 42 });
-      yield* client.revoke({
-        token: Redacted.make("private-refresh"),
-        tokenTypeHint: "refresh_token",
-      });
-      expect(requests).toEqual([
-        metadata.token_endpoint,
-        options.profile!.url,
-        metadata.revocation_endpoint,
-      ]);
-    }).pipe(Effect.scoped),
+    yield* OAuth.tokens(
+      yield* client.refreshGrant({ refreshToken: Redacted.make("private-refresh") }),
+    );
+    yield* client.revoke({
+      token: Redacted.make("private-refresh"),
+      tokenTypeHint: "refresh_token",
+    });
+    expect(requests).toEqual([metadata.token_endpoint, metadata.revocation_endpoint]);
+  }).pipe(Effect.scoped),
 );
 
 it.effect(
-  "rejects unsafe endpoints, reserved endpoint queries, unsupported authentication and header injection before dispatch",
+  "rejects unsafe endpoints, reserved endpoint queries, and unsupported authentication before dispatch",
   () =>
     Effect.gen(function* () {
       let requests = 0;
@@ -554,10 +534,6 @@ it.effect(
           metadata: { ...metadata, token_endpoint: "https://issuer.example/token?client_secret=x" },
         },
         { ...options, metadata: { ...metadata, token_endpoint_auth_methods_supported: ["none"] } },
-        {
-          ...options,
-          profile: { url: "https://api.example/user", headers: { Authorization: "injected" } },
-        },
         { ...options, timeoutMs: Infinity },
       ])
         expect(

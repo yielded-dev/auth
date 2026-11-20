@@ -176,13 +176,16 @@ const templateTenantSegment = (configured: string, discovered: string): string |
 
 /** Match an exact issuer, commercial `consumers` personal-account alias, or an
  * Entra `{tenantid}` template whose remaining origin and path match the
- * configured authority. Concrete Entra / CIAM tenant authorities, template
- * matches for single-tenant GUIDs, and both forms of `consumers` discovery pin
- * the issuer, report `pinned: true` so verification keeps requiring signing-key
- * issuer authority, and carry `expectedTenantId` so signed `tid` must match the
- * pinned tenant GUID. `common` and `organizations` stay on the template, with
- * the personal-account tenant excluded for `organizations`. Other segments,
- * including tenant domains, are rejected. */
+ * configured authority. Concrete Entra v2 / `*.ciamlogin.com` tenant
+ * authorities, template matches for single-tenant GUIDs, and both forms of
+ * `consumers` discovery pin the issuer, report `pinned: true` so verification
+ * keeps requiring signing-key issuer authority, and carry `expectedTenantId` so
+ * signed `tid` must match the pinned tenant GUID. Concrete Entra v1 authorities
+ * (`sts.windows.net`) carry `expectedTenantId` to bind signed `tid` and report
+ * `pinned: false`, permitting an issuer-less signing key while still checking
+ * any present key `issuer`. `common` and `organizations` stay on the template,
+ * with the personal-account tenant excluded for `organizations`. Other
+ * segments, including tenant domains, are rejected. */
 export const matchEntraDiscoveryIssuer = (
   configured: string,
   discovered: string,

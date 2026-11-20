@@ -42,6 +42,7 @@ import { classifyOAuthError } from "./classifyOAuthError";
 import { nativeAudiences, tokenCompatibility } from "./compatibility";
 import { registrationKind, type InstalledConfiguration } from "./configuration";
 import { discoveryProfile } from "./discovery";
+import { authorizationUrlWithCommaScopes } from "./http";
 import {
   persistedResponseIssuerMode,
   type OpenIdConnectAuthentication,
@@ -214,32 +215,36 @@ export const makeOpenIdConnectOAuthProtocol = Effect.fn("makeOpenIdConnectOAuthP
           ? yield* randomSecret.pipe(Effect.provideService(SecureRandom.SecureRandom, crypto))
           : undefined;
 
-      const url = yield* entry.client
-        .authorizationUrl({
-          redirectUri: callback.redirectUri,
-          scopes: provider.scopes,
-          state,
-          ...(pkce === undefined ? {} : { codeChallenge: pkce.challenge }),
-          ...(nonce === undefined ? {} : { nonce }),
-          ...(provider.authorizationParameters === undefined
-            ? {}
-            : { parameters: provider.authorizationParameters }),
-          ...(provider.protocol === "oidc" && provider.maxAgeSeconds !== undefined
-            ? { maxAgeSeconds: provider.maxAgeSeconds }
-            : {}),
-          ...(request.prompt === undefined ? {} : { prompt: request.prompt }),
-          ...(request.loginHint === undefined ? {} : { loginHint: request.loginHint }),
-          ...(provider.responseMode === undefined ? {} : { responseMode: provider.responseMode }),
-        })
-        .pipe(
-          Effect.catchCause((cause) =>
-            Effect.failCause(
-              Cause.map(cause, (error) =>
-                classifyOAuthError(error, { operation: "authorization_code", phase: "preSend" }),
-              ),
+      const authInput = {
+        redirectUri: callback.redirectUri,
+        scopes: provider.scopes,
+        state,
+        ...(pkce === undefined ? {} : { codeChallenge: pkce.challenge }),
+        ...(nonce === undefined ? {} : { nonce }),
+        ...(provider.authorizationParameters === undefined
+          ? {}
+          : { parameters: provider.authorizationParameters }),
+        ...(provider.protocol === "oidc" && provider.maxAgeSeconds !== undefined
+          ? { maxAgeSeconds: provider.maxAgeSeconds }
+          : {}),
+        ...(request.prompt === undefined ? {} : { prompt: request.prompt }),
+        ...(request.loginHint === undefined ? {} : { loginHint: request.loginHint }),
+        ...(provider.responseMode === undefined ? {} : { responseMode: provider.responseMode }),
+      };
+
+      const url = yield* (
+        provider.protocol === "oauth" && provider.scopeSeparator === ","
+          ? authorizationUrlWithCommaScopes(entry.client, authInput)
+          : entry.client.authorizationUrl(authInput)
+      ).pipe(
+        Effect.catchCause((cause) =>
+          Effect.failCause(
+            Cause.map(cause, (error) =>
+              classifyOAuthError(error, { operation: "authorization_code", phase: "preSend" }),
             ),
           ),
-        );
+        ),
+      );
 
       const responseIssuerMode = persistedResponseIssuerMode(
         provider.responseIssuerMode,
@@ -319,32 +324,30 @@ export const makeOpenIdConnectOAuthProtocol = Effect.fn("makeOpenIdConnectOAuthP
 
         const clientSecret = yield* requestSecret(provider.authentication);
 
-        const receipt = yield* client
-          .codeGrant({
-            code: request.response.code,
-            redirectUri: saved.redirectUri,
-            ...(request.secrets.pkceVerifier === undefined
-              ? {}
-              : { pkceVerifier: request.secrets.pkceVerifier }),
-            ...(provider.tokenParameters === undefined
-              ? {}
-              : { parameters: provider.tokenParameters }),
-            ...(clientSecret === undefined ? {} : { clientSecret }),
-          })
-          .pipe(
-            Effect.catchCause((cause) =>
-              Effect.failCause(
-                Cause.map(cause, (error) =>
-                  classifyOAuthError(error, { operation: "authorization_code", phase: "token" }),
-                ),
+        const receipt = yield* (entry.codeTokenSender ?? client.codeGrant)({
+          code: request.response.code,
+          redirectUri: saved.redirectUri,
+          ...(request.secrets.pkceVerifier === undefined
+            ? {}
+            : { pkceVerifier: request.secrets.pkceVerifier }),
+          ...(provider.tokenParameters === undefined
+            ? {}
+            : { parameters: provider.tokenParameters }),
+          ...(clientSecret === undefined ? {} : { clientSecret }),
+        }).pipe(
+          Effect.catchCause((cause) =>
+            Effect.failCause(
+              Cause.map(cause, (error) =>
+                classifyOAuthError(error, { operation: "authorization_code", phase: "token" }),
               ),
             ),
-            Effect.ensuring(
-              Effect.sync(() => {
-                if (clientSecret !== undefined) Redacted.wipeUnsafe(clientSecret);
-              }),
-            ),
-          );
+          ),
+          Effect.ensuring(
+            Effect.sync(() => {
+              if (clientSecret !== undefined) Redacted.wipeUnsafe(clientSecret);
+            }),
+          ),
+        );
 
         const grant = yield* tokens(
           receipt,
@@ -433,18 +436,20 @@ export const makeOpenIdConnectOAuthProtocol = Effect.fn("makeOpenIdConnectOAuthP
         const body =
           provider.identitySource.from === "token"
             ? Redacted.value(receipt.body)
-            : yield* client.fetchProfile(grant.accessToken).pipe(
-                Effect.catchCause((cause) =>
-                  Effect.failCause(
-                    Cause.map(cause, (error) =>
-                      classifyOAuthError(error, {
-                        operation: "authorization_code",
-                        phase: "userInfo",
-                      }),
+            : entry.fetchProfile === undefined
+              ? yield* unavailable()
+              : yield* entry.fetchProfile(grant.accessToken).pipe(
+                  Effect.catchCause((cause) =>
+                    Effect.failCause(
+                      Cause.map(cause, (error) =>
+                        classifyOAuthError(error, {
+                          operation: "authorization_code",
+                          phase: "userInfo",
+                        }),
+                      ),
                     ),
                   ),
-                ),
-              );
+                );
 
         const decoded = yield* Effect.suspend(() =>
           provider.identitySource.decodeIdentity(body),

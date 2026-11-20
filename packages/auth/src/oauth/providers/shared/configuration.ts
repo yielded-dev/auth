@@ -20,6 +20,7 @@ import {
   nativeAudiences,
 } from "./compatibility";
 import { discoveredIssuerMatches, DiscoveryProfile, discoveryProfile } from "./discovery";
+import { authorizationUrlWithCommaScopes } from "./http";
 import {
   advertisedIdTokenAlgorithms,
   hasStaticSecret,
@@ -36,7 +37,7 @@ import {
   type PlainOAuthIdentityDecoder,
   type PlainOAuthIdentitySource,
 } from "./models";
-import { install, type NativeProvider } from "./native";
+import { install, type NativeProvider, type NativeVendorOptions } from "./native";
 
 const boundedString = (maximum: number) =>
   Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(maximum));
@@ -321,11 +322,12 @@ export const validateIdentitySource = Effect.fnUntraced(function* <R>(
   });
 });
 
-export const nativeOAuthClientOptions = <R>(provider: {
+export const nativeVendorOptions = <R>(provider: {
   readonly identitySource: PlainOAuthIdentitySource<R>;
   readonly tokenBodyFormat?: "form" | "json";
   readonly scopeSeparator?: " " | ",";
-}): Pick<OAuth.ClientOptions, "profile" | "tokenBodyFormat" | "scopeSeparator"> => {
+  readonly [githubVerifiedPrimaryEmail]?: boolean;
+}): NativeVendorOptions => {
   const profile =
     provider.identitySource.from === "token"
       ? undefined
@@ -343,6 +345,7 @@ export const nativeOAuthClientOptions = <R>(provider: {
         };
 
   return {
+    ...(provider[githubVerifiedPrimaryEmail] === true ? { githubVerifiedPrimaryEmail: true } : {}),
     ...(profile === undefined ? {} : { profile }),
     ...(provider.tokenBodyFormat === undefined
       ? {}
@@ -564,34 +567,37 @@ export const installProvider = Effect.fn("OpenIdConnect.installProvider")(functi
       clientId: provider.clientId,
       authentication: nativeAuthentication(provider.authentication),
       timeoutMs: timeoutSeconds * 1000,
-      ...(provider.protocol === "oauth" ? nativeOAuthClientOptions(provider) : {}),
     },
-    provider.protocol === "oauth" && provider[githubVerifiedPrimaryEmail] === true,
+    provider.protocol === "oauth" ? nativeVendorOptions(provider) : undefined,
   );
 
   const placeholder = Redacted.make("a".repeat(43));
 
   for (const callback of provider.callbacks) {
-    const url = yield* native.client
-      .authorizationUrl({
-        redirectUri: callback.redirectUri,
-        scopes: provider.scopes,
-        state: placeholder,
-        ...(provider.pkceS256 ? { codeChallenge: Redacted.value(placeholder) } : {}),
-        ...(provider.responseMode === undefined ? {} : { responseMode: provider.responseMode }),
-        ...(provider.authorizationParameters === undefined
-          ? {}
-          : { parameters: provider.authorizationParameters }),
-        ...(provider.protocol === "oidc"
-          ? {
-              nonce: placeholder,
-              ...(provider.maxAgeSeconds === undefined
-                ? {}
-                : { maxAgeSeconds: provider.maxAgeSeconds }),
-            }
-          : {}),
-      })
-      .pipe(Effect.mapError(() => configError("parameters")));
+    const authInput: OAuth.AuthorizationInput = {
+      redirectUri: callback.redirectUri,
+      scopes: provider.scopes,
+      state: placeholder,
+      ...(provider.pkceS256 ? { codeChallenge: Redacted.value(placeholder) } : {}),
+      ...(provider.responseMode === undefined ? {} : { responseMode: provider.responseMode }),
+      ...(provider.authorizationParameters === undefined
+        ? {}
+        : { parameters: provider.authorizationParameters }),
+      ...(provider.protocol === "oidc"
+        ? {
+            nonce: placeholder,
+            ...(provider.maxAgeSeconds === undefined
+              ? {}
+              : { maxAgeSeconds: provider.maxAgeSeconds }),
+          }
+        : {}),
+    };
+
+    const url = yield* (
+      provider.protocol === "oauth" && provider.scopeSeparator === ","
+        ? authorizationUrlWithCommaScopes(native.client, authInput)
+        : native.client.authorizationUrl(authInput)
+    ).pipe(Effect.mapError(() => configError("parameters")));
 
     yield* Schema.decodeEffect(OAuthAuthorizationUrl)(Redacted.value(url)).pipe(
       Effect.mapError(() => configError("parameters")),

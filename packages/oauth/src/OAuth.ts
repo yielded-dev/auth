@@ -99,17 +99,6 @@ export interface ClientOptions extends RequestOptions {
   readonly metadata: Metadata;
   readonly clientId: string;
   readonly authentication: Authentication;
-  readonly profile?: {
-    readonly url: string;
-    readonly method?: "GET" | "POST";
-    readonly headers?: Readonly<Record<string, string>>;
-    readonly body?: string;
-  };
-  /** Defaults to form. Notion's token endpoint requires JSON. Repeated names,
-   * including more than one `resource`, fail before the request. */
-  readonly tokenBodyFormat?: "form" | "json";
-  /** Defaults to a space. Linear's authorize URL requires commas. */
-  readonly scopeSeparator?: " " | ",";
   readonly revocationAuthentication?: Authentication;
 }
 
@@ -163,9 +152,6 @@ export interface Client {
   readonly refreshGrant: (
     input: RefreshGrantInput,
   ) => Effect.Effect<TokenReceipt, OAuthError.OAuthError>;
-  readonly fetchProfile: (
-    accessToken: Redacted.Redacted<string>,
-  ) => Effect.Effect<JsonObject, OAuthError.OAuthError>;
   readonly revoke: (input: RevocationInput) => Effect.Effect<void, OAuthError.OAuthError>;
 }
 
@@ -174,24 +160,8 @@ const ClientOptionsSchema = Schema.Struct({
   clientId: V.text(1024),
   authentication: Authentication,
   ...V.RequestOptions.fields,
-  profile: Schema.optionalKey(
-    Schema.Struct({
-      url: V.Endpoint,
-      method: Schema.optionalKey(Schema.Literals(["GET", "POST"])),
-      headers: Schema.optionalKey(V.Headers),
-      body: Schema.optionalKey(V.text(4096)),
-    }),
-  ),
-  tokenBodyFormat: Schema.optionalKey(Schema.Literals(["form", "json"])),
-  scopeSeparator: Schema.optionalKey(Schema.Literals([" ", ","])),
   revocationAuthentication: Schema.optionalKey(Authentication),
-}).check(
-  Schema.makeFilter(
-    (options) =>
-      options.profile === undefined ||
-      V.endpointMatchesIssuer(options.metadata.issuer, options.profile.url),
-  ),
-);
+});
 
 const additional = {
   parameters: Schema.optionalKey(V.Parameters),
@@ -391,7 +361,6 @@ const authenticated = Effect.fnUntraced(function* (
   clientId: string,
   authentication: Authentication,
   body: URLSearchParams,
-  format: "form" | "json" = "form",
   clientSecret?: Redacted.Redacted<string>,
 ) {
   let request = HttpClientRequest.post(url).pipe(HttpClientRequest.acceptJson);
@@ -422,18 +391,7 @@ const authenticated = Effect.fnUntraced(function* (
     }
   }
 
-  if (format === "json") {
-    const seen = new Set<string>();
-
-    for (const key of body.keys()) {
-      if (seen.has(key))
-        return yield* V.invalidArgument("JSON token request cannot contain repeated parameters");
-      seen.add(key);
-    }
-  }
-
-  const encoded =
-    format === "json" ? JSON.stringify(Object.fromEntries(body.entries())) : body.toString();
+  const encoded = body.toString();
 
   if (new TextEncoder().encode(encoded).length > 131072)
     return yield* V.invalidArgument("Encoded token request body exceeds maximum size");
@@ -441,7 +399,7 @@ const authenticated = Effect.fnUntraced(function* (
   return HttpClientRequest.bodyText(
     request,
     encoded,
-    format === "json" ? "application/json" : "application/x-www-form-urlencoded;charset=UTF-8",
+    "application/x-www-form-urlencoded;charset=UTF-8",
   );
 });
 
@@ -487,19 +445,6 @@ export const make = Effect.fnUntraced(function* (
     return yield* V.invalidArgument("Client authentication method is not supported by metadata");
   const { available, use } = yield* Ownership.make("token");
   const http = yield* Transport.capture;
-  const profile = options.profile === undefined ? undefined : V.freeze(options.profile);
-
-  const tokenBodyFormat =
-    options.tokenBodyFormat === "json" ? ("json" as const) : ("form" as const);
-
-  const scopeSeparator = options.scopeSeparator === "," ? "," : " ";
-
-  if (
-    profile !== undefined &&
-    (profile.method === undefined || profile.method === "GET") &&
-    profile.body !== undefined
-  )
-    return yield* V.invalidArgument("GET profile requests cannot include a body");
 
   yield* Effect.addFinalizer(() =>
     Effect.sync(() => {
@@ -524,7 +469,6 @@ export const make = Effect.fnUntraced(function* (
       options.clientId,
       authentication,
       body,
-      tokenBodyFormat,
       clientSecret,
     );
 
@@ -544,7 +488,7 @@ export const make = Effect.fnUntraced(function* (
     body.set("redirect_uri", value.redirectUri);
     body.set("response_type", "code");
     body.set("response_mode", value.responseMode === "form_post" ? "form_post" : "query");
-    if (value.scopes.length > 0) body.set("scope", value.scopes.join(scopeSeparator));
+    if (value.scopes.length > 0) body.set("scope", value.scopes.join(" "));
     body.set("state", yield* V.reveal(value.state));
     if (value.codeChallenge !== undefined) {
       body.set("code_challenge", value.codeChallenge);
@@ -589,42 +533,9 @@ export const make = Effect.fnUntraced(function* (
     body.set("grant_type", "refresh_token");
     body.set("refresh_token", yield* V.reveal(value.refreshToken));
     if (value.scopes !== undefined && value.scopes.length > 0)
-      body.set("scope", value.scopes.join(scopeSeparator));
+      body.set("scope", value.scopes.join(" "));
 
     return yield* send(body, value.clientSecret);
-  }, use);
-
-  const fetchProfile = Effect.fnUntraced(function* (input: Redacted.Redacted<string>) {
-    yield* available;
-    if (profile === undefined) return yield* V.invalidArgument("No profile endpoint is configured");
-
-    const token = yield* V.reveal(
-      yield* V.decode(Bearer, input, () => V.invalidArgument("Invalid bearer access token")),
-    );
-
-    const url = new URL(profile.url).href;
-
-    let request = (
-      profile.method === "POST" ? HttpClientRequest.post(url) : HttpClientRequest.get(url)
-    ).pipe(
-      HttpClientRequest.acceptJson,
-      HttpClientRequest.setHeaders(profile.headers ?? {}),
-      HttpClientRequest.setHeader("authorization", `Bearer ${token}`),
-    );
-
-    if (profile.method === "POST" && profile.body !== undefined)
-      request = HttpClientRequest.bodyText(request, profile.body, "application/json");
-
-    const response = yield* Transport.request(http, request, options, "userinfo");
-
-    if (response.status !== 200)
-      return yield* invalidResponse(
-        "userinfo",
-        response.status,
-        "Unexpected profile response status",
-      );
-
-    return yield* V.reveal((yield* Transport.json(response, "userinfo")).body);
   }, use);
 
   const revoke = Effect.fnUntraced(function* (input: RevocationInput) {
@@ -645,7 +556,6 @@ export const make = Effect.fnUntraced(function* (
         token: yield* V.reveal(value.token),
         token_type_hint: value.tokenTypeHint,
       }),
-      "form",
       value.clientSecret,
     );
 
@@ -678,11 +588,7 @@ export const make = Effect.fnUntraced(function* (
     );
   }, use);
 
-  return { metadata, authorizationUrl, codeGrant, refreshGrant, fetchProfile, revoke };
-});
-
-const Bearer = Schema.Redacted(V.text(16384).check(Schema.isPattern(/^[A-Za-z0-9._~+/-]+=*$/u)), {
-  disallowJsonEncode: true,
+  return { metadata, authorizationUrl, codeGrant, refreshGrant, revoke };
 });
 
 const detachAuthentication = Effect.fnUntraced(function* (
