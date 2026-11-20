@@ -5,17 +5,12 @@ import { OpenIdConnectConfigurationError } from "./models";
 
 export type OAuthOperation = "authorization_code" | "refresh_token" | "revocation";
 
-export type OAuthPhase = "callback" | "preSend" | "token" | "idToken" | "userInfo" | "revocation";
+export type OAuthPhase = "preSend" | "token" | "idToken" | "userInfo" | "revocation";
 
 export interface OAuthErrorContext {
   readonly operation: OAuthOperation;
   readonly phase: OAuthPhase;
 }
-
-export type OAuthCallbackOutcome =
-  | { readonly _tag: "RejectRequest" }
-  | { readonly _tag: "CancelFlow" }
-  | { readonly _tag: "Unavailable" };
 
 const postSignatureTokenFailures: ReadonlySet<OAuthError.TokenVerificationFailed["reason"]> =
   new Set([
@@ -47,27 +42,6 @@ export const classifyOAuthConfigurationError = (
     case "EndpointError":
     case "TokenVerificationFailed":
       return OAuthUnavailable.make({});
-  }
-};
-
-/** Classify an `@yielded/oauth` callback failure per the callback boundary. */
-export const classifyOAuthCallbackError = (error: OAuthError.OAuthError): OAuthCallbackOutcome => {
-  switch (error.reason._tag) {
-    case "CallbackRejected":
-      return { _tag: "RejectRequest" };
-    case "AuthorizationDenied":
-      return { _tag: "CancelFlow" };
-    case "EndpointError":
-      return error.reason.endpoint === "authorization"
-        ? { _tag: "CancelFlow" }
-        : { _tag: "Unavailable" };
-    case "InvalidArgument":
-    case "ClientAuthFailed":
-    case "DiscoveryFailed":
-    case "TransportFailed":
-    case "InvalidResponse":
-    case "TokenVerificationFailed":
-      return { _tag: "Unavailable" };
   }
 };
 

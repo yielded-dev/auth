@@ -293,7 +293,7 @@ export class TokenVerificationFailed extends Data.TaggedError("TokenVerification
   readonly [ReasonTypeId] = ReasonTypeId;
 
   override get message(): string {
-    return `ID token verification failed: ${this.reason}`;
+    return `Token verification failed: ${this.reason}`;
   }
 }
 
@@ -353,8 +353,7 @@ export class OAuthError extends Data.TaggedError("OAuthError")<{
  * @category guards
  * @since 4.1.4
  */
-export const isOAuthError: (u: unknown) => u is OAuthError = (u): u is OAuthError =>
-  Predicate.hasProperty(u, TypeId);
+export const isOAuthError = (u: unknown): u is OAuthError => Predicate.hasProperty(u, TypeId);
 
 /**
  * Checks whether a value is one of the reasons carried by `OAuthError`.
@@ -363,6 +362,5 @@ export const isOAuthError: (u: unknown) => u is OAuthError = (u): u is OAuthErro
  * @category guards
  * @since 4.1.4
  */
-export const isOAuthErrorReason: (u: unknown) => u is OAuthErrorReason = (
-  u,
-): u is OAuthErrorReason => Predicate.hasProperty(u, ReasonTypeId);
+export const isOAuthErrorReason = (u: unknown): u is OAuthErrorReason =>
+  Predicate.hasProperty(u, ReasonTypeId);

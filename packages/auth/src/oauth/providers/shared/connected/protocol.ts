@@ -558,18 +558,7 @@ export const makeConnectedProtocolWithCompatibility = Effect.fn(
               accessToken: grant.accessToken,
               code: request.response.code,
             })
-            .pipe(
-              Effect.catchCause((cause) =>
-                Effect.failCause(
-                  Cause.map(cause, (error) =>
-                    classifyOAuthError(error, {
-                      operation: "authorization_code",
-                      phase: "idToken",
-                    }),
-                  ),
-                ),
-              ),
-            );
+            .pipe(Effect.catchCause((cause) => Effect.failCause(Cause.map(cause, unavailable))));
 
           const claims =
             provider.userInfo === "merge"

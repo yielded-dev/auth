@@ -196,7 +196,7 @@ it.effect(
       const invalidCases: ReadonlyArray<readonly [Partial<jose.JWTPayload>, string]> = [
         [{ iss: metadata.issuer.slice(0, -1) }, "issuer"],
         [{ aud: "other" }, "audience"],
-        [{ aud: ["client", "other"] }, "audience"],
+        [{ aud: ["client", "other"] }, "claim"],
         [{ azp: "other" }, "audience"],
         [{ exp: seconds }, "expired"],
         [{ iat: seconds + 1 }, "notYetValid"],

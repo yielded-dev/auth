@@ -50,10 +50,6 @@ export const request = Effect.fnUntraced(
           status: response.status,
         },
       );
-    if (response.status >= 500)
-      return yield* transportFailed(endpoint, "Upstream OAuth endpoint returned a server error", {
-        status: response.status,
-      });
     const announced = response.headers["content-length"];
 
     if (
@@ -153,13 +149,11 @@ const jsonError = (
   status: number,
   description: string,
 ): OAuthError.OAuthError =>
-  endpoint === "discovery"
-    ? new OAuthError.OAuthError({ reason: new OAuthError.DiscoveryFailed({ description }) })
-    : endpoint === "jwks"
-      ? transportFailed("jwks", description, { status })
-      : new OAuthError.OAuthError({
-          reason: new OAuthError.InvalidResponse({ endpoint, status, description }),
-        });
+  endpoint === "discovery" || endpoint === "jwks"
+    ? transportFailed(endpoint, description, { status })
+    : new OAuthError.OAuthError({
+        reason: new OAuthError.InvalidResponse({ endpoint, status, description }),
+      });
 
 export const json = Effect.fnUntraced(function* (
   response: Effect.Success<ReturnType<typeof request>>,

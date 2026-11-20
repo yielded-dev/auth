@@ -131,7 +131,7 @@ const IdClaims = Schema.Struct({
   sub: V.text(1024),
   aud: Schema.Union([
     V.text(1024),
-    Schema.Array(V.text(1024)).check(Schema.isMinLength(1), Schema.isMaxLength(64)),
+    Schema.Array(V.text(1024)).check(Schema.isMinLength(1), Schema.isMaxLength(1)),
   ]),
   azp: Schema.optionalKey(V.text(1024)),
   exp: V.NumericDate,
@@ -354,7 +354,19 @@ export const discover = Effect.fnUntraced(function* (
     });
   const document = yield* Transport.json(response, "discovery");
 
-  const metadata = yield* V.decode(Metadata, yield* V.reveal(document.body), () =>
+  const body = yield* V.reveal(
+    document.body,
+    () =>
+      new OAuthError.OAuthError({
+        reason: new OAuthError.TransportFailed({
+          endpoint: "discovery",
+          status: response.status,
+          description: "Discovery response body is unavailable",
+        }),
+      }),
+  );
+
+  const metadata = yield* V.decode(Metadata, body, () =>
     discoveryFailed("Invalid OIDC discovery metadata"),
   );
 
@@ -380,7 +392,7 @@ export const discover = Effect.fnUntraced(function* (
 });
 
 const mapJwtError = (error: Jwt.JwtError): OAuthError.OAuthError => {
-  if (error._tag !== "JoseError") return tokenFailed("claim");
+  if (error._tag !== "JoseError") return tokenFailed("malformed", error);
   switch (error.reason._tag) {
     case "InvalidToken":
     case "InvalidArgument":
@@ -466,7 +478,19 @@ export const makeVerifier = Effect.fnUntraced(function* (
           Redacted.make({
             kty: "oct" as const,
             alg: "HS256" as const,
-            k: Base64Url.encode(new TextEncoder().encode(yield* V.reveal(options.clientSecret))),
+            k: Base64Url.encode(
+              new TextEncoder().encode(
+                yield* V.reveal(
+                  options.clientSecret,
+                  () =>
+                    new OAuthError.OAuthError({
+                      reason: new OAuthError.ClientAuthFailed({
+                        description: "Client secret is unavailable",
+                      }),
+                    }),
+                ),
+              ),
+            ),
           }),
           "HS256",
         ).pipe(
@@ -592,10 +616,7 @@ export const makeVerifier = Effect.fnUntraced(function* (
     const now = (yield* Clock.currentTimeMillis) / 1000;
 
     if (start < 0 || start > now * 1000) return yield* tokenFailed("claim");
-    if (
-      (Array.isArray(claims.aud) && claims.aud.length !== 1) ||
-      (claims.azp !== undefined && !audiences.includes(claims.azp))
-    )
+    if (claims.azp !== undefined && !audiences.includes(claims.azp))
       return yield* tokenFailed("audience");
     if (claims.exp <= now) return yield* tokenFailed("expired");
     if (
@@ -617,12 +638,13 @@ export const makeVerifier = Effect.fnUntraced(function* (
         claims.sub !== policy.previous.subject ||
         (tenantTemplate
           ? claims.iss !== policy.previous.issuer
-          : policy.previous.issuer !== undefined && claims.iss !== policy.previous.issuer) ||
-        (claims.auth_time !== undefined && claims.auth_time !== policy.previous.authTime)
+          : policy.previous.issuer !== undefined && claims.iss !== policy.previous.issuer)
       )
         return yield* tokenFailed("continuity");
       if (claims.nonce !== undefined && claims.nonce !== expectedNonce)
         return yield* tokenFailed("nonce");
+      if (claims.auth_time !== undefined && claims.auth_time !== policy.previous.authTime)
+        return yield* tokenFailed("continuity");
     }
     const hashProfile = tokenHash(verified.protectedHeader.alg);
 
@@ -639,7 +661,7 @@ export const makeVerifier = Effect.fnUntraced(function* (
       const digest = yield* digests.digest(hashProfile.digest, new TextEncoder().encode(secret));
 
       if (digest.length !== hashProfile.octets * 2)
-        return yield* Effect.die(new RangeError("Digest returned an unexpected byte length"));
+        return yield* V.invalidArgument("Digest returned an unexpected byte length");
       if (hash !== Base64Url.encode(digest.subarray(0, hashProfile.octets)))
         return yield* tokenFailed("hash");
     }

@@ -560,7 +560,7 @@ it.effect(
           .pipe(Effect.flip),
       ).toMatchObject({
         _tag: "OAuthError",
-        reason: { _tag: "TransportFailed", endpoint: "revocation", status: 503 },
+        reason: { _tag: "InvalidResponse", endpoint: "revocation", status: 503 },
       });
       expect(revocations).toBe(1);
     }).pipe(Effect.scoped),
