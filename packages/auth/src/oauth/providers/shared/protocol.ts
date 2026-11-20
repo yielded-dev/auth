@@ -20,6 +20,7 @@ import { timeoutOrElseWithCause } from "../../../internal/timeout";
 import { RequestBindingFlowId } from "../../../operations/requestBindingModels";
 import { selectCallback } from "../../callback";
 import { OAuthProtocol } from "../../OAuthProtocol";
+import { attachProtocolPreflight } from "../../protocolPreflight";
 import { OAuthProviderKey } from "../../schema";
 import { OAuthProtocolRejected, OAuthRejected, OAuthUnavailable } from "../../signInErrors";
 import {
@@ -604,6 +605,79 @@ export const makeOpenIdConnectOAuthProtocol = Effect.fn("makeOpenIdConnectOAuthP
         );
       });
 
+    const checkExactReady = Effect.fn("OpenIdConnect.checkExactReady")(function* (
+      target: OAuthProtocolConfiguration | OAuthNativeProtocolConfiguration,
+      failOnStaticMismatch: boolean,
+    ) {
+      const kind = "redirectUri" in target ? "web" : "native";
+
+      const entry = installed.find(
+        ({ provider }) =>
+          provider.provider === target.provider &&
+          provider.configurationGeneration === target.configurationGeneration &&
+          registrationKind(provider) === kind,
+      );
+
+      if (entry === undefined) {
+        if (failOnStaticMismatch) return yield* unavailable();
+
+        return;
+      }
+
+      const provider = entry.provider;
+
+      if (provider.protocol !== target.protocol || provider.issuer !== target.issuer) {
+        if (failOnStaticMismatch) return yield* unavailable();
+
+        return;
+      }
+
+      if (kind === "web" && "redirectUri" in target) {
+        const callback = provider.callbacks.find(
+          (candidate) => candidate.callbackId === target.callbackId,
+        );
+
+        if (
+          callback === undefined ||
+          callback.redirectUri !== target.redirectUri ||
+          (provider.responseIssuerMode !== "discovered" &&
+            provider.responseIssuerMode !== target.responseIssuerMode)
+        ) {
+          if (failOnStaticMismatch) return yield* unavailable();
+
+          return;
+        }
+
+        if (!failOnStaticMismatch && provider.protocol !== "oidc") return;
+
+        const resolved = yield* entry.resolve;
+
+        if (
+          resolved.client === undefined ||
+          persistedResponseIssuerMode(
+            provider.responseIssuerMode,
+            resolved.metadata.authorization_response_iss_parameter_supported,
+          ) !== target.responseIssuerMode
+        ) {
+          return yield* unavailable();
+        }
+
+        return;
+      }
+
+      if (target.callbackId !== OAuthNativeCallbackId) {
+        if (failOnStaticMismatch) return yield* unavailable();
+
+        return;
+      }
+
+      if (!failOnStaticMismatch && provider.protocol !== "oidc") return;
+
+      const resolved = yield* entry.resolve;
+
+      if (resolved.nativeKeySet === undefined) return yield* unavailable();
+    });
+
     const ready: NonNullable<OAuthProtocol["Service"]["ready"]> = Effect.fn("OpenIdConnect.ready")(
       function* (target) {
         if (target === undefined) {
@@ -616,59 +690,7 @@ export const makeOpenIdConnectOAuthProtocol = Effect.fn("makeOpenIdConnectOAuthP
         }
 
         if ("protocol" in target) {
-          const kind = "redirectUri" in target ? "web" : "native";
-
-          const entry = installed.find(
-            ({ provider }) =>
-              provider.provider === target.provider &&
-              provider.configurationGeneration === target.configurationGeneration &&
-              registrationKind(provider) === kind,
-          );
-
-          // Static mismatches (uninstalled generation, wrong protocol/issuer/callback)
-          // are not discovery faults; let the post-consume path classify them identically to M5.
-          if (entry === undefined) return;
-          const provider = entry.provider;
-
-          if (provider.protocol !== target.protocol || provider.issuer !== target.issuer) {
-            return;
-          }
-
-          if (kind === "web" && "redirectUri" in target) {
-            const callback = provider.callbacks.find(
-              (candidate) => candidate.callbackId === target.callbackId,
-            );
-
-            if (
-              callback === undefined ||
-              callback.redirectUri !== target.redirectUri ||
-              (provider.responseIssuerMode !== "discovered" &&
-                provider.responseIssuerMode !== target.responseIssuerMode)
-            ) {
-              return;
-            }
-
-            const resolved = yield* entry.resolve;
-
-            if (
-              resolved.client === undefined ||
-              persistedResponseIssuerMode(
-                provider.responseIssuerMode,
-                resolved.metadata.authorization_response_iss_parameter_supported,
-              ) !== target.responseIssuerMode
-            ) {
-              return yield* unavailable();
-            }
-
-            return;
-          }
-
-          if (target.callbackId !== OAuthNativeCallbackId) return;
-          const resolved = yield* entry.resolve;
-
-          if (resolved.nativeKeySet === undefined) return yield* unavailable();
-
-          return;
+          return yield* checkExactReady(target, true);
         }
 
         const matching = installed.filter(
@@ -679,6 +701,8 @@ export const makeOpenIdConnectOAuthProtocol = Effect.fn("makeOpenIdConnectOAuthP
               provider.configurationGeneration === target.configurationGeneration),
         );
 
+        if (matching.length === 0) return yield* unavailable();
+
         yield* Effect.forEach(matching, (entry) => entry.resolve, {
           concurrency: 4,
           discard: true,
@@ -686,43 +710,55 @@ export const makeOpenIdConnectOAuthProtocol = Effect.fn("makeOpenIdConnectOAuthP
       },
     );
 
-    return OAuthProtocol.of({
-      ready: (target) => run(ready(target)),
-      prepareNative: (input) => run(prepareNative(input)),
-      verifyNativeIdentity: (input) =>
-        run(
-          verifyNativeIdentity(input).pipe(
-            timeoutOrElseWithCause({
-              duration: timeoutSeconds * 1000,
-              orElse: () => Effect.fail(unavailable()),
-            }),
-          ),
-        ).pipe(
-          Effect.tapError((error) =>
-            reportAuthDiagnostic(
-              "oauth-exchange",
-              error._tag === "OAuthProtocolRejected" ? "rejected" : "unavailable",
+    return attachProtocolPreflight(
+      OAuthProtocol.of({
+        ready: (target) => run(ready(target)),
+        prepareNative: (input) => run(prepareNative(input)),
+        verifyNativeIdentity: (input) =>
+          run(
+            verifyNativeIdentity(input).pipe(
+              timeoutOrElseWithCause({
+                duration: timeoutSeconds * 1000,
+                orElse: () => Effect.fail(unavailable()),
+              }),
+            ),
+          ).pipe(
+            Effect.tapError((error) =>
+              reportAuthDiagnostic(
+                "oauth-exchange",
+                error._tag === "OAuthProtocolRejected" ? "rejected" : "unavailable",
+              ),
             ),
           ),
-        ),
-      prepareAuthorization: (input) => run(prepareAuthorization(input)),
-      exchangeVerifiedIdentity: (input) =>
-        run(
-          exchangeVerifiedIdentity(input).pipe(
-            timeoutOrElseWithCause({
-              duration: timeoutSeconds * 1000,
-              orElse: () => Effect.fail(unavailable()),
-            }),
-          ),
-        ).pipe(
-          Effect.tapError((error) =>
-            reportAuthDiagnostic(
-              "oauth-exchange",
-              error._tag === "OAuthProtocolRejected" ? "rejected" : "unavailable",
+        prepareAuthorization: (input) => run(prepareAuthorization(input)),
+        exchangeVerifiedIdentity: (input) =>
+          run(
+            exchangeVerifiedIdentity(input).pipe(
+              timeoutOrElseWithCause({
+                duration: timeoutSeconds * 1000,
+                orElse: () => Effect.fail(unavailable()),
+              }),
+            ),
+          ).pipe(
+            Effect.tapError((error) =>
+              reportAuthDiagnostic(
+                "oauth-exchange",
+                error._tag === "OAuthProtocolRejected" ? "rejected" : "unavailable",
+              ),
             ),
           ),
-        ),
-    });
+      }),
+      {
+        needsLazy: (provider, kind) =>
+          installed.some(
+            ({ provider: candidate }) =>
+              candidate.provider === provider &&
+              candidate.protocol === "oidc" &&
+              (kind === undefined || registrationKind(candidate) === kind),
+          ),
+        preflight: (target) => run(checkExactReady(target, false)),
+      },
+    );
   },
 );
 

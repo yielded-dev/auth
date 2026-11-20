@@ -3,6 +3,7 @@ import type * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import type { PreparedCommit } from "../hooks/commit";
+import type { OAuthConnectedConfiguration } from "./connectedModels";
 import { OAuthConnectedRevocationJob } from "./connectedModels";
 import type { PrepareOAuthCommit } from "./OAuthSignInPersistence";
 import type { OAuthUnavailable } from "./signInErrors";
@@ -32,10 +33,16 @@ export class OAuthConnectedRevocations extends Context.Service<
   {
     /** Non-consuming read of the next pending revocation job so callers can warm
      * lazy provider discovery before claiming the job, optionally skipping jobs
-     * whose registration is temporarily unready in this maintenance pass. */
+     * or registration configurations that are temporarily unready in this pass. */
     readonly peek?: (input: {
       readonly moduleId: typeof OAuthModuleId.Type;
       readonly excludeJobIds?: ReadonlyArray<typeof OAuthConnectedRevocationJob.fields.jobId.Type>;
+      readonly excludeConfigurations?: ReadonlyArray<
+        Pick<
+          OAuthConnectedConfiguration,
+          "provider" | "configurationGeneration" | "issuer" | "callbackId" | "responseIssuerMode"
+        >
+      >;
     }) => Effect.Effect<OAuthConnectedRevocationJob | undefined, OAuthUnavailable>;
     readonly claim: <A>(
       input: {

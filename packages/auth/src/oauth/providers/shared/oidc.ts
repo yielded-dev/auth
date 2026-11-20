@@ -157,7 +157,7 @@ const makeSharedDiscovery = Effect.fnUntraced(function* (options: {
   const createAttempt = Effect.fnUntraced(function* () {
     const attemptScope = yield* Scope.fork(layerScope, "sequential");
     let matchedPolicy: EntraPolicy | undefined;
-    let resolvedAt: number | undefined;
+    let succeededAt: number | undefined;
 
     const remote = yield* Discovery.makeRemote({
       issuer: options.issuer,
@@ -171,6 +171,8 @@ const makeSharedDiscovery = Effect.fnUntraced(function* (options: {
         );
 
         if (matched === undefined) {
+          matchedPolicy = undefined;
+
           return Effect.fail(discoveryFailed("Discovered issuer does not match configured issuer"));
         }
 
@@ -186,18 +188,13 @@ const makeSharedDiscovery = Effect.fnUntraced(function* (options: {
         return Effect.succeed(matched.issuer);
       },
       supplement: Effect.fnUntraced(function* (normalized) {
-        const supplemented =
-          options.profile === undefined
-            ? normalized
-            : yield* supplementDiscovery(normalized, options.profile).pipe(
-                Effect.mapError((error) =>
-                  discoveryFailed("Discovered metadata failed provider profile validation", error),
-                ),
-              );
-
-        resolvedAt = yield* Clock.currentTimeMillis;
-
-        return supplemented;
+        return options.profile === undefined
+          ? normalized
+          : yield* supplementDiscovery(normalized, options.profile).pipe(
+              Effect.mapError((error) =>
+                discoveryFailed("Discovered metadata failed provider profile validation", error),
+              ),
+            );
       }),
     }).pipe(
       Effect.provideService(Scope.Scope, attemptScope),
@@ -209,20 +206,26 @@ const makeSharedDiscovery = Effect.fnUntraced(function* (options: {
     const resolveAttempt: Effect.Effect<SharedDiscoveryDocument, OAuthError.OAuthError> =
       remote.resolve.pipe(
         Effect.tapError(reportOnce),
-        Effect.flatMap((metadata) => {
-          if (matchedPolicy === undefined || resolvedAt === undefined) {
-            return Effect.fail(discoveryFailed("Missing discovery issuer policy"));
-          }
+        Effect.flatMap((metadata) =>
+          Effect.gen(function* () {
+            if (matchedPolicy === undefined) {
+              return yield* discoveryFailed("Missing discovery issuer policy");
+            }
 
-          return Effect.succeed({ metadata, policy: matchedPolicy, fetchedAt: resolvedAt });
-        }),
+            if (succeededAt === undefined) {
+              succeededAt = yield* Clock.currentTimeMillis;
+            }
+
+            return { metadata, policy: matchedPolicy, fetchedAt: succeededAt };
+          }),
+        ),
       );
 
     return {
       scope: attemptScope,
       resolve: resolveAttempt,
       get fetchedAt() {
-        return resolvedAt;
+        return succeededAt;
       },
     };
   });

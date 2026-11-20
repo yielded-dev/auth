@@ -18,6 +18,7 @@ import { timeoutOrElseWithCause } from "../../../../internal/timeout";
 import { RequestBindingFlowId } from "../../../../operations/requestBindingModels";
 import * as M from "../../../connectedModels";
 import { OAuthConnectedProtocol } from "../../../OAuthConnectedProtocol";
+import { attachConnectedProtocolPreflight } from "../../../protocolPreflight";
 import { OAuthProtocolRejected, OAuthUnavailable } from "../../../signInErrors";
 import {
   OAuthAuthorizationPrompt,
@@ -875,6 +876,49 @@ export const makeConnectedProtocolWithCompatibility = Effect.fn(
     return "Confirmed" as const;
   });
 
+  const checkExactReady = Effect.fn("OpenIdConnectConnected.checkExactReady")(function* (
+    target: M.OAuthConnectedConfiguration,
+    failOnStaticMismatch: boolean,
+  ) {
+    const entry = installed.find(
+      ({ provider }) =>
+        provider.provider === target.provider &&
+        provider.configurationGeneration === target.configurationGeneration,
+    );
+
+    const provider = entry?.provider;
+
+    if (
+      !entry ||
+      !provider ||
+      provider.protocol !== target.protocol ||
+      provider.issuer !== target.issuer ||
+      (provider.responseIssuerMode !== "discovered" &&
+        provider.responseIssuerMode !== target.responseIssuerMode) ||
+      provider.clientRegistrationId !== target.profile.clientRegistrationId ||
+      !provider.profiles.some((profile) => sameConnectedProfile(profile, target.profile)) ||
+      provider.callbacks.find((callback) => callback.callbackId === target.callbackId)
+        ?.redirectUri !== target.redirectUri
+    ) {
+      if (failOnStaticMismatch) return yield* unavailable();
+
+      return;
+    }
+
+    if (!failOnStaticMismatch && provider.protocol !== "oidc") return;
+
+    const resolved = yield* entry.resolve;
+
+    if (
+      persistedResponseIssuerMode(
+        provider.responseIssuerMode,
+        resolved.metadata.authorization_response_iss_parameter_supported,
+      ) !== target.responseIssuerMode
+    ) {
+      return yield* unavailable();
+    }
+  });
+
   const ready: NonNullable<OAuthConnectedProtocol["Service"]["ready"]> = Effect.fn(
     "OpenIdConnectConnected.ready",
   )(function* (target) {
@@ -888,43 +932,7 @@ export const makeConnectedProtocolWithCompatibility = Effect.fn(
     }
 
     if ("protocol" in target) {
-      const entry = installed.find(
-        ({ provider }) =>
-          provider.provider === target.provider &&
-          provider.configurationGeneration === target.configurationGeneration,
-      );
-
-      const provider = entry?.provider;
-
-      // Static mismatches (uninstalled generation, wrong protocol/issuer/profile/callback)
-      // are not discovery faults; let the post-claim path classify them identically to M5.
-      if (
-        !entry ||
-        !provider ||
-        provider.protocol !== target.protocol ||
-        provider.issuer !== target.issuer ||
-        (provider.responseIssuerMode !== "discovered" &&
-          provider.responseIssuerMode !== target.responseIssuerMode) ||
-        provider.clientRegistrationId !== target.profile.clientRegistrationId ||
-        !provider.profiles.some((profile) => sameConnectedProfile(profile, target.profile)) ||
-        provider.callbacks.find((callback) => callback.callbackId === target.callbackId)
-          ?.redirectUri !== target.redirectUri
-      ) {
-        return;
-      }
-
-      const resolved = yield* entry.resolve;
-
-      if (
-        persistedResponseIssuerMode(
-          provider.responseIssuerMode,
-          resolved.metadata.authorization_response_iss_parameter_supported,
-        ) !== target.responseIssuerMode
-      ) {
-        return yield* unavailable();
-      }
-
-      return;
+      return yield* checkExactReady(target, true);
     }
 
     const matching = installed.filter(
@@ -934,49 +942,62 @@ export const makeConnectedProtocolWithCompatibility = Effect.fn(
           provider.configurationGeneration === target.configurationGeneration),
     );
 
+    if (matching.length === 0) return yield* unavailable();
+
     yield* Effect.forEach(matching, (entry) => entry.resolve, {
       concurrency: 4,
       discard: true,
     });
   });
 
-  return OAuthConnectedProtocol.of({
-    ready: (target) => run(ready(target)),
-    prepareAuthorization: (input) => run(prepareAuthorization(input)),
-    exchangeGrant: (input) =>
-      run(exchangeGrant(input)).pipe(
-        timeoutOrElseWithCause({
-          duration: timeoutSeconds * 1000,
-          orElse: () => Effect.fail(unavailable()),
-        }),
-        Effect.tapError((error) =>
-          reportAuthDiagnostic(
-            "oauth-exchange",
-            error._tag === "OAuthProtocolRejected" ? "rejected" : "unavailable",
+  return attachConnectedProtocolPreflight(
+    OAuthConnectedProtocol.of({
+      ready: (target) => run(ready(target)),
+      prepareAuthorization: (input) => run(prepareAuthorization(input)),
+      exchangeGrant: (input) =>
+        run(exchangeGrant(input)).pipe(
+          timeoutOrElseWithCause({
+            duration: timeoutSeconds * 1000,
+            orElse: () => Effect.fail(unavailable()),
+          }),
+          Effect.tapError((error) =>
+            reportAuthDiagnostic(
+              "oauth-exchange",
+              error._tag === "OAuthProtocolRejected" ? "rejected" : "unavailable",
+            ),
           ),
         ),
-      ),
-    refreshGrant: (input) =>
-      run(refreshGrant(input)).pipe(
-        timeoutOrElseWithCause({
-          duration: timeoutSeconds * 1000,
-          orElse: () => Effect.fail(unavailable()),
-        }),
-        Effect.tapError((error) =>
-          reportAuthDiagnostic(
-            "oauth-exchange",
-            error._tag === "OAuthProtocolRejected" ? "rejected" : "unavailable",
+      refreshGrant: (input) =>
+        run(refreshGrant(input)).pipe(
+          timeoutOrElseWithCause({
+            duration: timeoutSeconds * 1000,
+            orElse: () => Effect.fail(unavailable()),
+          }),
+          Effect.tapError((error) =>
+            reportAuthDiagnostic(
+              "oauth-exchange",
+              error._tag === "OAuthProtocolRejected" ? "rejected" : "unavailable",
+            ),
           ),
         ),
-      ),
-    revokeGrant: (input) =>
-      run(revokeGrant(input)).pipe(
-        timeoutOrElseWithCause({
-          duration: timeoutSeconds * 1000,
-          orElse: () => Effect.fail(unavailable()),
-        }),
-      ),
-  });
+      revokeGrant: (input) =>
+        run(revokeGrant(input)).pipe(
+          timeoutOrElseWithCause({
+            duration: timeoutSeconds * 1000,
+            orElse: () => Effect.fail(unavailable()),
+          }),
+        ),
+    }),
+    {
+      hasLazy: installed.some(({ provider }) => provider.protocol === "oidc"),
+      needsLazy: (provider) =>
+        installed.some(
+          ({ provider: candidate }) =>
+            candidate.provider === provider && candidate.protocol === "oidc",
+        ),
+      preflight: (target) => run(checkExactReady(target, false)),
+    },
+  );
 });
 
 export const makeOpenIdConnectConnectedProtocol = <R, Setup>(

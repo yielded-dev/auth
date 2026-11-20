@@ -76,12 +76,12 @@ const resolve = <R>(providers: ReadonlyArray<Provider<R>>) =>
 
 /** Declare an OIDC or OAuth provider for Http.layer. Static configuration is
  * validated when the Layer builds with zero network I/O; OIDC discovery and
- * metadata capability checks run lazily on first use and are shared across
- * generations and retained access for the same issuer. Call
- * `OAuthProtocol.ready` or `OAuthConnectedProtocol.ready` at startup when
- * fail-fast boot validation is required. The HTTP host supplies the provider
- * ID and callback URLs; client and verification policy remain separate for
- * each protocol and registration. */
+ * metadata capability checks run lazily on first use. Run
+ * `yield* ((yield* OAuthProtocol).ready?.() ?? Effect.void)` (and the
+ * `OAuthConnectedProtocol` equivalent) at startup when fail-fast boot
+ * validation is required. The HTTP host supplies the provider ID and callback
+ * URLs; client and verification policy remain separate for each protocol and
+ * registration. */
 export const provider = <R = never>(
   options: ProviderOptions<R>,
 ): ProviderDefinition<OpenIdConnectConfigurationError | OAuthUnavailable, R | Requirements> => ({

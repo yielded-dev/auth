@@ -533,9 +533,9 @@ it.live.each(backends)(
   { timeout: 30_000 },
 );
 
-// Regression from PR #325 review: cold-worker OIDC discovery failures on callback,
-// refresh, and revocation must leave durable flows pending, grants Active, and
-// revocation jobs Pending so retries succeed after recovery.
+// Explicit human test request (2026-11-20): durable flows, active grants, and
+// pending revocation jobs survive a cold-worker OIDC discovery outage and
+// recover cleanly once discovery succeeds.
 it.live(
   "preserves pending flows, active grants, and pending revocation jobs when cold OIDC discovery fails",
   () =>

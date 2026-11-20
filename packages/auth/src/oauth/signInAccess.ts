@@ -26,6 +26,8 @@ import { OAuthConnectedPersistence } from "./OAuthConnectedPersistence";
 import { OAuthConnectedProtocol } from "./OAuthConnectedProtocol";
 import { OAuthConnectedTokenProtector } from "./OAuthConnectedTokenProtector";
 import type { OAuthProtocol } from "./OAuthProtocol";
+import { needsLazyConnectedProtocol, preflightConnectedProtocol } from "./protocolPreflight";
+import type { OAuthProviderKey } from "./schema";
 import { OAuthConfigurationError, OAuthRejected, OAuthUnavailable } from "./signInErrors";
 import {
   OAuthCallbackId,
@@ -218,16 +220,15 @@ const make = Effect.fnUntraced(function* (
   });
 
   const ready = Effect.fn("OAuth.access.ready")(function* (flow: OAuthSignInFlow) {
-    if (protocol.ready === undefined) return;
     const configuration = yield* configurationFor(flow);
 
-    yield* protocol.ready(configuration);
+    yield* preflightConnectedProtocol(protocol, configuration);
   });
 
   return {
     profile,
     prepare,
-    hasReady: protocol.ready !== undefined,
+    needsLazy: (provider: OAuthProviderKey) => needsLazyConnectedProtocol(protocol, provider),
     ready,
     exchange,
     retain,
