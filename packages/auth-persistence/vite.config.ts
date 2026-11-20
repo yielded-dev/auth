@@ -15,6 +15,7 @@ export default defineConfig({
   },
   run: {
     tasks: {
+      build: { command: "vp pack", cache: { untrackedEnv: ["TMPDIR"] } },
       test: { command: "vp test --passWithNoTests", cache: { untrackedEnv: ["TMPDIR"] } },
     },
   },

@@ -34,7 +34,6 @@
     "access": "public"
   },
   "scripts": {
-    "build": "vp pack",
     "check": "effect-tsrs diagnostics --project tsconfig.json --type-check --strict",
     "test": "vp test --passWithNoTests",
     "example:totp": "bun test/fixtures/totp-sqlite-bun.ts"

@@ -1,6 +1,11 @@
 import { defineConfig } from "vite-plus";
 
 export default defineConfig({
+  run: {
+    tasks: {
+      build: { command: "vp pack", cache: { untrackedEnv: ["TMPDIR"] } },
+    },
+  },
   pack: {
     tsconfig: "tsconfig.build.json",
     entry: ["src/index.ts", "src/BrowserLogin.ts"],
