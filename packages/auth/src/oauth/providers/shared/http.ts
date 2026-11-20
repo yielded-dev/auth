@@ -180,6 +180,7 @@ const reservedParameters: ReadonlySet<string> = new Set([
   "code_challenge_method",
   "nonce",
   "scope",
+  "resource",
   "iss",
   "grant_type",
   "refresh_token",
@@ -420,6 +421,29 @@ export const sendRequest = Effect.fnUntraced(
 
 const JsonObjectFromString = Schema.fromJsonString(Grant.TokenReceiptFromJson.fields.body.from);
 
+/** Decode bounded UTF-8 bytes into a frozen plain JSON object using
+ * `@yielded/oauth`'s plain-JSON schema validation, independent of Content-Type. */
+export const decodeJsonObjectBytes = Effect.fnUntraced(function* (
+  bytes: Redacted.Redacted<Uint8Array>,
+  status: number,
+  endpoint: OAuthError.InvalidResponse["endpoint"],
+): Effect.fn.Return<Readonly<Record<string, Schema.Json>>, OAuthError.OAuthError> {
+  const raw = yield* reveal(bytes, () =>
+    invalidResponse(endpoint, status, "Response body is unavailable"),
+  );
+
+  const decoded = yield* Effect.try({
+    try: () => new TextDecoder("utf-8", { fatal: true }).decode(raw),
+    catch: () => invalidResponse(endpoint, status, "Response body is not valid UTF-8"),
+  });
+
+  const body = yield* decode(JsonObjectFromString, decoded, () =>
+    invalidResponse(endpoint, status, "Response body is not a bounded JSON object"),
+  );
+
+  return freezePlainJson(body);
+});
+
 /** Mirror of `@yielded/oauth` `internal/transport.ts::json` for plain-OAuth
  * profile fetches and JSON token-body requests; keep in sync. Reuses
  * `@yielded/oauth`'s plain-JSON schema validation. */
@@ -431,23 +455,12 @@ export const parseJsonResponse = Effect.fnUntraced(function* (
     return yield* invalidResponse(endpoint, response.status, "Expected application/json response");
   }
 
-  const bytes = yield* reveal(response.bytes, () =>
-    invalidResponse(endpoint, response.status, "Response body is unavailable"),
-  );
-
-  const decoded = yield* Effect.try({
-    try: () => new TextDecoder("utf-8", { fatal: true }).decode(bytes),
-    catch: () => invalidResponse(endpoint, response.status, "Response body is not valid UTF-8"),
-  });
-
-  const body = yield* decode(JsonObjectFromString, decoded, () =>
-    invalidResponse(endpoint, response.status, "Response body is not a bounded JSON object"),
-  );
+  const body = yield* decodeJsonObjectBytes(response.bytes, response.status, endpoint);
 
   return {
     status: response.status,
     contentType: response.contentType,
-    body: Redacted.make(freezePlainJson(body)),
+    body: Redacted.make(body),
   };
 });
 

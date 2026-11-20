@@ -1,15 +1,10 @@
 import * as ClientAuth from "@yielded/oauth/ClientAuth";
-import * as Discovery from "@yielded/oauth/Discovery";
-import * as Grant from "@yielded/oauth/Grant";
-import * as OAuth from "@yielded/oauth/OAuth";
-import * as OAuthError from "@yielded/oauth/OAuthError";
 import * as Cause from "effect/Cause";
 import type * as Digest from "effect/crypto/Digest";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Base64Url from "effect/encoding/Base64Url";
-import * as Headers from "effect/http/Headers";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import type * as HttpClientResponse from "effect/http/HttpClientResponse";
@@ -34,9 +29,20 @@ import {
   OAuthRedirectUri,
   OAuthTransactionSecrets,
 } from "../../signInModels";
-import { captureHardenedHttp } from "../shared/http";
+import {
+  captureHardenedHttp,
+  decodeJsonObjectBytes,
+  invalidArgument,
+  reveal,
+  sendRequest,
+} from "../shared/http";
 import { issuer, providerKey, type ProviderOptions } from "./models";
 import { Athlete } from "./profile";
+
+const tokenEndpoint = "https://www.strava.com/oauth/token";
+const tokenLimits = { timeoutMs: 10_000, maxResponseBytes: 1_048_576 } as const;
+const maxTokenRequestBytes = 131_072;
+const utf8Encoder = new TextEncoder();
 
 const Token = Schema.Struct({
   token_type: Schema.String.check(Schema.isPattern(/^[Bb]earer$/)),
@@ -68,24 +74,31 @@ const hasSuccessFields = (body: Readonly<Record<string, Schema.Json>>): boolean 
 const hasErrorIndicator = (body: Readonly<Record<string, Schema.Json>>): boolean =>
   stravaErrorIndicators.some((key) => Object.hasOwn(body, key));
 
-const isJsonContentType = (contentType: string | undefined): boolean =>
-  contentType?.split(";", 1)[0]?.trim().toLowerCase() === "application/json";
+const encodeFormRequest = Effect.fnUntraced(function* (prepared: ClientAuth.PreparedRequest) {
+  const body = new URLSearchParams();
 
-// Allow valid JSON token bodies on HTTP 200 regardless of Content-Type to
-// preserve Strava's released compatibility while still going through
-// `OAuth.Client`'s bounded stream fold and plain-JSON validation.
-const normalizeStravaTokenResponse = (
-  response: HttpClientResponse.HttpClientResponse,
-): HttpClientResponse.HttpClientResponse =>
-  response.status === 200 && !isJsonContentType(response.headers["content-type"])
-    ? (Object.create(response, {
-        headers: {
-          value: Headers.set(response.headers, "content-type", "application/json"),
-          enumerable: true,
-          configurable: true,
-        },
-      }) as HttpClientResponse.HttpClientResponse)
-    : response;
+  for (const [key, value] of prepared.parameters) {
+    body.append(key, value);
+  }
+
+  const encoded = body.toString();
+
+  if (utf8Encoder.encode(encoded).length > maxTokenRequestBytes) {
+    return yield* invalidArgument("Encoded token request body exceeds maximum size");
+  }
+
+  let request = HttpClientRequest.post(tokenEndpoint).pipe(HttpClientRequest.acceptJson);
+
+  for (const [name, value] of Object.entries(prepared.headers)) {
+    request = HttpClientRequest.setHeader(request, name, value);
+  }
+
+  return HttpClientRequest.bodyText(
+    request,
+    encoded,
+    "application/x-www-form-urlencoded;charset=UTF-8",
+  );
+});
 
 // Fetch's JSON accessor buffers unknown fields too. Bound the scoped stream before decoding.
 const readBody = Effect.fnUntraced(function* (response: HttpClientResponse.HttpClientResponse) {
@@ -150,20 +163,11 @@ export const makeConnectedProtocol = Effect.fn("Strava.configure")(function* (
     return yield* OAuthConfigurationError.make({ reason: "policy" });
 
   const http = yield* captureHardenedHttp;
-  const tokenHttp = HttpClient.transformResponse(http, Effect.map(normalizeStravaTokenResponse));
   const scopedHttp = http.pipe(HttpClient.withScope);
   const crypto = yield* SecureRandom.SecureRandom;
 
   if (profile.provider !== providerKey || profile.clientRegistrationId !== options.clientId)
     return yield* OAuthConfigurationError.make({ reason: "policy" });
-
-  const discovery = yield* Discovery.makeLocal({
-    issuer,
-    authorization_endpoint: "https://www.strava.com/oauth/authorize",
-    token_endpoint: "https://www.strava.com/oauth/token",
-    response_types_supported: ["code"],
-    authorization_response_iss_parameter_supported: false,
-  }).pipe(Effect.mapError(() => OAuthConfigurationError.make({ reason: "policy" })));
 
   // Pass the caller's handle directly so wiping the registration secret blocks
   // dispatch with `OAuthUnavailable` before any HTTP request is sent.
@@ -181,35 +185,32 @@ export const makeConnectedProtocol = Effect.fn("Strava.configure")(function* (
   });
 
   const post = Effect.fn("Strava.token")(
-    function* (grant: Grant.Grant) {
-      const client = yield* OAuth.make({
-        clientId: options.clientId,
+    function* (
+      grantType: "authorization_code" | "refresh_token",
+      credentialKey: "code" | "refresh_token",
+      credential: Redacted.Redacted<string>,
+    ) {
+      const revealedCredential = yield* reveal(credential);
+
+      // Preserve Strava's released field order (`client_id`, `client_secret`,
+      // `grant_type`, `code`/`refresh_token`) while keeping credentials and
+      // `grant_type` framework-owned via `ClientAuth.withPreparedRequest`.
+      const request = yield* ClientAuth.withPreparedRequest(
         clientAuth,
-        timeout: "10 seconds",
-      }).pipe(
-        Effect.provideService(Discovery.Discovery, discovery),
-        Effect.provideService(HttpClient.HttpClient, tokenHttp),
+        { clientId: options.clientId, endpoint: tokenEndpoint, issuer },
+        [
+          ["grant_type", grantType],
+          [credentialKey, revealedCredential],
+        ],
+        encodeFormRequest,
+        { forbidGrantType: true, authPosition: "prepend" },
       );
 
-      const receipt = yield* client
-        .exchangeRaw(grant)
-        .pipe(
-          Effect.catchCause((cause) =>
-            Effect.failCause(
-              Cause.map(cause, (error) =>
-                OAuthError.isOAuthError(error) &&
-                error.reason._tag === "InvalidResponse" &&
-                error.reason.status === 400
-                  ? OAuthProtocolRejected.make({})
-                  : OAuthUnavailable.make({}),
-              ),
-            ),
-          ),
-        );
+      const response = yield* sendRequest(http, request, tokenLimits, "token");
 
-      const body = Redacted.value(receipt.body);
+      if (response.status === 200) {
+        const body = yield* decodeJsonObjectBytes(response.bytes, response.status, "token");
 
-      if (receipt.status === 200) {
         if (hasErrorIndicator(body)) {
           return yield* OAuthUnavailable.make({});
         }
@@ -220,8 +221,15 @@ export const makeConnectedProtocol = Effect.fn("Strava.configure")(function* (
         );
       }
 
-      if (receipt.status === 400) {
-        if (hasSuccessFields(body)) {
+      if (response.status === 400) {
+        // Inspect bounded JSON bytes on 400 regardless of Content-Type so
+        // contradictory receipts combining token fields with errors cannot
+        // produce a definitive rejection.
+        const decoded = yield* decodeJsonObjectBytes(response.bytes, response.status, "token").pipe(
+          Effect.option,
+        );
+
+        if (decoded._tag === "Some" && hasSuccessFields(decoded.value)) {
           return yield* OAuthUnavailable.make({});
         }
 
@@ -230,7 +238,6 @@ export const makeConnectedProtocol = Effect.fn("Strava.configure")(function* (
 
       return yield* OAuthUnavailable.make({});
     },
-    Effect.scoped,
     (effect) =>
       effect.pipe(
         Effect.catchCause((cause) =>
@@ -301,7 +308,7 @@ export const makeConnectedProtocol = Effect.fn("Strava.configure")(function* (
       if (Redacted.value(input.secrets.state) !== Redacted.value(input.response.state))
         return yield* OAuthProtocolRejected.make({});
 
-      const token = yield* post(Grant.authorizationCode({ code: input.response.code }));
+      const token = yield* post("authorization_code", "code", input.response.code);
       const athlete = token.athlete;
 
       if (athlete === undefined) return yield* OAuthProtocolRejected.make({});
@@ -333,7 +340,7 @@ export const makeConnectedProtocol = Effect.fn("Strava.configure")(function* (
       yield* verifyConfiguration(input.context.configuration);
       if (input.material.refreshToken === undefined) return yield* OAuthProtocolRejected.make({});
 
-      const token = yield* post(Grant.refreshToken({ refreshToken: input.material.refreshToken }));
+      const token = yield* post("refresh_token", "refresh_token", input.material.refreshToken);
 
       // Fetch identity again so a provider/account mismatch cannot silently
       // replace the grant held for this subject.

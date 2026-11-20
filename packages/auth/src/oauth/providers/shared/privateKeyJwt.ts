@@ -150,21 +150,27 @@ export class PrivateKeyClientSecret extends Context.Service<
 }
 
 /** Wrap a per-request private-key JWT signer (such as Apple `.p8`) as a named
- * `client_secret_post` `ClientAuth.Method`, wiping the minted secret on every
- * exit via `acquireUseRelease`. */
+ * `client_secret_post` `ClientAuth.Method`, keeping minting and application
+ * interruptible and wiping the minted secret on every exit. */
 export const makePrivateKeyClientAuth = (
   authentication: Extract<OpenIdConnectAuthentication, { readonly privateKeyJwt: PrivateKeyJwt }>,
   clientSecrets: PrivateKeyClientSecret["Service"],
 ): ClientAuth.Method<never> =>
   ClientAuth.make("client_secret_post", (request) =>
-    Effect.acquireUseRelease(
-      clientSecrets.mint(authentication).pipe(
-        Effect.filterOrFail(
-          (secret): secret is Redacted.Redacted<string> => secret !== undefined,
-          () => clientAuthFailed("Missing client secret for private-key JWT"),
+    Effect.uninterruptibleMask((restore) =>
+      Effect.flatMap(
+        restore(
+          clientSecrets.mint(authentication).pipe(
+            Effect.filterOrFail(
+              (secret): secret is Redacted.Redacted<string> => secret !== undefined,
+              () => clientAuthFailed("Missing client secret for private-key JWT"),
+            ),
+          ),
         ),
+        (secret) =>
+          restore(ClientAuth.secretPost(secret).apply(request)).pipe(
+            Effect.ensuring(Effect.sync(() => Redacted.wipeUnsafe(secret))),
+          ),
       ),
-      (secret) => ClientAuth.secretPost(secret).apply(request),
-      (secret) => Effect.sync(() => Redacted.wipeUnsafe(secret)),
     ),
   );

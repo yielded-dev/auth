@@ -394,6 +394,10 @@ const validateRawParameters = Effect.fnUntraced(function* (
  * `client_secret`, `client_assertion`, `client_assertion_type`), preserve
  * repeated parameter keys, and are bounded by the final encoded token request
  * body limit (`<= 131,072` UTF-8 bytes including client authentication fields).
+ * For `"authorization_code"` and `"refresh_token"` raw grants, parameters
+ * listed ahead of the first `"code"` or `"refresh_token"` entry serialize
+ * before `grant_type` (matching {@link authorizationCode} and
+ * {@link refreshToken}); all other raw grants serialize `grant_type` first.
  *
  * @stability unstable
  * @category constructors
