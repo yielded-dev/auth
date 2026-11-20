@@ -29,6 +29,7 @@ import * as Scope from "effect/Scope";
 import * as TestClock from "effect/testing/TestClock";
 import { describe, expect } from "vite-plus/test";
 
+import { makeProfileFetch } from "../../src/oauth/providers/shared/profileFetch";
 import { expectTag } from "./helpers/oauth";
 
 const json = (body: unknown, status = 200) => Response.json(body, { status });
@@ -1014,4 +1015,84 @@ it.effect.each<EntraDiscoveryCase>([
         );
       }
     }).pipe(Effect.provide(platform)),
+);
+
+// Relocated from packages/oauth/test/protocol.test.ts along with plain-OAuth profileFetch:
+// profile URL loopback anti-downgrade, bearer + custom headers, and pre-dispatch header-injection checks.
+it.effect(
+  "enforces profile URL loopback anti-downgrade, bearer/custom headers, and header-injection checks",
+  () =>
+    Effect.gen(function* () {
+      const requests: Array<{
+        readonly url: string;
+        readonly authorization: string | null;
+        readonly apiVersion: string | null;
+      }> = [];
+
+      const fetch: typeof globalThis.fetch = async (input, init) => {
+        const url = input instanceof Request ? input.url : String(input);
+
+        const headers = new Headers(
+          init?.headers ?? (input instanceof Request ? input.headers : undefined),
+        );
+
+        requests.push({
+          url,
+          authorization: headers.get("authorization"),
+          apiVersion: headers.get("x-api-version"),
+        });
+
+        return json({ id: 42 });
+      };
+
+      const provideFetch = Effect.provideService(FetchHttpClient.Fetch, fetch);
+
+      expect(
+        yield* makeProfileFetch({
+          issuer: "https://issuer.example/tenant/",
+          url: "http://localhost:8080/user",
+          timeoutMs: 1000,
+        }).pipe(provideFetch, Effect.flip),
+      ).toMatchObject({ _tag: "OAuthError", reason: { _tag: "InvalidArgument" } });
+
+      expect(
+        yield* makeProfileFetch({
+          issuer: "https://issuer.example/tenant/",
+          url: "https://api.example/user",
+          headers: { Authorization: "injected" },
+          timeoutMs: 1000,
+        }).pipe(provideFetch, Effect.flip),
+      ).toMatchObject({ _tag: "OAuthError", reason: { _tag: "InvalidArgument" } });
+
+      expect(requests).toEqual([]);
+
+      const loopbackProfile = yield* makeProfileFetch({
+        issuer: "http://127.0.0.1:8080",
+        url: "http://localhost:8080/user",
+        timeoutMs: 1000,
+      }).pipe(provideFetch);
+
+      expect(yield* loopbackProfile(Redacted.make("private-access"))).toEqual({ id: 42 });
+
+      const httpsProfile = yield* makeProfileFetch({
+        issuer: "https://issuer.example/tenant/",
+        url: "https://api.example/user",
+        headers: { "X-Api-Version": "2026" },
+        timeoutMs: 1000,
+      }).pipe(provideFetch);
+
+      expect(yield* httpsProfile(Redacted.make("private-access"))).toEqual({ id: 42 });
+      expect(requests).toEqual([
+        {
+          url: "http://localhost:8080/user",
+          authorization: "Bearer private-access",
+          apiVersion: null,
+        },
+        {
+          url: "https://api.example/user",
+          authorization: "Bearer private-access",
+          apiVersion: "2026",
+        },
+      ]);
+    }).pipe(Effect.scoped, Effect.provide(FetchHttpClient.layer)),
 );

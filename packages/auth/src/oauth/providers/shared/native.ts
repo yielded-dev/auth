@@ -41,6 +41,7 @@ export interface NativeVendorOptions {
   };
   readonly tokenBodyFormat?: "form" | "json";
   readonly scopeSeparator?: " " | ",";
+  readonly supportsRefresh?: boolean;
 }
 
 export interface NativeProvider {
@@ -83,10 +84,10 @@ export const install = Effect.fn("OpenIdConnect.installNative")(function* (
         );
 
   const useJsonTokens = vendor?.tokenBodyFormat === "json";
-  const useCommaScopes = vendor?.scopeSeparator === ",";
+  const useCommaRefresh = vendor?.scopeSeparator === "," && vendor?.supportsRefresh === true;
 
   const tokenSender =
-    useJsonTokens || useCommaScopes
+    useJsonTokens || useCommaRefresh
       ? yield* mapConfigError(
           makeAuthenticatedTokenSender({
             issuer: options.metadata.issuer,
@@ -113,7 +114,9 @@ export const install = Effect.fn("OpenIdConnect.installNative")(function* (
     ...(useJsonTokens && tokenSender !== undefined
       ? { codeTokenSender: tokenSender.codeGrant }
       : {}),
-    ...(tokenSender === undefined ? {} : { refreshTokenSender: tokenSender.refreshGrant }),
+    ...(vendor?.supportsRefresh === true && tokenSender !== undefined
+      ? { refreshTokenSender: tokenSender.refreshGrant }
+      : {}),
     ...(vendor?.githubVerifiedPrimaryEmail === true
       ? { enrichIdentity: yield* makeEmailEnrichment(options.timeoutMs) }
       : {}),

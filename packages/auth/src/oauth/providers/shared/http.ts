@@ -61,6 +61,7 @@ const clientAuthFailed = (description: string, cause?: unknown): OAuthError.OAut
     }),
   });
 
+// Mirror of `@yielded/oauth` `internal/validation.ts`; keep in sync until M4b.
 export const text = (maximum: number) => Schema.NonEmptyString.check(Schema.isMaxLength(maximum));
 
 const integer = (minimum: number, maximum: number) =>
@@ -297,6 +298,7 @@ export interface HttpResponse {
   readonly bytes: Redacted.Redacted<Uint8Array>;
 }
 
+// Mirror of `@yielded/oauth` `internal/transport.ts`; keep in sync until M4b.
 /** Single-attempt bounded HTTP request with manual redirect rejection,
  * `response.url` verification, `Scope`-owned byte folding, and cause-preserving timeout. */
 export const sendRequest = Effect.fnUntraced(
@@ -314,12 +316,6 @@ export const sendRequest = Effect.fnUntraced(
         "Redirects and unexpected response URLs are not allowed",
         { status: response.status },
       );
-    }
-
-    if (response.status >= 500) {
-      return yield* transportFailed(endpoint, "Upstream server error", {
-        status: response.status,
-      });
     }
 
     const announced = response.headers["content-length"];
@@ -435,13 +431,16 @@ export const authorizationUrlWithCommaScopes = Effect.fnUntraced(function* (
   client: OAuth.Client,
   input: OAuth.AuthorizationInput,
 ): Effect.fn.Return<Redacted.Redacted<string>, OAuthError.OAuthError> {
-  const base = yield* client.authorizationUrl({ ...input, scopes: [] });
-
   const scopes = yield* decode(Scopes, input.scopes, () =>
     invalidArgument("Invalid authorization scopes"),
   );
 
-  if (scopes.length === 0) return base;
+  const first = scopes[0];
+
+  if (first === undefined) return yield* client.authorizationUrl({ ...input, scopes: [] });
+
+  // Reserve `scope`'s exact query-parameter slot before rewriting its value in place.
+  const base = yield* client.authorizationUrl({ ...input, scopes: [first] });
 
   const url = new URL(
     yield* reveal(base, () => invalidArgument("Authorization URL is unavailable")),
@@ -456,6 +455,7 @@ export const authorizationUrlWithCommaScopes = Effect.fnUntraced(function* (
   return Redacted.make(url.href);
 });
 
+// Mirror of `@yielded/oauth` `OAuth.ts` auth and grant assembly; keep in sync until M4b.
 const TokenSenderOptionsSchema = Schema.Struct({
   issuer: Issuer,
   tokenEndpoint: ProtocolEndpoint,
@@ -489,6 +489,7 @@ const RefreshGrantSchema = Schema.Struct({
 
 // RFC6749 Appendix B: encode client credentials before joining with the colon.
 // Adapted from oauth4webapi 3.8.8 src/index.ts::formUrlEncode (MIT, Filip Skokan).
+// Exact source commit and license: ../../../../THIRD_PARTY_NOTICES.md.
 const basicComponent = (value: string): string =>
   encodeURIComponent(value).replace(/[-_.!~*'()]|%20/gu, (part) =>
     part === "%20" ? "+" : `%${part.charCodeAt(0).toString(16).toUpperCase()}`,
@@ -541,7 +542,7 @@ const encodeJsonObject = Effect.fnUntraced(function* (
   }
 
   return yield* Schema.encodeEffect(JsonStringRecord)(target).pipe(
-    Effect.mapError((cause) => invalidArgument("Could not encode JSON token request body", cause)),
+    Effect.mapError(() => invalidArgument("Could not encode JSON token request body")),
   );
 });
 
