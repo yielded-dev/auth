@@ -6,8 +6,7 @@ record the exact source revisions, authors, licenses, affected files, and the
 adapted Noble Argon2 implementation and password-derivation test material. That file is
 included in the published `@yielded/auth-platform-workerd` package.
 
-The [Auth package notices](packages/auth/THIRD_PARTY_NOTICES.md) and
-[OAuth package notices](packages/oauth/THIRD_PARTY_NOTICES.md) credit Filip
+The [OAuth package notices](packages/oauth/THIRD_PARTY_NOTICES.md) credit Filip
 Skokan’s MIT-licensed openid-client and oauth4webapi for the attributed HTTP
 Basic form-encoding adaptation and adapted protocol test contracts. The runtime
 uses Effect, including its bundled JOSE; those SDKs are not runtime

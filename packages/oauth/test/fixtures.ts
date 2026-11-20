@@ -4,13 +4,14 @@ import * as HttpClient from "effect/http/HttpClient";
 import type * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as Redacted from "effect/Redacted";
+import type * as Schema from "effect/Schema";
 import { expect } from "vite-plus/test";
 
-import type { OAuth } from "../src/index";
+import { ClientAuth, Discovery, Grant, type OAuth } from "../src/index";
 
 export const cryptoLayer = NodeCrypto.layer;
 
-export const metadata: OAuth.Metadata = {
+export const metadata: Discovery.Metadata = {
   issuer: "https://issuer.example/tenant/",
   authorization_endpoint: "https://issuer.example/authorize",
   token_endpoint: "https://issuer.example/token",
@@ -23,18 +24,21 @@ export const metadata: OAuth.Metadata = {
   token_endpoint_auth_methods_supported: ["client_secret_basic", "client_secret_post", "none"],
 };
 
+export const localDiscovery = Discovery.layerLocal(metadata);
+
 export const options: OAuth.ClientOptions = {
-  metadata,
   clientId: "client",
-  authentication: { method: "client_secret_post", secret: Redacted.make("client-secret") },
-  timeoutMs: 1000,
+  clientAuth: ClientAuth.secretPost(Redacted.make("client-secret")),
+  timeout: "1 second",
 };
 
 export const codeInput = {
   code: Redacted.make("single-use-code"),
   redirectUri: "https://app.example/callback",
   pkceVerifier: Redacted.make("dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"),
-} satisfies OAuth.CodeGrantInput;
+};
+
+export const codeGrant = Grant.authorizationCode(codeInput);
 
 export const tokenBody = {
   access_token: "private-access",
@@ -57,7 +61,7 @@ export const form = (request: HttpClientRequest.HttpClientRequest) => {
   return new URLSearchParams(new TextDecoder().decode(request.body.body));
 };
 
-export const receipt = (body: OAuth.JsonObject, status = 200): OAuth.TokenReceipt => ({
+export const receipt = (body: Record<string, Schema.Json>, status = 200): Grant.TokenReceipt => ({
   status,
   contentType: "application/json",
   body: Redacted.make(body),

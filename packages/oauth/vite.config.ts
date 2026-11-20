@@ -10,7 +10,9 @@ export default defineConfig({
     tsconfig: "tsconfig.build.json",
     entry: [
       "src/index.ts",
+      "src/ClientAuth.ts",
       "src/Discovery.ts",
+      "src/Grant.ts",
       "src/OAuth.ts",
       "src/OAuthError.ts",
       "src/Oidc.ts",

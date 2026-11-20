@@ -10,7 +10,7 @@ import * as TestClock from "effect/testing/TestClock";
 import { expect } from "vite-plus/test";
 
 import { OAuth } from "../src/index";
-import { codeInput, options } from "./fixtures";
+import { codeGrant, localDiscovery, options } from "./fixtures";
 
 // c4752e34b introduced joins that discard failing cleanup Exits in ownership
 // and transport (reproduced at 4ea887e2). Control cleanup to distinguish the
@@ -38,12 +38,13 @@ for (const termination of ["owner", "caller", "timeout"] as const) {
         ),
       );
 
-      const client = yield* OAuth.make({ ...options, timeoutMs: 10 }).pipe(
+      const client = yield* OAuth.make({ ...options, timeout: 10 }).pipe(
+        Effect.provide(localDiscovery),
         Effect.provideService(Scope.Scope, owner),
         Effect.provideService(HttpClient.HttpClient, http),
       );
 
-      const active = yield* Effect.forkChild(client.codeGrant(codeInput));
+      const active = yield* Effect.forkChild(client.exchangeRaw(codeGrant));
 
       yield* Deferred.await(entered);
       if (termination === "owner") yield* Scope.close(owner, Exit.void);

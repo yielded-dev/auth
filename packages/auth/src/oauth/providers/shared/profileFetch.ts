@@ -1,4 +1,3 @@
-import type * as OAuth from "@yielded/oauth/OAuth";
 import type * as OAuthError from "@yielded/oauth/OAuthError";
 import * as Effect from "effect/Effect";
 import type * as HttpClient from "effect/http/HttpClient";
@@ -39,7 +38,7 @@ export interface ProfileFetchOptions {
 
 export type ProfileFetcher = (
   accessToken: Redacted.Redacted<string>,
-) => Effect.Effect<OAuth.JsonObject, OAuthError.OAuthError>;
+) => Effect.Effect<Readonly<Record<string, Schema.Json>>, OAuthError.OAuthError>;
 
 const ProfileFetchOptionsSchema = Schema.Struct({
   issuer: Issuer,

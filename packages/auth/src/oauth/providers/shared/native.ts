@@ -1,4 +1,5 @@
-import type * as Discovery from "@yielded/oauth/Discovery";
+import type * as ClientAuth from "@yielded/oauth/ClientAuth";
+import * as Discovery from "@yielded/oauth/Discovery";
 import * as OAuth from "@yielded/oauth/OAuth";
 import type * as OAuthError from "@yielded/oauth/OAuthError";
 import type * as Oidc from "@yielded/oauth/Oidc";
@@ -14,7 +15,7 @@ import type * as Scope from "effect/Scope";
 
 import { makeEmailEnrichment } from "../github/email";
 import { classifyOAuthConfigurationError } from "./classifyOAuthError";
-import { makeAuthenticatedTokenSender, type AuthenticatedTokenSender } from "./http";
+import { makeJsonTokenSender, type JsonTokenSender } from "./http";
 import { makeProfileFetch, type ProfileFetcher } from "./profileFetch";
 
 /** Provider construction captures explicit platform/crypto services within its Scope. */
@@ -31,6 +32,15 @@ export interface NativeKeySet {
   readonly digest: Digest.Digest["Service"];
 }
 
+export interface NativeInstallOptions {
+  readonly metadata: Discovery.Metadata;
+  readonly clientId: string;
+  readonly clientAuth: ClientAuth.Method<never>;
+  readonly revocationAuth?: ClientAuth.Method<never>;
+  readonly timeoutMs: number;
+  readonly maxResponseBytes?: number;
+}
+
 export interface NativeVendorOptions {
   readonly githubVerifiedPrimaryEmail?: boolean;
   readonly profile?: {
@@ -41,14 +51,12 @@ export interface NativeVendorOptions {
   };
   readonly tokenBodyFormat?: "form" | "json";
   readonly scopeSeparator?: " " | ",";
-  readonly supportsRefresh?: boolean;
 }
 
 export interface NativeProvider {
-  readonly client: OAuth.Client;
+  readonly client: OAuth.Client["Service"];
   readonly fetchProfile?: ProfileFetcher;
-  readonly codeTokenSender?: AuthenticatedTokenSender["codeGrant"];
-  readonly refreshTokenSender?: AuthenticatedTokenSender["refreshGrant"];
+  readonly jsonTokenSender?: JsonTokenSender;
   readonly enrichIdentity?: Effect.Success<ReturnType<typeof makeEmailEnrichment>>;
   readonly verifier?: Oidc.Verifier["Service"];
   readonly nativeKeySet?: NativeKeySet;
@@ -57,7 +65,7 @@ export interface NativeProvider {
 }
 
 export const install = Effect.fn("OpenIdConnect.installNative")(function* (
-  options: OAuth.ClientOptions,
+  options: NativeInstallOptions,
   vendor?: NativeVendorOptions,
 ) {
   const mapConfigError = <A, R>(effect: Effect.Effect<A, OAuthError.OAuthError, R>) =>
@@ -67,7 +75,19 @@ export const install = Effect.fn("OpenIdConnect.installNative")(function* (
       ),
     );
 
-  const client = yield* mapConfigError(OAuth.make(options));
+  const localDiscovery = yield* mapConfigError(Discovery.makeLocal(options.metadata));
+
+  const client = yield* mapConfigError(
+    OAuth.make({
+      clientId: options.clientId,
+      clientAuth: options.clientAuth,
+      ...(options.revocationAuth === undefined ? {} : { revocationAuth: options.revocationAuth }),
+      timeout: options.timeoutMs,
+      ...(options.maxResponseBytes === undefined
+        ? {}
+        : { maxResponseBytes: options.maxResponseBytes }),
+    }).pipe(Effect.provideService(Discovery.Discovery, localDiscovery)),
+  );
 
   const fetchProfile =
     vendor?.profile === undefined
@@ -83,25 +103,19 @@ export const install = Effect.fn("OpenIdConnect.installNative")(function* (
           }),
         );
 
-  const useJsonTokens = vendor?.tokenBodyFormat === "json";
-  const useCommaRefresh = vendor?.scopeSeparator === "," && vendor?.supportsRefresh === true;
-
-  const tokenSender =
-    useJsonTokens || useCommaRefresh
+  const jsonTokenSender =
+    vendor?.tokenBodyFormat === "json"
       ? yield* mapConfigError(
-          makeAuthenticatedTokenSender({
+          makeJsonTokenSender({
             issuer: options.metadata.issuer,
             tokenEndpoint: options.metadata.token_endpoint,
             clientId: options.clientId,
-            authentication: options.authentication,
+            clientAuth: options.clientAuth,
             timeoutMs: options.timeoutMs,
             ...(options.maxResponseBytes === undefined
               ? {}
               : { maxResponseBytes: options.maxResponseBytes }),
-            ...(vendor?.tokenBodyFormat === undefined
-              ? {}
-              : { tokenBodyFormat: vendor.tokenBodyFormat }),
-            ...(vendor?.scopeSeparator === undefined
+            ...(vendor.scopeSeparator === undefined
               ? {}
               : { scopeSeparator: vendor.scopeSeparator }),
           }),
@@ -111,12 +125,7 @@ export const install = Effect.fn("OpenIdConnect.installNative")(function* (
   return {
     client,
     ...(fetchProfile === undefined ? {} : { fetchProfile }),
-    ...(useJsonTokens && tokenSender !== undefined
-      ? { codeTokenSender: tokenSender.codeGrant }
-      : {}),
-    ...(vendor?.supportsRefresh === true && tokenSender !== undefined
-      ? { refreshTokenSender: tokenSender.refreshGrant }
-      : {}),
+    ...(jsonTokenSender === undefined ? {} : { jsonTokenSender }),
     ...(vendor?.githubVerifiedPrimaryEmail === true
       ? { enrichIdentity: yield* makeEmailEnrichment(options.timeoutMs) }
       : {}),

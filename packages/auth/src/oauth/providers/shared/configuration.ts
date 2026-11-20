@@ -1,3 +1,4 @@
+import * as ClientAuth from "@yielded/oauth/ClientAuth";
 import type * as Discovery from "@yielded/oauth/Discovery";
 import type * as OAuth from "@yielded/oauth/OAuth";
 import * as Effect from "effect/Effect";
@@ -38,6 +39,7 @@ import {
   type PlainOAuthIdentitySource,
 } from "./models";
 import { install, type NativeProvider, type NativeVendorOptions } from "./native";
+import { makePrivateKeyClientAuth, PrivateKeyClientSecret } from "./privateKeyJwt";
 
 const boundedString = (maximum: number) =>
   Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(maximum));
@@ -94,16 +96,19 @@ export const authentication = Schema.Union([
   Schema.Struct({ method: Schema.Literal("none"), publicClient: Schema.Literal(true) }),
 ]);
 
-/** OAuth clients store a static secret or accept one on each token request. */
+/** Convert provider authentication policy into an `@yielded/oauth` `ClientAuth.Method`. */
 export const nativeAuthentication = (
   authentication: OpenIdConnectAuthentication,
-): OAuth.Authentication => {
-  if (isPrivateKeyAuthentication(authentication)) return { method: "client_secret_post" };
-  if (!hasStaticSecret(authentication)) return authentication;
+  clientSecrets: PrivateKeyClientSecret["Service"],
+): ClientAuth.Method<never> => {
+  if (isPrivateKeyAuthentication(authentication)) {
+    return makePrivateKeyClientAuth(authentication, clientSecrets);
+  }
+  if (!hasStaticSecret(authentication)) return ClientAuth.none;
 
   return authentication.method === "client_secret_basic"
-    ? { method: "client_secret_basic", secret: authentication.secret }
-    : { method: "client_secret_post", secret: authentication.secret };
+    ? ClientAuth.secretBasic(authentication.secret)
+    : ClientAuth.secretPost(authentication.secret);
 };
 
 /** Clone credential bytes so later wipes do not clear the caller's copy. */
@@ -372,7 +377,7 @@ export interface InstalledProvider<R> extends Omit<NativeProvider, "client"> {
   /** Absent for native registrations, which only verify platform ID tokens. */
   readonly client?: NativeProvider["client"];
   readonly provider: Provider<R>;
-  readonly metadata: OAuth.Metadata;
+  readonly metadata: Discovery.Metadata;
 }
 
 const metadataSchema = Schema.Struct({
@@ -430,6 +435,10 @@ export const prepareConfigurations = Effect.fn("OpenIdConnect.prepareConfigurati
       const privateKey = authentication.privateKeyJwt.privateKey;
 
       yield* Effect.addFinalizer(() => Effect.sync(() => Redacted.wipeUnsafe(privateKey)));
+    } else if (hasStaticSecret(authentication)) {
+      const staticSecret = authentication.secret;
+
+      yield* Effect.addFinalizer(() => Effect.sync(() => Redacted.wipeUnsafe(staticSecret)));
     }
   }
 
@@ -561,11 +570,13 @@ export const installProvider = Effect.fn("OpenIdConnect.installProvider")(functi
   // Native registrations never call the token endpoint, so they install no client.
   if (registrationKind(provider) === "native") return { provider, metadata };
 
+  const clientSecrets = yield* PrivateKeyClientSecret;
+
   const native = yield* install(
     {
       metadata,
       clientId: provider.clientId,
-      authentication: nativeAuthentication(provider.authentication),
+      clientAuth: nativeAuthentication(provider.authentication, clientSecrets),
       timeoutMs: timeoutSeconds * 1000,
     },
     provider.protocol === "oauth" ? nativeVendorOptions(provider) : undefined,
@@ -574,7 +585,7 @@ export const installProvider = Effect.fn("OpenIdConnect.installProvider")(functi
   const placeholder = Redacted.make("a".repeat(43));
 
   for (const callback of provider.callbacks) {
-    const authInput: OAuth.AuthorizationInput = {
+    const authInput: OAuth.AuthorizationUrlOptions = {
       redirectUri: callback.redirectUri,
       scopes: provider.scopes,
       state: placeholder,
@@ -588,7 +599,7 @@ export const installProvider = Effect.fn("OpenIdConnect.installProvider")(functi
             nonce: placeholder,
             ...(provider.maxAgeSeconds === undefined
               ? {}
-              : { maxAgeSeconds: provider.maxAgeSeconds }),
+              : { maxAge: `${provider.maxAgeSeconds} seconds` }),
           }
         : {}),
     };
@@ -625,6 +636,8 @@ export const installOAuthConfigurations = Effect.fn("OAuth.installConfigurations
           issuer: provider.issuer,
           authorization_endpoint: provider.authorizationEndpoint,
           token_endpoint: provider.tokenEndpoint,
+          response_types_supported: ["code"],
+          ...(provider.pkceS256 ? { code_challenge_methods_supported: ["S256"] } : {}),
           authorization_response_iss_parameter_supported:
             provider.responseIssuerMode === "required",
         },

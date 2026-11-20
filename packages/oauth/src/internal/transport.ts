@@ -50,6 +50,10 @@ export const request = Effect.fnUntraced(
           status: response.status,
         },
       );
+    if (response.status >= 500)
+      return yield* transportFailed(endpoint, "Upstream endpoint returned a server error", {
+        status: response.status,
+      });
     const announced = response.headers["content-length"];
 
     if (

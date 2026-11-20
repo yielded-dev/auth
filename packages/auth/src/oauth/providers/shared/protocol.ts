@@ -1,6 +1,7 @@
 import * as Discovery from "@yielded/oauth/Discovery";
+import * as Grant from "@yielded/oauth/Grant";
+import * as OAuth from "@yielded/oauth/OAuth";
 import * as Oidc from "@yielded/oauth/Oidc";
-import * as Pkce from "@yielded/oauth/Pkce";
 import * as Cause from "effect/Cause";
 import * as Digest from "effect/crypto/Digest";
 import * as SecureRandom from "effect/crypto/SecureRandom";
@@ -42,14 +43,12 @@ import { classifyOAuthError } from "./classifyOAuthError";
 import { nativeAudiences, tokenCompatibility } from "./compatibility";
 import { registrationKind, type InstalledConfiguration } from "./configuration";
 import { discoveryProfile } from "./discovery";
-import { authorizationUrlWithCommaScopes } from "./http";
+import { authorizeWithCommaScopes } from "./http";
 import {
   persistedResponseIssuerMode,
-  type OpenIdConnectAuthentication,
   type OpenIdConnectConfigurationError,
   type OpenIdConnectOidcProvider,
 } from "./models";
-import { PrivateKeyClientSecret } from "./privateKeyJwt";
 import {
   decodeAppleCallbackUser,
   decodeOidcProfile,
@@ -145,27 +144,13 @@ export const makeOpenIdConnectOAuthProtocol = Effect.fn("makeOpenIdConnectOAuthP
   ): Effect.fn.Return<
     OAuthProtocol["Service"],
     OpenIdConnectConfigurationError | OAuthUnavailable,
-    R | Setup | (SecureRandom.SecureRandom | Digest.Digest) | PrivateKeyClientSecret | Scope.Scope
+    R | Setup | (SecureRandom.SecureRandom | Digest.Digest) | Scope.Scope
   > {
     const context = (yield* Effect.context<R>()).pipe(withoutObservability);
     const crypto = yield* SecureRandom.SecureRandom;
     const digests = yield* Digest.Digest;
-    const clientSecrets = yield* PrivateKeyClientSecret;
     // Own application decoding as well as the native client's individual requests.
     const run = yield* makeScopedOperation(unavailable);
-
-    const requestSecret = (authentication: OpenIdConnectAuthentication) =>
-      clientSecrets
-        .mint(authentication)
-        .pipe(
-          Effect.catchCause((cause) =>
-            Effect.failCause(
-              Cause.map(cause, (error) =>
-                classifyOAuthError(error, { operation: "authorization_code", phase: "preSend" }),
-              ),
-            ),
-          ),
-        );
 
     // Setup shares the protocol's containment for supplied platform services.
     const { installed, timeoutSeconds } = yield* installation;
@@ -199,44 +184,37 @@ export const makeOpenIdConnectOAuthProtocol = Effect.fn("makeOpenIdConnectOAuthP
       )
         return yield* OAuthRejected.make({});
 
-      const state = yield* randomSecret.pipe(
-        Effect.provideService(SecureRandom.SecureRandom, crypto),
+      const responseIssuerMode = persistedResponseIssuerMode(
+        provider.responseIssuerMode,
+        entry.metadata.authorization_response_iss_parameter_supported,
       );
 
-      const pkce = provider.pkceS256
-        ? yield* Pkce.generate.pipe(
-            Effect.provideService(SecureRandom.SecureRandom, crypto),
-            Effect.provideService(Digest.Digest, digests),
-          )
-        : undefined;
-
-      const nonce =
-        provider.protocol === "oidc"
-          ? yield* randomSecret.pipe(Effect.provideService(SecureRandom.SecureRandom, crypto))
-          : undefined;
-
-      const authInput = {
+      const baseAuthOptions = {
         redirectUri: callback.redirectUri,
         scopes: provider.scopes,
-        state,
-        ...(pkce === undefined ? {} : { codeChallenge: pkce.challenge }),
-        ...(nonce === undefined ? {} : { nonce }),
+        pkce: provider.pkceS256,
+        issuerIdentification: responseIssuerMode,
         ...(provider.authorizationParameters === undefined
           ? {}
           : { parameters: provider.authorizationParameters }),
         ...(provider.protocol === "oidc" && provider.maxAgeSeconds !== undefined
-          ? { maxAgeSeconds: provider.maxAgeSeconds }
+          ? { maxAge: `${provider.maxAgeSeconds} seconds` as const }
           : {}),
         ...(request.prompt === undefined ? {} : { prompt: request.prompt }),
         ...(request.loginHint === undefined ? {} : { loginHint: request.loginHint }),
         ...(provider.responseMode === undefined ? {} : { responseMode: provider.responseMode }),
       };
 
-      const url = yield* (
-        provider.protocol === "oauth" && provider.scopeSeparator === ","
-          ? authorizationUrlWithCommaScopes(entry.client, authInput)
-          : entry.client.authorizationUrl(authInput)
+      const authorized = yield* (
+        provider.protocol === "oidc"
+          ? Oidc.authorize(baseAuthOptions)
+          : provider.scopeSeparator === ","
+            ? authorizeWithCommaScopes(baseAuthOptions)
+            : OAuth.authorize(baseAuthOptions)
       ).pipe(
+        Effect.provideService(OAuth.Client, entry.client),
+        Effect.provideService(SecureRandom.SecureRandom, crypto),
+        Effect.provideService(Digest.Digest, digests),
         Effect.catchCause((cause) =>
           Effect.failCause(
             Cause.map(cause, (error) =>
@@ -244,11 +222,6 @@ export const makeOpenIdConnectOAuthProtocol = Effect.fn("makeOpenIdConnectOAuthP
             ),
           ),
         ),
-      );
-
-      const responseIssuerMode = persistedResponseIssuerMode(
-        provider.responseIssuerMode,
-        entry.metadata.authorization_response_iss_parameter_supported,
       );
 
       const result = {
@@ -261,12 +234,16 @@ export const makeOpenIdConnectOAuthProtocol = Effect.fn("makeOpenIdConnectOAuthP
           callbackId: callback.callbackId,
           redirectUri: callback.redirectUri,
         },
-        authorizationUrl: url,
+        authorizationUrl: authorized.url,
         secrets: {
           namespace: "effect-auth/oauth-transaction-secrets/v1" as const,
-          state,
-          ...(pkce === undefined ? {} : { pkceVerifier: pkce.verifier }),
-          ...(nonce === undefined ? {} : { oidcNonce: nonce }),
+          state: authorized.transaction.state,
+          ...(authorized.transaction.pkceVerifier === undefined
+            ? {}
+            : { pkceVerifier: authorized.transaction.pkceVerifier }),
+          ...(authorized.transaction.nonce === undefined
+            ? {}
+            : { oidcNonce: authorized.transaction.nonce }),
         },
         ...(provider.responseMode === undefined ? {} : { responseMode: provider.responseMode }),
       };
@@ -322,30 +299,41 @@ export const makeOpenIdConnectOAuthProtocol = Effect.fn("makeOpenIdConnectOAuthP
         if (startedAt < 0 || startedAt > DateTime.toEpochMillis(yield* DateTime.now))
           return yield* rejected();
 
-        const clientSecret = yield* requestSecret(provider.authentication);
-
-        const receipt = yield* (entry.codeTokenSender ?? client.codeGrant)({
-          code: request.response.code,
-          redirectUri: saved.redirectUri,
-          ...(request.secrets.pkceVerifier === undefined
-            ? {}
-            : { pkceVerifier: request.secrets.pkceVerifier }),
-          ...(provider.tokenParameters === undefined
-            ? {}
-            : { parameters: provider.tokenParameters }),
-          ...(clientSecret === undefined ? {} : { clientSecret }),
-        }).pipe(
+        const receipt = yield* (
+          entry.jsonTokenSender !== undefined
+            ? entry.jsonTokenSender.codeGrant({
+                code: request.response.code,
+                redirectUri: saved.redirectUri,
+                ...(request.secrets.pkceVerifier === undefined
+                  ? {}
+                  : { pkceVerifier: request.secrets.pkceVerifier }),
+                ...(provider.tokenParameters === undefined
+                  ? {}
+                  : { parameters: provider.tokenParameters }),
+              })
+            : client.exchangeRaw(
+                Grant.fromTransaction(
+                  request.response.code,
+                  {
+                    issuer: entry.metadata.issuer,
+                    clientId: provider.clientId,
+                    redirectUri: saved.redirectUri,
+                    ...(request.secrets.pkceVerifier === undefined
+                      ? {}
+                      : { pkceVerifier: request.secrets.pkceVerifier }),
+                  },
+                  provider.tokenParameters === undefined
+                    ? undefined
+                    : { parameters: provider.tokenParameters },
+                ),
+              )
+        ).pipe(
           Effect.catchCause((cause) =>
             Effect.failCause(
               Cause.map(cause, (error) =>
                 classifyOAuthError(error, { operation: "authorization_code", phase: "token" }),
               ),
             ),
-          ),
-          Effect.ensuring(
-            Effect.sync(() => {
-              if (clientSecret !== undefined) Redacted.wipeUnsafe(clientSecret);
-            }),
           ),
         );
 

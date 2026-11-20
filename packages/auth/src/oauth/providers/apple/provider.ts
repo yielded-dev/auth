@@ -89,6 +89,7 @@ const importSigningKey = Effect.fnUntraced(function* (
         Cause.map(cause, () => OpenIdConnectConfigurationError.make({ reason: "authentication" })),
       ),
     ),
+    Effect.ensuring(Effect.sync(() => der.fill(0))),
   );
 });
 

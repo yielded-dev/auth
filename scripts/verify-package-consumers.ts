@@ -122,10 +122,11 @@ const checkReusableOperations = Effect.fn("packageConsumers.reusableOperations")
 import { Effect, Layer, Redacted } from "effect";
 import { Digest, SecureRandom } from "effect/crypto";
 import { FetchHttpClient } from "effect/http";
-import { Discovery, OAuth, OAuthError, Pkce } from "@yielded/oauth";
+import { ClientAuth, Discovery, Grant, OAuth, OAuthError, Pkce } from "@yielded/oauth";
 const text = (value) => new TextDecoder().decode(value);
 const effectCrypto = Layer.merge(SecureRandom.layerWebCrypto, Digest.layerWebCrypto);
 let requests = 0;
+let expectedVerifier = "";
 const fetchReceipt = async (url, init) => {
   requests++;
   assert.equal(String(url), "https://issuer.example/token");
@@ -133,7 +134,7 @@ const fetchReceipt = async (url, init) => {
   assert.equal(init.credentials, "omit");
   const form = new URLSearchParams(text(init.body));
   assert.equal(form.get("grant_type"), "authorization_code");
-  assert.equal(form.get("code_verifier"), "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk");
+  assert.equal(form.get("code_verifier"), expectedVerifier);
   return Response.json({ access_token: "private-access", token_type: "bearer", expires_in: 60 });
 };
 await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
@@ -148,18 +149,19 @@ await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
     issuer: "https://issuer.example",
     authorization_endpoint: "https://issuer.example/authorize",
     token_endpoint: "https://issuer.example/token",
+    code_challenge_methods_supported: ["S256"],
   });
-  const metadata = yield* localDiscovery.resolve;
   const client = yield* OAuth.make({
-    metadata: {
-      issuer: metadata.issuer,
-      authorization_endpoint: metadata.authorization_endpoint,
-      token_endpoint: metadata.token_endpoint,
-    },
-    clientId: "client", authentication: { method: "client_secret_basic", secret: Redacted.make("secret") }, timeoutMs: 1000,
-  });
-  const receipt = yield* client.codeGrant({ code: Redacted.make("single-use-code"), redirectUri: "https://app.example/callback", pkceVerifier: verifier });
-  const tokens = yield* OAuth.tokens(receipt);
+    clientId: "client",
+    clientAuth: ClientAuth.secretBasic(Redacted.make("secret")),
+    timeout: "1 second",
+  }).pipe(Effect.provideService(Discovery.Discovery, localDiscovery));
+  const authorized = yield* OAuth.authorize({
+    redirectUri: "https://app.example/callback",
+    scopes: ["read"],
+  }).pipe(Effect.provideService(OAuth.Client, client));
+  expectedVerifier = Redacted.value(authorized.transaction.pkceVerifier);
+  const tokens = yield* client.exchange(Grant.fromTransaction(Redacted.make("single-use-code"), authorized.transaction));
   assert.equal(Redacted.value(tokens.accessToken), "private-access");
   assert.equal(requests, 1);
 })).pipe(Effect.provide(Layer.merge(effectCrypto, FetchHttpClient.layer)), Effect.provideService(FetchHttpClient.Fetch, fetchReceipt)));
@@ -578,7 +580,15 @@ const checkReusableConsumers = Effect.fn("packageConsumers.reusable")(function* 
 
   yield* fs.symlink(effectSource, path.join(stage, "node_modules/effect"));
 
-  const oauthNamespaces = ["Discovery", "OAuth", "OAuthError", "Oidc", "Pkce"];
+  const oauthNamespaces = [
+    "ClientAuth",
+    "Discovery",
+    "Grant",
+    "OAuth",
+    "OAuthError",
+    "Oidc",
+    "Pkce",
+  ];
 
   // Only OAuth and Effect exist throughout this stage.
   yield* withPublishManifests(stage, () =>

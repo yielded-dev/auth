@@ -51,7 +51,7 @@ Version: **3.8.8**. Commit: **`916b97952dbf431d8b72f369840de54f5a286e4d`**.
 
 Runtime adaptation: [src/index.ts, `formUrlEncode`](https://github.com/panva/oauth4webapi/blob/916b97952dbf431d8b72f369840de54f5a286e4d/src/index.ts#L1867),
 used by upstream `ClientSecretBasic`, is adapted as
-[src/OAuth.ts, `basicComponent`](src/OAuth.ts). It form-encodes each credential
+[src/ClientAuth.ts, `basicComponent`](src/ClientAuth.ts). It form-encodes each credential
 component before joining them with a colon, including escaped punctuation and
 `+` for spaces. The MIT license below covers this adaptation as well as the
 selected test contracts.

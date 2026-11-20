@@ -521,7 +521,8 @@ it.effect("rejects missing jwks_uri, non-matching algorithms, and closed verifie
     const http = transport(() => Response.json({ keys: [] }));
     const token = yield* sign(keys.privateKey, claims);
 
-    const missingJwks = yield* makeRemoteVerifier(http, {}, Struct.omit(metadata, ["jwks_uri"]));
+    const { jwks_uri: _jwksUri, ...withoutJwks } = metadata;
+    const missingJwks = yield* makeRemoteVerifier(http, {}, withoutJwks);
 
     expect(yield* missingJwks.verify(token, verification).pipe(Effect.flip)).toMatchObject({
       _tag: "OAuthError",

@@ -25,6 +25,7 @@ import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Digest from "effect/crypto/Digest";
 import * as Mac from "effect/crypto/Mac";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Signature from "effect/crypto/Signature";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -51,7 +52,9 @@ import * as Discovery from "./Discovery.ts";
 import * as Ownership from "./internal/ownership.ts";
 import * as Transport from "./internal/transport.ts";
 import * as V from "./internal/validation.ts";
+import * as OAuth from "./OAuth.ts";
 import * as OAuthError from "./OAuthError.ts";
+import * as Pkce from "./Pkce.ts";
 
 /**
  * Custom issuer verification policy invoked after signature and registered-claim
@@ -1605,6 +1608,99 @@ export const layerVerifierRemote: (
   OAuthError.OAuthError,
   Discovery.Discovery | HttpClient.HttpClient | Signature.Signature | Digest.Digest
 > = (options) => Layer.effect(Verifier, makeVerifierRemote(options));
+
+/**
+ * Starts an OpenID Connect authorization flow through the registered
+ * {@link OAuth.Client} service.
+ *
+ * Ensures `"openid"` is included idempotently in `scopes`, resolves one
+ * `nonce` (caller-supplied `options.nonce` or a fresh 256-bit random value),
+ * generates a 256-bit `state` and optional PKCE `S256` pair (`pkce` defaults
+ * to `true`, `requireAdvertisedPkce` defaults to `true`), and delegates to
+ * `client.prepareAuthorization` so URL and transaction come from one metadata
+ * snapshot.
+ *
+ * @stability unstable
+ * @category authorization
+ * @since 4.1.4
+ */
+export const authorize: (
+  options: Omit<OAuth.AuthorizeOptions, "scopes"> & {
+    readonly scopes?: ReadonlyArray<string> | undefined;
+    readonly nonce?: string | Redacted.Redacted<string> | undefined;
+  },
+) => Effect.Effect<
+  OAuth.Authorization,
+  OAuthError.OAuthError,
+  OAuth.Client | Digest.Digest | SecureRandom.SecureRandom
+> = Effect.fnUntraced(function* (
+  options: Omit<OAuth.AuthorizeOptions, "scopes"> & {
+    readonly scopes?: ReadonlyArray<string> | undefined;
+    readonly nonce?: string | Redacted.Redacted<string> | undefined;
+  },
+): Effect.fn.Return<
+  OAuth.Authorization,
+  OAuthError.OAuthError,
+  OAuth.Client | Digest.Digest | SecureRandom.SecureRandom
+> {
+  if (!Predicate.isObject(options)) {
+    return yield* V.invalidArgument("Invalid OIDC authorization options");
+  }
+  if (options.scopes !== undefined && !Array.isArray(options.scopes)) {
+    return yield* V.invalidArgument("Invalid OIDC authorization scopes");
+  }
+  if (options.pkce !== undefined && typeof options.pkce !== "boolean") {
+    return yield* V.invalidArgument("pkce must be a boolean");
+  }
+
+  const client = yield* OAuth.Client;
+  const usePkce = options.pkce ?? true;
+
+  if (!usePkce && client.clientAuthName === "none") {
+    return yield* V.invalidArgument("Public clients require PKCE");
+  }
+
+  const rawScopes = options.scopes ?? [];
+  const scopes = rawScopes.includes("openid") ? rawScopes : ["openid", ...rawScopes];
+
+  const random = yield* SecureRandom.SecureRandom;
+  const stateBytes = yield* random.randomBytes(32);
+
+  if (stateBytes.length !== 32) {
+    return yield* Effect.die(
+      new RangeError("SecureRandom.randomBytes(32) returned an unexpected byte length"),
+    );
+  }
+
+  const state = Redacted.make(Base64Url.encode(stateBytes));
+
+  let nonce: string | Redacted.Redacted<string>;
+
+  if (options.nonce !== undefined) {
+    nonce = options.nonce;
+  } else {
+    const nonceBytes = yield* random.randomBytes(32);
+
+    if (nonceBytes.length !== 32) {
+      return yield* Effect.die(
+        new RangeError("SecureRandom.randomBytes(32) returned an unexpected byte length"),
+      );
+    }
+    nonce = Redacted.make(Base64Url.encode(nonceBytes));
+  }
+
+  const pkce = usePkce ? yield* Pkce.generate : undefined;
+  const { pkce: _pkce, scopes: _scopes, nonce: _nonce, ...rest } = options;
+
+  return yield* client.prepareAuthorization({
+    ...rest,
+    scopes,
+    nonce,
+    state,
+    requireAdvertisedPkce: options.requireAdvertisedPkce ?? true,
+    ...(pkce === undefined ? {} : { pkce }),
+  });
+});
 
 const isTokenChar = (code: number): boolean =>
   (code >= 0x30 && code <= 0x39) ||
