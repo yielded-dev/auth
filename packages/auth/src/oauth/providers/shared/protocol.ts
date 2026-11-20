@@ -625,11 +625,13 @@ export const makeOpenIdConnectOAuthProtocol = Effect.fn("makeOpenIdConnectOAuthP
               registrationKind(provider) === kind,
           );
 
-          if (entry === undefined) return yield* unavailable();
+          // Static mismatches (uninstalled generation, wrong protocol/issuer/callback)
+          // are not discovery faults; let the post-consume path classify them identically to M5.
+          if (entry === undefined) return;
           const provider = entry.provider;
 
           if (provider.protocol !== target.protocol || provider.issuer !== target.issuer) {
-            return yield* unavailable();
+            return;
           }
 
           if (kind === "web" && "redirectUri" in target) {
@@ -643,7 +645,7 @@ export const makeOpenIdConnectOAuthProtocol = Effect.fn("makeOpenIdConnectOAuthP
               (provider.responseIssuerMode !== "discovered" &&
                 provider.responseIssuerMode !== target.responseIssuerMode)
             ) {
-              return yield* unavailable();
+              return;
             }
 
             const resolved = yield* entry.resolve;
@@ -661,7 +663,7 @@ export const makeOpenIdConnectOAuthProtocol = Effect.fn("makeOpenIdConnectOAuthP
             return;
           }
 
-          if (target.callbackId !== OAuthNativeCallbackId) return yield* unavailable();
+          if (target.callbackId !== OAuthNativeCallbackId) return;
           const resolved = yield* entry.resolve;
 
           if (resolved.nativeKeySet === undefined) return yield* unavailable();

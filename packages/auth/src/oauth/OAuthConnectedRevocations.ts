@@ -31,9 +31,11 @@ export class OAuthConnectedRevocations extends Context.Service<
   OAuthConnectedRevocations,
   {
     /** Non-consuming read of the next pending revocation job so callers can warm
-     * lazy provider discovery before claiming the job. */
+     * lazy provider discovery before claiming the job, optionally skipping jobs
+     * whose registration is temporarily unready in this maintenance pass. */
     readonly peek?: (input: {
       readonly moduleId: typeof OAuthModuleId.Type;
+      readonly excludeJobIds?: ReadonlyArray<typeof OAuthConnectedRevocationJob.fields.jobId.Type>;
     }) => Effect.Effect<OAuthConnectedRevocationJob | undefined, OAuthUnavailable>;
     readonly claim: <A>(
       input: {

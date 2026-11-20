@@ -82,14 +82,18 @@ interface SharedDiscoveryDocument {
 }
 
 interface SharedDiscoveryHandle {
-  readonly service: Discovery.Discovery["Service"];
+  /** Resolve the shared raw discovery document (single-flight per issuer).
+   * When `minFetchedAfter` is supplied by a registration that rejected an older
+   * document and has passed cooldown, performs a fresh fetch without evicting
+   * or closing any previously resolved document. */
   readonly resolve: (
     minFetchedAfter?: number,
   ) => Effect.Effect<SharedDiscoveryDocument, OAuthError.OAuthError>;
 }
 
-/** Shared lazy discovery cache within one installation (and across sign-in and
- * connected protocols in `OpenIdConnect.provider`). */
+/** Shared lazy discovery cache within one provider installation (including its
+ * generations and retained-access configuration). Shares only the raw fetch;
+ * each registration pins its own validated local snapshot. */
 export type DiscoveryCache = Map<string, SharedDiscoveryHandle>;
 
 export const makeDiscoveryCache = (): DiscoveryCache => new Map();
@@ -126,7 +130,7 @@ const makeSharedDiscovery = Effect.fnUntraced(function* (options: {
   const layerScope = yield* Effect.scope;
   const baseHttp = yield* HttpClient.HttpClient;
   const fetch = yield* FetchHttpClient.Fetch;
-  const swapSemaphore = yield* Semaphore.make(1);
+  const refetchSemaphore = yield* Semaphore.make(1);
   const isMicrosoftProfile = options.profile === "microsoft";
   const reportedErrors = new WeakSet<object>();
   let closed = false;
@@ -224,11 +228,15 @@ const makeSharedDiscovery = Effect.fnUntraced(function* (options: {
   });
 
   // Static URL/issuer validation runs at Layer build with zero network I/O.
-  let current = yield* createAttempt().pipe(
+  const initialAttempt = yield* createAttempt().pipe(
     Effect.catchCause((cause) =>
       Effect.failCause(Cause.map(cause, classifyOAuthConfigurationError)),
     ),
   );
+
+  // Most recent successfully fetched raw document; never evicted on a failed refetch.
+  let latest: SharedDiscoveryDocument | undefined;
+  let refetchAttempt: Effect.Success<ReturnType<typeof createAttempt>> | undefined;
 
   yield* Effect.addFinalizer(() =>
     Effect.sync(() => {
@@ -242,37 +250,55 @@ const makeSharedDiscovery = Effect.fnUntraced(function* (options: {
     Effect.suspend(() => {
       if (closed) return Effect.fail(transportFailed("The discovery scope is closed"));
 
-      if (
-        minFetchedAfter === undefined ||
-        current.fetchedAt === undefined ||
-        current.fetchedAt > minFetchedAfter
-      ) {
-        return current.resolve;
-      }
+      if (minFetchedAfter === undefined) {
+        if (latest !== undefined) return Effect.succeed(latest);
 
-      return swapSemaphore
-        .withPermits(1)(
-          Effect.uninterruptible(
-            Effect.gen(function* () {
-              if (closed) return yield* transportFailed("The discovery scope is closed");
-              if (current.fetchedAt !== undefined && current.fetchedAt <= minFetchedAfter) {
-                const next = yield* createAttempt();
-                const previous = current;
-
-                current = next;
-                yield* Scope.close(previous.scope, Exit.void).pipe(Effect.ignore);
+        return initialAttempt.resolve.pipe(
+          Effect.tap((document) =>
+            Effect.sync(() => {
+              if (latest === undefined || document.fetchedAt > latest.fetchedAt) {
+                latest = document;
               }
             }),
           ),
-        )
-        .pipe(Effect.andThen(Effect.suspend(() => current.resolve)));
+        );
+      }
+
+      if (latest !== undefined && latest.fetchedAt > minFetchedAfter) {
+        return Effect.succeed(latest);
+      }
+
+      return refetchSemaphore.withPermits(1)(
+        Effect.gen(function* () {
+          if (closed) return yield* transportFailed("The discovery scope is closed");
+          if (latest !== undefined && latest.fetchedAt > minFetchedAfter) {
+            return latest;
+          }
+
+          if (refetchAttempt === undefined || refetchAttempt.fetchedAt !== undefined) {
+            const next = yield* createAttempt();
+            const previous = refetchAttempt;
+
+            refetchAttempt = next;
+            if (previous !== undefined) {
+              yield* Scope.close(previous.scope, Exit.void).pipe(Effect.ignore);
+            }
+          }
+
+          // Only publish `latest` after the refetch succeeds; a failed refetch
+          // leaves any previously resolved document intact and retains cooldown.
+          const document = yield* refetchAttempt.resolve;
+
+          if (latest === undefined || document.fetchedAt > latest.fetchedAt) {
+            latest = document;
+          }
+
+          return document;
+        }),
+      );
     });
 
-  const service = Discovery.Discovery.of({
-    resolve: Effect.map(resolve(), (document) => document.metadata),
-  });
-
-  return { service, resolve } satisfies SharedDiscoveryHandle;
+  return { resolve } satisfies SharedDiscoveryHandle;
 });
 
 const getSharedDiscovery = Effect.fnUntraced(function* (
@@ -313,13 +339,9 @@ const makeLazyResolved = Effect.fnUntraced(function* <A>(
   const semaphore = yield* Semaphore.make(1);
   let closed = false;
 
-  let cached:
-    | {
-        readonly metadata: Discovery.Metadata;
-        readonly value: A;
-        readonly scope: Scope.Closeable;
-      }
-    | undefined;
+  // Once validated, this registration pins its own immutable local client,
+  // verifier, and discovery snapshot for the lifetime of the Layer scope.
+  let cached: A | undefined;
 
   let rejected:
     | {
@@ -327,6 +349,9 @@ const makeLazyResolved = Effect.fnUntraced(function* <A>(
         readonly failedAt: number;
       }
     | undefined;
+
+  const isClosed = (): boolean => closed;
+  const readCached = (): A | undefined => cached;
 
   yield* Effect.addFinalizer(() =>
     Effect.sync(() => {
@@ -336,7 +361,11 @@ const makeLazyResolved = Effect.fnUntraced(function* <A>(
 
   return {
     resolve: Effect.gen(function* () {
-      if (closed) return yield* OAuthUnavailable.make({});
+      if (isClosed()) return yield* OAuthUnavailable.make({});
+
+      const initial = readCached();
+
+      if (initial !== undefined) return initial;
 
       const now = yield* Clock.currentTimeMillis;
 
@@ -354,17 +383,18 @@ const makeLazyResolved = Effect.fnUntraced(function* <A>(
           ),
         );
 
-      if (cached !== undefined && cached.metadata === metadata) {
-        return cached.value;
-      }
+      const afterDiscovery = readCached();
+
+      if (afterDiscovery !== undefined) return afterDiscovery;
 
       return yield* semaphore.withPermits(1)(
         Effect.uninterruptibleMask((restore) =>
           Effect.gen(function* () {
-            if (closed) return yield* OAuthUnavailable.make({});
-            if (cached !== undefined && cached.metadata === metadata) {
-              return cached.value;
-            }
+            if (isClosed()) return yield* OAuthUnavailable.make({});
+
+            const insideLock = readCached();
+
+            if (insideLock !== undefined) return insideLock;
 
             const checkNow = yield* Clock.currentTimeMillis;
 
@@ -399,19 +429,14 @@ const makeLazyResolved = Effect.fnUntraced(function* <A>(
               return yield* OAuthUnavailable.make({});
             }
 
-            if (closed) {
+            if (isClosed()) {
               yield* Scope.close(childScope, Exit.void).pipe(Effect.ignore);
 
               return yield* OAuthUnavailable.make({});
             }
 
-            const previous = cached;
-
             rejected = undefined;
-            cached = { metadata, value: built.value, scope: childScope };
-            if (previous !== undefined) {
-              yield* Scope.close(previous.scope, Exit.void).pipe(Effect.ignore);
-            }
+            cached = built.value;
 
             return built.value;
           }),
@@ -669,46 +694,38 @@ export const installConfigurations = Effect.fn("OpenIdConnect.installConfigurati
       continue;
     }
 
-    const client = yield* OAuth.make({
-      clientId: provider.clientId,
-      clientAuth,
-      timeout: timeoutSeconds * 1000,
-    }).pipe(
-      Effect.provideService(Discovery.Discovery, sharedDiscovery.service),
-      Effect.catchCause((cause) =>
-        Effect.failCause(Cause.map(cause, classifyOAuthConfigurationError)),
-      ),
-    );
-
     const { resolve } = yield* makeLazyResolved<ResolvedProvider<R>>(
       sharedDiscovery,
       Effect.fnUntraced(function* (metadata, policy) {
         const validated = yield* validateProviderMetadata(provider, metadata);
 
-        yield* Effect.scoped(
-          Effect.gen(function* () {
-            const localDiscovery = yield* Discovery.makeLocal(validated).pipe(
-              Effect.mapError(() => OpenIdConnectConfigurationError.make({ reason: "metadata" })),
-            );
-
-            const tempClient = yield* OAuth.make({
-              clientId: provider.clientId,
-              clientAuth,
-              timeout: timeoutSeconds * 1000,
-            }).pipe(
-              Effect.provideService(Discovery.Discovery, localDiscovery),
-              Effect.provideService(HttpClient.HttpClient, baseHttp),
-              Effect.provideService(FetchHttpClient.Fetch, fetch),
-              Effect.mapError(() => OpenIdConnectConfigurationError.make({ reason: "metadata" })),
-            );
-
-            yield* validateCallbackAuthorizationUrls(provider, tempClient);
-          }),
+        // Bind the registration's client, verifier, and UserInfo discovery to
+        // its own immutable validated snapshot so sibling refetches cannot swap
+        // endpoints under validated operations.
+        const localDiscovery = yield* Discovery.makeLocal(validated).pipe(
+          Effect.catchCause((cause) =>
+            Effect.failCause(Cause.map(cause, classifyOAuthConfigurationError)),
+          ),
         );
+
+        const client = yield* OAuth.make({
+          clientId: provider.clientId,
+          clientAuth,
+          timeout: timeoutSeconds * 1000,
+        }).pipe(
+          Effect.provideService(Discovery.Discovery, localDiscovery),
+          Effect.provideService(HttpClient.HttpClient, baseHttp),
+          Effect.provideService(FetchHttpClient.Fetch, fetch),
+          Effect.catchCause((cause) =>
+            Effect.failCause(Cause.map(cause, classifyOAuthConfigurationError)),
+          ),
+        );
+
+        yield* validateCallbackAuthorizationUrls(provider, client);
 
         const verifier = yield* makeVerifier(
           validated,
-          sharedDiscovery.service,
+          localDiscovery,
           provider.clientId,
           timeoutSeconds,
           {
@@ -730,7 +747,7 @@ export const installConfigurations = Effect.fn("OpenIdConnect.installConfigurati
           provider,
           metadata: validated,
           client,
-          discovery: sharedDiscovery.service,
+          discovery: localDiscovery,
           http: hardenedHttp,
           verifier,
         };
@@ -782,6 +799,13 @@ export const installConnectedConfigurations = Effect.fn(
       continue;
     }
 
+    const clientAuth = nativeAuthentication(provider.authentication, clientSecrets);
+
+    const revocationAuth =
+      provider.revocation.mode === "rfc7009"
+        ? nativeAuthentication(provider.revocation.authentication, clientSecrets)
+        : undefined;
+
     const sharedDiscovery = yield* getSharedDiscovery(discoveryCache, {
       issuer: provider.issuer,
       timeoutSeconds,
@@ -789,30 +813,36 @@ export const installConnectedConfigurations = Effect.fn(
       profile: provider[discoveryProfile],
     });
 
-    const client = yield* OAuth.make({
-      clientId: provider.clientId,
-      clientAuth: nativeAuthentication(provider.authentication, clientSecrets),
-      timeout: timeoutSeconds * 1000,
-      ...(provider.revocation.mode === "rfc7009"
-        ? {
-            revocationAuth: nativeAuthentication(provider.revocation.authentication, clientSecrets),
-          }
-        : {}),
-    }).pipe(
-      Effect.provideService(Discovery.Discovery, sharedDiscovery.service),
-      Effect.catchCause((cause) =>
-        Effect.failCause(Cause.map(cause, classifyOAuthConfigurationError)),
-      ),
-    );
-
     const { resolve } = yield* makeLazyResolved<ResolvedConnectedProvider<R>>(
       sharedDiscovery,
       Effect.fnUntraced(function* (metadata, policy) {
         const validated = yield* validateConnectedProviderMetadata(provider, metadata);
 
+        // Bind client, verifier, and UserInfo discovery to this registration's
+        // immutable validated snapshot.
+        const localDiscovery = yield* Discovery.makeLocal(validated).pipe(
+          Effect.catchCause((cause) =>
+            Effect.failCause(Cause.map(cause, classifyOAuthConfigurationError)),
+          ),
+        );
+
+        const client = yield* OAuth.make({
+          clientId: provider.clientId,
+          clientAuth,
+          timeout: timeoutSeconds * 1000,
+          ...(revocationAuth === undefined ? {} : { revocationAuth }),
+        }).pipe(
+          Effect.provideService(Discovery.Discovery, localDiscovery),
+          Effect.provideService(HttpClient.HttpClient, baseHttp),
+          Effect.provideService(FetchHttpClient.Fetch, fetch),
+          Effect.catchCause((cause) =>
+            Effect.failCause(Cause.map(cause, classifyOAuthConfigurationError)),
+          ),
+        );
+
         const verifier = yield* makeVerifier(
           validated,
-          sharedDiscovery.service,
+          localDiscovery,
           provider.clientId,
           timeoutSeconds,
           {
@@ -834,7 +864,7 @@ export const installConnectedConfigurations = Effect.fn(
           provider,
           metadata: validated,
           client,
-          discovery: sharedDiscovery.service,
+          discovery: localDiscovery,
           http: hardenedHttp,
           verifier,
         };

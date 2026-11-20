@@ -1114,7 +1114,7 @@ it.effect(
 
       const issuer = "https://lazy-idp.example";
       const discoveryUrl = `${issuer}/.well-known/openid-configuration`;
-      let healthy = false;
+      let mode: "down" | "hs256-unusable" | "healthy" = "down";
       let discoveryCalls = 0;
 
       const fetch: typeof globalThis.fetch = async (input) => {
@@ -1122,7 +1122,7 @@ it.effect(
 
         if (url === discoveryUrl) {
           discoveryCalls++;
-          if (!healthy) return new Response("service unavailable", { status: 503 });
+          if (mode === "down") return new Response("service unavailable", { status: 503 });
 
           return json({
             issuer,
@@ -1131,7 +1131,8 @@ it.effect(
             jwks_uri: `${issuer}/jwks`,
             response_types_supported: ["code"],
             code_challenge_methods_supported: ["S256"],
-            id_token_signing_alg_values_supported: ["ES256"],
+            id_token_signing_alg_values_supported:
+              mode === "hs256-unusable" ? ["HS256"] : ["ES256"],
             token_endpoint_auth_methods_supported: ["client_secret_basic"],
             authorization_response_iss_parameter_supported: true,
           });
@@ -1147,9 +1148,9 @@ it.effect(
             issuer: OAuthIssuer.make(issuer),
             responseIssuerMode: "discovered",
             clientId: "client",
-            clientSecret: Redacted.make("client-secret"),
+            clientSecret: Redacted.make("short"),
             redirectUri: OAuthRedirectUri.make("https://app.test/auth/lazy/callback"),
-            idTokenSignedResponseAlg: ["ES256"],
+            idTokenSignedResponseAlg: ["HS256", "ES256"],
           },
         ],
       }).pipe(Effect.provideService(FetchHttpClient.Fetch, fetch));
@@ -1165,88 +1166,27 @@ it.effect(
       yield* expectTag(prepare(), "OAuthUnavailable");
       expect(discoveryCalls).toBe(1);
 
-      healthy = true;
+      // Cooldown prevents immediate refetch; unusable HS256 verifier setup does not pin metadata.
+      mode = "hs256-unusable";
       yield* TestClock.adjust("5 seconds");
       yield* expectTag(prepare(), "OAuthUnavailable");
       expect(discoveryCalls).toBe(1);
 
       yield* TestClock.adjust("26 seconds");
-      yield* protocol.ready?.() ?? Effect.void;
+      yield* expectTag(prepare(), "OAuthUnavailable");
       expect(discoveryCalls).toBe(2);
+
+      mode = "healthy";
+      yield* TestClock.adjust("31 seconds");
+      yield* protocol.ready?.() ?? Effect.void;
+      expect(discoveryCalls).toBe(3);
 
       const started = yield* prepare();
 
-      expect(discoveryCalls).toBe(2);
+      expect(discoveryCalls).toBe(3);
       expect(started.configuration.responseIssuerMode).toBe("required");
 
       yield* prepare();
-      expect(discoveryCalls).toBe(2);
-    }).pipe(Effect.provide(platform)),
-);
-
-// Regression from PR #325 review: an unusable HS256 verifier (e.g. short secret)
-// must not pin bad discovery metadata for the Layer lifetime.
-it.effect(
-  "retries discovery after cooldown when verifier setup rejects advertised HS256 metadata",
-  () =>
-    Effect.gen(function* () {
-      yield* TestClock.setTime(2_000_000_000_000);
-
-      const issuer = "https://hs256-recovery.example";
-      let alg: "HS256" | "RS256" = "HS256";
-      let discoveryCalls = 0;
-
-      const fetch: typeof globalThis.fetch = async (input) => {
-        const url = input instanceof Request ? input.url : String(input);
-
-        if (url === `${issuer}/.well-known/openid-configuration`) {
-          discoveryCalls++;
-
-          return json({
-            issuer,
-            authorization_endpoint: `${issuer}/authorize`,
-            token_endpoint: `${issuer}/token`,
-            jwks_uri: `${issuer}/jwks`,
-            response_types_supported: ["code"],
-            code_challenge_methods_supported: ["S256"],
-            id_token_signing_alg_values_supported: [alg],
-            token_endpoint_auth_methods_supported: ["client_secret_basic"],
-          });
-        }
-        throw new Error(`Unexpected endpoint ${url}`);
-      };
-
-      const protocol = yield* loadProtocol({
-        providers: [
-          {
-            protocol: "oidc",
-            provider: OAuthProviderKey.make("hs256"),
-            issuer: OAuthIssuer.make(issuer),
-            responseIssuerMode: "discovered",
-            clientId: "client",
-            clientSecret: Redacted.make("fixture"),
-            redirectUri: OAuthRedirectUri.make("https://app.test/auth/hs256/callback"),
-            idTokenSignedResponseAlg: ["HS256", "RS256"],
-          },
-        ],
-      }).pipe(Effect.provideService(FetchHttpClient.Fetch, fetch));
-
-      const prepare = () =>
-        protocol.prepareAuthorization({
-          provider: OAuthProviderKey.make("hs256"),
-          flowId: RequestBindingFlowId.make("flow-hs256"),
-        });
-
-      yield* expectTag(prepare(), "OAuthUnavailable");
-      expect(discoveryCalls).toBe(1);
-
-      alg = "RS256";
-      yield* TestClock.adjust("5 seconds");
-      yield* expectTag(prepare(), "OAuthUnavailable");
-      expect(discoveryCalls).toBe(1);
-
-      yield* TestClock.adjust("26 seconds");
-      yield* prepare();
-      expect(discoveryCalls).toBe(2);
+      expect(discoveryCalls).toBe(3);
     }).pipe(Effect.provide(platform)),
 );

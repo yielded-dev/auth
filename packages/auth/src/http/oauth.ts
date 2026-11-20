@@ -203,11 +203,7 @@ export const makeOAuth = <E, R, ResponseR>(
 
           const protocol = protocols.get(target.provider);
 
-          if (protocol === undefined) {
-            return "protocol" in target ? OAuthUnavailable.make({}) : Effect.void;
-          }
-
-          return protocol.ready?.(target) ?? Effect.void;
+          return protocol?.ready?.(target) ?? Effect.void;
         },
       });
 
@@ -235,11 +231,7 @@ export const makeOAuth = <E, R, ResponseR>(
 
           const protocol = protocols.get(target.provider)?.connected;
 
-          if (protocol === undefined) {
-            return "protocol" in target ? OAuthUnavailable.make({}) : Effect.void;
-          }
-
-          return protocol.ready?.(target) ?? Effect.void;
+          return protocol?.ready?.(target) ?? Effect.void;
         },
       });
 

@@ -888,7 +888,41 @@ export const makeConnectedProtocolWithCompatibility = Effect.fn(
     }
 
     if ("protocol" in target) {
-      yield* retained(target);
+      const entry = installed.find(
+        ({ provider }) =>
+          provider.provider === target.provider &&
+          provider.configurationGeneration === target.configurationGeneration,
+      );
+
+      const provider = entry?.provider;
+
+      // Static mismatches (uninstalled generation, wrong protocol/issuer/profile/callback)
+      // are not discovery faults; let the post-claim path classify them identically to M5.
+      if (
+        !entry ||
+        !provider ||
+        provider.protocol !== target.protocol ||
+        provider.issuer !== target.issuer ||
+        (provider.responseIssuerMode !== "discovered" &&
+          provider.responseIssuerMode !== target.responseIssuerMode) ||
+        provider.clientRegistrationId !== target.profile.clientRegistrationId ||
+        !provider.profiles.some((profile) => sameConnectedProfile(profile, target.profile)) ||
+        provider.callbacks.find((callback) => callback.callbackId === target.callbackId)
+          ?.redirectUri !== target.redirectUri
+      ) {
+        return;
+      }
+
+      const resolved = yield* entry.resolve;
+
+      if (
+        persistedResponseIssuerMode(
+          provider.responseIssuerMode,
+          resolved.metadata.authorization_response_iss_parameter_supported,
+        ) !== target.responseIssuerMode
+      ) {
+        return yield* unavailable();
+      }
 
       return;
     }

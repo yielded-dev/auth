@@ -911,30 +911,27 @@ export const makeOAuthMethod = <
             };
 
             // Warm lazy provider metadata before consuming a valid code flow so a
-            // discovery outage or misconfiguration leaves the flow pending.
-            if (response._tag === "Code") {
-              if (inspect !== undefined) {
-                const pending = yield* inspect(accessInput);
+            // discovery outage or metadata mismatch leaves the flow pending.
+            const needsReady = access !== undefined ? access.hasReady : ready !== undefined;
 
-                if (pending === undefined) return yield* OAuthRejected.make({});
-                const pendingFlow = yield* snapshotOAuthSignInFlow.effect(pending);
-                const pendingRedirect = pendingFlow.context.redirectUri;
+            if (response._tag === "Code" && needsReady) {
+              if (inspect === undefined) return yield* OAuthUnavailable.make({});
+              const pending = yield* inspect(accessInput);
 
-                if (pendingRedirect === undefined) return yield* OAuthUnavailable.make({});
-                if (access !== undefined) {
-                  yield* access.ready(pendingFlow);
-                } else if (ready !== undefined) {
-                  yield* ready(
-                    yield* snapshotOAuthProtocolConfiguration.effect({
-                      ...pendingFlow.context,
-                      redirectUri: pendingRedirect,
-                    }),
-                  );
-                }
-              } else if (access !== undefined) {
-                yield* access.readyProvider(request.provider);
+              if (pending === undefined) return yield* OAuthRejected.make({});
+              const pendingFlow = yield* snapshotOAuthSignInFlow.effect(pending);
+              const pendingRedirect = pendingFlow.context.redirectUri;
+
+              if (pendingRedirect === undefined) return yield* OAuthUnavailable.make({});
+              if (access !== undefined) {
+                yield* access.ready(pendingFlow);
               } else if (ready !== undefined) {
-                yield* ready({ provider: request.provider, kind: "web" });
+                yield* ready(
+                  yield* snapshotOAuthProtocolConfiguration.effect({
+                    ...pendingFlow.context,
+                    redirectUri: pendingRedirect,
+                  }),
+                );
               }
             }
 
@@ -1089,7 +1086,8 @@ export const makeOAuthMethod = <
               requestBindingExpiresAtMillis: binder.expiresAtMillis,
             };
 
-            if (inspect !== undefined) {
+            if (ready !== undefined) {
+              if (inspect === undefined) return yield* OAuthUnavailable.make({});
               const pending = yield* inspect(nativeAccess);
 
               if (pending === undefined) return yield* OAuthRejected.make({});
@@ -1102,18 +1100,14 @@ export const makeOAuthMethod = <
                 pendingFlow.context.responseIssuerMode !== "unsupported"
               )
                 return yield* OAuthUnavailable.make({});
-              if (ready !== undefined) {
-                yield* ready({
-                  provider: pendingFlow.context.provider,
-                  protocol: "oidc",
-                  configurationGeneration: pendingFlow.context.configurationGeneration,
-                  issuer: pendingFlow.context.issuer,
-                  responseIssuerMode: "unsupported",
-                  callbackId: OAuthNativeCallbackId,
-                });
-              }
-            } else if (ready !== undefined) {
-              yield* ready({ provider: request.provider, kind: "native" });
+              yield* ready({
+                provider: pendingFlow.context.provider,
+                protocol: "oidc",
+                configurationGeneration: pendingFlow.context.configurationGeneration,
+                issuer: pendingFlow.context.issuer,
+                responseIssuerMode: "unsupported",
+                callbackId: OAuthNativeCallbackId,
+              });
             }
 
             const decision = yield* consume(nativeAccess, (value, journal) =>

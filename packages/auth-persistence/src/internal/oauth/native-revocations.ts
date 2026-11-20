@@ -121,11 +121,19 @@ export const makeNativeOAuthRevocationServices = Effect.fnUntraced(function* (
       executor.read(
         Effect.gen(function* () {
           const moduleId = M.snapshotOAuthSync(M.OAuthModuleId, input.moduleId);
+          const exclude = input.excludeJobIds ?? [];
+
+          if (exclude.length > 64) return yield* invalidState();
+
+          const excludedIds = exclude.map((id) =>
+            M.snapshotOAuthSync(M.OAuthConnectedRevocationJob.fields.jobId, id),
+          );
 
           const pending = sql.and([
             exact(j.moduleId, moduleId),
             exact(j.state, "Pending"),
             sql`${tables.expression(mapping.clock.toMillis(job.column(j.retentionUntil)))} > ${now}`,
+            ...excludedIds.map((id) => sql`not (${exact(j.jobId, id)})`),
           ]);
 
           const rows =

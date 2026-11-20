@@ -224,10 +224,14 @@ const make = Effect.fnUntraced(function* (
     yield* protocol.ready(configuration);
   });
 
-  const readyProvider = (provider: OAuthSignInFlow["context"]["provider"]) =>
-    protocol.ready === undefined ? Effect.void : protocol.ready({ provider });
-
-  return { profile, prepare, ready, readyProvider, exchange, retain };
+  return {
+    profile,
+    prepare,
+    hasReady: protocol.ready !== undefined,
+    ready,
+    exchange,
+    retain,
+  };
 });
 
 export type SignInAccess = Effect.Success<ReturnType<typeof make>>;

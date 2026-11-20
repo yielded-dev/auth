@@ -437,6 +437,9 @@ export const layer = <E, R>(options: Options<E, R>) => {
             yield* entry.protocol
               .ready(context.upstream)
               .pipe(Effect.mapError(() => Unavailable.make({})));
+            if (DateTime.toEpochMillis(yield* DateTime.now) >= context.expiresAtMillis) {
+              return yield* Rejected.make({});
+            }
           }
         }
 

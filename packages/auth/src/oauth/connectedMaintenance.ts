@@ -245,20 +245,55 @@ export const makeOAuthConnectedMaintenance = <const Id extends string>(
             }),
           );
 
-        if (peek === undefined) {
-          if (ready !== undefined) {
-            yield* ready();
-          }
-
+        if (ready === undefined) {
           return (yield* runClaimed(undefined)) ?? { outcome: "Empty" as const };
         }
 
-        for (let attempt = 0; attempt < 4; attempt++) {
-          const pending = yield* peek({ moduleId: id });
+        if (peek === undefined) {
+          return yield* OAuthUnavailable.make({});
+        }
 
-          if (pending === undefined) return { outcome: "Empty" as const };
-          if (ready !== undefined) {
-            yield* ready(pending.grant.context.configuration);
+        // Bounded scan so one temporarily unready registration does not stall
+        // healthy revocation jobs queued behind it.
+        const excluded: Array<typeof M.OAuthConnectedRevocationJob.fields.jobId.Type> = [];
+        const failedConfigs = new Set<string>();
+        let sawUnavailable = false;
+
+        for (let attempt = 0; attempt < 32; attempt++) {
+          const pending = yield* peek({
+            moduleId: id,
+            ...(excluded.length === 0 ? {} : { excludeJobIds: excluded }),
+          });
+
+          if (pending === undefined) {
+            return sawUnavailable
+              ? yield* OAuthUnavailable.make({})
+              : { outcome: "Empty" as const };
+          }
+
+          const config = pending.grant.context.configuration;
+
+          const configKey = JSON.stringify([
+            config.provider,
+            config.configurationGeneration,
+            config.issuer,
+            config.callbackId,
+            config.responseIssuerMode,
+          ]);
+
+          if (failedConfigs.has(configKey)) {
+            sawUnavailable = true;
+            excluded.push(pending.jobId);
+            continue;
+          }
+
+          const readiness = yield* Effect.result(ready(config));
+
+          if (readiness._tag === "Failure") {
+            sawUnavailable = true;
+            failedConfigs.add(configKey);
+            excluded.push(pending.jobId);
+            continue;
           }
 
           const outcome = yield* runClaimed(pending.jobId);
@@ -266,7 +301,7 @@ export const makeOAuthConnectedMaintenance = <const Id extends string>(
           if (outcome !== undefined) return outcome;
         }
 
-        return { outcome: "Empty" as const };
+        return sawUnavailable ? yield* OAuthUnavailable.make({}) : { outcome: "Empty" as const };
       });
 
       return ConnectedMaintenance.of({
