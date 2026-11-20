@@ -7,8 +7,7 @@
   "scripts": {
     "check": "effect-tsrs diagnostics --project tsconfig.json --type-check --strict",
     "build": "vp pack && vp build",
-    "start": "vp run build && electron .",
-    "package": "vp run build && bun scripts/package.ts"
+    "start": "vp run build && electron ."
   },
   "dependencies": {
     "@effect/atom-react": "catalog:",

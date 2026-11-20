@@ -17,7 +17,6 @@
     "check:scripts": "effect-tsrs diagnostics --project scripts/tsconfig.json --type-check --strict",
     "check:exports": "bun scripts/verify-package-exports.ts",
     "verify:package-purity": "bun scripts/verify-package-purity.ts",
-    "check:package-consumers": "bun scripts/verify-package-consumers.ts",
     "test": "vp run -r --parallel --concurrency-limit 4 test",
     "build": "vp run -r build && vp run check:package-consumers",
     "ready": "vp run check && vp run test && vp run build",

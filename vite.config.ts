@@ -185,6 +185,10 @@ export default defineConfig({
       scripts: true,
     },
     tasks: {
+      "check:package-consumers": {
+        command: "bun scripts/verify-package-consumers.ts",
+        cache: { untrackedEnv: ["TMPDIR"] },
+      },
       "ci:format": {
         command: "vp fmt --check",
       },

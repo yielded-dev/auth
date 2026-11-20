@@ -15,9 +15,10 @@ shim ahead of system Bun on `PATH`. See
 [Vite+ environment modes](https://viteplus.dev/guide/env#environment-modes).
 
 In a sandbox, pass a writable `TMPDIR` to `vp` so Bun and the tests can create
-temporary files. Bun can also fall back to `.tmp` inside its install cache. Set
-`BUN_INSTALL_CACHE_DIR` in the sandbox environment if the default cache is
-read-only.
+temporary files. Cached Vite tasks that use the OS temp directory pass
+`TMPDIR` through `cache.untrackedEnv`. Bun can also fall back to `.tmp` inside
+its install cache. Set `BUN_INSTALL_CACHE_DIR` in the sandbox environment if the
+default cache is read-only.
 
 `vp check` runs formatting and linting. `vp run check` also runs TypeScript and
 Effect diagnostics through `effect-tsrs` across workspaces and scripts. Its bundled

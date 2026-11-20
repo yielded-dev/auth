@@ -13,4 +13,9 @@ export default defineConfig({
     silent: "passed-only",
     include: ["test/**/*.test.ts"],
   },
+  run: {
+    tasks: {
+      test: { command: "vp test --passWithNoTests", cache: { untrackedEnv: ["TMPDIR"] } },
+    },
+  },
 });

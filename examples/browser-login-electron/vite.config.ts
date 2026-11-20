@@ -15,4 +15,12 @@ export default defineConfig({
   },
   base: "./",
   build: { outDir: "dist/renderer", target: "chrome152" },
+  run: {
+    tasks: {
+      package: {
+        command: "vp run build && bun scripts/package.ts",
+        cache: { untrackedEnv: ["TMPDIR"] },
+      },
+    },
+  },
 });

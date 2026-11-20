@@ -9,6 +9,7 @@ export default defineConfig({
   run: {
     tasks: {
       start: { command: "vp build && bun src/server.ts", cache: false },
+      test: { command: "vp test", cache: { untrackedEnv: ["TMPDIR"] } },
     },
   },
 });
