@@ -520,8 +520,26 @@ export const withPreparedRequest: <A, E, R, R2>(
     return Effect.fail(V.invalidArgument("Invalid clientAuth method"));
   }
 
+  if (options !== undefined && !Predicate.isObject(options)) {
+    return Effect.fail(V.invalidArgument("Invalid withPreparedRequest options"));
+  }
+
+  if (options?.forbidGrantType !== undefined && typeof options.forbidGrantType !== "boolean") {
+    return Effect.fail(V.invalidArgument("forbidGrantType must be a boolean"));
+  }
+
+  const rawAuthPosition: unknown = options?.authPosition;
+
+  if (
+    rawAuthPosition !== undefined &&
+    rawAuthPosition !== "append" &&
+    rawAuthPosition !== "prepend"
+  ) {
+    return Effect.fail(V.invalidArgument('authPosition must be "append" or "prepend"'));
+  }
+
   const forbidGrantType = options?.forbidGrantType ?? true;
-  const authPosition = options?.authPosition ?? "append";
+  const authPosition: "append" | "prepend" = rawAuthPosition ?? "append";
 
   return Effect.uninterruptibleMask((restore) =>
     Effect.flatMap(
