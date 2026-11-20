@@ -31,8 +31,10 @@ export class OAuthSignInPersistence extends Context.Service<
       prepare: PrepareOAuthCommit<OAuthIssueDecision, A>,
     ) => Effect.Effect<PreparedCommit<A>, OAuthUnavailable>;
     /** Conditional DELETE at engine time checks purpose, module, accepted generation,
-     * provider, callback, state, exact binder and response issuer. Wrong access does
-     * not consume. Return the exact deleted flow before any provider exchange. */
+     * provider, callback, state, exact binder, response issuer, and observed
+     * `access.responseMode` against the issued flow's `responseMode` (NULL/omitted
+     * strictly for native sign-in). Wrong access or wrong mode must leave the flow
+     * pending. Return the exact deleted flow before any provider exchange. */
     readonly consume: <A>(
       input: OAuthSignInAccess,
       prepare: PrepareOAuthCommit<OAuthConsumeDecision, A>,

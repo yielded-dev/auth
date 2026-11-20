@@ -41,6 +41,7 @@ import { cookieDomain, httpsOrigin, origin, originWithinDomain } from "../intern
 import type { OAuthConnectedProtocol } from "../oauth/OAuthConnectedProtocol";
 import type { OAuthProtocol } from "../oauth/OAuthProtocol";
 import type { ProviderDefinition } from "../oauth/providerDefinition";
+import { OAuthCallbackTransport } from "../oauth/signInModels";
 import type { ActionSuccess, AuthActions } from "../operations/actions";
 import { guest } from "../operations/context";
 import {
@@ -486,6 +487,7 @@ export const make = <
       return yield* Effect.gen(function* () {
         let response = yield* effect.pipe(
           Effect.provideService(auth, api),
+          Effect.provideService(OAuthCallbackTransport, { mode: "query" }),
           Effect.provideService(AuthRequest, {
             invocation: guest,
             credentials: security.credentials,

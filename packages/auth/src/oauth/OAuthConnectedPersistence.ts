@@ -32,8 +32,10 @@ export class OAuthConnectedPersistence extends Context.Service<
       input: M.OAuthConnectedFlow,
       prepare: PrepareOAuthCommit<typeof M.OAuthConnectedIssueDecision.Type, A>,
     ) => Mutation<A>;
-    /** Exact live-flow DELETE with state/binder/issuer/engine-expiry predicates.
-     * A confirmed consumed snapshot permits one exchange. */
+    /** Exact live-flow DELETE with state/binder/issuer/engine-expiry and observed
+     * `access.responseMode` predicates against the issued flow's `responseMode`
+     * (NULL/omitted reserved strictly for native sign-in). Wrong mode must leave
+     * the flow pending. A confirmed consumed snapshot permits one exchange. */
     readonly consume: <A>(
       input: M.OAuthConnectedAccess,
       prepare: PrepareOAuthCommit<typeof M.OAuthConnectedConsumeDecision.Type, A>,

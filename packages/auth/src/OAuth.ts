@@ -55,6 +55,7 @@ export {
   OAuthCredentialSnapshot,
   OAuthSignInFlow,
   OAuthSignInAccess,
+  OAuthCallbackTransport,
   OAuthIssueDecision,
   OAuthConsumeDecision,
   OAuthCodeResponse,

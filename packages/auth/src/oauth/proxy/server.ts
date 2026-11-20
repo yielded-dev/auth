@@ -417,7 +417,6 @@ export const layer = <E, R>(options: Options<E, R>) => {
 
           response = yield* Schema.decodeEffect(OAuthCallbackResponse)({
             _tag: "Code",
-            mode: decoded.mode,
             state,
             code: Redacted.value(result.code),
             ...(result.issuer === undefined ? {} : { issuer: result.issuer }),

@@ -444,7 +444,7 @@ OAuth adds these roles; each physical table is named `${prefix}_${role}`:
 
 - **`oauthIdentities`**: provider identity ownership shared by login and retained grants.
 - **`oauthCredentials`**: login credentials tied to the shared `credentials` authority.
-- **`oauthSignInFlows`**: single-use sign-in flows, enabled by `OAuth.make`. Stores `responseMode` (`"query"` or `"form_post"` for browser flows; `NULL` is reserved for native sign-in flows) and checks it atomically at consumption so wrong-mode callbacks leave the row pending.
+- **`oauthSignInFlows`**: single-use sign-in flows, enabled by `OAuth.make`. Stores `responseMode` (`"query"` or `"form_post"` for browser flows; `NULL` is reserved for native sign-in flows); mapped tables bind `OAuthFlowTable.responseMode`, and replacement persistence services must compare observed `access.responseMode` inside the same conditional delete so wrong-mode callbacks leave the row pending.
 - **`oauthConnectedFlows`**: connect and reconnect flows, enabled by retained access or `makeConnected`. Stores and atomically checks `responseMode` (`"query"` or `"form_post"`).
 - **`oauthConnectedGrants`**: encrypted grants and refresh state, enabled with connected flows.
 - **`oauthConnectedRevocations`**: durable provider-revocation work, enabled with connected flows.

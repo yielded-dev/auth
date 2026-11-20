@@ -7,6 +7,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Base64Url from "effect/encoding/Base64Url";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
@@ -68,6 +69,7 @@ import {
 } from "./signInErrors";
 import {
   OAuthCallbackResponse,
+  OAuthCallbackTransport,
   OAuthConsumeDecision,
   OAuthNativeCallbackId,
   OAuthNativeProtocolConfiguration,
@@ -874,7 +876,11 @@ export const makeOAuthMethod = <
             yield* noAmbient();
             const request = yield* snapshotOAuthSignInComplete.effect(raw);
             const response = request.response;
-            const observedMode = response.mode ?? "query";
+
+            const observedMode = Option.match(yield* Effect.serviceOption(OAuthCallbackTransport), {
+              onNone: () => "query" as const,
+              onSome: (transport) => transport.mode,
+            });
 
             const serialized = yield* Schema.encodeEffect(responseJson)(response).pipe(
               Effect.mapError(() => OAuthRejected.make({})),

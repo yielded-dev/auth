@@ -7,6 +7,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Base64Url from "effect/encoding/Base64Url";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
@@ -65,6 +66,7 @@ import {
 import {
   OAuthAuthorizationUrl,
   OAuthCallbackResponse,
+  OAuthCallbackTransport,
   OAuthClaimId,
   OAuthExternalIdentity,
   OAuthReturnTarget,
@@ -506,7 +508,11 @@ export const makeOAuthConnected = <const Id extends string>(
 
         const request = yield* snapshotOAuthConnectedComplete.effect(raw);
         const response = request.response;
-        const observedMode = response.mode ?? "query";
+
+        const observedMode = Option.match(yield* Effect.serviceOption(OAuthCallbackTransport), {
+          onNone: () => "query" as const,
+          onSome: (transport) => transport.mode,
+        });
 
         if (
           encoder.encode(
@@ -584,7 +590,7 @@ export const makeOAuthConnected = <const Id extends string>(
         )
           return yield* OAuthUnavailable.make({});
 
-        return { caller, request, flow, context, access, observedMode };
+        return { caller, request, flow, context, access, observedMode, expectedMode };
       });
 
       const completeChallenge = (context: M.OAuthConnectedTransactionContext) =>
@@ -599,10 +605,8 @@ export const makeOAuthConnected = <const Id extends string>(
         invocation: AuthInvocation,
         raw: typeof M.OAuthConnectedComplete.Type,
       ) {
-        const { caller, request, flow, context, observedMode } = yield* consumeCallback(
-          invocation,
-          raw,
-        );
+        const { caller, request, flow, context, observedMode, expectedMode } =
+          yield* consumeCallback(invocation, raw);
 
         const response = request.response;
 
@@ -646,7 +650,7 @@ export const makeOAuthConnected = <const Id extends string>(
               },
               {
                 state: secrets.state,
-                responseMode: observedMode,
+                responseMode: expectedMode,
                 issuer: context.issuer,
                 issuerIdentification: context.responseIssuerMode,
               },
