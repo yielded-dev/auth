@@ -164,8 +164,8 @@ it.effect("completes a form_post callback through the proxy without repeating ex
   }).pipe(Effect.scoped),
 );
 
-// Regression from PR #325 review: cold-worker OIDC discovery failure during a
-// proxy callback must leave the proxy record Pending so replay succeeds after recovery.
+// Explicit human test request (2026-11-20): pending proxy callback records
+// survive a cold-worker OIDC discovery outage untouched and complete after recovery.
 it.effect(
   "keeps a pending proxy record untouched when cold OIDC discovery fails and completes after recovery",
   () =>

@@ -116,17 +116,61 @@ export const makeNativeOAuthRevocationServices = Effect.fnUntraced(function* (
     return { row, encoded, value };
   });
 
+  const revocationConfigurationKey = (input: {
+    readonly provider: typeof M.OAuthConnectedConfiguration.fields.provider.Type;
+    readonly configurationGeneration: typeof M.OAuthConnectedConfiguration.fields.configurationGeneration.Type;
+    readonly issuer: typeof M.OAuthConnectedConfiguration.fields.issuer.Type;
+    readonly callbackId: typeof M.OAuthConnectedConfiguration.fields.callbackId.Type;
+    readonly responseIssuerMode: typeof M.OAuthConnectedConfiguration.fields.responseIssuerMode.Type;
+  }) =>
+    JSON.stringify([
+      input.provider,
+      input.configurationGeneration,
+      input.issuer,
+      input.callbackId,
+      input.responseIssuerMode,
+    ]);
+
   const service: M.OAuthConnectedRevocations["Service"] = {
     peek: (input) =>
       executor.read(
         Effect.gen(function* () {
           const moduleId = M.snapshotOAuthSync(M.OAuthModuleId, input.moduleId);
           const exclude = input.excludeJobIds ?? [];
+          const excludeConfigurations = input.excludeConfigurations ?? [];
 
-          if (exclude.length > 64) return yield* invalidState();
+          if (exclude.length > 64 || excludeConfigurations.length > 64)
+            return yield* invalidState();
 
           const excludedIds = exclude.map((id) =>
             M.snapshotOAuthSync(M.OAuthConnectedRevocationJob.fields.jobId, id),
+          );
+
+          const excludedConfigs = new Set(
+            excludeConfigurations.map((configuration) =>
+              revocationConfigurationKey({
+                provider: M.snapshotOAuthSync(
+                  M.OAuthConnectedConfiguration.fields.provider,
+                  configuration.provider,
+                ),
+                configurationGeneration: M.snapshotOAuthSync(
+                  M.OAuthConnectedConfiguration.fields.configurationGeneration,
+                  configuration.configurationGeneration,
+                ),
+                issuer: M.snapshotOAuthSync(
+                  M.OAuthConnectedConfiguration.fields.issuer,
+                  configuration.issuer,
+                ),
+                callbackId: M.snapshotOAuthSync(
+                  M.OAuthConnectedConfiguration.fields.callbackId,
+                  configuration.callbackId,
+                ),
+                responseIssuerMode: M.snapshotOAuthSync(
+                  M.OAuthConnectedConfiguration.fields.responseIssuerMode,
+                  configuration.responseIssuerMode,
+                ),
+              }),
+            ),
           );
 
           const pending = sql.and([
@@ -136,12 +180,54 @@ export const makeNativeOAuthRevocationServices = Effect.fnUntraced(function* (
             ...excludedIds.map((id) => sql`not (${exact(j.jobId, id)})`),
           ]);
 
-          const rows =
-            yield* sql`select ${job.fields("job_")} from ${job.name} where ${pending} order by ${job.column(j.retentionUntil)}, ${job.column(j.jobId)} limit 1`;
+          if (excludedConfigs.size === 0) {
+            const rows =
+              yield* sql`select ${job.fields("job_")} from ${job.name} where ${pending} order by ${job.column(j.retentionUntil)}, ${job.column(j.jobId)} limit 1`;
 
-          if (rows[0] === undefined) return undefined;
+            if (rows[0] === undefined) return undefined;
 
-          return (yield* decodeJobRow(rows[0], moduleId)).value;
+            return (yield* decodeJobRow(rows[0], moduleId)).value;
+          }
+
+          let cursor: { readonly retentionUntilMillis: number; readonly jobId: string } | undefined;
+
+          for (;;) {
+            const retentionValue =
+              cursor === undefined
+                ? undefined
+                : job.value(
+                    j.retentionUntil,
+                    mapping.clock.encodeInstant(cursor.retentionUntilMillis),
+                  );
+
+            const pageWhere =
+              cursor === undefined || retentionValue === undefined
+                ? pending
+                : sql.and([
+                    pending,
+                    sql`(${job.column(j.retentionUntil)} > ${retentionValue} or (${job.column(j.retentionUntil)} = ${retentionValue} and ${job.column(j.jobId)} > ${job.value(j.jobId, cursor.jobId)}))`,
+                  ]);
+
+            const rows =
+              yield* sql`select ${job.fields("job_")} from ${job.name} where ${pageWhere} order by ${job.column(j.retentionUntil)}, ${job.column(j.jobId)} limit 64`;
+
+            if (rows.length === 0) return undefined;
+
+            for (const raw of rows) {
+              const { row, value } = yield* decodeJobRow(raw, moduleId);
+              const retentionUntilMillis = mapping.clock.decodeInstant(row[j.retentionUntil]);
+
+              cursor = { retentionUntilMillis, jobId: value.jobId };
+
+              if (
+                !excludedConfigs.has(revocationConfigurationKey(value.grant.context.configuration))
+              ) {
+                return value;
+              }
+            }
+
+            if (rows.length < 64) return undefined;
+          }
         }),
       ),
     claim: (input, prepare) =>

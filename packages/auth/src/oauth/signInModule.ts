@@ -52,6 +52,7 @@ import {
   type OAuthProviderProfiles,
   type ProfileOptions,
 } from "./profiles";
+import { needsLazyProtocol, preflightProtocol } from "./protocolPreflight";
 import { makeOAuthRegistration } from "./registration";
 import {
   OAuthRegistrationAuthentication,
@@ -456,13 +457,14 @@ export const makeOAuthMethod = <
         const access = yield* signInAccess(moduleId, policy, options.access);
         const { issue: issueBinding, verify: verifyBinding } = yield* binding.RequestBinding;
 
+        const protocol = yield* OAuthProtocol;
+
         const {
           prepareAuthorization,
           exchangeVerifiedIdentity,
           prepareNative,
           verifyNativeIdentity,
-          ready,
-        } = yield* OAuthProtocol;
+        } = protocol;
 
         const { resolve: returnTarget } = yield* OAuthReturnTargets;
         const { seal, open } = yield* OAuthTransactionProtector;
@@ -912,7 +914,10 @@ export const makeOAuthMethod = <
 
             // Warm lazy provider metadata before consuming a valid code flow so a
             // discovery outage or metadata mismatch leaves the flow pending.
-            const needsReady = access !== undefined ? access.hasReady : ready !== undefined;
+            const needsReady =
+              access !== undefined
+                ? access.needsLazy(request.provider)
+                : needsLazyProtocol(protocol, request.provider, "web");
 
             if (response._tag === "Code" && needsReady) {
               if (inspect === undefined) return yield* OAuthUnavailable.make({});
@@ -925,8 +930,9 @@ export const makeOAuthMethod = <
               if (pendingRedirect === undefined) return yield* OAuthUnavailable.make({});
               if (access !== undefined) {
                 yield* access.ready(pendingFlow);
-              } else if (ready !== undefined) {
-                yield* ready(
+              } else {
+                yield* preflightProtocol(
+                  protocol,
                   yield* snapshotOAuthProtocolConfiguration.effect({
                     ...pendingFlow.context,
                     redirectUri: pendingRedirect,
@@ -1086,7 +1092,7 @@ export const makeOAuthMethod = <
               requestBindingExpiresAtMillis: binder.expiresAtMillis,
             };
 
-            if (ready !== undefined) {
+            if (needsLazyProtocol(protocol, request.provider, "native")) {
               if (inspect === undefined) return yield* OAuthUnavailable.make({});
               const pending = yield* inspect(nativeAccess);
 
@@ -1100,7 +1106,7 @@ export const makeOAuthMethod = <
                 pendingFlow.context.responseIssuerMode !== "unsupported"
               )
                 return yield* OAuthUnavailable.make({});
-              yield* ready({
+              yield* preflightProtocol(protocol, {
                 provider: pendingFlow.context.provider,
                 protocol: "oidc",
                 configurationGeneration: pendingFlow.context.configurationGeneration,

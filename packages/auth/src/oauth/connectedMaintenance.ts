@@ -33,6 +33,7 @@ import {
   OAuthConnectedRevocationDecision,
 } from "./OAuthConnectedRevocations";
 import { OAuthConnectedTokenProtector } from "./OAuthConnectedTokenProtector";
+import { hasLazyConnectedProtocol, preflightConnectedProtocol } from "./protocolPreflight";
 import { OAuthMethodUnsupported, OAuthUnavailable } from "./signInErrors";
 import { OAuthClaimId, OAuthCleanupInput } from "./signInModels";
 import { makeOAuthSnapshot } from "./signInSnapshot";
@@ -79,7 +80,8 @@ export const makeOAuthConnectedMaintenance = <const Id extends string>(
       const { id, policy } = yield* validateConnectedPolicy(moduleId, captured);
       const { cleanup: clean } = yield* OAuthConnectedPersistence;
       const revocations = yield* Effect.serviceOption(OAuthConnectedRevocations);
-      const { revokeGrant, ready } = yield* OAuthConnectedProtocol;
+      const protocol = yield* OAuthConnectedProtocol;
+      const { revokeGrant } = protocol;
       const { open } = yield* OAuthConnectedTokenProtector;
       const { randomBytes } = yield* SecureRandom.SecureRandom;
 
@@ -245,7 +247,7 @@ export const makeOAuthConnectedMaintenance = <const Id extends string>(
             }),
           );
 
-        if (ready === undefined) {
+        if (!hasLazyConnectedProtocol(protocol)) {
           return (yield* runClaimed(undefined)) ?? { outcome: "Empty" as const };
         }
 
@@ -253,22 +255,39 @@ export const makeOAuthConnectedMaintenance = <const Id extends string>(
           return yield* OAuthUnavailable.make({});
         }
 
-        // Bounded scan so one temporarily unready registration does not stall
-        // healthy revocation jobs queued behind it.
-        const excluded: Array<typeof M.OAuthConnectedRevocationJob.fields.jobId.Type> = [];
+        // Exclude unavailable registrations across bounded passes so healthy
+        // revocation jobs queued behind any number of unavailable jobs still run.
+        const excludedJobIds: Array<typeof M.OAuthConnectedRevocationJob.fields.jobId.Type> = [];
+        const excludedJobIdSet = new Set<typeof M.OAuthConnectedRevocationJob.fields.jobId.Type>();
+
+        const excludedConfigurations: Array<{
+          readonly provider: typeof M.OAuthConnectedConfiguration.fields.provider.Type;
+          readonly configurationGeneration: typeof M.OAuthConnectedConfiguration.fields.configurationGeneration.Type;
+          readonly issuer: typeof M.OAuthConnectedConfiguration.fields.issuer.Type;
+          readonly callbackId: typeof M.OAuthConnectedConfiguration.fields.callbackId.Type;
+          readonly responseIssuerMode: typeof M.OAuthConnectedConfiguration.fields.responseIssuerMode.Type;
+        }> = [];
+
         const failedConfigs = new Set<string>();
         let sawUnavailable = false;
 
-        for (let attempt = 0; attempt < 32; attempt++) {
+        for (let attempt = 0; attempt < 64; attempt++) {
           const pending = yield* peek({
             moduleId: id,
-            ...(excluded.length === 0 ? {} : { excludeJobIds: excluded }),
+            ...(excludedJobIds.length === 0 ? {} : { excludeJobIds: excludedJobIds }),
+            ...(excludedConfigurations.length === 0
+              ? {}
+              : { excludeConfigurations: excludedConfigurations }),
           });
 
           if (pending === undefined) {
             return sawUnavailable
               ? yield* OAuthUnavailable.make({})
               : { outcome: "Empty" as const };
+          }
+
+          if (excludedJobIdSet.has(pending.jobId)) {
+            break;
           }
 
           const config = pending.grant.context.configuration;
@@ -283,16 +302,25 @@ export const makeOAuthConnectedMaintenance = <const Id extends string>(
 
           if (failedConfigs.has(configKey)) {
             sawUnavailable = true;
-            excluded.push(pending.jobId);
+            if (excludedJobIds.length >= 64) break;
+            excludedJobIds.push(pending.jobId);
+            excludedJobIdSet.add(pending.jobId);
             continue;
           }
 
-          const readiness = yield* Effect.result(ready(config));
+          const readiness = yield* Effect.result(preflightConnectedProtocol(protocol, config));
 
           if (readiness._tag === "Failure") {
             sawUnavailable = true;
             failedConfigs.add(configKey);
-            excluded.push(pending.jobId);
+            if (excludedConfigurations.length >= 64) break;
+            excludedConfigurations.push({
+              provider: config.provider,
+              configurationGeneration: config.configurationGeneration,
+              issuer: config.issuer,
+              callbackId: config.callbackId,
+              responseIssuerMode: config.responseIssuerMode,
+            });
             continue;
           }
 

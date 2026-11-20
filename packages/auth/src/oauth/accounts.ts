@@ -66,6 +66,7 @@ import { OAuthActionEvidence } from "./OAuthActionEvidence";
 import { OAuthLinkTransactionProtector } from "./OAuthLinkTransactionProtector";
 import { OAuthProtocol } from "./OAuthProtocol";
 import { OAuthReturnTargets } from "./OAuthReturnTargets";
+import { needsLazyProtocol, preflightProtocol } from "./protocolPreflight";
 import {
   OAuthConfigurationError,
   OAuthMethodUnsupported,
@@ -206,7 +207,8 @@ export const makeOAuthAccounts = <
       } = yield* OAuthAccountsPersistence;
 
       const { verify: verifyAction } = yield* OAuthActionEvidence;
-      const { prepareAuthorization, exchangeVerifiedIdentity, ready } = yield* OAuthProtocol;
+      const protocol = yield* OAuthProtocol;
+      const { prepareAuthorization, exchangeVerifiedIdentity } = protocol;
       const { resolve: resolveTarget } = yield* OAuthReturnTargets;
       const { seal, open } = yield* OAuthLinkTransactionProtector;
       const { before } = yield* LifecycleHooks;
@@ -566,7 +568,7 @@ export const makeOAuthAccounts = <
 
         // Warm lazy provider metadata before consuming a valid code flow so a
         // discovery outage or metadata mismatch leaves the flow pending.
-        if (response._tag === "Code" && ready !== undefined) {
+        if (response._tag === "Code" && needsLazyProtocol(protocol, request.provider, "web")) {
           if (inspect === undefined) return yield* OAuthUnavailable.make({});
           const pending = yield* inspect(access);
 
@@ -577,7 +579,7 @@ export const makeOAuthAccounts = <
           }
           const pendingFlow = yield* snapshotOAuthLinkFlow.effect(pending);
 
-          yield* ready({
+          yield* preflightProtocol(protocol, {
             provider: pendingFlow.context.provider,
             protocol: pendingFlow.context.protocol,
             configurationGeneration: pendingFlow.context.configurationGeneration,
