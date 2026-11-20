@@ -141,8 +141,12 @@ it.effect("completes a form_post callback through the proxy without repeating ex
 
       const form = new URLSearchParams({ state, code: "provider-code", user }).toString();
 
+      expect((yield* server.handle(new Request(`${callbackUrl}?${form}`))).status).toBe(400);
       expect((yield* callback(`${callbackUrl}?state=${state}`, form)).status).toBe(400);
       expect((yield* callback(callbackUrl, `${form}&state=${state}`)).status).toBe(400);
+      expect((yield* callback(callbackUrl, `${form}&id_token=header.payload.sig`)).status).toBe(
+        400,
+      );
       const completed = yield* callback(callbackUrl, form);
 
       expect(completed.status).toBe(303);

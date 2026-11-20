@@ -260,6 +260,7 @@ it.live.each(backends)(
       const flow = yield* Schema.decodeEffect(OAuth.OAuthSignInFlow)({
         context: {
           ...configuration,
+          responseMode: "query",
           namespace: "effect-auth/oauth-sign-in-context/v1",
           moduleId,
           generation: 1,
@@ -332,6 +333,10 @@ it.live.each(backends)(
         subjectId: credential.revision.subjectId,
       };
 
+      expect(
+        (yield* (yield* connected.consume({ ...access, responseMode: "form_post" }, prepare)).read)
+          ._tag,
+      ).toBe("Rejected");
       expect((yield* (yield* connected.consume(access, prepare)).read)._tag).toBe("Consumed");
       expect((yield* (yield* connected.consume(access, prepare)).read)._tag).toBe("Rejected");
 

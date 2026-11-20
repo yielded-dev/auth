@@ -234,6 +234,8 @@ export const OAuthSignInAccess = Schema.Struct({
   requestBindingVerifier: OAuthSignInTransactionContext.fields.requestBindingVerifier,
   requestBindingExpiresAtMillis: OAuthInstant,
   responseIssuer: Schema.optionalKey(OAuthIssuer),
+  /** Expected callback delivery mode for browser flows; omitted only for native flows. */
+  responseMode: Schema.optionalKey(Schema.Literals(["query", "form_post"])),
 });
 
 export type OAuthSignInAccess = typeof OAuthSignInAccess.Type;
@@ -257,6 +259,8 @@ const responseBase = {
     Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(2048)),
   ),
   issuer: Schema.optionalKey(OAuthIssuer),
+  /** Callback delivery transport; defaults to `"query"` when omitted. */
+  mode: Schema.optionalKey(Schema.Literals(["query", "form_post"])),
 };
 
 export const OAuthCodeResponse = Schema.TaggedStruct("Code", {

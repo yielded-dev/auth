@@ -546,8 +546,14 @@ Auth provider configuration requires HTTPS endpoints. The lower-level `@yielded/
 exposes `ClientAuth`, `Discovery`, `Grant`, `OAuth`, `Oidc`, `Pkce`, and `OAuthError` for direct
 relying-party protocol composition (plain-OAuth profile fetches, JSON token bodies, and
 comma-separated scopes live in `@yielded/auth`'s provider adapters). Authorization URLs omit
-`response_mode` for `"query"` and emit `response_mode=form_post` only for `"form_post"`. It accepts HTTP
-endpoints and discovery URLs on
+`response_mode` for `"query"` and emit `response_mode=form_post` only for `"form_post"`.
+Callback decoding (`OAuth.callbackParamsFromQuery`, `OAuth.callbackParamsFromFormPost`, and
+`OAuth.validateCallback`) enforces parameter bounds, rejects duplicates and front-channel token
+parameters (`id_token`, `access_token`) on `response_type=code` callbacks, verifies `responseMode`,
+constant-time `state`, and RFC 9207 `iss` before classification, and preserves `scope` and `mode`
+on `OAuthCallbackResponse`. Wrong-mode callbacks are rejected without consuming the pending flow;
+bound provider errors consume the flow once, clear `request-binding`, and return `Cancelled`.
+It accepts HTTP endpoints and discovery URLs on
 `localhost`, `127.0.0.1`, or `[::1]` only with an explicitly configured HTTP loopback
 issuer. Asymmetric OIDC verification still requires an HTTPS JWKS URL.
 

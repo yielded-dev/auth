@@ -95,6 +95,9 @@ export const makeOAuthNativeFlow = Effect.fnUntraced(function* <Flow extends OAu
       input.responseIssuer === undefined
         ? exact(f.responseIssuerMode, "unsupported")
         : sql.and([exact(f.responseIssuerMode, "required"), exact(f.issuer, input.responseIssuer)]),
+      input.responseMode === undefined
+        ? sql`${flow.column(f.responseMode)} is null`
+        : exact(f.responseMode, input.responseMode),
     ]);
   });
 
@@ -105,7 +108,10 @@ export const makeOAuthNativeFlow = Effect.fnUntraced(function* <Flow extends OAu
 
     if (
       context.issuedAtMillis >= context.expiresAtMillis ||
-      context.expiresAtMillis > context.requestBindingExpiresAtMillis
+      context.expiresAtMillis > context.requestBindingExpiresAtMillis ||
+      (context.redirectUri === undefined
+        ? purpose !== "sign-in" || context.responseMode !== undefined
+        : context.responseMode === undefined)
     )
       return false;
 
@@ -119,6 +125,7 @@ export const makeOAuthNativeFlow = Effect.fnUntraced(function* <Flow extends OAu
       [f.callbackId]: context.callbackId,
       [f.issuer]: context.issuer,
       [f.responseIssuerMode]: context.responseIssuerMode,
+      [f.responseMode]: context.responseMode ?? null,
       [f.subjectId]: nativeId,
       [f.stateDigest]: context.stateDigest,
       [f.binderVerifier]: context.requestBindingVerifier,
@@ -213,6 +220,11 @@ export const makeOAuthNativeFlow = Effect.fnUntraced(function* <Flow extends OAu
         context.issuedAtMillis === mapping.clock.decodeInstant(row[f.issuedAt]) &&
         context.expiresAtMillis === mapping.clock.decodeInstant(row[f.expiresAt]) &&
         subjectId(value) === input.subjectId &&
+        context.responseMode === input.responseMode &&
+        row[f.responseMode] === (input.responseMode ?? null) &&
+        (input.responseMode === undefined
+          ? context.redirectUri === undefined
+          : context.redirectUri !== undefined) &&
         (input.responseIssuer === undefined
           ? context.responseIssuerMode === "unsupported"
           : context.responseIssuerMode === "required" && context.issuer === input.responseIssuer)
@@ -268,6 +280,7 @@ export const makeOAuthNativeFlow = Effect.fnUntraced(function* <Flow extends OAu
     },
   ) {
     if (input.formPostSubject !== true) return yield* consumeMatching(input);
+    if (input.responseMode !== "form_post") return undefined;
 
     const predicate = yield* access(input);
 

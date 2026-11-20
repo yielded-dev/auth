@@ -40,6 +40,7 @@ const oauthFlow = spec(
     callbackId: text,
     issuer: text,
     responseIssuerMode: text,
+    responseMode: optionalText,
     subjectId: optionalText,
     stateDigest: text,
     binderVerifier: text,

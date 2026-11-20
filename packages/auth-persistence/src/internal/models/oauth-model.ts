@@ -148,6 +148,7 @@ export interface OAuthFlowTable<F extends Table> {
   readonly callbackId: Column<F>;
   readonly issuer: Column<F>;
   readonly responseIssuerMode: Column<F>;
+  readonly responseMode: Column<F>;
   readonly subjectId: Column<F>;
   readonly stateDigest: Column<F>;
   readonly binderVerifier: Column<F>;

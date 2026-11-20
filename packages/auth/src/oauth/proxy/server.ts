@@ -1,3 +1,4 @@
+import * as OAuthProtocolClient from "@yielded/oauth/OAuth";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -41,7 +42,7 @@ import {
   Rejected,
   Unavailable,
 } from "./models";
-import { noStore, readText, secrets } from "./wire";
+import { noStore, readBytes, readText, secrets } from "./wire";
 
 export interface Options<E = never, R = never> {
   readonly origin: string;
@@ -334,74 +335,96 @@ export const layer = <E, R>(options: Options<E, R>) => {
         )
           return yield* Rejected.make({});
 
-        const params = formPost
-          ? new URLSearchParams(yield* readText(HttpServerRequest.fromWeb(request).stream, 16384))
-          : url.searchParams;
+        let decoded: OAuthProtocolClient.CallbackParams;
 
-        const known = new Set([
-          "code",
-          "state",
-          "iss",
-          "error",
-          "error_description",
-          "error_uri",
-          ...providerCallbackParameters,
-          ...(formPost ? ["user"] : []),
-        ]);
+        if (formPost) {
+          const body = yield* readBytes(HttpServerRequest.fromWeb(request).stream, 16384);
 
-        const seen = new Set<string>();
-
-        for (const [key, value] of params) {
-          if (!known.has(key) || seen.has(key) || value.length > 4096)
-            return yield* Rejected.make({});
-          seen.add(key);
+          decoded = yield* OAuthProtocolClient.callbackParamsFromFormPost({
+            url,
+            contentType: request.headers.get("content-type") ?? undefined,
+            body,
+            maxBytes: 16384,
+            allowedParameters: [...providerCallbackParameters, "user"],
+            unknownParameters: "reject",
+          }).pipe(Effect.mapError(() => Rejected.make({})));
+        } else {
+          decoded = yield* OAuthProtocolClient.callbackParamsFromQuery(url, {
+            allowedParameters: providerCallbackParameters,
+            unknownParameters: "reject",
+          }).pipe(Effect.mapError(() => Rejected.make({})));
         }
-        const state = params.get("state");
-        const code = params.get("code");
-        const error = params.get("error");
 
-        if (state === null || (code === null) === (error === null)) return yield* Rejected.make({});
+        const state = Redacted.value(decoded.state);
         const record = yield* load(state);
         const context = record.context;
-        const issuer = params.get("iss");
 
         if (
           record._tag !== "Pending" ||
           context.upstream.provider !== provider ||
-          context.responseMode !== (formPost ? "form_post" : "query") ||
+          context.responseMode !== decoded.mode ||
           (context.upstream.responseIssuerMode === "required"
-            ? issuer !== context.upstream.issuer
-            : issuer !== null)
+            ? decoded.issuer !== context.upstream.issuer
+            : decoded.issuer !== undefined)
         )
           return yield* Rejected.make({});
         const payload = yield* protector.open(context, record.sealed);
 
         if (
           payload._tag !== "Pending" ||
-          Redacted.value(payload.preparation.secrets.state) !== state ||
           !sameConfiguration(payload.preparation.configuration, context.upstream)
         )
           return yield* Unavailable.make({});
-        const scope = params.get("scope");
-        const user = params.get("user");
 
-        const response = yield* Schema.decodeEffect(OAuthCallbackResponse)(
-          code === null
-            ? {
-                _tag: "Error",
-                state,
-                error: error === "access_denied" ? "access-denied" : "rejected",
-                ...(issuer === null ? {} : { issuer }),
-              }
-            : {
-                _tag: "Code",
-                state,
-                code,
-                ...(issuer === null ? {} : { issuer }),
-                ...(scope === null ? {} : { scope }),
-                ...(user === null || user.length === 0 ? {} : { user }),
-              },
-        ).pipe(Effect.mapError(() => Rejected.make({})));
+        const validation = yield* Effect.result(
+          OAuthProtocolClient.validateCallback(decoded, {
+            state: payload.preparation.secrets.state,
+            responseMode: context.responseMode,
+            issuer: context.upstream.issuer,
+            issuerIdentification: context.upstream.responseIssuerMode,
+            expiresAt: DateTime.makeUnsafe(context.expiresAtMillis),
+          }),
+        );
+
+        let errorCode: "access_denied" | "rejected" | undefined;
+        let response: typeof OAuthCallbackResponse.Type | undefined;
+
+        if (validation._tag === "Failure") {
+          const reason = validation.failure.reason;
+
+          switch (reason._tag) {
+            case "AuthorizationDenied":
+              errorCode = "access_denied";
+              break;
+            case "EndpointError":
+              errorCode = "rejected";
+              break;
+            case "CallbackRejected":
+              return yield* reason.reason === "stateMismatch"
+                ? Unavailable.make({})
+                : Rejected.make({});
+            case "ClientAuthFailed":
+            case "DiscoveryFailed":
+            case "InvalidArgument":
+            case "InvalidResponse":
+            case "TokenVerificationFailed":
+            case "TransportFailed":
+              return yield* Rejected.make({});
+          }
+        } else {
+          const result = validation.success;
+          const user = Object.hasOwn(result.extra, "user") ? result.extra.user : undefined;
+
+          response = yield* Schema.decodeEffect(OAuthCallbackResponse)({
+            _tag: "Code",
+            mode: decoded.mode,
+            state,
+            code: Redacted.value(result.code),
+            ...(result.issuer === undefined ? {} : { issuer: result.issuer }),
+            ...(result.scope === undefined ? {} : { scope: result.scope }),
+            ...(user === undefined || user.length === 0 ? {} : { user }),
+          }).pipe(Effect.mapError(() => Rejected.make({})));
+        }
 
         const exchanging: Record = { _tag: "Exchanging", version: yield* random, context };
 
@@ -411,15 +434,13 @@ export const layer = <E, R>(options: Options<E, R>) => {
 
         destination.searchParams.set("state", state);
         destination.searchParams.set("iss", context.configuration.issuer);
-        if (response._tag === "Error") {
-          destination.searchParams.set(
-            "error",
-            error === "access_denied" ? "access_denied" : "rejected",
-          );
+        if (errorCode !== undefined) {
+          destination.searchParams.set("error", errorCode);
         } else {
           const entry = installed.find((entry) => entry.provider === provider);
 
-          if (entry === undefined) return yield* Rejected.make({});
+          if (entry === undefined || response === undefined || response._tag !== "Code")
+            return yield* Rejected.make({});
           const started = yield* DateTime.now;
 
           const identity = yield* entry.protocol

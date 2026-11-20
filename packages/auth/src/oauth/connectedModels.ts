@@ -377,7 +377,9 @@ export const OAuthConnectedAccess = Schema.Struct({
   formPostSubject: Schema.optionalKey(Schema.Literal(true)),
 }).check(
   Schema.makeFilter(
-    (value) => (value.formPostSubject === true) !== (value.subjectId !== undefined),
+    (value) =>
+      (value.formPostSubject === true) !== (value.subjectId !== undefined) &&
+      (value.formPostSubject !== true || value.responseMode === "form_post"),
   ),
 );
 

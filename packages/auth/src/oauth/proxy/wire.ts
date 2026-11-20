@@ -39,6 +39,45 @@ export const secrets = Effect.gen(function* () {
   };
 });
 
+export const readBytes = Effect.fnUntraced(function* <E, R>(
+  stream: Stream.Stream<Uint8Array, E, R>,
+  maximum: number,
+) {
+  let bytes = 0;
+
+  return yield* stream.pipe(
+    Stream.mapEffect((chunk) => {
+      bytes += chunk.byteLength;
+
+      return bytes > maximum ? Effect.fail(Rejected.make({})) : Effect.succeed(chunk);
+    }),
+    Stream.runFold(
+      () => [] as Array<Uint8Array>,
+      (chunks, chunk) => {
+        chunks.push(chunk);
+
+        return chunks;
+      },
+    ),
+    Effect.map((chunks) => {
+      const output = new Uint8Array(bytes);
+      let offset = 0;
+
+      for (const chunk of chunks) {
+        output.set(chunk, offset);
+        offset += chunk.byteLength;
+      }
+
+      return output;
+    }),
+    Effect.catchCause((cause) =>
+      Effect.failCause(
+        Cause.map(cause, (error) => (Schema.is(Rejected)(error) ? error : Unavailable.make({}))),
+      ),
+    ),
+  );
+});
+
 export const readText = Effect.fnUntraced(function* <E, R>(
   stream: Stream.Stream<Uint8Array, E, R>,
   maximum: number,

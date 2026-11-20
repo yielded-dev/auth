@@ -1,3 +1,4 @@
+import * as OAuthProtocolClient from "@yielded/oauth/OAuth";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Digest from "effect/crypto/Digest";
@@ -416,7 +417,7 @@ export const makeOAuthConnected = <const Id extends string>(
 
         const intent = yield* snapshotOAuthConnectedIntentContext.effect({
           ...prepared.configuration,
-          ...(prepared.responseMode === undefined ? {} : { responseMode: prepared.responseMode }),
+          responseMode: prepared.responseMode ?? "query",
           namespace: "effect-auth/oauth-connected-context/v1",
           moduleId: id,
           generation: policy.generation,
@@ -505,6 +506,7 @@ export const makeOAuthConnected = <const Id extends string>(
 
         const request = yield* snapshotOAuthConnectedComplete.effect(raw);
         const response = request.response;
+        const observedMode = response.mode ?? "query";
 
         if (
           encoder.encode(
@@ -514,6 +516,9 @@ export const makeOAuthConnected = <const Id extends string>(
           ).length > 16384
         )
           return yield* OAuthRejected.make({});
+
+        if (authenticated === undefined && observedMode !== "form_post")
+          return yield* AuthenticationRequired.make({});
 
         const binder = {
           ...(yield* verifyBinding(request.flowId, request.requestBinding).pipe(
@@ -530,6 +535,7 @@ export const makeOAuthConnected = <const Id extends string>(
           stateDigest: yield* stateDigest(request.flowId, request.provider, response.state),
           requestBindingVerifier: binder.verifier,
           requestBindingExpiresAtMillis: binder.expiresAtMillis,
+          responseMode: observedMode,
           ...(response.issuer === undefined ? {} : { responseIssuer: response.issuer }),
         };
 
@@ -550,8 +556,9 @@ export const makeOAuthConnected = <const Id extends string>(
         }
         const flow = yield* snapshotOAuthConnectedFlow.effect(consumed.flow);
         const context = flow.context;
+        const expectedMode = context.responseMode;
 
-        if (authenticated === undefined && context.responseMode !== "form_post")
+        if (authenticated === undefined && expectedMode !== "form_post")
           return yield* AuthenticationRequired.make({});
 
         const caller = authenticated ?? context.authenticatedCaller;
@@ -569,6 +576,7 @@ export const makeOAuthConnected = <const Id extends string>(
           context.requestBindingVerifier !== binder.verifier ||
           context.requestBindingExpiresAtMillis !== binder.expiresAtMillis ||
           context.expiresAtMillis > binder.expiresAtMillis ||
+          expectedMode !== observedMode ||
           !connectedProfile(policy, context.profile) ||
           (context.responseIssuerMode === "required"
             ? response.issuer !== context.issuer
@@ -576,7 +584,7 @@ export const makeOAuthConnected = <const Id extends string>(
         )
           return yield* OAuthUnavailable.make({});
 
-        return { caller, request, flow, context, access };
+        return { caller, request, flow, context, access, observedMode };
       });
 
       const completeChallenge = (context: M.OAuthConnectedTransactionContext) =>
@@ -591,7 +599,11 @@ export const makeOAuthConnected = <const Id extends string>(
         invocation: AuthInvocation,
         raw: typeof M.OAuthConnectedComplete.Type,
       ) {
-        const { caller, request, flow, context } = yield* consumeCallback(invocation, raw);
+        const { caller, request, flow, context, observedMode } = yield* consumeCallback(
+          invocation,
+          raw,
+        );
+
         const response = request.response;
 
         if (response._tag === "Error")
@@ -616,10 +628,29 @@ export const makeOAuthConnected = <const Id extends string>(
             if (
               (context.protocol === "oidc") !== (secrets.oidcNonce !== undefined) ||
               (yield* stateDigest(context.flowId, context.provider, secrets.state)) !==
-                context.stateDigest ||
-              Redacted.value(secrets.state) !== Redacted.value(response.state)
+                context.stateDigest
             )
               return yield* OAuthUnavailable.make({});
+
+            yield* OAuthProtocolClient.validateCallback(
+              {
+                mode: observedMode,
+                state: response.state,
+                ...(response.issuer === undefined ? {} : { issuer: response.issuer }),
+                outcome: {
+                  _tag: "Code",
+                  code: response.code,
+                  ...(response.scope === undefined ? {} : { scope: response.scope }),
+                  extra: {},
+                },
+              },
+              {
+                state: secrets.state,
+                responseMode: observedMode,
+                issuer: context.issuer,
+                issuerIdentification: context.responseIssuerMode,
+              },
+            ).pipe(Effect.mapError(() => OAuthUnavailable.make({})));
             const start = DateTime.toEpochMillis(yield* DateTime.now);
 
             const protocolConfiguration =

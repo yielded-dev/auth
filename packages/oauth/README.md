@@ -21,7 +21,8 @@ permissions, identity, and grant storage.
 - **`OAuth`**: Scoped `OAuth.Client` service (`make` / `layer`) capturing `Discovery`,
   `HttpClient`, and independent `clientAuth` / `revocationAuth` requirements, with
   `authorizationUrl`, single-snapshot `prepareAuthorization`, `OAuth.authorize`,
-  `exchangeRaw`, `exchange`, and RFC 7009 `revoke` (exact HTTP `200` success).
+  `exchangeRaw`, `exchange`, RFC 7009 `revoke` (exact HTTP `200` success), and canonical
+  callback helpers (`callbackParamsFromQuery`, `callbackParamsFromFormPost`, `validateCallback`).
 - **`Oidc`**: `Oidc.authorize` (idempotent `"openid"`, consistent `nonce`, advertised
   PKCE by default), `Oidc.verify` (known `Jwk.PublicKey` or HMAC `Jwk.SecretKey`),
   `Oidc.verifyWithKeySet`, `Oidc.Verifier` (`makeVerifier` / `layerVerifier` and lazy,
