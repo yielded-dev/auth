@@ -7,7 +7,11 @@ import * as Schema from "effect/Schema";
 import type { AnyRoute } from "../http-operation/contract";
 import { OperationHttpConfigurationError, OperationHttpError } from "../http-operation/errors";
 import { OperationHttpServerConfig } from "../http-operation/OperationHttpServerConfig";
-import { oauthCallback, type OAuthHttpCallback } from "../http-operation/server";
+import {
+  compileCallbackAllowlist,
+  oauthCallback,
+  type OAuthHttpCallback,
+} from "../http-operation/server";
 import { origin as Origin } from "../internal/origin";
 import { providerCallbackParameters, selectCallback } from "../oauth/callback";
 import { OAuthConnectedProtocol } from "../oauth/OAuthConnectedProtocol";
@@ -126,12 +130,15 @@ export const makeOAuth = <E, R, ResponseR>(
               );
             paths.add(path);
             ids.add(callbackId);
+
+            const allowedQueryParameters = compileCallbackAllowlist([
+              ...providerCallbackParameters,
+              ...(callback.allowedQueryParameters ?? []),
+            ]);
+
             captured.push({
               ...callback,
-              allowedQueryParameters: [
-                ...providerCallbackParameters,
-                ...(callback.allowedQueryParameters ?? []),
-              ],
+              ...(allowedQueryParameters === undefined ? {} : { allowedQueryParameters }),
               path,
               callbackId,
               redirectUri: yield* Schema.decodeResult(OAuthRedirectUri)(`${origin}${path}`),

@@ -1026,10 +1026,26 @@ export const authorize: (
 });
 
 const maxCallbackParams = 32;
+const maxAllowedCallbackParameters = 256;
 const maxCallbackValueLength = 4096;
 const maxCallbackScopeLength = 16384;
 const maxCallbackQueryLength = 262144;
 const defaultMaxFormPostBytes = 16384;
+const maxCallbackClockToleranceMillis = 300_000;
+
+// RFC 6749 Appendix A.11: code = 1*VSCHAR (%x20-7E).
+const authorizationCodePattern = /^[\x20-\x7e]+$/;
+
+// RFC 6749 §4.1.2.1: error values MUST NOT include characters outside %x20-21 / %x23-5B / %x5D-7E.
+const authorizationErrorPattern = /^[\x20\x21\x23-\x5b\x5d-\x7e]+$/;
+
+// Callback issuer equality matches the issuance issuer contract without
+// imposing Discovery's URL/no-query/no-well-known restrictions.
+const CallbackIssuer = V.text(2048).check(
+  // oxlint-disable-next-line no-control-regex -- Reject whitespace, backslash, and ASCII controls.
+  Schema.isPattern(/^[^\s\\\u0000-\u001f\u007f]+$/),
+  Schema.makeFilter((value) => V.isWellFormedUnicode(value)),
+);
 
 const standardCallbackParameters: ReadonlySet<string> = new Set([
   "state",
@@ -1117,7 +1133,10 @@ const parseCallbackDecodeOptions = Effect.fnUntraced(function* (
   const allowed = new Set<string>();
 
   if (options.allowedParameters !== undefined) {
-    if (!Array.isArray(options.allowedParameters) || options.allowedParameters.length > 64) {
+    if (
+      !Array.isArray(options.allowedParameters) ||
+      options.allowedParameters.length > maxAllowedCallbackParameters
+    ) {
       return yield* V.invalidArgument("Invalid allowedParameters");
     }
 
@@ -1141,9 +1160,9 @@ const parseCallbackDecodeOptions = Effect.fnUntraced(function* (
   return { allowed, unknownParameters };
 });
 
-const parseUrlEncodedString = Effect.fnUntraced(function* (
+const checkUrlEncodedBounds = Effect.fnUntraced(function* (
   raw: string,
-): Effect.fn.Return<ReadonlyArray<readonly [string, string]>, OAuthError.OAuthError> {
+): Effect.fn.Return<void, OAuthError.OAuthError> {
   if (raw.length > maxCallbackQueryLength) {
     return yield* callbackRejected("invalidParameters");
   }
@@ -1162,8 +1181,16 @@ const parseUrlEncodedString = Effect.fnUntraced(function* (
       start = index + 1;
     }
   }
+});
 
-  const params = new URLSearchParams(raw);
+const parseUrlEncodedString = Effect.fnUntraced(function* (
+  raw: string,
+): Effect.fn.Return<ReadonlyArray<readonly [string, string]>, OAuthError.OAuthError> {
+  yield* checkUrlEncodedBounds(raw);
+
+  // Prefix `&` when `raw` starts with `?` so URLSearchParams does not strip a
+  // literal leading `?` belonging to the first parameter name.
+  const params = new URLSearchParams(raw.startsWith("?") ? `&${raw}` : raw);
   const entries: Array<readonly [string, string]> = [];
 
   for (const [key, value] of params) {
@@ -1335,8 +1362,7 @@ const decodeCallbackEntries = Effect.fnUntraced(function* (
     if (
       error.length === 0 ||
       error.length > 128 ||
-      // oxlint-disable-next-line no-control-regex -- Reject control characters in OAuth error codes.
-      /[\u0000-\u001f\u007f]/u.test(error) ||
+      !authorizationErrorPattern.test(error) ||
       (errorUri !== undefined && errorUri.length > 2048)
     ) {
       return yield* callbackRejected("invalidParameters");
@@ -1353,6 +1379,7 @@ const decodeCallbackEntries = Effect.fnUntraced(function* (
     if (
       code === undefined ||
       code.length === 0 ||
+      !authorizationCodePattern.test(code) ||
       errorDescription !== undefined ||
       errorUri !== undefined
     ) {
@@ -1410,9 +1437,13 @@ export const callbackParamsFromQuery: (
   ) {
     const [, url] = yield* extractCallbackUrl(input);
 
-    const entries = yield* parseUrlEncodedString(
-      url.search.startsWith("?") ? url.search.slice(1) : url.search,
-    );
+    yield* checkUrlEncodedBounds(url.search.startsWith("?") ? url.search.slice(1) : url.search);
+
+    const entries: Array<readonly [string, string]> = [];
+
+    for (const [key, value] of url.searchParams) {
+      entries.push([key, value]);
+    }
 
     return yield* decodeCallbackEntries("query", entries, parsedOptions);
   }
@@ -1621,6 +1652,7 @@ export const validateCallback: (
     readonly issuer: string;
     readonly issuerIdentification: IssuerIdentificationMode;
     readonly expiresAt?: DateTime.Utc | undefined;
+    readonly clockTolerance?: Duration.Input | undefined;
   },
 ) => Effect.Effect<CallbackResult, OAuthError.OAuthError> = Effect.fnUntraced(function* (
   callback: CallbackParams,
@@ -1630,6 +1662,7 @@ export const validateCallback: (
     readonly issuer: string;
     readonly issuerIdentification: IssuerIdentificationMode;
     readonly expiresAt?: DateTime.Utc | undefined;
+    readonly clockTolerance?: Duration.Input | undefined;
   },
 ): Effect.fn.Return<CallbackResult, OAuthError.OAuthError> {
   if (!Predicate.isObject(callback) || !Predicate.isObject(expected)) {
@@ -1668,7 +1701,7 @@ export const validateCallback: (
   );
 
   const expectedIssuer = yield* V.configuration(
-    V.Issuer,
+    CallbackIssuer,
     expected.issuer,
     "Invalid expected issuer",
   );
@@ -1680,6 +1713,16 @@ export const validateCallback: (
   );
 
   let expiresAtMillis: number | undefined;
+  let clockToleranceMillis = 0;
+
+  if (expected.clockTolerance !== undefined) {
+    clockToleranceMillis = yield* V.finiteMillis("clockTolerance", expected.clockTolerance);
+    if (clockToleranceMillis > maxCallbackClockToleranceMillis) {
+      return yield* V.invalidArgument(
+        `clockTolerance must not exceed ${maxCallbackClockToleranceMillis} milliseconds`,
+      );
+    }
+  }
 
   if (expected.expiresAt !== undefined) {
     if (!DateTime.isDateTime(expected.expiresAt)) {
@@ -1722,6 +1765,10 @@ export const validateCallback: (
       true,
     );
 
+    if (!authorizationCodePattern.test(code)) {
+      return yield* V.invalidArgument("Invalid authorization code");
+    }
+
     const scope =
       outcome.scope === undefined
         ? undefined
@@ -1745,8 +1792,7 @@ export const validateCallback: (
         typeof outcome.rawCode !== "string" ||
         outcome.rawCode.length === 0 ||
         outcome.rawCode.length > 128 ||
-        // oxlint-disable-next-line no-control-regex -- Reject control characters in rawCode.
-        /[\u0000-\u001f\u007f]/u.test(outcome.rawCode)
+        !authorizationErrorPattern.test(outcome.rawCode)
       ) {
         return yield* V.invalidArgument("Invalid callback rawCode");
       }
@@ -1765,7 +1811,7 @@ export const validateCallback: (
   if (expiresAtMillis !== undefined) {
     const nowMillis = yield* Clock.currentTimeMillis;
 
-    if (nowMillis > expiresAtMillis) {
+    if (nowMillis > expiresAtMillis + clockToleranceMillis) {
       return yield* callbackRejected("invalidTransport");
     }
   }

@@ -281,6 +281,7 @@ const registrationIntent = Effect.gen(function* () {
       configurationGeneration: 1,
       issuer: "https://provider.example",
       responseIssuerMode: "unsupported",
+      responseMode: "query",
       callbackId: "example",
       redirectUri: "https://app.example/callback",
       returnTarget: "/",

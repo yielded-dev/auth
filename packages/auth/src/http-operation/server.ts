@@ -14,7 +14,7 @@ import * as Scope from "effect/Scope";
 import { AuthRequest } from "../auth/AuthRequest";
 import { HookDenied } from "../hooks/models";
 import { reportAuthFailure, ReportedOperationDefect } from "../internal/diagnostics";
-import { providerCallbackParameters } from "../oauth/callback";
+import { OAuthCallbackTransport } from "../oauth/signInModels";
 import type { AuthInvocation } from "../operations/context";
 import {
   AuthCredentialCommandCollector,
@@ -80,6 +80,65 @@ export interface OAuthHttpCallback<R = never> {
   ) => Effect.Effect<Response, OperationHttpError, R>;
 }
 
+const maxCompiledCallbackAllowlist = 255;
+
+const forbiddenCallbackAllowlistNames: ReadonlySet<string> = new Set([
+  "__proto__",
+  "constructor",
+  "prototype",
+  "access_token",
+  "id_token",
+  "token",
+  "token_type",
+  "expires_in",
+  "response",
+]);
+
+const isWellFormedUnicode = (value: string): boolean => {
+  for (let i = 0; i < value.length; i++) {
+    const code = value.charCodeAt(i);
+
+    if (code >= 0xd800 && code <= 0xdbff) {
+      const next = value.charCodeAt(i + 1);
+
+      if (!(next >= 0xdc00 && next <= 0xdfff)) return false;
+      i++;
+    } else if (code >= 0xdc00 && code <= 0xdfff) {
+      return false;
+    }
+  }
+
+  return true;
+};
+
+export const compileCallbackAllowlist = (
+  names: ReadonlyArray<string> | undefined,
+): ReadonlyArray<string> | undefined => {
+  if (names === undefined) return undefined;
+  const unique = new Set<string>();
+
+  for (const name of names) {
+    if (
+      typeof name !== "string" ||
+      name.length === 0 ||
+      name.length > 256 ||
+      !isWellFormedUnicode(name) ||
+      // oxlint-disable-next-line no-control-regex -- Reject ASCII control characters in callback parameter allowlists.
+      /[\u0000-\u001f\u007f]/u.test(name) ||
+      forbiddenCallbackAllowlistNames.has(name.toLowerCase()) ||
+      forbiddenCallbackAllowlistNames.has(name)
+    )
+      // oxlint-disable-next-line effect/no-untyped-throw -- Public synchronous callback construction rejects an invalid parameter allowlist before mounting.
+      throw OperationHttpConfigurationError.make({ reason: "callback" });
+    unique.add(name);
+    if (unique.size > maxCompiledCallbackAllowlist)
+      // oxlint-disable-next-line effect/no-untyped-throw -- Public synchronous callback construction rejects an oversized parameter allowlist before mounting.
+      throw OperationHttpConfigurationError.make({ reason: "callback" });
+  }
+
+  return Object.freeze([...unique]);
+};
+
 export const oauthCallback = <R extends AnyRoute, ResponseR = never>(
   route: R,
   options: Omit<OAuthHttpCallback<ResponseR>, "route">,
@@ -94,18 +153,18 @@ export const oauthCallback = <R extends AnyRoute, ResponseR = never>(
     // oxlint-disable-next-line effect/no-untyped-throw -- Public synchronous callback construction rejects an invalid route before mounting.
     throw OperationHttpConfigurationError.make({ reason: "callback" });
 
+  const allowedQueryParameters = compileCallbackAllowlist(options.allowedQueryParameters);
+
   return Object.freeze({
     ...options,
     route,
     allowedRedirectOrigins: Object.freeze([...options.allowedRedirectOrigins]),
-    ...(options.allowedQueryParameters === undefined
-      ? {}
-      : { allowedQueryParameters: Object.freeze([...options.allowedQueryParameters]) }),
+    ...(allowedQueryParameters === undefined ? {} : { allowedQueryParameters }),
   });
 };
 
-const boundedText = Effect.fnUntraced(function* (request: Request, maximum: number) {
-  if (request.body === null) return "";
+const boundedBytes = Effect.fnUntraced(function* (request: Request, maximum: number) {
+  if (request.body === null) return new Uint8Array(0);
   const body = request.body;
   let readFailed = false;
 
@@ -133,10 +192,7 @@ const boundedText = Effect.fnUntraced(function* (request: Request, maximum: numb
             offset += chunk.byteLength;
           }
 
-          return {
-            _tag: "Text" as const,
-            text: new TextDecoder("utf-8", { fatal: true }).decode(output),
-          };
+          return { _tag: "Bytes" as const, bytes: output };
         },
         catch: () => {
           readFailed = true;
@@ -157,7 +213,16 @@ const boundedText = Effect.fnUntraced(function* (request: Request, maximum: numb
 
   if (result._tag === "TooLarge") return yield* OperationHttpError.make({ reason: "too-large" });
 
-  return result.text;
+  return result.bytes;
+});
+
+const boundedText = Effect.fnUntraced(function* (request: Request, maximum: number) {
+  const bytes = yield* boundedBytes(request, maximum);
+
+  return yield* Effect.try({
+    try: () => new TextDecoder("utf-8", { fatal: true }).decode(bytes),
+    catch: () => OperationHttpError.make({ reason: "request" }),
+  });
 });
 
 const baseHeaders = () =>
@@ -198,15 +263,13 @@ const callbackPayload = Effect.fn("OperationHttp.callbackPayload")(function* (
   credentials: HttpCredentials,
   url: URL,
 ) {
-  const allowedParameters = [
-    ...new Set([...providerCallbackParameters, "user", ...(callback.allowedQueryParameters ?? [])]),
-  ];
+  const configuredAllowlist = callback.allowedQueryParameters;
 
   let decoded: OAuthProtocolClient.CallbackParams;
 
   if (request.method === "GET") {
     decoded = yield* OAuthProtocolClient.callbackParamsFromQuery(url, {
-      allowedParameters,
+      ...(configuredAllowlist === undefined ? {} : { allowedParameters: configuredAllowlist }),
       unknownParameters: "reject",
     }).pipe(Effect.mapError(() => OperationHttpError.make({ reason: "request" })));
   } else if (request.method === "POST") {
@@ -219,14 +282,29 @@ const callbackPayload = Effect.fn("OperationHttp.callbackPayload")(function* (
       return yield* OperationHttpError.make({ reason: "request" });
     }
     const config = yield* OperationHttpServerConfig;
-    const body = yield* boundedText(request, config.maximumBodyBytes);
+    const maxBytes = Math.min(config.maximumBodyBytes, 16384);
+
+    const body = yield* boundedBytes(request, maxBytes).pipe(
+      Effect.mapError((error) =>
+        error.reason === "too-large" && 16384 < config.maximumBodyBytes
+          ? OperationHttpError.make({ reason: "request" })
+          : error,
+      ),
+    );
+
+    const postAllowlist =
+      configuredAllowlist === undefined
+        ? ["user"]
+        : configuredAllowlist.includes("user")
+          ? configuredAllowlist
+          : [...configuredAllowlist, "user"];
 
     decoded = yield* OAuthProtocolClient.callbackParamsFromFormPost({
       url,
       contentType: contentType ?? undefined,
       body,
-      maxBytes: Math.min(config.maximumBodyBytes, 16384),
-      allowedParameters,
+      maxBytes,
+      allowedParameters: postAllowlist,
       unknownParameters: "reject",
     }).pipe(Effect.mapError(() => OperationHttpError.make({ reason: "request" })));
   } else {
@@ -241,14 +319,12 @@ const callbackPayload = Effect.fn("OperationHttp.callbackPayload")(function* (
     | {
         readonly _tag: "Error";
         readonly state: string;
-        readonly mode: "query" | "form_post";
         readonly error: "access-denied" | "rejected";
         readonly issuer?: string;
       }
     | {
         readonly _tag: "Code";
         readonly state: string;
-        readonly mode: "query" | "form_post";
         readonly code: string;
         readonly issuer?: string;
         readonly scope?: string;
@@ -259,19 +335,18 @@ const callbackPayload = Effect.fn("OperationHttp.callbackPayload")(function* (
     response = {
       _tag: "Error",
       state,
-      mode: decoded.mode,
       error: decoded.outcome.code === "access_denied" ? "access-denied" : "rejected",
       ...(decoded.issuer === undefined ? {} : { issuer: decoded.issuer }),
     };
   } else {
-    const user = Object.hasOwn(decoded.outcome.extra, "user")
-      ? decoded.outcome.extra.user
-      : undefined;
+    const user =
+      decoded.mode === "form_post" && Object.hasOwn(decoded.outcome.extra, "user")
+        ? decoded.outcome.extra.user
+        : undefined;
 
     response = {
       _tag: "Code",
       state,
-      mode: decoded.mode,
       code: Redacted.value(decoded.outcome.code),
       ...(decoded.issuer === undefined ? {} : { issuer: decoded.issuer }),
       ...(decoded.outcome.scope === undefined ? {} : { scope: decoded.outcome.scope }),
@@ -280,10 +355,13 @@ const callbackPayload = Effect.fn("OperationHttp.callbackPayload")(function* (
   }
 
   return {
-    flowId: yield* callback.flowId(request, credentials),
-    provider: callback.provider,
-    callbackId: callback.callbackId,
-    response,
+    mode: decoded.mode,
+    payload: {
+      flowId: yield* callback.flowId(request, credentials),
+      provider: callback.provider,
+      callbackId: callback.callbackId,
+      response,
+    },
   };
 });
 
@@ -477,14 +555,26 @@ export const make = Effect.fnUntraced(function* <
       if (callback !== undefined && security.credentials["request-binding"] === undefined)
         return yield* OperationHttpError.make({ reason: "credentials" });
 
-      const raw =
-        callback === undefined && route.method === "GET"
-          ? undefined
-          : callback === undefined
-            ? (yield* decodeRequestBody(yield* boundedText(request, config.maximumBodyBytes)).pipe(
-                Effect.mapError(() => OperationHttpError.make({ reason: "request" })),
-              )).payload
-            : yield* callbackPayload(callback, request, security.credentials, url);
+      let callbackMode: "query" | "form_post" = "query";
+      let raw: unknown;
+
+      if (callback === undefined && route.method === "GET") {
+        raw = undefined;
+      } else if (callback === undefined) {
+        raw = (yield* decodeRequestBody(yield* boundedText(request, config.maximumBodyBytes)).pipe(
+          Effect.mapError(() => OperationHttpError.make({ reason: "request" })),
+        )).payload;
+      } else {
+        const decodedCallback = yield* callbackPayload(
+          callback,
+          request,
+          security.credentials,
+          url,
+        );
+
+        raw = decodedCallback.payload;
+        callbackMode = decodedCallback.mode;
+      }
 
       const payload = yield* inject(route, raw, security.credentials);
 
@@ -566,6 +656,7 @@ export const make = Effect.fnUntraced(function* <
 
       const requestServices = services.pipe(
         Context.add(Scope.Scope, requestScope),
+        Context.add(OAuthCallbackTransport, { mode: callbackMode }),
         Context.add(AuthRequest, {
           invocation: trusted,
           ...(resolveInvocation === undefined ? {} : { resolveInvocation }),

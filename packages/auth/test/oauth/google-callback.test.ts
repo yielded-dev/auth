@@ -104,9 +104,10 @@ it.effect("admits the parameters Google appends to its callback", () =>
 
     const response = { state: "A".repeat(43), code: "code", iss: "https://accounts.google.com" };
 
-    // An unknown or front-channel token parameter is refused before the request binding
+    // An unknown, POST-only, or front-channel token parameter is refused before the request binding
     // is read; Google's own parameters pass, and the unbound request fails on its binding instead.
     expect(yield* reason({ ...response, unexpected: "1" })).toBe("request");
+    expect(yield* reason({ ...response, user: '{"name":{"firstName":"Ada"}}' })).toBe("request");
     expect(yield* reason({ ...response, id_token: "header.payload.sig" })).toBe("request");
     expect(
       yield* reason({
@@ -147,7 +148,8 @@ it.live("forwards the callback scope parameter to the completion operation", () 
         Effect.sync(() => {
           const flow = flows.get(access.flowId);
 
-          if (flow === undefined) return prepare({ _tag: "Rejected" }, journal);
+          if (flow === undefined || flow.context.responseMode !== access.responseMode)
+            return prepare({ _tag: "Rejected" }, journal);
           flows.delete(access.flowId);
 
           return prepare({ _tag: "Consumed", flow }, journal);

@@ -1,3 +1,4 @@
+import * as Context from "effect/Context";
 import * as Schema from "effect/Schema";
 
 import { returnTarget } from "../internal/return-target";
@@ -25,11 +26,29 @@ export const OAuthInstant = Schema.Int.check(
   Schema.isBetween({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }),
 );
 
+const isWellFormedUnicode = (value: string): boolean => {
+  for (let i = 0; i < value.length; i++) {
+    const code = value.charCodeAt(i);
+
+    if (code >= 0xd800 && code <= 0xdbff) {
+      const next = value.charCodeAt(i + 1);
+
+      if (!(next >= 0xdc00 && next <= 0xdfff)) return false;
+      i++;
+    } else if (code >= 0xdc00 && code <= 0xdfff) {
+      return false;
+    }
+  }
+
+  return true;
+};
+
 export const OAuthIssuer = Schema.String.check(
   Schema.isMinLength(1),
   Schema.isMaxLength(2048),
   // oxlint-disable-next-line no-control-regex -- URI boundaries reject control characters.
   Schema.isPattern(/^[^\s\\\u0000-\u001f\u007f]+$/),
+  Schema.makeFilter(isWellFormedUnicode),
 ).pipe(Schema.brand("effect-auth/OAuthIssuer"));
 
 export const OAuthRedirectUri = Schema.String.check(
@@ -234,11 +253,23 @@ export const OAuthSignInAccess = Schema.Struct({
   requestBindingVerifier: OAuthSignInTransactionContext.fields.requestBindingVerifier,
   requestBindingExpiresAtMillis: OAuthInstant,
   responseIssuer: Schema.optionalKey(OAuthIssuer),
-  /** Expected callback delivery mode for browser flows; omitted only for native flows. */
+  /** Observed callback delivery mode for browser flows; omitted only for native flows. */
   responseMode: Schema.optionalKey(Schema.Literals(["query", "form_post"])),
 });
 
 export type OAuthSignInAccess = typeof OAuthSignInAccess.Type;
+
+/** Server-owned observed callback transport for one completion invocation.
+ * Dedicated HTTP callback routes provide `"query"` for GET and `"form_post"` for
+ * POST; named JSON completion routes always force `"query"`. Trusted server-side
+ * custom callback hosts may provide this service explicitly for `form_post`
+ * callbacks instead of accepting transport claims from public payloads.
+ * @effect-leakable-service
+ */
+export class OAuthCallbackTransport extends Context.Service<
+  OAuthCallbackTransport,
+  { readonly mode: "query" | "form_post" }
+>()("effect-auth/OAuthCallbackTransport") {}
 
 export const OAuthIssueDecision = Schema.Union([
   Schema.TaggedStruct("Issued", { flow: OAuthSignInFlow }),
@@ -259,8 +290,6 @@ const responseBase = {
     Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(2048)),
   ),
   issuer: Schema.optionalKey(OAuthIssuer),
-  /** Callback delivery transport; defaults to `"query"` when omitted. */
-  mode: Schema.optionalKey(Schema.Literals(["query", "form_post"])),
 };
 
 export const OAuthCodeResponse = Schema.TaggedStruct("Code", {
