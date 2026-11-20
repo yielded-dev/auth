@@ -901,3 +901,146 @@ it.effect("decodes whole decimal expiry strings while preserving the private raw
     ).toMatchObject({ _tag: "OAuthError", reason: { _tag: "InvalidResponse", endpoint: "token" } });
   }),
 );
+
+it.effect(
+  "decodes and validates query and form_post callbacks with RFC 9207 issuer checks and distinct error reasons",
+  () =>
+    Effect.gen(function* () {
+      const state = "state-value-123";
+      const issuer = metadata.issuer;
+
+      const queryDecoded = yield* OAuth.callbackParamsFromQuery(
+        `https://app.example/cb?code=abc&state=${state}&iss=${encodeURIComponent(issuer)}&scope=openid+email&hd=example.com&ignored=1`,
+        { allowedParameters: ["hd"] },
+      );
+
+      expect(queryDecoded.mode).toBe("query");
+      expect(Redacted.value(queryDecoded.state)).toBe(state);
+      expect(queryDecoded.issuer).toBe(issuer);
+      expect(queryDecoded.outcome._tag).toBe("Code");
+      if (queryDecoded.outcome._tag === "Code") {
+        expect(Redacted.value(queryDecoded.outcome.code)).toBe("abc");
+        expect(queryDecoded.outcome.scope).toBe("openid email");
+        expect(queryDecoded.outcome.extra).toEqual({ hd: "example.com" });
+      }
+
+      // Rejects unknown params when unknownParameters === "reject", duplicates, and front-channel tokens.
+      expect(
+        yield* OAuth.callbackParamsFromQuery(
+          `https://app.example/cb?code=abc&state=${state}&extra=1`,
+          { unknownParameters: "reject" },
+        ).pipe(Effect.flip),
+      ).toMatchObject({
+        _tag: "OAuthError",
+        reason: { _tag: "CallbackRejected", reason: "unexpectedParameter" },
+      });
+
+      expect(
+        yield* OAuth.callbackParamsFromQuery(
+          `https://app.example/cb?code=abc&state=${state}&state=${state}`,
+        ).pipe(Effect.flip),
+      ).toMatchObject({
+        _tag: "OAuthError",
+        reason: { _tag: "CallbackRejected", reason: "duplicateParameter" },
+      });
+
+      expect(
+        yield* OAuth.callbackParamsFromFormPost({
+          url: "https://app.example/cb",
+          contentType: "application/x-www-form-urlencoded; charset=utf-8",
+          body: `code=abc&state=${state}&id_token=header.payload.sig`,
+        }).pipe(Effect.flip),
+      ).toMatchObject({
+        _tag: "OAuthError",
+        reason: { _tag: "CallbackRejected", reason: "unexpectedParameter" },
+      });
+
+      // form_post rejects non-empty query strings and invalid UTF-8 bytes.
+      expect(
+        yield* OAuth.callbackParamsFromFormPost({
+          url: "https://app.example/cb?state=smuggled",
+          contentType: "application/x-www-form-urlencoded",
+          body: `code=abc&state=${state}`,
+        }).pipe(Effect.flip),
+      ).toMatchObject({
+        _tag: "OAuthError",
+        reason: { _tag: "CallbackRejected", reason: "invalidTransport" },
+      });
+
+      expect(
+        yield* OAuth.callbackParamsFromFormPost({
+          url: "https://app.example/cb",
+          contentType: "application/x-www-form-urlencoded",
+          body: new Uint8Array([0xff, 0xfe]),
+        }).pipe(Effect.flip),
+      ).toMatchObject({
+        _tag: "OAuthError",
+        reason: { _tag: "CallbackRejected", reason: "invalidTransport" },
+      });
+
+      const formDecoded = yield* OAuth.callbackParamsFromFormPost({
+        url: "https://app.example/cb",
+        contentType: "application/x-www-form-urlencoded",
+        body: new TextEncoder().encode(
+          `code=apple-code&state=${state}&user=${encodeURIComponent('{"name":{"firstName":"Ada"}}')}`,
+        ),
+        allowedParameters: ["user"],
+        unknownParameters: "reject",
+      });
+
+      const expected = {
+        state: Redacted.make(state),
+        responseMode: "query" as const,
+        issuer,
+        issuerIdentification: "required" as const,
+      };
+
+      const validated = yield* OAuth.validateCallback(queryDecoded, expected);
+
+      expect(Redacted.value(validated.code)).toBe("abc");
+      expect(validated.issuer).toBe(issuer);
+      expect(validated.scope).toBe("openid email");
+      expect(validated.extra).toEqual({ hd: "example.com" });
+
+      // Mode mismatch and issuer checks run before outcome classification (including Error callbacks).
+      expect(yield* OAuth.validateCallback(formDecoded, expected).pipe(Effect.flip)).toMatchObject({
+        _tag: "OAuthError",
+        reason: { _tag: "CallbackRejected", reason: "invalidTransport" },
+      });
+
+      const deniedNoIss = yield* OAuth.callbackParamsFromQuery(
+        `https://app.example/cb?error=access_denied&state=${state}`,
+      );
+
+      expect(yield* OAuth.validateCallback(deniedNoIss, expected).pipe(Effect.flip)).toMatchObject({
+        _tag: "OAuthError",
+        reason: { _tag: "CallbackRejected", reason: "missingIssuer" },
+      });
+
+      const deniedWithIss = yield* OAuth.callbackParamsFromQuery(
+        `https://app.example/cb?error=access_denied&state=${state}&iss=${encodeURIComponent(issuer)}`,
+      );
+
+      expect(
+        yield* OAuth.validateCallback(deniedWithIss, expected).pipe(Effect.flip),
+      ).toMatchObject({
+        _tag: "OAuthError",
+        reason: { _tag: "AuthorizationDenied" },
+      });
+
+      const otherErrorWithIss = yield* OAuth.callbackParamsFromQuery(
+        `https://app.example/cb?error=temporarily_unavailable&state=${state}&iss=${encodeURIComponent(issuer)}`,
+      );
+
+      expect(
+        yield* OAuth.validateCallback(otherErrorWithIss, expected).pipe(Effect.flip),
+      ).toMatchObject({
+        _tag: "OAuthError",
+        reason: {
+          _tag: "EndpointError",
+          endpoint: "authorization",
+          code: "temporarily_unavailable",
+        },
+      });
+    }),
+);

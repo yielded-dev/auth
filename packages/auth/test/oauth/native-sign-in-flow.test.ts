@@ -104,6 +104,7 @@ const harness = Effect.fnUntraced(function* () {
           context.callbackId !== access.callbackId ||
           context.stateDigest !== access.stateDigest ||
           context.requestBindingVerifier !== access.requestBindingVerifier ||
+          context.responseMode !== access.responseMode ||
           (access.responseIssuer === undefined) !== (context.responseIssuerMode === "unsupported")
         )
           return prepare({ _tag: "Rejected" }, journal);

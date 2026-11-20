@@ -41,6 +41,7 @@ it.live.each(["sqlite", "d1", "pglite"] as const)(
               const flow = yield* Schema.decodeEffect(OAuth.OAuthSignInFlow)({
                 context: {
                   ...configuration,
+                  responseMode: "query",
                   namespace: "effect-auth/oauth-sign-in-context/v1",
                   moduleId: "strava/oauth",
                   generation: 1,

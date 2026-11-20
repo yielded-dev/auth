@@ -1,3 +1,4 @@
+import * as OAuthProtocolClient from "@yielded/oauth/OAuth";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -13,6 +14,7 @@ import * as Scope from "effect/Scope";
 import { AuthRequest } from "../auth/AuthRequest";
 import { HookDenied } from "../hooks/models";
 import { reportAuthFailure, ReportedOperationDefect } from "../internal/diagnostics";
+import { providerCallbackParameters } from "../oauth/callback";
 import type { AuthInvocation } from "../operations/context";
 import {
   AuthCredentialCommandCollector,
@@ -190,82 +192,92 @@ const failResponse = (error: OperationHttpError) =>
       }),
   ).pipe(Effect.orDie);
 
-const callbackParameters = Effect.fn("OperationHttp.callbackParameters")(function* (
-  request: Request,
-  url: URL,
-) {
-  if (request.method === "GET") return url.searchParams;
-  if (request.method !== "POST" || url.search !== "")
-    return yield* OperationHttpError.make({
-      reason: request.method === "POST" ? "request" : "method",
-    });
-
-  const contentType = request.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase();
-
-  if (contentType !== "application/x-www-form-urlencoded")
-    return yield* OperationHttpError.make({ reason: "request" });
-  const config = yield* OperationHttpServerConfig;
-
-  return new URLSearchParams(yield* boundedText(request, config.maximumBodyBytes));
-});
-
 const callbackPayload = Effect.fn("OperationHttp.callbackPayload")(function* (
   callback: OAuthHttpCallback<unknown>,
   request: Request,
   credentials: HttpCredentials,
   url: URL,
 ) {
-  const allowed = new Set([
-    "state",
-    "code",
-    "error",
-    "error_description",
-    "error_uri",
-    "iss",
-    "user",
-    "id_token",
-    ...(callback.allowedQueryParameters ?? []),
-  ]);
+  const allowedParameters = [
+    ...new Set([...providerCallbackParameters, "user", ...(callback.allowedQueryParameters ?? [])]),
+  ];
 
-  const seen = new Set<string>();
-  const params = yield* callbackParameters(request, url);
+  let decoded: OAuthProtocolClient.CallbackParams;
 
-  for (const [name, value] of params) {
-    const limit = name === "id_token" ? 65536 : 4096;
+  if (request.method === "GET") {
+    decoded = yield* OAuthProtocolClient.callbackParamsFromQuery(url, {
+      allowedParameters,
+      unknownParameters: "reject",
+    }).pipe(Effect.mapError(() => OperationHttpError.make({ reason: "request" })));
+  } else if (request.method === "POST") {
+    const contentType = request.headers.get("content-type");
 
-    if (!allowed.has(name) || seen.has(name) || value.length > limit)
+    if (
+      url.search !== "" ||
+      contentType?.split(";")[0]?.trim().toLowerCase() !== "application/x-www-form-urlencoded"
+    ) {
       return yield* OperationHttpError.make({ reason: "request" });
-    seen.add(name);
+    }
+    const config = yield* OperationHttpServerConfig;
+    const body = yield* boundedText(request, config.maximumBodyBytes);
+
+    decoded = yield* OAuthProtocolClient.callbackParamsFromFormPost({
+      url,
+      contentType: contentType ?? undefined,
+      body,
+      maxBytes: Math.min(config.maximumBodyBytes, 16384),
+      allowedParameters,
+      unknownParameters: "reject",
+    }).pipe(Effect.mapError(() => OperationHttpError.make({ reason: "request" })));
+  } else {
+    return yield* OperationHttpError.make({ reason: "method" });
   }
-  const state = params.get("state");
-  const code = params.get("code");
-  const error = params.get("error");
 
-  if (
-    state === null ||
-    state.length === 0 ||
-    state.length > 2048 ||
-    (code === null) === (error === null)
-  )
-    return yield* OperationHttpError.make({ reason: "request" });
-  const issuer = params.get("iss");
-  const user = params.get("user");
+  const state = Redacted.value(decoded.state);
 
-  const response =
-    code === null
-      ? {
-          _tag: "Error",
-          state,
-          error: error === "access_denied" ? "access-denied" : "rejected",
-          ...(issuer === null ? {} : { issuer }),
-        }
-      : {
-          _tag: "Code",
-          state,
-          code,
-          ...(issuer === null ? {} : { issuer }),
-          ...(user === null || user.length === 0 ? {} : { user }),
-        };
+  if (state.length > 2048) return yield* OperationHttpError.make({ reason: "request" });
+
+  let response:
+    | {
+        readonly _tag: "Error";
+        readonly state: string;
+        readonly mode: "query" | "form_post";
+        readonly error: "access-denied" | "rejected";
+        readonly issuer?: string;
+      }
+    | {
+        readonly _tag: "Code";
+        readonly state: string;
+        readonly mode: "query" | "form_post";
+        readonly code: string;
+        readonly issuer?: string;
+        readonly scope?: string;
+        readonly user?: string;
+      };
+
+  if (decoded.outcome._tag === "Error") {
+    response = {
+      _tag: "Error",
+      state,
+      mode: decoded.mode,
+      error: decoded.outcome.code === "access_denied" ? "access-denied" : "rejected",
+      ...(decoded.issuer === undefined ? {} : { issuer: decoded.issuer }),
+    };
+  } else {
+    const user = Object.hasOwn(decoded.outcome.extra, "user")
+      ? decoded.outcome.extra.user
+      : undefined;
+
+    response = {
+      _tag: "Code",
+      state,
+      mode: decoded.mode,
+      code: Redacted.value(decoded.outcome.code),
+      ...(decoded.issuer === undefined ? {} : { issuer: decoded.issuer }),
+      ...(decoded.outcome.scope === undefined ? {} : { scope: decoded.outcome.scope }),
+      ...(user === undefined || user.length === 0 ? {} : { user }),
+    };
+  }
 
   return {
     flowId: yield* callback.flowId(request, credentials),

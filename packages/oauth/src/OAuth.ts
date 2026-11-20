@@ -23,6 +23,7 @@
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import type * as Digest from "effect/crypto/Digest";
+import * as Mac from "effect/crypto/Mac";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -201,6 +202,78 @@ export interface AuthorizeOptions {
   readonly responseMode?: ResponseMode | undefined;
   readonly resources?: ReadonlyArray<string> | undefined;
   readonly parameters?: Readonly<Record<string, string>> | undefined;
+}
+
+/**
+ * Decoded authorization callback outcome: either a redacted authorization
+ * `Code` with optional `scope` and allowlisted `extra` parameters, or a
+ * normalized `Error` carrying a closed {@link OAuthError.OAuthErrorCode}.
+ *
+ * @stability unstable
+ * @category models
+ * @since 4.1.4
+ */
+export type CallbackOutcome =
+  | {
+      readonly _tag: "Code";
+      readonly code: Redacted.Redacted<string>;
+      readonly scope?: string | undefined;
+      readonly extra: Readonly<Record<string, string>>;
+    }
+  | {
+      readonly _tag: "Error";
+      readonly code: OAuthError.OAuthErrorCode;
+      readonly rawCode?: string | undefined;
+    };
+
+/**
+ * Decoded authorization callback parameters preserving delivery transport
+ * `mode`, redacted `state`, optional RFC 9207 `issuer`, and {@link CallbackOutcome}.
+ *
+ * @stability unstable
+ * @category models
+ * @since 4.1.4
+ */
+export interface CallbackParams {
+  readonly mode: ResponseMode;
+  readonly state: Redacted.Redacted<string>;
+  readonly issuer?: string | undefined;
+  readonly outcome: CallbackOutcome;
+}
+
+/**
+ * Options for {@link callbackParamsFromQuery} and {@link callbackParamsFromFormPost}.
+ *
+ * @stability unstable
+ * @category models
+ * @since 4.1.4
+ */
+export interface CallbackDecodeOptions {
+  /**
+   * Additional non-standard parameter names retained in `outcome.extra` (and
+   * permitted when `unknownParameters` is `"reject"`). Standard OAuth callback
+   * parameters are handled directly and never copied into `extra`.
+   */
+  readonly allowedParameters?: ReadonlyArray<string> | undefined;
+  /**
+   * Policy for unrecognized parameters outside the standard set and
+   * `allowedParameters`. Defaults to `"ignore"` (RFC 6749 §4.1.2).
+   */
+  readonly unknownParameters?: "ignore" | "reject" | undefined;
+}
+
+/**
+ * Validated authorization callback code result returned by {@link validateCallback}.
+ *
+ * @stability unstable
+ * @category models
+ * @since 4.1.4
+ */
+export interface CallbackResult {
+  readonly code: Redacted.Redacted<string>;
+  readonly issuer?: string | undefined;
+  readonly scope?: string | undefined;
+  readonly extra: Readonly<Record<string, string>>;
 }
 
 /**
@@ -949,5 +1022,804 @@ export const authorize: (
     ...rest,
     state,
     ...(pkce === undefined ? {} : { pkce }),
+  });
+});
+
+const maxCallbackParams = 32;
+const maxCallbackValueLength = 4096;
+const maxCallbackScopeLength = 16384;
+const maxCallbackQueryLength = 262144;
+const defaultMaxFormPostBytes = 16384;
+
+const standardCallbackParameters: ReadonlySet<string> = new Set([
+  "state",
+  "code",
+  "error",
+  "error_description",
+  "error_uri",
+  "iss",
+  "scope",
+]);
+
+const forbiddenCallbackParameters: ReadonlySet<string> = new Set([
+  "access_token",
+  "id_token",
+  "token",
+  "token_type",
+  "expires_in",
+  "response",
+]);
+
+const forbiddenCallbackKeys: ReadonlySet<string> = new Set([
+  "__proto__",
+  "constructor",
+  "prototype",
+]);
+
+const knownCallbackErrorCodes: ReadonlySet<string> = new Set<OAuthError.OAuthErrorCode>([
+  "invalid_request",
+  "invalid_client",
+  "invalid_grant",
+  "unauthorized_client",
+  "unsupported_grant_type",
+  "unsupported_response_type",
+  "unsupported_token_type",
+  "invalid_scope",
+  "invalid_target",
+  "invalid_token",
+  "insufficient_scope",
+  "access_denied",
+  "interaction_required",
+  "login_required",
+  "account_selection_required",
+  "consent_required",
+  "temporarily_unavailable",
+  "server_error",
+  "other",
+]);
+
+const callbackRejected = (reason: OAuthError.CallbackRejected["reason"]): OAuthError.OAuthError =>
+  new OAuthError.OAuthError({
+    reason: new OAuthError.CallbackRejected({ reason }),
+  });
+
+const defineExtraProperty = (target: Record<string, string>, key: string, value: string): void => {
+  Object.defineProperty(target, key, {
+    value,
+    enumerable: true,
+    configurable: true,
+    writable: true,
+  });
+};
+
+const parseCallbackDecodeOptions = Effect.fnUntraced(function* (
+  options: CallbackDecodeOptions | undefined,
+): Effect.fn.Return<
+  {
+    readonly allowed: ReadonlySet<string>;
+    readonly unknownParameters: "ignore" | "reject";
+  },
+  OAuthError.OAuthError
+> {
+  if (options === undefined) {
+    return { allowed: new Set<string>(), unknownParameters: "ignore" };
+  }
+  if (!Predicate.isObject(options)) {
+    return yield* V.invalidArgument("Invalid callback decode options");
+  }
+
+  const unknownParameters = options.unknownParameters ?? "ignore";
+
+  if (unknownParameters !== "ignore" && unknownParameters !== "reject") {
+    return yield* V.invalidArgument('unknownParameters must be "ignore" or "reject"');
+  }
+
+  const allowed = new Set<string>();
+
+  if (options.allowedParameters !== undefined) {
+    if (!Array.isArray(options.allowedParameters) || options.allowedParameters.length > 64) {
+      return yield* V.invalidArgument("Invalid allowedParameters");
+    }
+
+    for (const key of options.allowedParameters) {
+      if (
+        typeof key !== "string" ||
+        key.length === 0 ||
+        key.length > 256 ||
+        !V.isWellFormedUnicode(key) ||
+        // oxlint-disable-next-line no-control-regex -- Reject control characters in allowed parameter names.
+        /[\u0000-\u001f\u007f]/u.test(key) ||
+        forbiddenCallbackKeys.has(key) ||
+        forbiddenCallbackParameters.has(key.toLowerCase())
+      ) {
+        return yield* V.invalidArgument("Invalid entry in allowedParameters");
+      }
+      allowed.add(key);
+    }
+  }
+
+  return { allowed, unknownParameters };
+});
+
+const parseUrlEncodedString = Effect.fnUntraced(function* (
+  raw: string,
+): Effect.fn.Return<ReadonlyArray<readonly [string, string]>, OAuthError.OAuthError> {
+  if (raw.length > maxCallbackQueryLength) {
+    return yield* callbackRejected("invalidParameters");
+  }
+
+  let segments = 0;
+  let start = 0;
+
+  for (let index = 0; index <= raw.length; index++) {
+    if (index === raw.length || raw.charCodeAt(index) === 38) {
+      if (index > start) {
+        segments += 1;
+        if (segments > maxCallbackParams) {
+          return yield* callbackRejected("invalidParameters");
+        }
+      }
+      start = index + 1;
+    }
+  }
+
+  const params = new URLSearchParams(raw);
+  const entries: Array<readonly [string, string]> = [];
+
+  for (const [key, value] of params) {
+    entries.push([key, value]);
+  }
+
+  return entries;
+});
+
+const extractCallbackUrl = (
+  input: string | { readonly href: string },
+): Effect.Effect<readonly [string, URL], OAuthError.OAuthError> =>
+  Effect.gen(function* () {
+    let rawUrl: string;
+
+    if (typeof input === "string") {
+      rawUrl = input;
+    } else if (Predicate.isObject(input) && "href" in input) {
+      const href = yield* Effect.try({
+        try: () => (input as { readonly href: unknown }).href,
+        catch: () => callbackRejected("invalidTransport"),
+      });
+
+      if (typeof href !== "string") {
+        return yield* V.invalidArgument("Callback URL href must be a string");
+      }
+      rawUrl = href;
+    } else {
+      return yield* V.invalidArgument("Invalid callback URL");
+    }
+
+    if (rawUrl.includes("#")) {
+      return yield* callbackRejected("invalidTransport");
+    }
+
+    const parsed = yield* Effect.try({
+      try: () => new URL(rawUrl),
+      catch: () => callbackRejected("invalidTransport"),
+    });
+
+    return [rawUrl, parsed] as const;
+  });
+
+const isFormUrlEncodedContentType = (contentType: string | undefined): boolean => {
+  if (typeof contentType !== "string") return false;
+  const parts = contentType.split(";");
+
+  if (parts[0]?.trim().toLowerCase() !== "application/x-www-form-urlencoded") {
+    return false;
+  }
+
+  for (const rawParam of parts.slice(1)) {
+    const param = rawParam.trim();
+
+    if (param.length === 0) continue;
+    const eq = param.indexOf("=");
+
+    if (eq <= 0) return false;
+    const name = param.slice(0, eq).trim().toLowerCase();
+    let value = param.slice(eq + 1).trim();
+
+    if (value.length >= 2 && value.startsWith('"') && value.endsWith('"')) {
+      value = value.slice(1, -1);
+    }
+    if (name === "charset" && value.toLowerCase() !== "utf-8") {
+      return false;
+    }
+  }
+
+  return true;
+};
+
+const decodeCallbackEntries = Effect.fnUntraced(function* (
+  mode: ResponseMode,
+  entries: ReadonlyArray<readonly [string, string]>,
+  options: {
+    readonly allowed: ReadonlySet<string>;
+    readonly unknownParameters: "ignore" | "reject";
+  },
+): Effect.fn.Return<CallbackParams, OAuthError.OAuthError> {
+  const seen = new Set<string>();
+  const extra: Record<string, string> = {};
+  let count = 0;
+
+  let state: string | undefined;
+  let code: string | undefined;
+  let error: string | undefined;
+  let errorDescription: string | undefined;
+  let errorUri: string | undefined;
+  let issuer: string | undefined;
+  let scope: string | undefined;
+
+  for (const [key, value] of entries) {
+    count += 1;
+    if (count > maxCallbackParams) {
+      return yield* callbackRejected("invalidParameters");
+    }
+
+    if (
+      key.length === 0 ||
+      key.length > 256 ||
+      !V.isWellFormedUnicode(key) ||
+      !V.isWellFormedUnicode(value)
+    ) {
+      return yield* callbackRejected("invalidParameters");
+    }
+
+    if (seen.has(key)) {
+      return yield* callbackRejected("duplicateParameter");
+    }
+    seen.add(key);
+
+    if (forbiddenCallbackParameters.has(key.toLowerCase())) {
+      return yield* callbackRejected("unexpectedParameter");
+    }
+
+    const limit = key === "scope" ? maxCallbackScopeLength : maxCallbackValueLength;
+
+    if (value.length > limit) {
+      return yield* callbackRejected("invalidParameters");
+    }
+
+    if (standardCallbackParameters.has(key)) {
+      switch (key) {
+        case "state":
+          state = value;
+          break;
+        case "code":
+          code = value;
+          break;
+        case "error":
+          error = value;
+          break;
+        case "error_description":
+          errorDescription = value;
+          break;
+        case "error_uri":
+          errorUri = value;
+          break;
+        case "iss":
+          issuer = value;
+          break;
+        case "scope":
+          scope = value;
+          break;
+      }
+    } else if (options.allowed.has(key)) {
+      defineExtraProperty(extra, key, value);
+    } else if (options.unknownParameters === "reject") {
+      return yield* callbackRejected("unexpectedParameter");
+    }
+  }
+
+  if (state === undefined || state.length === 0) {
+    return yield* callbackRejected("missingState");
+  }
+
+  if (issuer !== undefined && (issuer.length === 0 || issuer.length > 2048)) {
+    return yield* callbackRejected("invalidParameters");
+  }
+
+  if ((code !== undefined) === (error !== undefined)) {
+    return yield* callbackRejected("invalidParameters");
+  }
+
+  let outcome: CallbackOutcome;
+
+  if (error !== undefined) {
+    if (
+      error.length === 0 ||
+      error.length > 128 ||
+      // oxlint-disable-next-line no-control-regex -- Reject control characters in OAuth error codes.
+      /[\u0000-\u001f\u007f]/u.test(error) ||
+      (errorUri !== undefined && errorUri.length > 2048)
+    ) {
+      return yield* callbackRejected("invalidParameters");
+    }
+
+    const normalized = V.normalizeOAuthErrorCode(error);
+
+    outcome = Object.freeze({
+      _tag: "Error" as const,
+      code: normalized.code,
+      ...(normalized.rawCode === undefined ? {} : { rawCode: normalized.rawCode }),
+    });
+  } else {
+    if (
+      code === undefined ||
+      code.length === 0 ||
+      errorDescription !== undefined ||
+      errorUri !== undefined
+    ) {
+      return yield* callbackRejected("invalidParameters");
+    }
+
+    outcome = Object.freeze({
+      _tag: "Code" as const,
+      code: Redacted.make(code),
+      ...(scope === undefined ? {} : { scope }),
+      extra: Object.freeze(extra),
+    });
+  }
+
+  return Object.freeze({
+    mode,
+    state: Redacted.make(state),
+    ...(issuer === undefined ? {} : { issuer }),
+    outcome,
+  });
+});
+
+/**
+ * Decodes an OAuth 2.1 `query` authorization callback from a URL string,
+ * `URL`-like `{ href }` object, or key-value iterable (`URLSearchParams`,
+ * `UrlParams.UrlParams`).
+ *
+ * Enforces parameter count and value length bounds, rejects duplicate keys and
+ * front-channel token parameters (`access_token`, `id_token`, `token`,
+ * `token_type`, `expires_in`, `response`), requires non-empty `state` and
+ * `code` XOR `error`, and redacts `state` and `code` immediately.
+ *
+ * @stability unstable
+ * @category callbacks
+ * @since 4.1.4
+ */
+export const callbackParamsFromQuery: (
+  input:
+    | string
+    | { readonly href: string }
+    | Iterable<readonly [string, string | Redacted.Redacted<string>]>,
+  options?: CallbackDecodeOptions,
+) => Effect.Effect<CallbackParams, OAuthError.OAuthError> = Effect.fnUntraced(function* (
+  input:
+    | string
+    | { readonly href: string }
+    | Iterable<readonly [string, string | Redacted.Redacted<string>]>,
+  options?: CallbackDecodeOptions,
+): Effect.fn.Return<CallbackParams, OAuthError.OAuthError> {
+  const parsedOptions = yield* parseCallbackDecodeOptions(options);
+
+  if (
+    typeof input === "string" ||
+    (Predicate.isObject(input) && "href" in input && typeof input.href === "string")
+  ) {
+    const [, url] = yield* extractCallbackUrl(input);
+
+    const entries = yield* parseUrlEncodedString(
+      url.search.startsWith("?") ? url.search.slice(1) : url.search,
+    );
+
+    return yield* decodeCallbackEntries("query", entries, parsedOptions);
+  }
+
+  if (Predicate.isObject(input) && Symbol.iterator in input) {
+    const rawEntries = yield* Effect.try({
+      try: () => {
+        const collected: Array<readonly [unknown, unknown]> = [];
+        const iterator = (input as Iterable<unknown>)[Symbol.iterator]();
+
+        for (let step = iterator.next(); !step.done; step = iterator.next()) {
+          if (collected.length >= maxCallbackParams) {
+            return { _tag: "TooMany" as const };
+          }
+          if (!Array.isArray(step.value) || step.value.length !== 2) {
+            return { _tag: "Malformed" as const };
+          }
+          collected.push([step.value[0], step.value[1]]);
+        }
+
+        return { _tag: "Entries" as const, entries: collected };
+      },
+      catch: () => V.invalidArgument("Invalid callback parameter iterable"),
+    });
+
+    if (rawEntries._tag === "TooMany") {
+      return yield* callbackRejected("invalidParameters");
+    }
+    if (rawEntries._tag === "Malformed") {
+      return yield* V.invalidArgument("Invalid callback parameter entry");
+    }
+
+    const entries: Array<readonly [string, string]> = [];
+
+    for (const [key, value] of rawEntries.entries) {
+      if (typeof key !== "string") {
+        return yield* V.invalidArgument("Callback parameter key must be a string");
+      }
+
+      const revealed = yield* V.revealString(
+        value as string | Redacted.Redacted<string>,
+        () => V.invalidArgument("Callback parameter value is unavailable"),
+        () => V.invalidArgument("Callback parameter value must be a string"),
+      );
+
+      entries.push([key, revealed]);
+    }
+
+    return yield* decodeCallbackEntries("query", entries, parsedOptions);
+  }
+
+  return yield* V.invalidArgument("Invalid query callback input");
+});
+
+/**
+ * Decodes an OAuth 2.1 `form_post` authorization callback.
+ *
+ * Requires an empty URL query string, `application/x-www-form-urlencoded`
+ * content type (UTF-8), and a UTF-8 body within `maxBytes` (default `16384`).
+ * Applies the same parameter bounds, duplicate-key rejection, and front-channel
+ * token rejection as {@link callbackParamsFromQuery}.
+ *
+ * @stability unstable
+ * @category callbacks
+ * @since 4.1.4
+ */
+export const callbackParamsFromFormPost: (
+  options: CallbackDecodeOptions & {
+    readonly url: string | { readonly href: string };
+    readonly contentType: string | undefined;
+    readonly body: Uint8Array | string;
+    readonly maxBytes?: number | undefined;
+  },
+) => Effect.Effect<CallbackParams, OAuthError.OAuthError> = Effect.fnUntraced(function* (
+  options: CallbackDecodeOptions & {
+    readonly url: string | { readonly href: string };
+    readonly contentType: string | undefined;
+    readonly body: Uint8Array | string;
+    readonly maxBytes?: number | undefined;
+  },
+): Effect.fn.Return<CallbackParams, OAuthError.OAuthError> {
+  if (!Predicate.isObject(options)) {
+    return yield* V.invalidArgument("Invalid form_post callback options");
+  }
+
+  const parsedOptions = yield* parseCallbackDecodeOptions(options);
+
+  const maxBytes = yield* V.positiveInteger(
+    "maxBytes",
+    options.maxBytes ?? defaultMaxFormPostBytes,
+  );
+
+  if (maxBytes > defaultMaxResponseBytes) {
+    return yield* V.invalidArgument(`maxBytes must not exceed ${defaultMaxResponseBytes} bytes`);
+  }
+
+  const [rawUrl, url] = yield* extractCallbackUrl(options.url);
+
+  if (rawUrl.includes("?") || url.search !== "") {
+    return yield* callbackRejected("invalidTransport");
+  }
+
+  if (!isFormUrlEncodedContentType(options.contentType)) {
+    return yield* callbackRejected("invalidTransport");
+  }
+
+  let bodyText: string;
+
+  if (options.body instanceof Uint8Array) {
+    if (options.body.byteLength > maxBytes) {
+      return yield* callbackRejected("invalidTransport");
+    }
+
+    bodyText = yield* Effect.try({
+      try: () => new TextDecoder("utf-8", { fatal: true }).decode(options.body as Uint8Array),
+      catch: () => callbackRejected("invalidTransport"),
+    });
+  } else if (typeof options.body === "string") {
+    if (
+      !V.isWellFormedUnicode(options.body) ||
+      utf8Encoder.encode(options.body).byteLength > maxBytes
+    ) {
+      return yield* callbackRejected("invalidTransport");
+    }
+    bodyText = options.body;
+  } else {
+    return yield* V.invalidArgument("form_post body must be a string or Uint8Array");
+  }
+
+  const entries = yield* parseUrlEncodedString(bodyText);
+
+  return yield* decodeCallbackEntries("form_post", entries, parsedOptions);
+});
+
+const copyCallbackExtra = Effect.fnUntraced(function* (
+  extra: unknown,
+): Effect.fn.Return<Readonly<Record<string, string>>, OAuthError.OAuthError> {
+  if (extra === null || typeof extra !== "object" || Array.isArray(extra)) {
+    return yield* V.invalidArgument("Invalid callback extra parameters");
+  }
+
+  const prototype = Object.getPrototypeOf(extra);
+
+  if (prototype !== Object.prototype && prototype !== null) {
+    return yield* V.invalidArgument("Invalid callback extra parameters");
+  }
+
+  const keys = Reflect.ownKeys(extra);
+
+  if (keys.length > maxCallbackParams) {
+    return yield* V.invalidArgument("Invalid callback extra parameters");
+  }
+
+  const target: Record<string, string> = {};
+
+  for (const key of keys) {
+    if (
+      typeof key !== "string" ||
+      key.length === 0 ||
+      key.length > 256 ||
+      !V.isWellFormedUnicode(key) ||
+      forbiddenCallbackKeys.has(key) ||
+      forbiddenCallbackParameters.has(key.toLowerCase())
+    ) {
+      return yield* V.invalidArgument("Invalid callback extra parameters");
+    }
+
+    const descriptor = Object.getOwnPropertyDescriptor(extra, key);
+
+    if (
+      descriptor === undefined ||
+      !("value" in descriptor) ||
+      !descriptor.enumerable ||
+      typeof descriptor.value !== "string" ||
+      descriptor.value.length > maxCallbackValueLength ||
+      !V.isWellFormedUnicode(descriptor.value)
+    ) {
+      return yield* V.invalidArgument("Invalid callback extra parameters");
+    }
+
+    defineExtraProperty(target, key, descriptor.value);
+  }
+
+  return Object.freeze(target);
+});
+
+/**
+ * Validates decoded {@link CallbackParams} against expected ceremony state
+ * (accepting a {@link Transaction} directly).
+ *
+ * Enforces expiry, delivery `responseMode`, constant-time UTF-8 `state`
+ * equality, and RFC 9207 `iss` verification in exact order for both `Code` and
+ * `Error` outcomes before mapping bound `access_denied` errors to
+ * `AuthorizationDenied` and all other bound errors to
+ * `EndpointError({ endpoint: "authorization" })`.
+ *
+ * @stability unstable
+ * @category callbacks
+ * @since 4.1.4
+ */
+export const validateCallback: (
+  callback: CallbackParams,
+  expected: {
+    readonly state: string | Redacted.Redacted<string>;
+    readonly responseMode: ResponseMode;
+    readonly issuer: string;
+    readonly issuerIdentification: IssuerIdentificationMode;
+    readonly expiresAt?: DateTime.Utc | undefined;
+  },
+) => Effect.Effect<CallbackResult, OAuthError.OAuthError> = Effect.fnUntraced(function* (
+  callback: CallbackParams,
+  expected: {
+    readonly state: string | Redacted.Redacted<string>;
+    readonly responseMode: ResponseMode;
+    readonly issuer: string;
+    readonly issuerIdentification: IssuerIdentificationMode;
+    readonly expiresAt?: DateTime.Utc | undefined;
+  },
+): Effect.fn.Return<CallbackResult, OAuthError.OAuthError> {
+  if (!Predicate.isObject(callback) || !Predicate.isObject(expected)) {
+    return yield* V.invalidArgument("Invalid callback validation input");
+  }
+
+  const callbackMode = yield* V.configuration(
+    ResponseModeSchema,
+    callback.mode,
+    "Invalid callback mode",
+  );
+
+  const callbackState = yield* decodeNonEmptySecret(
+    callback.state,
+    maxCallbackValueLength,
+    "callback state",
+    true,
+  );
+
+  const callbackIssuer =
+    callback.issuer === undefined
+      ? undefined
+      : yield* V.configuration(V.text(2048), callback.issuer, "Invalid callback issuer");
+
+  const expectedMode = yield* V.configuration(
+    ResponseModeSchema,
+    expected.responseMode,
+    "Invalid expected responseMode",
+  );
+
+  const expectedState = yield* decodeNonEmptySecret(
+    expected.state,
+    maxCallbackValueLength,
+    "expected state",
+    true,
+  );
+
+  const expectedIssuer = yield* V.configuration(
+    V.Issuer,
+    expected.issuer,
+    "Invalid expected issuer",
+  );
+
+  const issuerIdentification = yield* V.configuration(
+    IssuerIdentificationSchema,
+    expected.issuerIdentification,
+    "Invalid issuerIdentification",
+  );
+
+  let expiresAtMillis: number | undefined;
+
+  if (expected.expiresAt !== undefined) {
+    if (!DateTime.isDateTime(expected.expiresAt)) {
+      return yield* V.invalidArgument("expected.expiresAt must be a DateTime.Utc");
+    }
+    const millis = DateTime.toEpochMillis(expected.expiresAt);
+
+    if (!Number.isFinite(millis) || millis < 0) {
+      return yield* V.invalidArgument("expected.expiresAt must be a non-negative instant");
+    }
+    expiresAtMillis = millis;
+  }
+
+  const outcome = callback.outcome;
+
+  if (!Predicate.isObject(outcome)) {
+    return yield* V.invalidArgument("Invalid callback outcome");
+  }
+
+  let validatedCode:
+    | {
+        readonly code: string;
+        readonly scope: string | undefined;
+        readonly extra: Readonly<Record<string, string>>;
+      }
+    | undefined;
+
+  let validatedError:
+    | {
+        readonly code: OAuthError.OAuthErrorCode;
+        readonly rawCode: string | undefined;
+      }
+    | undefined;
+
+  if (outcome._tag === "Code") {
+    const code = yield* decodeNonEmptySecret(
+      outcome.code,
+      maxCallbackValueLength,
+      "authorization code",
+      true,
+    );
+
+    const scope =
+      outcome.scope === undefined
+        ? undefined
+        : yield* V.configuration(
+            Schema.String.check(Schema.isMaxLength(maxCallbackScopeLength)),
+            outcome.scope,
+            "Invalid callback scope",
+          );
+
+    const extra = yield* copyCallbackExtra(outcome.extra);
+
+    validatedCode = { code, scope, extra };
+  } else if (outcome._tag === "Error") {
+    if (typeof outcome.code !== "string" || !knownCallbackErrorCodes.has(outcome.code)) {
+      return yield* V.invalidArgument("Invalid callback error code");
+    }
+
+    if (outcome.rawCode !== undefined) {
+      if (
+        outcome.code !== "other" ||
+        typeof outcome.rawCode !== "string" ||
+        outcome.rawCode.length === 0 ||
+        outcome.rawCode.length > 128 ||
+        // oxlint-disable-next-line no-control-regex -- Reject control characters in rawCode.
+        /[\u0000-\u001f\u007f]/u.test(outcome.rawCode)
+      ) {
+        return yield* V.invalidArgument("Invalid callback rawCode");
+      }
+    }
+
+    validatedError = {
+      code: outcome.code as OAuthError.OAuthErrorCode,
+      rawCode: outcome.rawCode,
+    };
+  } else {
+    return yield* V.invalidArgument("Invalid callback outcome");
+  }
+
+  // Normative check order for BOTH Code and Error outcomes (RFC 9207 §2.1 & §2.4, RFC 9700 §4.4.2):
+  // 1. Transaction expiration and transport responseMode.
+  if (expiresAtMillis !== undefined) {
+    const nowMillis = yield* Clock.currentTimeMillis;
+
+    if (nowMillis > expiresAtMillis) {
+      return yield* callbackRejected("invalidTransport");
+    }
+  }
+
+  if (callbackMode !== expectedMode) {
+    return yield* callbackRejected("invalidTransport");
+  }
+
+  // 2. Constant-time UTF-8 state equality.
+  if (!Mac.timingSafeEqual(utf8Encoder.encode(callbackState), utf8Encoder.encode(expectedState))) {
+    return yield* callbackRejected("stateMismatch");
+  }
+
+  // 3. RFC 9207 iss verification.
+  if (issuerIdentification === "required") {
+    if (callbackIssuer === undefined) {
+      return yield* callbackRejected("missingIssuer");
+    }
+    if (callbackIssuer !== expectedIssuer) {
+      return yield* callbackRejected("issuerMismatch");
+    }
+  } else if (issuerIdentification === "unsupported") {
+    if (callbackIssuer !== undefined) {
+      return yield* callbackRejected("unexpectedParameter");
+    }
+  } else if (callbackIssuer !== undefined && callbackIssuer !== expectedIssuer) {
+    return yield* callbackRejected("issuerMismatch");
+  }
+
+  // 4. Outcome classification after full ceremony binding succeeded.
+  if (validatedError !== undefined) {
+    if (validatedError.code === "access_denied") {
+      return yield* new OAuthError.OAuthError({
+        reason: new OAuthError.AuthorizationDenied(),
+      });
+    }
+
+    return yield* new OAuthError.OAuthError({
+      reason: new OAuthError.EndpointError({
+        endpoint: "authorization",
+        code: validatedError.code,
+        ...(validatedError.rawCode === undefined ? {} : { rawCode: validatedError.rawCode }),
+      }),
+    });
+  }
+
+  if (validatedCode === undefined) {
+    return yield* V.invalidArgument("Invalid callback outcome");
+  }
+
+  return Object.freeze({
+    code: Redacted.make(validatedCode.code),
+    ...(callbackIssuer === undefined ? {} : { issuer: callbackIssuer }),
+    ...(validatedCode.scope === undefined ? {} : { scope: validatedCode.scope }),
+    extra: validatedCode.extra,
   });
 });
