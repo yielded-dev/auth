@@ -17,7 +17,7 @@ import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
-import { timeoutOrElseWithCause } from "../../internal/timeout";
+import { timeoutOrElseWithCause } from "./internal";
 import {
   AssertionAlgorithms,
   Client,

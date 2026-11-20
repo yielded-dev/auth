@@ -6,7 +6,7 @@ import * as Jwt from "effect/jose/Jwt";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 
-import { AccessTokenClaims } from "./access-token";
+import { makeAccessTokenClaimsSchema, type AccessTokenClaims } from "./access-token";
 import type { Authentication } from "./models";
 import { ConfigurationError, OpenIdProfile, Text, Unavailable } from "./models";
 
@@ -50,8 +50,12 @@ export const scopedProfile = (profile: OpenIdProfile, scopes: ReadonlyArray<stri
     : {}),
 });
 
-export const makeIdentityTokens = Effect.fnUntraced(function* (options: IdentitySigningKeys) {
+export const makeIdentityTokens = Effect.fnUntraced(function* <Subject extends string>(
+  options: IdentitySigningKeys,
+  subject: Schema.Codec<Subject, string>,
+) {
   const services = yield* Effect.context<Signature.Signature>();
+  const AccessTokenClaimsSchema = makeAccessTokenClaimsSchema(subject);
 
   const keys = yield* Schema.decodeUnknownEffect(
     Schema.Struct({
@@ -90,8 +94,8 @@ export const makeIdentityTokens = Effect.fnUntraced(function* (options: Identity
 
   return {
     jwks: { keys: keys.publicKeys },
-    issueAccess: (claims: AccessTokenClaims) =>
-      Jwt.sign(AccessTokenClaims, claims, signingKey, {
+    issueAccess: (claims: AccessTokenClaims<Subject>) =>
+      Jwt.sign(AccessTokenClaimsSchema, claims, signingKey, {
         kid: keys.activeKeyId,
         typ: "at+jwt",
       }).pipe(
@@ -103,7 +107,7 @@ export const makeIdentityTokens = Effect.fnUntraced(function* (options: Identity
     issue: Effect.fnUntraced(function* (input: {
       readonly issuer: string;
       readonly clientId: string;
-      readonly authentication: Authentication;
+      readonly authentication: Authentication<Subject>;
       readonly nonce?: string;
       readonly profile: OpenIdProfile;
       readonly scopes: ReadonlyArray<string>;

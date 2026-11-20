@@ -4,7 +4,6 @@ import * as Schema from "effect/Schema";
 import type * as Types from "effect/Types";
 
 import * as OAuthScope from "../../OAuthScope";
-import type { SubjectId } from "../../Schema";
 import {
   AccessClaims,
   type Authentication,
@@ -42,7 +41,11 @@ export interface AuthorizationInput<Scope extends OAuthScope.OAuthScope> {
   readonly grantType: "authorization_code" | "refresh_token";
 }
 
-export const makeAuthorization = <const Id extends string, Scope extends OAuthScope.OAuthScope>(
+export const makeAuthorization = <
+  const Id extends string,
+  Scope extends OAuthScope.OAuthScope,
+  Subject extends string = string,
+>(
   id: Id,
 ) => {
   /** Recheck permission at code exchange and refresh. Return only requested
@@ -53,10 +56,11 @@ export const makeAuthorization = <const Id extends string, Scope extends OAuthSc
       readonly server: Id;
       readonly kind: "authorization";
       readonly scopes: Types.Invariant<Scope>;
+      readonly subject: Types.Invariant<Subject>;
     },
     {
       readonly authorize: (
-        input: AuthorizationInput<Scope> & { readonly subjectId: SubjectId },
+        input: AuthorizationInput<Scope> & { readonly subjectId: Subject },
       ) => Effect.Effect<OpenIdAuthorizationResult<Scope>, Unavailable>;
     }
   >()(`effect-auth/OAuthServer/${id}/Authorization`);
@@ -70,6 +74,7 @@ export const makeAuthorization = <const Id extends string, Scope extends OAuthSc
 export const makeOpenIdAuthorization = <
   const Id extends string,
   Scope extends OAuthScope.OAuthScope,
+  Subject extends string = string,
 >(
   id: Id,
 ) => {
@@ -81,10 +86,11 @@ export const makeOpenIdAuthorization = <
       readonly server: Id;
       readonly kind: "openid-authorization";
       readonly scopes: Types.Invariant<Scope>;
+      readonly subject: Types.Invariant<Subject>;
     },
     {
       readonly authorize: (
-        input: AuthorizationInput<Scope> & { readonly authentication: Authentication },
+        input: AuthorizationInput<Scope> & { readonly authentication: Authentication<Subject> },
       ) => Effect.Effect<OpenIdAuthorizationResult<Scope>, Unavailable>;
     }
   >()(`effect-auth/OAuthServer/${id}/OpenIdAuthorization`);

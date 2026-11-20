@@ -144,6 +144,71 @@ export const literalScopes = Effect.suspend(() => {
     const unconfiguredAccess = yield* unconfigured.verify(Redacted.make("credential"));
 
     expectTypeOf(unconfiguredAccess.scopes[0]).toEqualTypeOf<OAuthScope.OAuthScope>();
+    expectTypeOf(unconfiguredAccess.subjectId).toEqualTypeOf<SubjectId>();
+
+    const CustomSubject = Schema.NonEmptyString.pipe(Schema.brand("example/UserId"));
+
+    type CustomSubject = typeof CustomSubject.Type;
+
+    const customResource = OAuthServer.make("custom-subject-resource", {
+      scopes,
+      subject: CustomSubject,
+    });
+
+    const customIdentity = OAuthServer.makeOpenId("custom-subject-identity", {
+      scopes,
+      subject: CustomSubject,
+    });
+
+    expectTypeOf<typeof customResource.Subject.Type>().toEqualTypeOf<CustomSubject>();
+    expectTypeOf<typeof customResource.Access.Type.subjectId>().toEqualTypeOf<CustomSubject>();
+    expectTypeOf<typeof customIdentity.Access.Type.subjectId>().toEqualTypeOf<CustomSubject>();
+
+    customResource.Authorization.of({
+      authorize: ({ subjectId, scopes }) => {
+        expectTypeOf(subjectId).toEqualTypeOf<CustomSubject>();
+
+        return Effect.succeed({ scopes });
+      },
+    });
+
+    customIdentity.Identity.of({
+      current: Effect.as(Effect.void, undefined),
+      active: (authentication) => {
+        expectTypeOf(authentication.subjectId).toEqualTypeOf<CustomSubject>();
+
+        return Effect.succeed(true);
+      },
+      profile: ({ subjectId }) => {
+        expectTypeOf(subjectId).toEqualTypeOf<CustomSubject>();
+
+        return Effect.succeed({});
+      },
+    });
+
+    const customVerifier = yield* OAuthServer.makeAccessTokenVerifier({
+      issuer: "https://identity.example.com",
+      resource: "https://resource.example.com",
+      publicKeys: [],
+      scopes: [read],
+      subject: CustomSubject,
+    });
+
+    const customAccess = yield* customVerifier.verify(Redacted.make("credential"));
+
+    expectTypeOf(customAccess.subjectId).toEqualTypeOf<CustomSubject>();
+    expectTypeOf(customAccess.scopes[0]).toEqualTypeOf<OAuthScope.OAuthScope<"documents:read">>();
+
+    const customKeySetVerifier = yield* OAuthServer.makeAccessTokenVerifierWithKeySet({
+      issuer: "https://identity.example.com",
+      resource: "https://resource.example.com",
+      subject: CustomSubject,
+    });
+
+    const customKeySetAccess = yield* customKeySetVerifier.verify(Redacted.make("credential"));
+
+    expectTypeOf(customKeySetAccess.subjectId).toEqualTypeOf<CustomSubject>();
+    expectTypeOf(customKeySetAccess.scopes[0]).toEqualTypeOf<OAuthScope.OAuthScope>();
   });
 });
 
@@ -154,14 +219,23 @@ export const serviceScopes = () => {
     scopes: [OAuthScope.make("read"), OAuthScope.make("write")],
   });
 
+  const CustomSubject = Schema.NonEmptyString.pipe(Schema.brand("example/Subject"));
+
+  const otherSubject = OAuthServer.makeOpenId("same-id", {
+    scopes: [OAuthScope.make("read")],
+    subject: CustomSubject,
+  });
+
   return (layers: {
     readonly server: Layer.Layer<typeof broad.Service.Identifier>;
     readonly authorization: Layer.Layer<typeof broad.Authorization.Identifier>;
     readonly identity: Layer.Layer<typeof broad.Identity.Identifier>;
+    readonly otherServer: Layer.Layer<typeof otherSubject.Service.Identifier>;
   }) => {
     const server = Effect.provide(narrow.Service, layers.server);
     const authorization = Effect.provide(narrow.Authorization, layers.authorization);
     const identity = Effect.provide(narrow.Identity, layers.identity);
+    const mismatchedSubject = Effect.provide(narrow.Service, layers.otherServer);
 
     expectTypeOf<Effect.Services<typeof server>>().toEqualTypeOf<
       typeof narrow.Service.Identifier
@@ -171,6 +245,9 @@ export const serviceScopes = () => {
     >();
     expectTypeOf<Effect.Services<typeof identity>>().toEqualTypeOf<
       typeof narrow.Identity.Identifier
+    >();
+    expectTypeOf<Effect.Services<typeof mismatchedSubject>>().toEqualTypeOf<
+      typeof narrow.Service.Identifier
     >();
   };
 };

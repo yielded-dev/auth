@@ -2,7 +2,6 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
-import type { SubjectId } from "../../Schema";
 import type { Authentication, Unavailable } from "./models";
 
 /** Application-owned prior approval for an exact OpenID client, callback and
@@ -26,14 +25,14 @@ export class OpenIdConsent extends Context.Service<
   static readonly defaultLayer = Layer.succeed(OpenIdConsent, OpenIdConsent.default);
 }
 
-export interface Consent {
+export interface Consent<Subject extends string = string> {
   readonly clientName: string;
   readonly clientId: string;
   /** False only for metadata-document clients, whose clientId is their HTTPS URL.
    * Not a vetting signal: stored client names may be self-asserted.
    */
   readonly registered: boolean;
-  readonly subjectId: SubjectId;
+  readonly subjectId: Subject;
   readonly resource: string;
   readonly scopes: ReadonlyArray<string>;
   readonly redirectUri: string;

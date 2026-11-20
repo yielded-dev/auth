@@ -1,10 +1,10 @@
 import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
 import * as Jwks from "effect/jose/Jwks";
+import type * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 
 import * as OAuthScope from "../../OAuthScope";
-import { SubjectId } from "../../Schema";
 
 export class Unavailable extends Schema.TaggedError<Unavailable>()("OAuthServerUnavailable", {}) {}
 
@@ -18,8 +18,19 @@ export class ConfigurationError extends Schema.TaggedError<ConfigurationError>()
   {},
 ) {}
 
+export interface SigningKeyring {
+  readonly activeKeyId: string;
+  /** At least 32 cryptographically random bytes per key, encoded as base64url. */
+  readonly keys: ReadonlyArray<{
+    readonly id: string;
+    readonly material: Redacted.Redacted<string>;
+  }>;
+}
+
 export const Text = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(2048));
 export const Random = Schema.String.check(Schema.isPattern(/^[A-Za-z0-9_-]{43}$/));
+export const DefaultSubject = Schema.NonEmptyString;
+export type DefaultSubject = typeof DefaultSubject.Type;
 export const Scope = OAuthScope.OAuthScope;
 export const maximumScopes = 1024;
 export const Scopes = Schema.NonEmptyArray(Scope).check(Schema.isMaxLength(maximumScopes));
@@ -53,6 +64,22 @@ export class Rejected extends Schema.TaggedError<Rejected>()("OAuthServerRejecte
 
 export const reject = (error: Rejected["error"] = "invalid_request") => Rejected.make({ error });
 
+const isAllowedProtocol = (url: URL) =>
+  url.protocol === "https:" ||
+  (url.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname));
+
+export const Origin = Schema.String.check(
+  Schema.makeFilter((value) => {
+    try {
+      const url = new URL(value);
+
+      return url.origin === value && isAllowedProtocol(url);
+    } catch {
+      return false;
+    }
+  }),
+);
+
 export const Url = Text.check(
   Schema.makeFilter((text) => {
     try {
@@ -63,8 +90,7 @@ export const Url = Text.check(
         !url.password &&
         !text.includes("#") &&
         !/[\s\\]/.test(text) &&
-        (url.protocol === "https:" ||
-          (url.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname)))
+        isAllowedProtocol(url)
       );
     } catch {
       return false;
@@ -175,16 +201,23 @@ export const Authorization = Schema.Struct({
 
 export type Authorization = typeof Authorization.Type;
 
-/** Verified application authentication, never values supplied by an OAuth client. */
-export const Authentication = Schema.Struct({
-  subjectId: SubjectId,
-  sessionId: Text,
-  securityRevision: Text,
-  authenticatedAtMillis: Schema.Natural,
-  expiresAtMillis: Schema.Natural,
-});
+export const makeAuthenticationSchema = <Subject extends string>(
+  subject: Schema.Codec<Subject, string>,
+) =>
+  Schema.Struct({
+    subjectId: subject,
+    sessionId: Text,
+    securityRevision: Text,
+    authenticatedAtMillis: Schema.Natural,
+    expiresAtMillis: Schema.Natural,
+  });
 
-export type Authentication = typeof Authentication.Type;
+/** Verified application authentication, never values supplied by an OAuth client. */
+export const Authentication = makeAuthenticationSchema(DefaultSubject);
+
+export type Authentication<Subject extends string = string> = ReturnType<
+  typeof makeAuthenticationSchema<Subject>
+>["Type"];
 
 /** Application-approved claims. Scope filtering happens before credential delivery. */
 export const OpenIdProfile = Schema.Struct({
@@ -221,29 +254,42 @@ export const OpenIdMetadata = Schema.Struct({
   request_uri_parameter_supported: Schema.Literal(false),
 });
 
-export const UserInfo = Schema.Struct({ sub: SubjectId, ...OpenIdProfile.fields });
+export const makeUserInfoSchema = <Subject extends string>(
+  subject: Schema.Codec<Subject, string>,
+) => Schema.Struct({ sub: subject, ...OpenIdProfile.fields });
+
+export const UserInfo = makeUserInfoSchema(DefaultSubject);
+
+export const makeRecordSchema = <Subject extends string>(subject: Schema.Codec<Subject, string>) =>
+  Schema.Struct({
+    version: Random,
+    status: Schema.Literals(["Pending", "Consent", "Code", "Active", "Revoked"]),
+    authorization: Authorization,
+    subjectId: Schema.optionalKey(subject),
+    authentication: Schema.optionalKey(makeAuthenticationSchema(subject)),
+    claims: Schema.optionalKey(AccessClaims),
+    expiresAtMillis: Schema.Natural,
+  });
 
 /** One record owns consent, code redemption and the entire refresh family.
  * Revocation is monotonic; a stale CAS must never reactivate a revoked grant.
  * No bearer credentials or provider tokens are persisted here.
  */
-export const Record = Schema.Struct({
-  version: Random,
-  status: Schema.Literals(["Pending", "Consent", "Code", "Active", "Revoked"]),
-  authorization: Authorization,
-  subjectId: Schema.optionalKey(SubjectId),
-  authentication: Schema.optionalKey(Authentication),
-  claims: Schema.optionalKey(AccessClaims),
-  expiresAtMillis: Schema.Natural,
-});
+export const Record = makeRecordSchema(DefaultSubject);
 
-export type Record = typeof Record.Type;
+export type Record<Subject extends string = string> = ReturnType<
+  typeof makeRecordSchema<Subject>
+>["Type"];
 
-export const makeAccessSchema = <Scope extends OAuthScope.OAuthScope>(
+export const makeAccessSchema = <
+  Scope extends OAuthScope.OAuthScope,
+  Subject extends string = string,
+>(
   scope: Schema.Codec<Scope, string>,
+  subject: Schema.Codec<Subject, string>,
 ) =>
   Schema.Struct({
-    subjectId: SubjectId,
+    subjectId: subject,
     grantId: Random,
     clientId: Text,
     resource: Text,
@@ -251,11 +297,12 @@ export const makeAccessSchema = <Scope extends OAuthScope.OAuthScope>(
     claims: Schema.optionalKey(AccessClaims),
   });
 
-export const Access = makeAccessSchema(Scope);
+export const Access = makeAccessSchema(Scope, DefaultSubject);
 
-export type Access<Scope extends OAuthScope.OAuthScope = OAuthScope.OAuthScope> = ReturnType<
-  typeof makeAccessSchema<Scope>
->["Type"];
+export type Access<
+  Scope extends OAuthScope.OAuthScope = OAuthScope.OAuthScope,
+  Subject extends string = string,
+> = ReturnType<typeof makeAccessSchema<Scope, Subject>>["Type"];
 
 /** Request-local authenticated authority. Absent outside protected requests;
  * callers must reject undefined. Never provide a principal at server startup.

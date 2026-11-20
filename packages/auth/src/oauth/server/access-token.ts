@@ -8,14 +8,14 @@ import * as Jwt from "effect/jose/Jwt";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 
-import { origin } from "../../internal/origin";
 import type * as OAuthScope from "../../OAuthScope";
-import { SubjectId } from "../../Schema";
 import {
   AccessClaims,
   BearerToken,
   ConfigurationError,
+  DefaultSubject,
   InvalidToken,
+  Origin,
   Random,
   Scope,
   ScopeText,
@@ -26,49 +26,67 @@ import {
   Url,
 } from "./models";
 
+export const makeAccessTokenClaimsSchema = <Subject extends string>(
+  subject: Schema.Codec<Subject, string>,
+) =>
+  Schema.Struct({
+    iss: Text,
+    sub: subject,
+    aud: Text,
+    iat: Schema.Natural,
+    exp: Schema.Natural,
+    jti: Random,
+    grant_id: Random,
+    client_id: Text,
+    scope: ScopeText,
+    auth_time: Schema.Natural,
+    sid: Text,
+    claims: Schema.optionalKey(AccessClaims),
+  });
+
 /** RFC 9068 access tokens use a distinct type and audience from ID tokens. */
-export const AccessTokenClaims = Schema.Struct({
-  iss: Text,
-  sub: SubjectId,
-  aud: Text,
-  iat: Schema.Natural,
-  exp: Schema.Natural,
-  jti: Random,
-  grant_id: Random,
-  client_id: Text,
-  scope: ScopeText,
-  auth_time: Schema.Natural,
-  sid: Text,
-  claims: Schema.optionalKey(AccessClaims),
-});
+export const AccessTokenClaims = makeAccessTokenClaimsSchema(DefaultSubject);
 
-export type AccessTokenClaims = typeof AccessTokenClaims.Type;
+export type AccessTokenClaims<Subject extends string = string> = ReturnType<
+  typeof makeAccessTokenClaimsSchema<Subject>
+>["Type"];
 
-export interface AccessTokenVerifierWithKeySetOptions {
+export interface AccessTokenVerifierWithKeySetOptions<Subject extends string = string> {
   readonly issuer: string;
   readonly resource: string;
   /** Only these declared scopes are accepted when supplied. */
-  readonly scopes?: ReadonlyArray<OAuthScope.OAuthScope>;
+  readonly scopes?: ReadonlyArray<OAuthScope.OAuthScope> | undefined;
+  /** Subject schema decoded from the JWT `sub` claim. */
+  readonly subject?: Schema.Codec<Subject, string> | undefined;
 }
 
-export interface AccessTokenVerifierOptions extends AccessTokenVerifierWithKeySetOptions {
+export interface AccessTokenVerifierOptions<
+  Subject extends string = string,
+> extends AccessTokenVerifierWithKeySetOptions<Subject> {
   /** Trusted keys from the issuer's JWKS; reacquire this verifier when keys rotate. */
   readonly publicKeys: ReadonlyArray<Jwk.PublicJwk>;
 }
 
-const makeVerifier = Effect.fnUntraced(function* <Scope extends OAuthScope.OAuthScope>(
-  options: AccessTokenVerifierWithKeySetOptions,
+/** @internal */
+export const makeVerifierCore = Effect.fnUntraced(function* <
+  Scope extends OAuthScope.OAuthScope,
+  Subject extends string,
+>(
+  options: AccessTokenVerifierWithKeySetOptions<string>,
   scope: Schema.Codec<Scope, string>,
+  subject: Schema.Codec<Subject, string>,
 ) {
   const signature = yield* Signature.Signature;
   const keys = yield* Jwks.Jwks;
   const ScopeSchema = Schema.toType(scope);
+  const SubjectSchema = Schema.toType(subject);
   const ScopesSchema = makeScopesSchema(ScopeSchema);
-  const AccessSchema = makeAccessSchema(ScopeSchema);
+  const AccessTokenClaimsSchema = makeAccessTokenClaimsSchema(subject);
+  const AccessSchema = makeAccessSchema(ScopeSchema, SubjectSchema);
 
   const config = yield* Schema.decodeEffect(
     Schema.Struct({
-      issuer: origin,
+      issuer: Origin,
       resource: Url,
     }),
   )(options, { reportInput: false }).pipe(Effect.mapError(() => ConfigurationError.make({})));
@@ -76,7 +94,7 @@ const makeVerifier = Effect.fnUntraced(function* <Scope extends OAuthScope.OAuth
   const decode = Effect.fnUntraced(function* (credential: Redacted.Redacted<string>) {
     if (!Schema.is(BearerToken)(Redacted.value(credential))) return yield* InvalidToken.make({});
 
-    const { claims } = yield* Jwt.verifyWithKeySet(AccessTokenClaims, credential, {
+    const { claims } = yield* Jwt.verifyWithKeySet(AccessTokenClaimsSchema, credential, {
       algorithms: ["RS256"],
       issuer: config.issuer,
       audience: config.resource,
@@ -101,6 +119,7 @@ const makeVerifier = Effect.fnUntraced(function* <Scope extends OAuthScope.OAuth
     const seconds = (yield* Clock.currentTimeMillis) / 1000;
 
     if (
+      claims.sub.length === 0 ||
       claims.iat > seconds ||
       claims.exp <= seconds ||
       claims.exp <= claims.iat ||
@@ -137,9 +156,14 @@ const makeVerifier = Effect.fnUntraced(function* <Scope extends OAuthScope.OAuth
   };
 });
 
-const makeLocalVerifier = Effect.fnUntraced(function* <Scope extends OAuthScope.OAuthScope>(
-  options: AccessTokenVerifierOptions,
+/** @internal */
+export const makeLocalVerifierCore = Effect.fnUntraced(function* <
+  Scope extends OAuthScope.OAuthScope,
+  Subject extends string,
+>(
+  options: AccessTokenVerifierOptions<string>,
   scope: Schema.Codec<Scope, string>,
+  subject: Schema.Codec<Subject, string>,
 ) {
   const publicKeys = yield* Schema.decodeUnknownEffect(
     Schema.NonEmptyArray(Jwk.PublicJwk).check(Schema.isMaxLength(16)),
@@ -151,7 +175,9 @@ const makeLocalVerifier = Effect.fnUntraced(function* <Scope extends OAuthScope.
     Effect.mapError(() => ConfigurationError.make({})),
   );
 
-  return yield* makeVerifier(options, scope).pipe(Effect.provideService(Jwks.Jwks, keys));
+  return yield* makeVerifierCore(options, scope, subject).pipe(
+    Effect.provideService(Jwks.Jwks, keys),
+  );
 });
 
 /** Verify offline with trusted public keys. Revocation and permission changes
@@ -159,18 +185,39 @@ const makeLocalVerifier = Effect.fnUntraced(function* <Scope extends OAuthScope.
  * Retains only the signature service; verification uses the caller's clock and context.
  * Declared scopes narrow access only after every token scope passes validation.
  */
+export function makeAccessTokenVerifier<
+  const S extends ReadonlyArray<OAuthScope.OAuthScope>,
+  Subject extends string,
+>(
+  options: AccessTokenVerifierOptions<Subject> & {
+    readonly scopes: S;
+    readonly subject: Schema.Codec<Subject, string>;
+  },
+): ReturnType<typeof makeLocalVerifierCore<S[number], Subject>>;
+
 export function makeAccessTokenVerifier<const S extends ReadonlyArray<OAuthScope.OAuthScope>>(
-  options: AccessTokenVerifierOptions & { readonly scopes: S },
-): ReturnType<typeof makeLocalVerifier<S[number]>>;
+  options: AccessTokenVerifierOptions<DefaultSubject> & {
+    readonly scopes: S;
+    readonly subject?: undefined;
+  },
+): ReturnType<typeof makeLocalVerifierCore<S[number], DefaultSubject>>;
+
+export function makeAccessTokenVerifier<Subject extends string>(
+  options: AccessTokenVerifierOptions<Subject> & {
+    readonly scopes?: undefined;
+    readonly subject: Schema.Codec<Subject, string>;
+  },
+): ReturnType<typeof makeLocalVerifierCore<OAuthScope.OAuthScope, Subject>>;
 
 export function makeAccessTokenVerifier(
-  options: AccessTokenVerifierOptions,
-): ReturnType<typeof makeLocalVerifier<OAuthScope.OAuthScope>>;
+  options: AccessTokenVerifierOptions<DefaultSubject>,
+): ReturnType<typeof makeLocalVerifierCore<OAuthScope.OAuthScope, DefaultSubject>>;
 
-export function makeAccessTokenVerifier(options: AccessTokenVerifierOptions) {
-  return makeLocalVerifier(
+export function makeAccessTokenVerifier(options: AccessTokenVerifierOptions<string>) {
+  return makeLocalVerifierCore(
     options,
     options.scopes === undefined ? Scope : Schema.Literals(options.scopes),
+    options.subject ?? DefaultSubject,
   );
 }
 
@@ -186,17 +233,40 @@ export function makeAccessTokenVerifier(options: AccessTokenVerifierOptions) {
  */
 export function makeAccessTokenVerifierWithKeySet<
   const S extends ReadonlyArray<OAuthScope.OAuthScope>,
+  Subject extends string,
 >(
-  options: AccessTokenVerifierWithKeySetOptions & { readonly scopes: S },
-): ReturnType<typeof makeVerifier<S[number]>>;
+  options: AccessTokenVerifierWithKeySetOptions<Subject> & {
+    readonly scopes: S;
+    readonly subject: Schema.Codec<Subject, string>;
+  },
+): ReturnType<typeof makeVerifierCore<S[number], Subject>>;
+
+export function makeAccessTokenVerifierWithKeySet<
+  const S extends ReadonlyArray<OAuthScope.OAuthScope>,
+>(
+  options: AccessTokenVerifierWithKeySetOptions<DefaultSubject> & {
+    readonly scopes: S;
+    readonly subject?: undefined;
+  },
+): ReturnType<typeof makeVerifierCore<S[number], DefaultSubject>>;
+
+export function makeAccessTokenVerifierWithKeySet<Subject extends string>(
+  options: AccessTokenVerifierWithKeySetOptions<Subject> & {
+    readonly scopes?: undefined;
+    readonly subject: Schema.Codec<Subject, string>;
+  },
+): ReturnType<typeof makeVerifierCore<OAuthScope.OAuthScope, Subject>>;
 
 export function makeAccessTokenVerifierWithKeySet(
-  options: AccessTokenVerifierWithKeySetOptions,
-): ReturnType<typeof makeVerifier<OAuthScope.OAuthScope>>;
+  options: AccessTokenVerifierWithKeySetOptions<DefaultSubject>,
+): ReturnType<typeof makeVerifierCore<OAuthScope.OAuthScope, DefaultSubject>>;
 
-export function makeAccessTokenVerifierWithKeySet(options: AccessTokenVerifierWithKeySetOptions) {
-  return makeVerifier(
+export function makeAccessTokenVerifierWithKeySet(
+  options: AccessTokenVerifierWithKeySetOptions<string>,
+) {
+  return makeVerifierCore(
     options,
     options.scopes === undefined ? Scope : Schema.Literals(options.scopes),
+    options.subject ?? DefaultSubject,
   );
 }
