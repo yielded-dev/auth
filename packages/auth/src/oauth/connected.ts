@@ -553,31 +553,28 @@ export const makeOAuthConnected = <const Id extends string>(
         );
 
         // Warm lazy provider metadata before consuming a valid code flow so a
-        // discovery outage or misconfiguration leaves the flow pending.
+        // discovery outage or metadata mismatch leaves the flow pending.
         if (response._tag === "Code" && ready !== undefined) {
-          if (inspect !== undefined) {
-            const pending = yield* inspect(access);
+          if (inspect === undefined) return yield* OAuthUnavailable.make({});
+          const pending = yield* inspect(access);
 
-            if (pending === undefined) {
-              if (authenticated === undefined) return yield* AuthenticationRequired.make({});
+          if (pending === undefined) {
+            if (authenticated === undefined) return yield* AuthenticationRequired.make({});
 
-              return yield* OAuthRejected.make({});
-            }
-            const pendingFlow = yield* snapshotOAuthConnectedFlow.effect(pending);
-
-            yield* ready({
-              provider: pendingFlow.context.provider,
-              protocol: pendingFlow.context.protocol,
-              configurationGeneration: pendingFlow.context.configurationGeneration,
-              issuer: pendingFlow.context.issuer,
-              responseIssuerMode: pendingFlow.context.responseIssuerMode,
-              callbackId: pendingFlow.context.callbackId,
-              redirectUri: pendingFlow.context.redirectUri,
-              profile: pendingFlow.context.profile,
-            });
-          } else {
-            yield* ready({ provider: request.provider });
+            return yield* OAuthRejected.make({});
           }
+          const pendingFlow = yield* snapshotOAuthConnectedFlow.effect(pending);
+
+          yield* ready({
+            provider: pendingFlow.context.provider,
+            protocol: pendingFlow.context.protocol,
+            configurationGeneration: pendingFlow.context.configurationGeneration,
+            issuer: pendingFlow.context.issuer,
+            responseIssuerMode: pendingFlow.context.responseIssuerMode,
+            callbackId: pendingFlow.context.callbackId,
+            redirectUri: pendingFlow.context.redirectUri,
+            profile: pendingFlow.context.profile,
+          });
         }
 
         const consumed = yield* consume(access, (value, journal) =>

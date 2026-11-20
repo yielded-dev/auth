@@ -737,15 +737,15 @@ Sign-in accepts per-request `prompt` and `loginHint`. Public clients use
 `Config.Redacted`. Static settings (including shared-callback issuer checks)
 validate at Layer construction with zero network I/O. OpenID Connect providers
 resolve discovery lazily on first use — including the first callback, refresh,
-or revocation after a restart — sharing one fetch per issuer within the Layer
-scope and enforcing a 30-second cooldown after failures. Metadata-dependent
-checks (issuer matching, advertised authentication methods, PKCE, ID-token
-algorithms, verifier key setup, and `responseIssuerMode: "discovered"`) fail
-with `OAuthUnavailable` before any pending flow is consumed, active grant is
-settled, or revocation job is claimed; misconfigured OIDC metadata does not
-block startup. Call `(yield* OAuthProtocol).ready?.()` (and
-`(yield* OAuthConnectedProtocol).ready?.()` for connected grants) during startup
-when fail-fast boot validation is required.
+or revocation after a restart — sharing one raw fetch per issuer within a
+provider installation (including its generations and retained-access
+configuration). Metadata-dependent checks (issuer matching, advertised
+authentication methods, PKCE, ID-token algorithms, verifier key setup, and
+`responseIssuerMode: "discovered"`) fail with `OAuthUnavailable` before any
+pending flow is consumed, active grant is settled, or revocation job is claimed;
+metadata-dependent configuration failures do not block startup. Call
+`(yield* OAuthProtocol).ready?.()` (and `(yield* OAuthConnectedProtocol).ready?.()`
+for connected grants) during startup when fail-fast boot validation is required.
 
 ### Configuration rotation
 

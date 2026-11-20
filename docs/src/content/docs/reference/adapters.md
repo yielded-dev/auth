@@ -505,7 +505,10 @@ Account mappings require a self-contained `metadataAccess` SQL predicate enforci
 current permission for the verified invocation. False returns an empty page.
 `OAuthAccountsPersistence.list` exposes credential IDs and provider/issuer/subject
 tuples, not application profiles. Retained-grant listing belongs to
-`OAuthConnectedPersistence`.
+`OAuthConnectedPersistence`. Custom persistence services paired with lazy OIDC
+providers must implement `inspect` (bound, non-consuming callback lookup) and
+`OAuthConnectedRevocations.peek` (non-consuming pending revocation lookup with
+`excludeJobIds`), or fail closed with `OAuthUnavailable`.
 
 ### Kysely-owned schemas
 
