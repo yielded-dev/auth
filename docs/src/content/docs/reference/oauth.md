@@ -703,8 +703,12 @@ the provider configuration and are independent of sign-in scopes.
 
 Keep S256 PKCE and issuer-response validation enabled for providers that support
 them. `pkceS256: false` and `responseIssuerMode: "unsupported"` are explicit provider
-configuration choices. `userInfo: "merge"` fills missing ID-token claims after checking
-the same subject; ID-token claims take precedence. Null standard profile claims are
+configuration choices. ID-token verification enforces `typ` (`"JWT"` or omitted by
+default), audience/`azp` policy, and a 30-second default clock tolerance across
+`exp`, `nbf`, `iat`, `auth_time`, and `max_age` (anchored to the stored flow
+request time). `userInfo: "merge"` fetches the discovered UserInfo endpoint via
+`Oidc.fetchUserInfo`, verifies `sub` matches the ID token, and fills missing
+ID-token claims (ID-token claims take precedence). Null standard profile claims are
 omitted; custom claims are preserved for `profileSchema`. Discovery accepts a
 `{tenantid}` path segment when it matches the configured authority; verification
 substitutes the signed `tid` and checks the selected signing key's issuer. A
@@ -712,8 +716,9 @@ concrete GUID authority discovered from that template keeps its own issuer, and
 the signing key must still publish a matching issuer. Commercial `consumers` pins the
 personal-account issuer and requires a matching signing-key issuer. A tenant domain
 does not match that template. `common` and `organizations` stay on it, with
-`organizations` accepting only work and school accounts. Refresh against the
-template requires the original `iss`.
+`organizations` accepting only work and school accounts. Refresh checks `iss`, `sub`,
+`aud`, optional `nonce`, and any recorded `auth_time` (requiring the original `iss`
+against a template issuer).
 
 Sign-in accepts per-request `prompt` and `loginHint`. Public clients use
 `authentication: { method: "none", publicClient: true }`. Load secrets with

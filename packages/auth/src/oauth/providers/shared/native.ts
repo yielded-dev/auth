@@ -1,11 +1,14 @@
+import type * as Discovery from "@yielded/oauth/Discovery";
 import * as OAuth from "@yielded/oauth/OAuth";
 import type * as Oidc from "@yielded/oauth/Oidc";
 import * as Cause from "effect/Cause";
 import type * as Digest from "effect/crypto/Digest";
 import type * as SecureRandom from "effect/crypto/SecureRandom";
+import type * as Signature from "effect/crypto/Signature";
 import * as Effect from "effect/Effect";
 import type * as HttpClient from "effect/http/HttpClient";
-import type * as Redacted from "effect/Redacted";
+import type * as Jwk from "effect/jose/Jwk";
+import type * as Jwks from "effect/jose/Jwks";
 import type * as Scope from "effect/Scope";
 
 import { makeEmailEnrichment } from "../github/email";
@@ -17,15 +20,21 @@ export type Requirements =
   | HttpClient.HttpClient
   | Scope.Scope;
 
+export interface NativeKeySet {
+  readonly jwks: Jwks.Jwks["Service"];
+  readonly algorithms: ReadonlyArray<Jwk.AsymmetricAlgorithm>;
+  readonly issuerPolicy?: Oidc.IssuerPolicy | undefined;
+  readonly signature: Signature.Signature["Service"];
+  readonly digest: Digest.Digest["Service"];
+}
+
 export interface NativeProvider {
   readonly client: OAuth.Client;
   readonly enrichIdentity?: Effect.Success<ReturnType<typeof makeEmailEnrichment>>;
-  readonly verifier?: {
-    readonly verify: (
-      token: Redacted.Redacted<string>,
-      input: Oidc.VerificationInput,
-    ) => Effect.Effect<Oidc.Verified, Effect.Error<ReturnType<Oidc.Verifier["verify"]>>>;
-  };
+  readonly verifier?: Oidc.Verifier["Service"];
+  readonly nativeKeySet?: NativeKeySet;
+  readonly discovery?: Discovery.Discovery["Service"];
+  readonly http?: HttpClient.HttpClient;
 }
 
 export const install = Effect.fn("OpenIdConnect.installNative")(function* (

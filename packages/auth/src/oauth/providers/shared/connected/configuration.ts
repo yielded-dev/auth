@@ -561,11 +561,7 @@ export const installConnectedProvider = Effect.fn("OpenIdConnect.installConnecte
         clientId: provider.clientId,
         authentication: nativeAuthentication(provider.authentication),
         timeoutMs: timeoutSeconds * 1000,
-        ...(provider.protocol === "oauth"
-          ? nativeOAuthClientOptions(provider)
-          : provider.userInfo === "merge" && metadata.userinfo_endpoint !== undefined
-            ? { profile: { url: metadata.userinfo_endpoint } }
-            : {}),
+        ...(provider.protocol === "oauth" ? nativeOAuthClientOptions(provider) : {}),
         ...(provider.revocation.mode === "rfc7009"
           ? { revocationAuthentication: nativeAuthentication(provider.revocation.authentication) }
           : {}),

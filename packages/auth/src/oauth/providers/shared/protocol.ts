@@ -1,10 +1,14 @@
-import type * as Oidc from "@yielded/oauth/Oidc";
+import * as Discovery from "@yielded/oauth/Discovery";
+import * as Oidc from "@yielded/oauth/Oidc";
 import * as Pkce from "@yielded/oauth/Pkce";
 import * as Cause from "effect/Cause";
 import * as Digest from "effect/crypto/Digest";
 import * as SecureRandom from "effect/crypto/SecureRandom";
+import * as Signature from "effect/crypto/Signature";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as HttpClient from "effect/http/HttpClient";
+import * as Jwks from "effect/jose/Jwks";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
@@ -35,7 +39,7 @@ import {
 } from "../../signInModels";
 import { makeOAuthSnapshot } from "../../signInSnapshot";
 import { classifyOAuthError } from "./classifyOAuthError";
-import { tokenCompatibility } from "./compatibility";
+import { nativeAudiences, tokenCompatibility } from "./compatibility";
 import { registrationKind, type InstalledConfiguration } from "./configuration";
 import { discoveryProfile } from "./discovery";
 import {
@@ -63,16 +67,13 @@ const beginInput = Schema.Struct({
   loginHint: Schema.optionalKey(OAuthLoginHint),
 });
 
-const userInfoSubject = Schema.Struct({
-  sub: Schema.NonEmptyString.check(Schema.isMaxLength(1024)),
-});
-
 const exchangeInput = Schema.toType(
   Schema.Struct({
     configuration: OAuthProtocolConfiguration,
     response: OAuthCodeResponse,
     secrets: OAuthTransactionSecrets,
     verificationStartedAt: Schema.DateTimeUtcFromMillis,
+    requestedAt: Schema.optionalKey(Schema.DateTimeUtcFromMillis),
   }),
 );
 
@@ -87,6 +88,7 @@ const nativeVerifyInput = Schema.toType(
     credential: OAuthNativeCredential,
     secrets: OAuthTransactionSecrets,
     verificationStartedAt: Schema.DateTimeUtcFromMillis,
+    requestedAt: Schema.optionalKey(Schema.DateTimeUtcFromMillis),
   }),
 );
 
@@ -101,7 +103,7 @@ const rejected = () => OAuthProtocolRejected.make({});
 /** Project verified claims. Apple's unsigned first-consent name only fills missing names. */
 const oidcIdentity = Effect.fnUntraced(function* (
   provider: OpenIdConnectOidcProvider,
-  verified: Oidc.Verified,
+  verified: Oidc.VerifiedIdToken,
   claims: Schema.JsonObject,
   name: OAuthNativeName | undefined,
 ) {
@@ -124,9 +126,9 @@ const oidcIdentity = Effect.fnUntraced(function* (
   return yield* snapshotOAuthVerifiedExternalIdentity.effect({
     identity: { provider: provider.provider, issuer: provider.issuer, subject },
     ...(profile === undefined ? {} : { profile }),
-    ...(verified.upstreamAuthenticatedAt === undefined
+    ...(verified.authenticatedAt === undefined
       ? {}
-      : { upstreamAuthenticatedAt: verified.upstreamAuthenticatedAt }),
+      : { upstreamAuthenticatedAt: verified.authenticatedAt }),
   });
 });
 
@@ -354,16 +356,22 @@ export const makeOpenIdConnectOAuthProtocol = Effect.fn("makeOpenIdConnectOAuthP
         );
 
         if (provider.protocol === "oidc") {
-          if (entry.verifier === undefined || grant.idToken === undefined)
+          const oidcNonce = request.secrets.oidcNonce;
+
+          if (
+            entry.verifier === undefined ||
+            grant.idToken === undefined ||
+            oidcNonce === undefined
+          )
             return yield* unavailable();
 
           const verified = yield* entry.verifier
             .verify(grant.idToken, {
-              verificationStartedAt: request.verificationStartedAt,
-              nonce: request.secrets.oidcNonce!,
+              nonce: oidcNonce,
+              ...(request.requestedAt === undefined ? {} : { requestedAt: request.requestedAt }),
               ...(provider.maxAgeSeconds === undefined
                 ? {}
-                : { maxAgeSeconds: provider.maxAgeSeconds }),
+                : { maxAge: `${provider.maxAgeSeconds} seconds` }),
               accessToken: grant.accessToken,
               code: request.response.code,
             })
@@ -383,7 +391,18 @@ export const makeOpenIdConnectOAuthProtocol = Effect.fn("makeOpenIdConnectOAuthP
           const claims =
             provider.userInfo === "merge"
               ? yield* (function* () {
-                  const userInfo = yield* client.fetchProfile(grant.accessToken).pipe(
+                  if (entry.discovery === undefined || entry.http === undefined) {
+                    return yield* unavailable();
+                  }
+
+                  const userInfo = yield* Oidc.fetchUserInfo({
+                    accessToken: grant.accessToken,
+                    expectedSubject: verified.subject,
+                    timeout: timeoutSeconds * 1000,
+                    maxResponseBytes: 1_048_576,
+                  }).pipe(
+                    Effect.provideService(Discovery.Discovery, entry.discovery),
+                    Effect.provideService(HttpClient.HttpClient, entry.http),
                     Effect.catchCause((cause) =>
                       Effect.failCause(
                         Cause.map(cause, (error) =>
@@ -396,13 +415,7 @@ export const makeOpenIdConnectOAuthProtocol = Effect.fn("makeOpenIdConnectOAuthP
                     ),
                   );
 
-                  const subject = yield* Schema.decodeUnknownEffect(userInfoSubject)(userInfo).pipe(
-                    Effect.mapError(rejected),
-                  );
-
-                  if (subject.sub !== verified.subject) return yield* rejected();
-
-                  return mergeUserInfo(userInfo, Redacted.value(verified.claims));
+                  return mergeUserInfo(Redacted.value(userInfo), Redacted.value(verified.claims));
                 })()
               : Redacted.value(verified.claims);
 
@@ -519,13 +532,14 @@ export const makeOpenIdConnectOAuthProtocol = Effect.fn("makeOpenIdConnectOAuthP
 
         if (
           entry === undefined ||
-          entry.verifier === undefined ||
+          entry.nativeKeySet === undefined ||
           entry.provider.protocol !== "oidc" ||
           entry.provider.issuer !== saved.issuer ||
           saved.callbackId !== OAuthNativeCallbackId
         )
           return yield* unavailable();
         const provider = entry.provider;
+        const nativeKeySet = entry.nativeKeySet;
         const nonce = request.secrets.oidcNonce;
 
         if (nonce === undefined || request.secrets.pkceVerifier !== undefined)
@@ -535,25 +549,46 @@ export const makeOpenIdConnectOAuthProtocol = Effect.fn("makeOpenIdConnectOAuthP
         if (startedAt < 0 || startedAt > DateTime.toEpochMillis(yield* DateTime.now))
           return yield* rejected();
 
+        const alternativeClientIds = (provider[nativeAudiences] ?? []).filter(
+          (audience) => audience !== provider.clientId,
+        );
+
         // The platform token is the assertion. Its code only satisfies `c_hash`.
-        const verified = yield* entry.verifier
-          .verify(request.credential.idToken, {
-            verificationStartedAt: request.verificationStartedAt,
-            nonce,
-            ...(request.credential.code === undefined ? {} : { code: request.credential.code }),
-            ...(provider.maxAgeSeconds === undefined
-              ? {}
-              : { maxAgeSeconds: provider.maxAgeSeconds }),
-          })
-          .pipe(
-            Effect.catchCause((cause) =>
-              Effect.failCause(
-                Cause.map(cause, (error) =>
-                  classifyOAuthError(error, { operation: "authorization_code", phase: "idToken" }),
-                ),
+        const verified = yield* Oidc.verifyWithKeySet(request.credential.idToken, {
+          issuer: entry.metadata.issuer,
+          clientId: provider.clientId,
+          ...(alternativeClientIds.length === 0 ? {} : { alternativeClientIds }),
+          algorithms: nativeKeySet.algorithms,
+          ...(nativeKeySet.issuerPolicy === undefined
+            ? {}
+            : { issuerPolicy: nativeKeySet.issuerPolicy }),
+          nonce,
+          ...(request.requestedAt === undefined ? {} : { requestedAt: request.requestedAt }),
+          ...(request.credential.code === undefined
+            ? {}
+            : { code: request.credential.code, requireCodeHash: true }),
+          ...(provider.maxAgeSeconds === undefined
+            ? {}
+            : { maxAge: `${provider.maxAgeSeconds} seconds` }),
+        }).pipe(
+          Effect.provideService(Jwks.Jwks, nativeKeySet.jwks),
+          Effect.provideService(Signature.Signature, nativeKeySet.signature),
+          Effect.provideService(Digest.Digest, nativeKeySet.digest),
+          Effect.catchCause((cause) =>
+            Effect.failCause(
+              Cause.map(cause, (error) =>
+                classifyOAuthError(error, { operation: "authorization_code", phase: "idToken" }),
               ),
             ),
-          );
+          ),
+        );
+
+        if (
+          Redacted.value(verified.claims).c_hash !== undefined &&
+          request.credential.code === undefined
+        ) {
+          return yield* rejected();
+        }
 
         return yield* oidcIdentity(
           provider,

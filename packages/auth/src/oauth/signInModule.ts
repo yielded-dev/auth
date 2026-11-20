@@ -957,6 +957,7 @@ export const makeOAuthMethod = <
                   response,
                   secrets,
                   verificationStartedAt: start,
+                  requestedAt: DateTime.makeUnsafe(context.issuedAtMillis),
                 };
 
                 if (access === undefined) {
@@ -1078,6 +1079,7 @@ export const makeOAuthMethod = <
                   },
                   secrets,
                   verificationStartedAt: start,
+                  requestedAt: DateTime.makeUnsafe(context.issuedAtMillis),
                 }).pipe(
                   Effect.flatMap((value) => snapshotOAuthVerifiedExternalIdentity.effect(value)),
                 );

@@ -1,4 +1,6 @@
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
@@ -438,6 +440,123 @@ export const reveal = <A>(
   onError: () => OAuthError.OAuthError = () =>
     invalidArgument("Redacted OAuth value is unavailable"),
 ) => Effect.try({ try: () => Redacted.value(value), catch: onError });
+
+export const Bearer = Schema.Redacted(
+  text(16384).check(Schema.isPattern(/^[A-Za-z0-9._~+/-]+=*$/u)),
+  { disallowJsonEncode: true },
+);
+
+export const isHttpsUrl = (value: string): boolean => {
+  try {
+    const url = new URL(value);
+
+    return (
+      url.protocol === "https:" &&
+      url.username === "" &&
+      url.password === "" &&
+      !value.includes("#") &&
+      // oxlint-disable-next-line no-control-regex -- Reject URL parser normalization of untrusted controls.
+      !/[\s\\\u0000-\u001f\u007f]/u.test(value)
+    );
+  } catch {
+    return false;
+  }
+};
+
+// `Duration` reads NaN as zero in every input form, and non-finite or
+// overflowing object components add up to NaN. Reject them eagerly.
+const hasInvalidDurationComponent = (input: Duration.Input): boolean => {
+  if (typeof input === "number") return Number.isNaN(input);
+  if (typeof input !== "object" || input === null || Duration.isDuration(input)) return false;
+  if (Array.isArray(input)) return input.some((component) => !Number.isFinite(component));
+
+  return Object.entries(input).some(
+    ([unit, component]) =>
+      typeof component === "number" &&
+      (!Number.isFinite(component) || !Number.isFinite(Duration.toMillis({ [unit]: component }))),
+  );
+};
+
+const durationFromInput = (input: Duration.Input): Option.Option<Duration.Duration> =>
+  hasInvalidDurationComponent(input) ? Option.none() : Duration.fromInput(input);
+
+const durationMillis = (input: Duration.Input): Option.Option<number> =>
+  Option.map(durationFromInput(input), Duration.toMillis);
+
+export const finiteMillis = (
+  name: string,
+  input: Duration.Input,
+): Effect.Effect<number, OAuthError.OAuthError> => {
+  const value = durationMillis(input);
+
+  return Option.isSome(value) && Number.isFinite(value.value) && value.value >= 0
+    ? Effect.succeed(value.value)
+    : Effect.fail(invalidArgument(`${name} must be a finite, non-negative duration`));
+};
+
+export const positiveFiniteMillis = (
+  name: string,
+  input: Duration.Input,
+): Effect.Effect<number, OAuthError.OAuthError> => {
+  const value = durationMillis(input);
+
+  return Option.isSome(value) && Number.isFinite(value.value) && value.value > 0
+    ? Effect.succeed(value.value)
+    : Effect.fail(invalidArgument(`${name} must be a finite, positive duration`));
+};
+
+export const positiveMillisOrInfinity = (
+  name: string,
+  input: Duration.Input,
+): Effect.Effect<number, OAuthError.OAuthError> => {
+  const value = durationMillis(input);
+
+  return Option.isSome(value) && !Number.isNaN(value.value) && value.value > 0
+    ? Effect.succeed(value.value)
+    : Effect.fail(invalidArgument(`${name} must be a positive duration or Infinity`));
+};
+
+export const wholeSeconds = (
+  name: string,
+  input: Duration.Input,
+): Effect.Effect<number, OAuthError.OAuthError> => {
+  const duration = durationFromInput(input);
+
+  if (Option.isNone(duration)) {
+    return Effect.fail(
+      invalidArgument(`${name} must be a finite, non-negative whole-second duration`),
+    );
+  }
+
+  const millis = Duration.toMillis(duration.value);
+  const nanos = Duration.toNanos(duration.value);
+
+  if (
+    !Number.isFinite(millis) ||
+    millis < 0 ||
+    Option.isNone(nanos) ||
+    nanos.value < 0n ||
+    nanos.value % 1_000_000_000n !== 0n
+  ) {
+    return Effect.fail(
+      invalidArgument(`${name} must be a finite, non-negative whole-second duration`),
+    );
+  }
+
+  const seconds = millis / 1000;
+
+  return Number.isSafeInteger(seconds)
+    ? Effect.succeed(seconds)
+    : Effect.fail(invalidArgument(`${name} must be a finite, non-negative whole-second duration`));
+};
+
+export const positiveInteger = (
+  name: string,
+  value: number,
+): Effect.Effect<number, OAuthError.OAuthError> =>
+  Number.isSafeInteger(value) && value > 0
+    ? Effect.succeed(value)
+    : Effect.fail(invalidArgument(`${name} must be a positive integer`));
 
 /** Freeze owned configuration snapshots or freshly parsed wire JSON, not caller-owned graphs. */
 export const freeze = <A>(value: A): A => {

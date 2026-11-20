@@ -123,12 +123,17 @@ const make = Effect.fnUntraced(function* (
       .pipe(Effect.flatMap((value) => snapshotOAuthConnectedGrantResponse.effect(value)));
 
     const continuation = grant.material.continuation;
+    const nowMillis = DateTime.toEpochMillis(yield* DateTime.now);
 
     const identity = yield* snapshotOAuthVerifiedExternalIdentity.effect({
       identity: grant.identity,
       ...(grant.profile === undefined ? {} : { profile: grant.profile }),
       ...(continuation._tag === "Oidc" && continuation.authTime !== undefined
-        ? { upstreamAuthenticatedAt: DateTime.makeUnsafe(continuation.authTime * 1000) }
+        ? {
+            upstreamAuthenticatedAt: DateTime.makeUnsafe(
+              Math.min(nowMillis, Math.trunc(continuation.authTime * 1000)),
+            ),
+          }
         : {}),
     });
 

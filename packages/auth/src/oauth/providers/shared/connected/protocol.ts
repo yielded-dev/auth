@@ -1,11 +1,13 @@
+import * as Discovery from "@yielded/oauth/Discovery";
 import type * as OAuth from "@yielded/oauth/OAuth";
-import type * as Oidc from "@yielded/oauth/Oidc";
+import * as Oidc from "@yielded/oauth/Oidc";
 import * as Pkce from "@yielded/oauth/Pkce";
 import * as Cause from "effect/Cause";
 import * as Digest from "effect/crypto/Digest";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as HttpClient from "effect/http/HttpClient";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
@@ -29,6 +31,7 @@ import {
   OAuthTransactionSecrets,
 } from "../../../signInModels";
 import { makeOAuthSnapshot } from "../../../signInSnapshot";
+import { isTenantIssuerTemplate } from "../../microsoft/discovery";
 import { classifyOAuthError } from "../classifyOAuthError";
 import { type ConnectedCompatibility } from "../compatibility";
 import {
@@ -59,14 +62,6 @@ const prepareInput = Schema.Struct({
   loginHint: Schema.optionalKey(OAuthLoginHint),
 });
 
-const tokenIssuer = Schema.Struct({
-  iss: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(2048)),
-});
-
-const userInfoSubject = Schema.Struct({
-  sub: Schema.NonEmptyString.check(Schema.isMaxLength(1024)),
-});
-
 const prepareOutput = Schema.Struct({
   ...OAuthProtocolPreparation.fields,
   configuration: M.OAuthConnectedConfiguration,
@@ -78,6 +73,7 @@ const exchangeInput = Schema.toType(
     secrets: OAuthTransactionSecrets,
     response: OAuthCodeResponse,
     verificationStartedAt: Schema.DateTimeUtcFromMillis,
+    requestedAt: Schema.optionalKey(Schema.DateTimeUtcFromMillis),
   }),
 );
 
@@ -281,7 +277,7 @@ export const makeConnectedProtocolWithCompatibility = Effect.fn(
 
   const oidcIdentity = Effect.fn("OpenIdConnectConnected.oidcIdentity")(function* (
     entry: InstalledConnectedProvider<R>,
-    verified: Oidc.Verified,
+    verified: Oidc.VerifiedIdToken,
     originalNonce: Redacted.Redacted<string>,
     previous?: {
       readonly identity: typeof OAuthExternalIdentity.Type;
@@ -306,10 +302,6 @@ export const makeConnectedProtocolWithCompatibility = Effect.fn(
           ).pipe(Effect.catchCause((cause) => Effect.failCause(Cause.map(cause, unavailable))))
         : undefined;
 
-    const issued = yield* Schema.decodeUnknownEffect(tokenIssuer)(
-      Redacted.value(verified.claims),
-    ).pipe(Effect.catchCause((cause) => Effect.failCause(Cause.map(cause, unavailable))));
-
     const decodedSubject =
       provider.decodeSubject === undefined
         ? verified.subject
@@ -325,7 +317,9 @@ export const makeConnectedProtocolWithCompatibility = Effect.fn(
 
     if (
       previous !== undefined &&
-      (previous.continuation.issuer !== issued.iss || namespaced !== previous.identity.subject)
+      ((previous.continuation.issuer !== undefined &&
+        previous.continuation.issuer !== verified.issuer) ||
+        namespaced !== previous.identity.subject)
     )
       return yield* unavailable();
 
@@ -339,7 +333,8 @@ export const makeConnectedProtocolWithCompatibility = Effect.fn(
         clientId: provider.clientId,
         nonce: Redacted.make(Redacted.value(originalNonce)),
         subject: verified.subject,
-        issuer: issued.iss,
+        issuer: verified.issuer,
+        audience: [...verified.audience],
         ...(verified.authTime === undefined ? {} : { authTime: verified.authTime }),
       },
     };
@@ -545,25 +540,53 @@ export const makeConnectedProtocolWithCompatibility = Effect.fn(
 
     const identity = yield* provider.protocol === "oidc"
       ? Effect.gen(function* () {
-          if (entry.verifier === undefined || grant.idToken === undefined)
+          const oidcNonce = request.secrets.oidcNonce;
+
+          if (
+            entry.verifier === undefined ||
+            grant.idToken === undefined ||
+            oidcNonce === undefined
+          )
             return yield* unavailable();
 
           const verified = yield* entry.verifier
             .verify(grant.idToken, {
-              verificationStartedAt: request.verificationStartedAt,
-              nonce: request.secrets.oidcNonce!,
+              nonce: oidcNonce,
+              ...(request.requestedAt === undefined ? {} : { requestedAt: request.requestedAt }),
               ...(provider.maxAgeSeconds === undefined
                 ? {}
-                : { maxAgeSeconds: provider.maxAgeSeconds }),
+                : { maxAge: `${provider.maxAgeSeconds} seconds` }),
               accessToken: grant.accessToken,
               code: request.response.code,
             })
-            .pipe(Effect.catchCause((cause) => Effect.failCause(Cause.map(cause, unavailable))));
+            .pipe(
+              Effect.catchCause((cause) =>
+                Effect.failCause(
+                  Cause.map(cause, (error) =>
+                    classifyOAuthError(error, {
+                      operation: "authorization_code",
+                      phase: "idToken",
+                    }),
+                  ),
+                ),
+              ),
+            );
 
           const claims =
             provider.userInfo === "merge"
               ? yield* (function* () {
-                  const userInfo = yield* entry.client.fetchProfile(grant.accessToken).pipe(
+                  if (entry.discovery === undefined || entry.http === undefined) {
+                    return yield* unavailable();
+                  }
+
+                  const userInfo = yield* Oidc.fetchUserInfo({
+                    accessToken: grant.accessToken,
+                    expectedSubject: verified.subject,
+                    timeout: timeoutSeconds * 1000,
+                    maxResponseBytes: 1_048_576,
+                  }).pipe(
+                    Effect.provideService(Discovery.Discovery, entry.discovery),
+                    Effect.provideService(HttpClient.HttpClient, entry.http),
                     Effect.catchCause((cause) =>
                       Effect.failCause(
                         Cause.map(cause, (error) =>
@@ -576,23 +599,11 @@ export const makeConnectedProtocolWithCompatibility = Effect.fn(
                     ),
                   );
 
-                  const subject = yield* Schema.decodeUnknownEffect(userInfoSubject)(userInfo).pipe(
-                    Effect.mapError(unavailable),
-                  );
-
-                  if (subject.sub !== verified.subject) return yield* unavailable();
-
-                  return mergeUserInfo(userInfo, Redacted.value(verified.claims));
+                  return mergeUserInfo(Redacted.value(userInfo), Redacted.value(verified.claims));
                 })()
               : undefined;
 
-          return yield* oidcIdentity(
-            entry,
-            verified,
-            request.secrets.oidcNonce!,
-            undefined,
-            claims,
-          );
+          return yield* oidcIdentity(entry, verified, oidcNonce, undefined, claims);
         })
       : provider.identitySource.from === "token"
         ? decodeIdentity(entry, Redacted.value(receipt.body), grant.accessToken)
@@ -712,14 +723,22 @@ export const makeConnectedProtocolWithCompatibility = Effect.fn(
       if (previous._tag !== "Oidc" || !previous.nonce || entry.verifier === undefined)
         return yield* unavailable();
       if (grant.idToken !== undefined) {
+        const previousIssuer =
+          previous.issuer ??
+          (isTenantIssuerTemplate(entry.metadata.issuer) ? undefined : entry.metadata.issuer);
+
+        if (previousIssuer === undefined) return yield* unavailable();
+
+        const previousAudience = previous.audience ?? [previous.clientId];
+
         const verified = yield* entry.verifier
           .verify(grant.idToken, {
-            verificationStartedAt: request.verificationStartedAt,
-            nonce: previous.nonce,
             accessToken: grant.accessToken,
             previous: {
               subject: previous.subject ?? request.context.identity.subject,
-              ...(previous.issuer === undefined ? {} : { issuer: previous.issuer }),
+              issuer: previousIssuer,
+              audience: previousAudience,
+              nonce: previous.nonce,
               ...(previous.authTime === undefined ? {} : { authTime: previous.authTime }),
             },
           })

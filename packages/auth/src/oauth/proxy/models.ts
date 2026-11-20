@@ -101,6 +101,8 @@ export const FlowContext = Schema.Struct({
   upstream: OAuthProtocolConfiguration,
   /** Provider callback transport captured at prepare; the app handoff uses GET. */
   responseMode: Schema.Literals(["query", "form_post"]),
+  /** Authorization initiation time used as `requestedAt` for OIDC `max_age`. */
+  issuedAtMillis: Schema.optionalKey(OAuthInstant),
   expiresAtMillis: OAuthInstant,
 });
 

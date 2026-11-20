@@ -92,6 +92,7 @@ export const request = Effect.fnUntraced(
     return {
       status: response.status,
       contentType: response.headers["content-type"] ?? null,
+      wwwAuthenticate: response.headers["www-authenticate"] ?? null,
       bytes: Redacted.make(buffer.subarray(0, length)),
     };
   },

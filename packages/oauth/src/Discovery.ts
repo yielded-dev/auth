@@ -20,7 +20,6 @@ import * as Exit from "effect/Exit";
 import type * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
@@ -227,66 +226,6 @@ const transportFailed = (
     }),
   });
 
-// `Duration` reads NaN as zero in every input form, and non-finite or
-// overflowing object components add up to NaN. Reject them eagerly.
-const hasInvalidDurationComponent = (input: Duration.Input): boolean => {
-  if (typeof input === "number") return Number.isNaN(input);
-  if (typeof input !== "object" || input === null || Duration.isDuration(input)) return false;
-  if (Array.isArray(input)) return input.some((component) => !Number.isFinite(component));
-
-  return Object.entries(input).some(
-    ([unit, component]) =>
-      typeof component === "number" &&
-      (!Number.isFinite(component) || !Number.isFinite(Duration.toMillis({ [unit]: component }))),
-  );
-};
-
-const durationMillis = (input: Duration.Input): Option.Option<number> =>
-  hasInvalidDurationComponent(input)
-    ? Option.none()
-    : Option.map(Duration.fromInput(input), Duration.toMillis);
-
-const finiteMillis = (
-  name: string,
-  input: Duration.Input,
-): Effect.Effect<number, OAuthError.OAuthError> => {
-  const value = durationMillis(input);
-
-  return Option.isSome(value) && Number.isFinite(value.value) && value.value >= 0
-    ? Effect.succeed(value.value)
-    : Effect.fail(V.invalidArgument(`${name} must be a finite, non-negative duration`));
-};
-
-const positiveFiniteMillis = (
-  name: string,
-  input: Duration.Input,
-): Effect.Effect<number, OAuthError.OAuthError> => {
-  const value = durationMillis(input);
-
-  return Option.isSome(value) && Number.isFinite(value.value) && value.value > 0
-    ? Effect.succeed(value.value)
-    : Effect.fail(V.invalidArgument(`${name} must be a finite, positive duration`));
-};
-
-const positiveMillisOrInfinity = (
-  name: string,
-  input: Duration.Input,
-): Effect.Effect<number, OAuthError.OAuthError> => {
-  const value = durationMillis(input);
-
-  return Option.isSome(value) && !Number.isNaN(value.value) && value.value > 0
-    ? Effect.succeed(value.value)
-    : Effect.fail(V.invalidArgument(`${name} must be a positive duration or Infinity`));
-};
-
-const positiveInteger = (
-  name: string,
-  value: number,
-): Effect.Effect<number, OAuthError.OAuthError> =>
-  Number.isSafeInteger(value) && value > 0
-    ? Effect.succeed(value)
-    : Effect.fail(V.invalidArgument(`${name} must be a positive integer`));
-
 const buildWellKnownUrl = (
   issuer: string,
   wellKnown: "openid-configuration" | "oauth-authorization-server",
@@ -402,15 +341,15 @@ export const makeRemote: (
     requestUrl = buildWellKnownUrl(configuredIssuer, wellKnown);
   }
 
-  const timeToLive = yield* positiveMillisOrInfinity(
+  const timeToLive = yield* V.positiveMillisOrInfinity(
     "timeToLive",
     options.timeToLive ?? Duration.infinity,
   );
 
-  const cooldown = yield* finiteMillis("cooldown", options.cooldown ?? "30 seconds");
-  const timeoutMs = yield* positiveFiniteMillis("timeout", options.timeout ?? "5 seconds");
+  const cooldown = yield* V.finiteMillis("cooldown", options.cooldown ?? "30 seconds");
+  const timeoutMs = yield* V.positiveFiniteMillis("timeout", options.timeout ?? "5 seconds");
 
-  const maxResponseBytes = yield* positiveInteger(
+  const maxResponseBytes = yield* V.positiveInteger(
     "maxResponseBytes",
     options.maxResponseBytes ?? 131072,
   );

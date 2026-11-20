@@ -32,6 +32,25 @@ export const isTenantIssuerTemplate = (issuer: string): boolean => {
   );
 };
 
+/** Substitutes a validated tenant GUID into a single-placeholder `{tenantid}` template. */
+export const substituteTenantIssuer = (template: string, tenantId: string): string | undefined => {
+  if (!Schema.is(entraTenantId)(tenantId)) return undefined;
+
+  const parts = issuerOriginAndPath(template);
+
+  if (parts === undefined) return undefined;
+
+  const segments = parts.path.split("/");
+  const index = segments.indexOf(tenantPlaceholder);
+
+  if (index < 0 || segments.filter((segment) => segment === tenantPlaceholder).length !== 1)
+    return undefined;
+
+  segments[index] = tenantId;
+
+  return `${parts.origin}${segments.join("/")}`;
+};
+
 /** Replace one `consumers` segment on the commercial host with its tenant GUID. */
 const personalAccountIssuer = (configured: string): string | undefined => {
   const parts = issuerOriginAndPath(configured);
@@ -81,15 +100,23 @@ const templateTenantSegment = (configured: string, discovered: string): string |
 
 /** Match an exact issuer, commercial `consumers` personal-account alias, or an
  * Entra `{tenantid}` template whose remaining origin and path match the
- * configured authority. Template matches for single-tenant GUIDs and both
- * forms of `consumers` discovery pin the issuer and require signing-key issuer
- * authority. `common` and `organizations` stay on the template, with the
- * personal-account tenant excluded for `organizations`. */
+ * configured authority. Template matches for single-tenant GUIDs and both forms
+ * of `consumers` discovery pin the issuer, report `pinned: true` so
+ * verification keeps requiring signing-key issuer authority, and carry
+ * `expectedTenantId` so signed `tid` must match the pinned tenant GUID.
+ * `common` and `organizations` stay on the template, with the personal-account
+ * tenant excluded for `organizations`. Other segments, including tenant
+ * domains, are rejected. */
 export const matchEntraDiscoveryIssuer = (
   configured: string,
   discovered: string,
 ):
-  | { readonly issuer: string; readonly pinned: boolean; readonly excludedTenantId?: string }
+  | {
+      readonly issuer: string;
+      readonly pinned: boolean;
+      readonly expectedTenantId?: string;
+      readonly excludedTenantId?: string;
+    }
   | undefined => {
   if (configured === discovered) {
     return { issuer: discovered, pinned: false };
@@ -98,21 +125,35 @@ export const matchEntraDiscoveryIssuer = (
   const personal = personalAccountIssuer(configured);
 
   if (personal !== undefined && personal === discovered) {
-    return { issuer: discovered, pinned: true };
+    return {
+      issuer: discovered,
+      pinned: true,
+      expectedTenantId: personalMicrosoftAccountTenant,
+    };
   }
 
   const tenant = templateTenantSegment(configured, discovered);
 
   if (tenant === undefined) return undefined;
-  if (tenant === "common") return { issuer: discovered, pinned: false };
+  if (tenant === "common") {
+    return { issuer: discovered, pinned: false };
+  }
   if (tenant === "organizations") {
-    return { issuer: discovered, pinned: false, excludedTenantId: personalMicrosoftAccountTenant };
+    return {
+      issuer: discovered,
+      pinned: false,
+      excludedTenantId: personalMicrosoftAccountTenant,
+    };
   }
   if (Schema.is(entraTenantId)(tenant)) {
-    return { issuer: configured, pinned: true };
+    return { issuer: configured, pinned: true, expectedTenantId: tenant };
   }
   if (tenant === "consumers" && personal !== undefined) {
-    return { issuer: personal, pinned: true };
+    return {
+      issuer: personal,
+      pinned: true,
+      expectedTenantId: personalMicrosoftAccountTenant,
+    };
   }
 
   return undefined;

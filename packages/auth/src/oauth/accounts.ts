@@ -611,6 +611,7 @@ export const makeOAuthAccounts = <
               response,
               secrets,
               verificationStartedAt: yield* DateTime.now,
+              requestedAt: DateTime.makeUnsafe(context.issuedAtMillis),
             }).pipe(Effect.flatMap((value) => snapshotOAuthVerifiedExternalIdentity.effect(value)));
           }),
           context.exchangeTimeoutMillis,

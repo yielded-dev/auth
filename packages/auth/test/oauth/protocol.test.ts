@@ -700,6 +700,7 @@ it.live("owns GitHub cohort revocation until its provider scope closes", () =>
 const entraHost = "https://login.microsoftonline.com";
 const entraTemplate = `${entraHost}/{tenantid}/v2.0`;
 const workTenant = "11111111-1111-1111-1111-111111111111";
+const otherWorkTenant = "22222222-2222-2222-2222-222222222222";
 const personalTenant = "9188040d-6c67-4c5b-b112-36a304b66dad";
 const uppercasePersonalTenant = personalTenant.toUpperCase();
 
@@ -709,7 +710,9 @@ it.effect.each([
     name: "requires key issuer authority for a pinned tenant template",
     authority: workTenant,
     discoveryIssuer: entraTemplate,
-    tenant: workTenant,
+    tokenIssuer: `${entraHost}/${workTenant}/v2.0`,
+    tid: workTenant,
+    expectedSubject: "provider-subject",
     keys: [
       { keyIssuer: undefined, accepted: false },
       { keyIssuer: entraTemplate, accepted: true },
@@ -720,7 +723,9 @@ it.effect.each([
     name: "definitely rejects personal accounts on organizations",
     authority: "organizations",
     discoveryIssuer: entraTemplate,
-    tenant: uppercasePersonalTenant,
+    tokenIssuer: `${entraHost}/${uppercasePersonalTenant}/v2.0`,
+    tid: uppercasePersonalTenant,
+    expectedSubject: `${uppercasePersonalTenant}:provider-subject`,
     keys: [{ keyIssuer: `${entraHost}/${uppercasePersonalTenant}/v2.0`, accepted: false }],
   },
   // Regression at 881f94d: concrete consumers discovery admitted an issuer-less key.
@@ -728,131 +733,163 @@ it.effect.each([
     name: "requires key issuer authority for concrete consumers discovery",
     authority: "consumers",
     discoveryIssuer: `${entraHost}/${personalTenant}/v2.0`,
-    tenant: personalTenant,
-    keys: [{ keyIssuer: undefined, accepted: false }],
+    tokenIssuer: `${entraHost}/${personalTenant}/v2.0`,
+    tid: personalTenant,
+    expectedSubject: `${personalTenant}:provider-subject`,
+    keys: [
+      { keyIssuer: undefined, accepted: false },
+      { keyIssuer: `${entraHost}/${personalTenant}/v2.0`, accepted: true },
+    ],
   },
-])("Entra discovery $name", ({ authority, discoveryIssuer, tenant, keys }) =>
-  Effect.gen(function* () {
-    const seconds = 2_000_000_000;
+  // Regression at 881f94d (carried into 0609a81): pinned consumers with a concrete
+  // JWK issuer never compared signed tid with the pinned tenant GUID before
+  // building the tenant-namespaced subject.
+  {
+    name: "rejects mismatched tid on pinned consumers discovery",
+    authority: "consumers",
+    discoveryIssuer: `${entraHost}/${personalTenant}/v2.0`,
+    tokenIssuer: `${entraHost}/${personalTenant}/v2.0`,
+    tid: workTenant,
+    expectedSubject: `${workTenant}:provider-subject`,
+    keys: [{ keyIssuer: `${entraHost}/${personalTenant}/v2.0`, accepted: false }],
+  },
+  // Regression at 881f94d (carried into 0609a81): pinned single-tenant GUID with
+  // a concrete JWK issuer never compared signed tid with the pinned tenant GUID.
+  {
+    name: "rejects mismatched tid on pinned single-tenant discovery",
+    authority: workTenant,
+    discoveryIssuer: entraTemplate,
+    tokenIssuer: `${entraHost}/${workTenant}/v2.0`,
+    tid: otherWorkTenant,
+    expectedSubject: "provider-subject",
+    keys: [{ keyIssuer: `${entraHost}/${workTenant}/v2.0`, accepted: false }],
+  },
+])(
+  "Entra discovery $name",
+  ({ authority, discoveryIssuer, tokenIssuer, tid, expectedSubject, keys }) =>
+    Effect.gen(function* () {
+      const seconds = 2_000_000_000;
 
-    yield* TestClock.setTime(seconds * 1000);
-    const pair = yield* Jwk.generateKeyPair({ algorithm: "ES256", kid: "key" });
-    const signingKey = yield* Jwk.importPrivate(pair.privateKey, "ES256");
-    const issuer = `${entraHost}/${tenant}/v2.0`;
-    const configuredIssuer = `${entraHost}/${authority}/v2.0`;
-    const discoveryUrl = `${configuredIssuer}/.well-known/openid-configuration`;
-    const tokenUrl = `${entraHost}/${authority}/oauth2/v2.0/token`;
-    const jwksUrl = `${entraHost}/${authority}/discovery/v2.0/keys`;
+      yield* TestClock.setTime(seconds * 1000);
+      const pair = yield* Jwk.generateKeyPair({ algorithm: "ES256", kid: "key" });
+      const signingKey = yield* Jwk.importPrivate(pair.privateKey, "ES256");
+      const configuredIssuer = `${entraHost}/${authority}/v2.0`;
+      const discoveryUrl = `${configuredIssuer}/.well-known/openid-configuration`;
+      const tokenUrl = `${entraHost}/${authority}/oauth2/v2.0/token`;
+      const jwksUrl = `${entraHost}/${authority}/discovery/v2.0/keys`;
 
-    const EntraIdToken = Schema.Struct({
-      iss: Schema.String,
-      sub: Schema.String,
-      aud: Schema.String,
-      azp: Schema.String,
-      iat: Schema.Finite,
-      exp: Schema.Finite,
-      nonce: Schema.String,
-      tid: Schema.String,
-    });
-
-    for (const { keyIssuer, accepted } of keys) {
-      let idToken = "";
-
-      const fetch: typeof globalThis.fetch = async (input) => {
-        const url = input instanceof Request ? input.url : String(input);
-
-        if (url === discoveryUrl) {
-          return json({
-            issuer: discoveryIssuer,
-            signing_key_issuer_required: false,
-            authorization_endpoint: `${entraHost}/${authority}/oauth2/v2.0/authorize`,
-            token_endpoint: tokenUrl,
-            jwks_uri: jwksUrl,
-            response_types_supported: ["code"],
-            code_challenge_methods_supported: ["S256"],
-            id_token_signing_alg_values_supported: ["ES256"],
-            token_endpoint_auth_methods_supported: ["client_secret_basic"],
-          });
-        }
-        if (url === tokenUrl) {
-          return json({
-            access_token: "private-access",
-            token_type: "bearer",
-            id_token: idToken,
-          });
-        }
-        if (url === jwksUrl) {
-          return json({
-            keys: [
-              {
-                ...pair.publicKey,
-                ...(keyIssuer === undefined ? {} : { issuer: keyIssuer }),
-              },
-            ],
-          });
-        }
-        throw new Error(`Unexpected endpoint ${url}`);
-      };
-
-      const protocol = yield* loadProtocol({
-        providers: [
-          {
-            protocol: "oidc",
-            provider: OAuthProviderKey.make("entra"),
-            issuer: OAuthIssuer.make(configuredIssuer),
-            responseIssuerMode: "unsupported",
-            clientId: "client",
-            clientSecret: Redacted.make("client-secret"),
-            redirectUri: OAuthRedirectUri.make("https://app.test/auth/entra/callback"),
-            idTokenSignedResponseAlg: ["ES256"],
-          },
-        ],
-      }).pipe(Effect.provideService(FetchHttpClient.Fetch, fetch));
-
-      const started = yield* protocol.prepareAuthorization({
-        provider: OAuthProviderKey.make("entra"),
-        flowId: RequestBindingFlowId.make("flow-entra"),
+      const EntraIdToken = Schema.Struct({
+        iss: Schema.String,
+        sub: Schema.String,
+        aud: Schema.String,
+        azp: Schema.String,
+        iat: Schema.Finite,
+        exp: Schema.Finite,
+        nonce: Schema.String,
+        tid: Schema.String,
       });
 
-      if (started.secrets.oidcNonce === undefined) {
-        throw new Error("Expected OIDC nonce");
+      for (const { keyIssuer, accepted } of keys) {
+        let idToken = "";
+
+        const fetch: typeof globalThis.fetch = async (input) => {
+          const url = input instanceof Request ? input.url : String(input);
+
+          if (url === discoveryUrl) {
+            return json({
+              issuer: discoveryIssuer,
+              signing_key_issuer_required: false,
+              authorization_endpoint: `${entraHost}/${authority}/oauth2/v2.0/authorize`,
+              token_endpoint: tokenUrl,
+              jwks_uri: jwksUrl,
+              response_types_supported: ["code"],
+              code_challenge_methods_supported: ["S256"],
+              id_token_signing_alg_values_supported: ["ES256"],
+              token_endpoint_auth_methods_supported: ["client_secret_basic"],
+            });
+          }
+          if (url === tokenUrl) {
+            return json({
+              access_token: "private-access",
+              token_type: "bearer",
+              id_token: idToken,
+            });
+          }
+          if (url === jwksUrl) {
+            return json({
+              keys: [
+                {
+                  ...pair.publicKey,
+                  ...(keyIssuer === undefined ? {} : { issuer: keyIssuer }),
+                },
+              ],
+            });
+          }
+          throw new Error(`Unexpected endpoint ${url}`);
+        };
+
+        const protocol = yield* loadProtocol({
+          providers: [
+            {
+              protocol: "oidc",
+              provider: OAuthProviderKey.make("entra"),
+              issuer: OAuthIssuer.make(configuredIssuer),
+              responseIssuerMode: "unsupported",
+              clientId: "client",
+              clientSecret: Redacted.make("client-secret"),
+              redirectUri: OAuthRedirectUri.make("https://app.test/auth/entra/callback"),
+              idTokenSignedResponseAlg: ["ES256"],
+            },
+          ],
+        }).pipe(Effect.provideService(FetchHttpClient.Fetch, fetch));
+
+        const started = yield* protocol.prepareAuthorization({
+          provider: OAuthProviderKey.make("entra"),
+          flowId: RequestBindingFlowId.make("flow-entra"),
+        });
+
+        if (started.secrets.oidcNonce === undefined) {
+          throw new Error("Expected OIDC nonce");
+        }
+
+        idToken = Redacted.value(
+          yield* Jwt.sign(
+            EntraIdToken,
+            {
+              iss: tokenIssuer,
+              sub: "provider-subject",
+              aud: "client",
+              azp: "client",
+              iat: seconds,
+              exp: seconds + 300,
+              nonce: Redacted.value(started.secrets.oidcNonce),
+              tid,
+            },
+            signingKey,
+          ),
+        );
+
+        const completed = yield* protocol
+          .exchangeVerifiedIdentity({
+            configuration: started.configuration,
+            secrets: started.secrets,
+            verificationStartedAt: DateTime.makeUnsafe(seconds * 1000),
+            response: {
+              _tag: "Code",
+              state: started.secrets.state,
+              code: Redacted.make("single-use-code"),
+            },
+          })
+          .pipe(Effect.provideService(FetchHttpClient.Fetch, fetch), Effect.result);
+
+        expect(completed).toMatchObject(
+          accepted
+            ? {
+                _tag: "Success",
+                success: { identity: { subject: expectedSubject, issuer: configuredIssuer } },
+              }
+            : { _tag: "Failure", failure: { _tag: "OAuthProtocolRejected" } },
+        );
       }
-
-      idToken = Redacted.value(
-        yield* Jwt.sign(
-          EntraIdToken,
-          {
-            iss: issuer,
-            sub: "provider-subject",
-            aud: "client",
-            azp: "client",
-            iat: seconds,
-            exp: seconds + 300,
-            nonce: Redacted.value(started.secrets.oidcNonce),
-            tid: tenant,
-          },
-          signingKey,
-        ),
-      );
-
-      const exchange = protocol
-        .exchangeVerifiedIdentity({
-          configuration: started.configuration,
-          secrets: started.secrets,
-          verificationStartedAt: DateTime.makeUnsafe(seconds * 1000),
-          response: {
-            _tag: "Code",
-            state: started.secrets.state,
-            code: Redacted.make("single-use-code"),
-          },
-        })
-        .pipe(Effect.provideService(FetchHttpClient.Fetch, fetch));
-
-      if (accepted) {
-        expect((yield* exchange).identity).toMatchObject({ subject: "provider-subject", issuer });
-      } else {
-        yield* expectTag(exchange, "OAuthProtocolRejected");
-      }
-    }
-  }).pipe(Effect.provide(platform)),
+    }).pipe(Effect.provide(platform)),
 );

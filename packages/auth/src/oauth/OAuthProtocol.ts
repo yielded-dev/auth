@@ -43,6 +43,7 @@ export class OAuthProtocol extends Context.Service<
       readonly response: OAuthCodeResponse;
       readonly secrets: OAuthTransactionSecrets;
       readonly verificationStartedAt: DateTime.Utc;
+      readonly requestedAt?: DateTime.Utc;
     }) => Effect.Effect<OAuthVerifiedExternalIdentity, OAuthProtocolRejected | OAuthUnavailable>;
     /** Native OIDC sign-in from a platform sheet, without a browser redirect. Select
      * only the provider's active native registration; return the reserved native
@@ -60,6 +61,7 @@ export class OAuthProtocol extends Context.Service<
       readonly credential: OAuthNativeCredential;
       readonly secrets: OAuthTransactionSecrets;
       readonly verificationStartedAt: DateTime.Utc;
+      readonly requestedAt?: DateTime.Utc;
     }) => Effect.Effect<OAuthVerifiedExternalIdentity, OAuthProtocolRejected | OAuthUnavailable>;
   }
 >()("effect-auth/OAuthProtocol") {}

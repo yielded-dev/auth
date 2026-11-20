@@ -260,6 +260,8 @@ export const layer = <E, R>(options: Options<E, R>) => {
           redirectUri: OAuthRedirectUri.make(input.redirectUri),
         };
 
+        const issuedAtMillis = yield* now;
+
         const context = yield* Schema.decodeEffect(FlowContext)({
           id: yield* digest(state),
           proxy,
@@ -269,7 +271,8 @@ export const layer = <E, R>(options: Options<E, R>) => {
           configuration,
           upstream: prepared.configuration,
           responseMode: prepared.responseMode ?? "query",
-          expiresAtMillis: (yield* now) + 300_000,
+          issuedAtMillis,
+          expiresAtMillis: issuedAtMillis + 300_000,
         }).pipe(Effect.mapError(() => Unavailable.make({})));
 
         const sealed = yield* protector.seal(context, { _tag: "Pending", preparation: prepared });
@@ -425,6 +428,9 @@ export const layer = <E, R>(options: Options<E, R>) => {
               secrets: payload.preparation.secrets,
               response,
               verificationStartedAt: started,
+              ...(context.issuedAtMillis === undefined
+                ? {}
+                : { requestedAt: DateTime.makeUnsafe(context.issuedAtMillis) }),
             })
             .pipe(
               timeoutWithCause(30_000),

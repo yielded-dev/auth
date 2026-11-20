@@ -231,19 +231,21 @@ it.effect("rejects __proto__ members in remote and local discovery metadata", ()
 );
 
 // Requested verifier seam: HTTP JWKS is a permanent configuration error.
-it.effect("rejects HTTP JWKS before constructing an asymmetric verifier", () =>
+it.effect("rejects HTTP JWKS before fetching a remote key set", () =>
   Effect.gen(function* () {
     const requests: string[] = [];
 
-    const result = yield* Oidc.makeVerifier({
-      metadata: {
-        ...metadata,
-        issuer: "http://127.0.0.1:8080",
-        jwks_uri: "http://[::1]:8080/jwks",
-      },
+    const verifier = yield* Oidc.makeVerifierRemote({
       clientId: "client",
-      timeoutMs: 1000,
+      jwks: { timeout: 1000 },
     }).pipe(
+      Effect.provide(
+        Discovery.layerLocal({
+          ...metadata,
+          issuer: "http://127.0.0.1:8080",
+          jwks_uri: "http://[::1]:8080/jwks",
+        }),
+      ),
       Effect.provideService(
         HttpClient.HttpClient,
         transport((request) => {
@@ -252,12 +254,13 @@ it.effect("rejects HTTP JWKS before constructing an asymmetric verifier", () =>
           return Response.json({ keys: [] });
         }),
       ),
-      Effect.flip,
     );
+
+    const result = yield* verifier.verify("eyJhbGciOiJSUzI1NiJ9.e30.AQ").pipe(Effect.flip);
 
     expect(result).toMatchObject({ _tag: "OAuthError", reason: { _tag: "InvalidArgument" } });
     expect(requests).toEqual([]);
-  }).pipe(Effect.scoped),
+  }).pipe(Effect.scoped, Effect.provide(cryptoLayer)),
 );
 
 it.effect("authenticates Basic/Post/None once and preserves private raw provider receipts", () =>

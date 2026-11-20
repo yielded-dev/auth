@@ -21,7 +21,7 @@ import * as TestClock from "effect/testing/TestClock";
 import * as jose from "jose";
 import { expect } from "vite-plus/test";
 
-import { Oidc } from "../src/index";
+import { Discovery, Oidc } from "../src/index";
 import { cryptoLayer, metadata, transport } from "./fixtures";
 
 const seconds = 2_000_000_000;
@@ -45,23 +45,41 @@ const claims = {
   c_hash: hash("single-use-code"),
 };
 
-const verification: Oidc.VerificationInput = {
-  verificationStartedAt: DateTime.makeUnsafe(seconds * 1000 - 1000),
+const verification: Oidc.VerifyOptions = {
+  requestedAt: DateTime.makeUnsafe(seconds * 1000 - 1000),
   nonce: Redacted.make("nonce"),
-  maxAgeSeconds: 60,
+  maxAge: "60 seconds",
   accessToken: Redacted.make("private-access"),
   code: Redacted.make("single-use-code"),
 };
 
 const generate = Effect.promise(() => jose.generateKeyPair("RS256", { extractable: true }));
 
-const sign = (key: CryptoKey, data: jose.JWTPayload) =>
+const sign = (
+  key: CryptoKey,
+  data: jose.JWTPayload,
+  header: Partial<jose.JWTHeaderParameters> = {},
+) =>
   Effect.promise(() =>
-    new jose.SignJWT(data).setProtectedHeader({ alg: "RS256", kid: "key" }).sign(key),
+    new jose.SignJWT(data).setProtectedHeader({ alg: "RS256", kid: "key", ...header }).sign(key),
   ).pipe(Effect.map(Redacted.make));
 
+const makeRemoteVerifier = (
+  http: HttpClient.HttpClient,
+  options: Partial<Oidc.VerifierOptions> = {},
+  discoveryMetadata: Discovery.Metadata = metadata,
+) =>
+  Oidc.makeVerifierRemote({
+    clientId: "client",
+    jwks: { timeout: 1000 },
+    ...options,
+  }).pipe(
+    Effect.provide(Discovery.layerLocal(discoveryMetadata)),
+    Effect.provideService(HttpClient.HttpClient, http),
+  );
+
 it.effect(
-  "verifies signed OIDC claims/hashes, retains profile extensions and clamps authentication time to captured start",
+  "verifies signed OIDC claims/hashes, retains profile extensions and clamps authentication time to verification clock",
   () =>
     Effect.gen(function* () {
       yield* TestClock.setTime(seconds * 1000);
@@ -69,35 +87,41 @@ it.effect(
       const jwk = yield* Effect.promise(() => jose.exportJWK(keys.publicKey));
       let calls = 0;
 
-      const verifier = yield* Oidc.makeVerifier({
-        metadata,
-        clientId: "client",
-        timeoutMs: 1000,
-      }).pipe(
-        Effect.provideService(
-          HttpClient.HttpClient,
-          transport((request) => {
-            calls++;
-            expect(request.url).toBe(metadata.jwks_uri);
+      const verifier = yield* makeRemoteVerifier(
+        transport((request) => {
+          calls++;
+          expect(request.url).toBe(metadata.jwks_uri);
 
-            return Response.json({ keys: [{ ...jwk, kid: "key" }] });
-          }),
-        ),
+          return Response.json({ keys: [{ ...jwk, kid: "key" }] });
+        }),
       );
 
       const result = yield* verifier.verify(yield* sign(keys.privateKey, claims), verification);
 
       expect(result.subject).toBe("provider-subject");
+      expect(result.issuer).toBe(metadata.issuer);
+      expect(result.audience).toEqual(["client"]);
+      expect(result.protectedHeader.alg).toBe("RS256");
       expect(result.authTime).toBe(seconds - 10);
       expect(Redacted.value(result.claims).hd).toBe("example.com");
-      expect(DateTime.toEpochMillis(result.upstreamAuthenticatedAt!)).toBe((seconds - 10) * 1000);
+      expect(DateTime.toEpochMillis(result.authenticatedAt!)).toBe((seconds - 10) * 1000);
 
-      const recent = yield* verifier.verify(
+      // Fresh login occurring after requestedAt is not back-dated, while tolerable
+      // future auth_time skew clamps to verification nowMillis.
+      const fresh = yield* verifier.verify(
         yield* sign(keys.privateKey, { ...claims, auth_time: seconds }),
         verification,
       );
 
-      expect(DateTime.toEpochMillis(recent.upstreamAuthenticatedAt!)).toBe(seconds * 1000 - 1000);
+      expect(DateTime.toEpochMillis(fresh.authenticatedAt!)).toBe(seconds * 1000);
+
+      const skewed = yield* verifier.verify(
+        yield* sign(keys.privateKey, { ...claims, auth_time: seconds + 5 }),
+        verification,
+      );
+
+      expect(DateTime.toEpochMillis(skewed.authenticatedAt!)).toBe(seconds * 1000);
+
       yield* verifier.verify(
         yield* sign(keys.privateKey, { ...claims, aud: ["client"] }),
         verification,
@@ -116,29 +140,35 @@ it.effect(
 );
 
 it.effect(
-  "rejects authenticated wrong issuer/aud/azp/time/nonce/hash claims with no clock tolerance",
+  "rejects authenticated wrong typ/issuer/aud/azp/time/nonce/hash claims with zero clock tolerance",
   () =>
     Effect.gen(function* () {
       yield* TestClock.setTime(seconds * 1000);
       const keys = yield* generate;
       const jwk = yield* Effect.promise(() => jose.exportJWK(keys.publicKey));
 
-      const verifier = yield* Oidc.makeVerifier({
-        metadata,
-        clientId: "client",
-        timeoutMs: 1000,
-      }).pipe(
-        Effect.provideService(
-          HttpClient.HttpClient,
-          transport(() => Response.json({ keys: [{ ...jwk, kid: "key" }] })),
-        ),
+      const verifier = yield* makeRemoteVerifier(
+        transport(() => Response.json({ keys: [{ ...jwk, kid: "key" }] })),
+        { clockTolerance: 0 },
       );
 
-      // Existing Auth requires one audience even when an azp names this client.
+      // typ is rejected immediately after signature verification, before exp/claim checks.
+      expect(
+        yield* verifier
+          .verify(
+            yield* sign(keys.privateKey, { ...claims, exp: 0 }, { typ: "at+jwt" }),
+            verification,
+          )
+          .pipe(Effect.flip),
+      ).toMatchObject({
+        _tag: "OAuthError",
+        reason: { _tag: "TokenVerificationFailed", reason: "typ" },
+      });
+
       const invalidCases: ReadonlyArray<readonly [Partial<jose.JWTPayload>, string]> = [
         [{ iss: metadata.issuer.slice(0, -1) }, "issuer"],
         [{ aud: "other" }, "audience"],
-        [{ aud: ["client", "other"] }, "claim"],
+        [{ aud: ["client", "other"] }, "audience"],
         [{ azp: "other" }, "audience"],
         [{ exp: seconds }, "expired"],
         [{ iat: seconds + 1 }, "notYetValid"],
@@ -146,7 +176,7 @@ it.effect(
         [{ nonce: "other" }, "nonce"],
         [{ nonce: undefined }, "nonce"],
         [{ auth_time: seconds + 1 }, "notYetValid"],
-        [{ auth_time: seconds - 61 }, "maxAge"],
+        [{ auth_time: seconds - 62 }, "maxAge"],
         [{ auth_time: undefined }, "maxAge"],
         [{ at_hash: hash("other") }, "hash"],
         [{ c_hash: hash("other") }, "hash"],
@@ -167,24 +197,19 @@ it.effect(
         yield* verifier
           .verify(yield* sign(keys.privateKey, claims), {
             ...verification,
-            verificationStartedAt: DateTime.makeUnsafe(seconds * 1000 + 1),
+            requestedAt: DateTime.makeUnsafe(seconds * 1000 + 1),
           })
           .pipe(Effect.flip),
       ).toMatchObject({
         _tag: "OAuthError",
-        reason: { _tag: "TokenVerificationFailed", reason: "claim" },
+        reason: { _tag: "TokenVerificationFailed", reason: "maxAge" },
       });
       expect(
         yield* verifier
-          .verify(yield* sign(keys.privateKey, claims), Struct.omit(verification, ["accessToken"]))
-          .pipe(Effect.flip),
-      ).toMatchObject({
-        _tag: "OAuthError",
-        reason: { _tag: "TokenVerificationFailed", reason: "hash" },
-      });
-      expect(
-        yield* verifier
-          .verify(yield* sign(keys.privateKey, claims), Struct.omit(verification, ["code"]))
+          .verify(yield* sign(keys.privateKey, claims), {
+            ...Struct.omit(verification, ["code"]),
+            requireCodeHash: true,
+          })
           .pipe(Effect.flip),
       ).toMatchObject({
         _tag: "OAuthError",
@@ -202,15 +227,8 @@ it.effect(
       const other = yield* generate;
       const jwk = yield* Effect.promise(() => jose.exportJWK(keys.publicKey));
 
-      const verifier = yield* Oidc.makeVerifier({
-        metadata,
-        clientId: "client",
-        timeoutMs: 1000,
-      }).pipe(
-        Effect.provideService(
-          HttpClient.HttpClient,
-          transport(() => Response.json({ keys: [{ ...jwk, kid: "key" }] })),
-        ),
+      const verifier = yield* makeRemoteVerifier(
+        transport(() => Response.json({ keys: [{ ...jwk, kid: "key" }] })),
       );
 
       const invalid = yield* sign(other.privateKey, {
@@ -232,15 +250,8 @@ it.effect(
         reason: { _tag: "TokenVerificationFailed", reason: "malformed" },
       });
 
-      const unavailable = yield* Oidc.makeVerifier({
-        metadata,
-        clientId: "client",
-        timeoutMs: 1000,
-      }).pipe(
-        Effect.provideService(
-          HttpClient.HttpClient,
-          transport(() => new Response(null, { status: 503 })),
-        ),
+      const unavailable = yield* makeRemoteVerifier(
+        transport(() => new Response(null, { status: 503 })),
       );
 
       expect(
@@ -255,27 +266,26 @@ it.effect(
 );
 
 it.effect(
-  "refresh binds subject/optional nonce/auth_time without treating old max_age as a new login",
+  "refresh binds issuer/subject/audience/optional nonce/auth_time without treating old max_age as a new login",
   () =>
     Effect.gen(function* () {
       yield* TestClock.setTime(seconds * 1000);
       const keys = yield* generate;
       const jwk = yield* Effect.promise(() => jose.exportJWK(keys.publicKey));
 
-      const verifier = yield* Oidc.makeVerifier({
-        metadata,
-        clientId: "client",
-        timeoutMs: 1000,
-      }).pipe(
-        Effect.provideService(
-          HttpClient.HttpClient,
-          transport(() => Response.json({ keys: [{ ...jwk, kid: "key" }] })),
-        ),
+      const verifier = yield* makeRemoteVerifier(
+        transport(() => Response.json({ keys: [{ ...jwk, kid: "key" }] })),
       );
 
-      const input = {
+      const input: Oidc.VerifyOptions = {
         ...verification,
-        previous: { subject: "provider-subject", authTime: seconds - 7200 },
+        previous: {
+          subject: "provider-subject",
+          issuer: metadata.issuer,
+          audience: "client",
+          nonce: Redacted.make("nonce"),
+          authTime: seconds - 7200,
+        },
       };
 
       const refreshed = {
@@ -304,41 +314,151 @@ it.effect(
     }).pipe(Effect.scoped, Effect.provide(cryptoLayer)),
 );
 
-it.effect("rejects unsupported OIDC metadata and closes the issuer's scoped JWKS resolver", () =>
-  Effect.gen(function* () {
-    const http = transport(() => Response.json({ keys: [] }));
+// Regression at c4752e3 (Effect-TS/effect#9884): max_age=0 checked auth_time + 0 < floor(now),
+// rejecting fresh logins that took >= 1s after the authorization request began.
+it.effect(
+  "accepts max_age=0 when auth_time is at or after requestedAt despite >=1s login delay",
+  () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(seconds * 1000);
+      const keys = yield* generate;
+      const jwk = yield* Effect.promise(() => jose.exportJWK(keys.publicKey));
 
-    for (const unsupported of [
-      Struct.omit(metadata, ["jwks_uri"]),
-      { ...metadata, code_challenge_methods_supported: ["plain"] },
-      { ...metadata, id_token_signing_alg_values_supported: ["HS256"] },
-      { ...metadata, response_types_supported: ["id_token"] },
-    ]) {
+      const verifier = yield* makeRemoteVerifier(
+        transport(() => Response.json({ keys: [{ ...jwk, kid: "key" }] })),
+        { clockTolerance: 0 },
+      );
+
+      const requestedAt = DateTime.makeUnsafe((seconds - 5) * 1000);
+
+      const verified = yield* verifier.verify(
+        yield* sign(keys.privateKey, { ...claims, auth_time: seconds - 2 }),
+        {
+          ...verification,
+          requestedAt,
+          maxAge: 0,
+        },
+      );
+
+      expect(verified.subject).toBe("provider-subject");
+      expect(verified.authTime).toBe(seconds - 2);
+
+      // Authentication before requestedAt is still rejected under max_age=0.
       expect(
-        yield* Oidc.makeVerifier({
-          metadata: unsupported,
-          clientId: "client",
-          timeoutMs: 1000,
-        }).pipe(Effect.provideService(HttpClient.HttpClient, http), Effect.flip),
-      ).toMatchObject({ _tag: "OAuthError", reason: { _tag: "InvalidArgument" } });
-    }
+        yield* verifier
+          .verify(yield* sign(keys.privateKey, { ...claims, auth_time: seconds - 6 }), {
+            ...verification,
+            requestedAt,
+            maxAge: 0,
+          })
+          .pipe(Effect.flip),
+      ).toMatchObject({
+        _tag: "OAuthError",
+        reason: { _tag: "TokenVerificationFailed", reason: "maxAge" },
+      });
+
+      // Millisecond precision: fractional requestedAt neither admits an extra
+      // second nor falsely rejects auth_time at the exact millisecond cutoff.
+      const fractionalRequestedAt = DateTime.makeUnsafe((seconds - 5) * 1000 + 900);
+
+      expect(
+        yield* verifier
+          .verify(yield* sign(keys.privateKey, { ...claims, auth_time: seconds - 10 + 0.2 }), {
+            ...verification,
+            requestedAt: fractionalRequestedAt,
+            maxAge: "5 seconds",
+          })
+          .pipe(Effect.flip),
+      ).toMatchObject({
+        _tag: "OAuthError",
+        reason: { _tag: "TokenVerificationFailed", reason: "maxAge" },
+      });
+
+      const exactCutoff = yield* verifier.verify(
+        yield* sign(keys.privateKey, { ...claims, auth_time: seconds - 10 + 0.9 }),
+        {
+          ...verification,
+          requestedAt: fractionalRequestedAt,
+          maxAge: "5 seconds",
+        },
+      );
+
+      expect(exactCutoff.subject).toBe("provider-subject");
+    }).pipe(Effect.scoped, Effect.provide(cryptoLayer)),
+);
+
+// Regression at c4752e3: refresh compared claims.auth_time !== previous.authTime even when
+// previous.authTime was omitted, falsely rejecting refreshed tokens that include auth_time.
+it.effect("accepts refresh ID token carrying auth_time when previous.authTime is omitted", () =>
+  Effect.gen(function* () {
+    yield* TestClock.setTime(seconds * 1000);
+    const keys = yield* generate;
+    const jwk = yield* Effect.promise(() => jose.exportJWK(keys.publicKey));
+
+    const verifier = yield* makeRemoteVerifier(
+      transport(() => Response.json({ keys: [{ ...jwk, kid: "key" }] })),
+    );
+
+    const verified = yield* verifier.verify(
+      yield* sign(keys.privateKey, {
+        ...claims,
+        nonce: undefined,
+        auth_time: seconds - 7200,
+        c_hash: undefined,
+      }),
+      {
+        ...verification,
+        previous: {
+          subject: "provider-subject",
+          issuer: metadata.issuer,
+          audience: "client",
+          nonce: Redacted.make("nonce"),
+        },
+      },
+    );
+
+    expect(verified.subject).toBe("provider-subject");
+    expect(verified.authTime).toBe(seconds - 7200);
+  }).pipe(Effect.scoped, Effect.provide(cryptoLayer)),
+);
+
+it.effect("rejects missing jwks_uri, non-matching algorithms, and closed verifier scopes", () =>
+  Effect.gen(function* () {
+    yield* TestClock.setTime(seconds * 1000);
+    const keys = yield* generate;
+    const http = transport(() => Response.json({ keys: [] }));
+    const token = yield* sign(keys.privateKey, claims);
+
+    const missingJwks = yield* makeRemoteVerifier(http, {}, Struct.omit(metadata, ["jwks_uri"]));
+
+    expect(yield* missingJwks.verify(token, verification).pipe(Effect.flip)).toMatchObject({
+      _tag: "OAuthError",
+      reason: { _tag: "InvalidArgument" },
+    });
+
+    const hmacOnly = yield* makeRemoteVerifier(
+      http,
+      {},
+      { ...metadata, id_token_signing_alg_values_supported: ["HS256"] },
+    );
+
+    expect(yield* hmacOnly.verify(token, verification).pipe(Effect.flip)).toMatchObject({
+      _tag: "OAuthError",
+      reason: { _tag: "TokenVerificationFailed", reason: "algorithm" },
+    });
+
     const scope = yield* Scope.make();
 
-    const verifier = yield* Oidc.makeVerifier({
-      metadata,
-      clientId: "client",
-      timeoutMs: 1000,
-    }).pipe(
+    const verifier = yield* makeRemoteVerifier(http).pipe(
       Effect.provideService(Scope.Scope, scope),
-      Effect.provideService(HttpClient.HttpClient, http),
     );
 
     yield* Scope.close(scope, Exit.void);
-    const keys = yield* generate;
 
-    expect(
-      yield* verifier.verify(yield* sign(keys.privateKey, claims), verification).pipe(Effect.flip),
-    ).toMatchObject({ _tag: "OAuthError", reason: { _tag: "TransportFailed", endpoint: "jwks" } });
+    expect(yield* verifier.verify(token, verification).pipe(Effect.flip)).toMatchObject({
+      _tag: "OAuthError",
+      reason: { _tag: "TransportFailed", endpoint: "jwks" },
+    });
   }).pipe(Effect.scoped, Effect.provide(cryptoLayer)),
 );
 
@@ -359,12 +479,7 @@ it.effect("captures verification policy before JWKS I/O", () =>
         ),
     );
 
-    const verifier = yield* Oidc.makeVerifier({
-      metadata,
-      clientId: "client",
-      timeoutMs: 1000,
-    }).pipe(Effect.provideService(HttpClient.HttpClient, http));
-
+    const verifier = yield* makeRemoteVerifier(http);
     const policy = { ...verification, nonce: Redacted.make("nonce") };
     const token = yield* sign(keys.privateKey, claims);
     const fiber = yield* verifier.verify(token, policy).pipe(Effect.forkChild);
@@ -388,22 +503,11 @@ for (const termination of ["owner closure", "caller interruption"] as const) {
         Scope.close(scope, Exit.void),
       );
 
-      const verifier = yield* Oidc.makeVerifier({
-        metadata,
-        clientId: "client",
-        timeoutMs: 1000,
-      }).pipe(
-        Effect.provideService(Scope.Scope, owner),
-        Effect.provideService(
-          HttpClient.HttpClient,
-          transport(() => Response.json({ keys: [{ ...jwk, kid: "key" }] })),
-        ),
-      );
-
       const signatures = yield* Signature.Signature;
       const entered = yield* Deferred.make<void>();
       const cleanupStarted = yield* Deferred.make<void>();
       const allowCleanup = yield* Deferred.make<void>();
+      let shouldGate = true;
       let cleanupFinished = false;
       let terminationFinished = false;
 
@@ -412,24 +516,30 @@ for (const termination of ["owner closure", "caller interruption"] as const) {
       const gated = Signature.Signature.of({
         ...signatures,
         verify: (key, signature, data) =>
-          signatures.verify(key, signature, data).pipe(
-            Effect.tap(() => Deferred.succeed(entered, undefined)),
-            Effect.andThen(Effect.never),
-            Effect.ensuring(
-              Effect.gen(function* () {
-                yield* Deferred.succeed(cleanupStarted, undefined);
-                yield* Deferred.await(allowCleanup);
-                cleanupFinished = true;
-              }),
-            ),
-          ),
+          shouldGate
+            ? signatures.verify(key, signature, data).pipe(
+                Effect.tap(() => Deferred.succeed(entered, undefined)),
+                Effect.andThen(Effect.never),
+                Effect.ensuring(
+                  Effect.gen(function* () {
+                    yield* Deferred.succeed(cleanupStarted, undefined);
+                    yield* Deferred.await(allowCleanup);
+                    cleanupFinished = true;
+                  }),
+                ),
+              )
+            : signatures.verify(key, signature, data),
       });
 
-      const token = yield* sign(keys.privateKey, { ...claims, nonce: "wrong-nonce" });
+      const verifier = yield* makeRemoteVerifier(
+        transport(() => Response.json({ keys: [{ ...jwk, kid: "key" }] })),
+      ).pipe(
+        Effect.provideService(Scope.Scope, owner),
+        Effect.provideService(Signature.Signature, gated),
+      );
 
-      const active = yield* verifier
-        .verify(token, verification)
-        .pipe(Effect.provideService(Signature.Signature, gated), Effect.forkChild);
+      const token = yield* sign(keys.privateKey, { ...claims, nonce: "wrong-nonce" });
+      const active = yield* verifier.verify(token, verification).pipe(Effect.forkChild);
 
       yield* Deferred.await(entered);
 
@@ -464,6 +574,7 @@ for (const termination of ["owner closure", "caller interruption"] as const) {
         const exit = yield* Fiber.await(active);
 
         expect(Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause)).toBe(true);
+        shouldGate = false;
         expect(
           (yield* verifier.verify(yield* sign(keys.privateKey, claims), verification)).subject,
         ).toBe("provider-subject");

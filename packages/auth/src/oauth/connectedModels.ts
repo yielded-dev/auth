@@ -228,6 +228,13 @@ export const OAuthConnectedContinuation = Schema.Union([
     issuer: Schema.optionalKey(
       Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(2048)),
     ),
+    /** ID-token `aud` values from the original authentication for refresh continuity. */
+    audience: Schema.optionalKey(
+      Schema.Array(Schema.NonEmptyString.check(Schema.isMaxLength(1024))).check(
+        Schema.isMinLength(1),
+        Schema.isMaxLength(64),
+      ),
+    ),
   }),
   Schema.TaggedStruct("OAuth", {}),
 ]);

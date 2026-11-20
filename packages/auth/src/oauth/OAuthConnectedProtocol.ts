@@ -44,6 +44,7 @@ export class OAuthConnectedProtocol extends Context.Service<
       readonly secrets: OAuthTransactionSecrets;
       readonly response: OAuthCodeResponse;
       readonly verificationStartedAt: DateTime.Utc;
+      readonly requestedAt?: DateTime.Utc;
     }) => Effect.Effect<OAuthConnectedGrantResponse, OAuthProtocolRejected | OAuthUnavailable>;
     readonly refreshGrant: (input: {
       readonly context: OAuthConnectedTokenContext;

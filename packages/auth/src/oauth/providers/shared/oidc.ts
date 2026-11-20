@@ -6,17 +6,27 @@ import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Digest from "effect/crypto/Digest";
 import * as Mac from "effect/crypto/Mac";
-import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Signature from "effect/crypto/Signature";
 import * as Effect from "effect/Effect";
+import * as Base64Url from "effect/encoding/Base64Url";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
-import type * as Redacted from "effect/Redacted";
+import * as Jwk from "effect/jose/Jwk";
+import * as Jwks from "effect/jose/Jwks";
+import * as Redacted from "effect/Redacted";
+import * as Tracer from "effect/Tracer";
 
-import type { OAuthUnavailable } from "../../signInErrors";
+import { makeScopedOperation } from "../../../internal/scoped-operation";
+import { OAuthUnavailable } from "../../signInErrors";
+import { isTenantIssuerTemplate } from "../microsoft/discovery";
+import { makeEntraIssuerPolicy, makeEntraJwks } from "../microsoft/jwks";
 import { classifyOAuthConfigurationError } from "./classifyOAuthError";
-import { nativeAudiences } from "./compatibility";
-import { installProvider, prepareConfigurations, type InstalledProvider } from "./configuration";
+import {
+  installProvider,
+  prepareConfigurations,
+  registrationKind,
+  type InstalledProvider,
+} from "./configuration";
 import {
   installConnectedProvider,
   prepareConnectedConfigurations,
@@ -31,11 +41,13 @@ import {
   type DiscoveryProfile,
 } from "./discovery";
 import {
+  advertisedIdTokenAlgorithms,
   hasStaticSecret,
-  type OpenIdConnectConfigurationError,
+  OpenIdConnectConfigurationError,
+  type IdTokenSignedResponseAlg,
   type OpenIdConnectOAuthProtocolOptions,
 } from "./models";
-import type { Requirements as OAuthRequirements } from "./native";
+import type { NativeKeySet, Requirements as OAuthRequirements } from "./native";
 
 export type Requirements = OAuthRequirements | Signature.Signature | Mac.Mac;
 
@@ -43,6 +55,8 @@ export interface DiscoveredProviderMetadata {
   readonly metadata: Discovery.Metadata;
   /** Local policy flag set when discovery pinned a template or `consumers` issuer. */
   readonly signingKeyIssuerRequired: boolean;
+  /** Pinned tenant GUID that signed `tid` must match when discovery pinned a tenant or `consumers`. */
+  readonly expectedTenantId: string | undefined;
   /** Local tenant exclusion for the matched issuer template. */
   readonly excludedTenantId: string | undefined;
 }
@@ -91,6 +105,7 @@ export class ProviderDiscovery extends Context.Service<
         if (found?.client === client && found.fetch === fetch) return found.discovered;
 
         let pinned = false;
+        let expectedTenantId: string | undefined;
         let excludedTenantId: string | undefined;
 
         const metadata = yield* Effect.scoped(
@@ -112,6 +127,7 @@ export class ProviderDiscovery extends Context.Service<
               }
 
               pinned = matched.pinned;
+              expectedTenantId = matched.expectedTenantId;
               excludedTenantId = matched.excludedTenantId;
 
               return Effect.succeed(matched.issuer);
@@ -141,6 +157,7 @@ export class ProviderDiscovery extends Context.Service<
         const discovered: DiscoveredProviderMetadata = {
           metadata,
           signingKeyIssuerRequired: pinned,
+          expectedTenantId,
           excludedTenantId,
         };
 
@@ -152,42 +169,198 @@ export class ProviderDiscovery extends Context.Service<
   });
 }
 
+const captureHardenedHttp = Effect.gen(function* () {
+  const client = yield* HttpClient.HttpClient;
+  const fetch = yield* FetchHttpClient.Fetch;
+
+  return HttpClient.transformResponse(client, (effect) =>
+    effect.pipe(
+      Effect.provideService(FetchHttpClient.Fetch, fetch),
+      Effect.provideService(FetchHttpClient.RequestInit, {
+        redirect: "manual",
+        credentials: "omit",
+        cache: "no-store",
+      }),
+      Effect.provideService(Tracer.DisablePropagation, true),
+    ),
+  );
+});
+
+const asymmetricAlgorithmsOf = (
+  advertised: ReadonlyArray<IdTokenSignedResponseAlg>,
+): ReadonlyArray<Jwk.AsymmetricAlgorithm> =>
+  advertised.filter(
+    (algorithm): algorithm is Exclude<IdTokenSignedResponseAlg, "HS256"> => algorithm !== "HS256",
+  );
+
+const makeHmacVerifier = Effect.fn("OpenIdConnect.makeHmacVerifier")(function* (
+  issuer: string,
+  clientId: string,
+  clientSecret: Redacted.Redacted<string>,
+) {
+  const mac = yield* Mac.Mac;
+  const digest = yield* Digest.Digest;
+
+  const secret = yield* Effect.try({
+    try: () => Redacted.value(clientSecret),
+    catch: () => OpenIdConnectConfigurationError.make({ reason: "authentication" }),
+  });
+
+  const jwkSecret = Redacted.make({
+    kty: "oct" as const,
+    alg: "HS256" as const,
+    k: Base64Url.encode(new TextEncoder().encode(secret)),
+  });
+
+  const key = yield* Jwk.importSecret(jwkSecret, "HS256").pipe(
+    Effect.ensuring(Effect.sync(() => Redacted.wipeUnsafe(jwkSecret))),
+    Effect.mapError(() => OpenIdConnectConfigurationError.make({ reason: "metadata" })),
+  );
+
+  const run = yield* makeScopedOperation(
+    () =>
+      new OAuthError.OAuthError({
+        reason: new OAuthError.TransportFailed({
+          endpoint: "jwks",
+          description: "The verifier scope is closed",
+        }),
+      }),
+  );
+
+  return Oidc.Verifier.of({
+    verify: (idToken, verifyOptions) =>
+      run(
+        Oidc.verify(idToken, key, {
+          issuer,
+          clientId,
+          ...verifyOptions,
+        }).pipe(Effect.provideService(Mac.Mac, mac), Effect.provideService(Digest.Digest, digest)),
+      ),
+  });
+});
+
 const makeVerifier = Effect.fn("OpenIdConnect.makeVerifier")(function* (
   metadata: OAuth.Metadata,
+  discovery: Discovery.Discovery["Service"],
   clientId: string,
   timeoutSeconds: number,
   options: {
-    readonly algorithms: ReadonlyArray<Oidc.IdTokenAlgorithm>;
-    readonly pkceS256: boolean;
+    readonly algorithms: ReadonlyArray<IdTokenSignedResponseAlg>;
+    readonly signingKeyIssuerRequired: boolean;
+    readonly expectedTenantId: string | undefined;
     readonly excludedTenantId: string | undefined;
     readonly clientSecret?: Redacted.Redacted<string>;
-    readonly audiences?: ReadonlyArray<string>;
   },
 ) {
-  const context = Context.make(SecureRandom.SecureRandom, yield* SecureRandom.SecureRandom).pipe(
-    Context.add(Digest.Digest, yield* Digest.Digest),
-    Context.add(Signature.Signature, yield* Signature.Signature),
-    Context.add(Mac.Mac, yield* Mac.Mac),
+  const advertised = advertisedIdTokenAlgorithms(
+    metadata.id_token_signing_alg_values_supported,
+    options.algorithms,
   );
 
-  const verifier = yield* Oidc.makeVerifier({
-    metadata,
-    clientId,
+  if (advertised === undefined) {
+    return yield* OpenIdConnectConfigurationError.make({ reason: "metadata" });
+  }
+
+  const hmacOnly = advertised.length === 1 && advertised[0] === "HS256";
+
+  if (hmacOnly) {
+    if (options.signingKeyIssuerRequired || isTenantIssuerTemplate(metadata.issuer)) {
+      return yield* OpenIdConnectConfigurationError.make({ reason: "metadata" });
+    }
+    if (options.clientSecret === undefined) {
+      return yield* OpenIdConnectConfigurationError.make({ reason: "authentication" });
+    }
+
+    return yield* makeHmacVerifier(metadata.issuer, clientId, options.clientSecret);
+  }
+
+  const algorithms = asymmetricAlgorithmsOf(advertised);
+
+  if (metadata.jwks_uri === undefined) {
+    return yield* OpenIdConnectConfigurationError.make({ reason: "metadata" });
+  }
+
+  const entra = yield* makeEntraJwks({
+    url: metadata.jwks_uri,
     timeoutMs: timeoutSeconds * 1000,
-    algorithms: options.algorithms,
-    pkceS256: options.pkceS256,
-    excludedTenantId: options.excludedTenantId,
-    ...(options.clientSecret === undefined ? {} : { clientSecret: options.clientSecret }),
-    ...(options.audiences === undefined ? {} : { audiences: options.audiences }),
   }).pipe(
+    Effect.mapError((error) =>
+      error.reason._tag === "InvalidArgument"
+        ? OpenIdConnectConfigurationError.make({ reason: "metadata" })
+        : OAuthUnavailable.make({}),
+    ),
+  );
+
+  const issuerPolicy = makeEntraIssuerPolicy({
+    signingKeyIssuerRequired: options.signingKeyIssuerRequired,
+    expectedTenantId: options.expectedTenantId,
+    excludedTenantId: options.excludedTenantId,
+    issuerOf: entra.issuerOf,
+  });
+
+  return yield* Oidc.makeVerifier({
+    clientId,
+    algorithms,
+    issuerPolicy,
+  }).pipe(
+    Effect.provideService(Discovery.Discovery, discovery),
+    Effect.provideService(Jwks.Jwks, entra.service),
     Effect.catchCause((cause) =>
       Effect.failCause(Cause.map(cause, classifyOAuthConfigurationError)),
     ),
   );
+});
+
+const makeNativeKeySet = Effect.fn("OpenIdConnect.makeNativeKeySet")(function* (
+  metadata: OAuth.Metadata,
+  timeoutSeconds: number,
+  options: {
+    readonly algorithms: ReadonlyArray<IdTokenSignedResponseAlg>;
+    readonly signingKeyIssuerRequired: boolean;
+    readonly expectedTenantId: string | undefined;
+    readonly excludedTenantId: string | undefined;
+  },
+): Effect.fn.Return<
+  NativeKeySet,
+  OpenIdConnectConfigurationError | OAuthUnavailable,
+  HttpClient.HttpClient | Signature.Signature | Digest.Digest | OAuthRequirements
+> {
+  const advertised = advertisedIdTokenAlgorithms(
+    metadata.id_token_signing_alg_values_supported,
+    options.algorithms,
+  );
+
+  const algorithms = advertised === undefined ? [] : asymmetricAlgorithmsOf(advertised);
+
+  if (algorithms.length === 0 || metadata.jwks_uri === undefined) {
+    return yield* OpenIdConnectConfigurationError.make({ reason: "metadata" });
+  }
+
+  const signature = yield* Signature.Signature;
+  const digest = yield* Digest.Digest;
+
+  const entra = yield* makeEntraJwks({
+    url: metadata.jwks_uri,
+    timeoutMs: timeoutSeconds * 1000,
+  }).pipe(
+    Effect.mapError((error) =>
+      error.reason._tag === "InvalidArgument"
+        ? OpenIdConnectConfigurationError.make({ reason: "metadata" })
+        : OAuthUnavailable.make({}),
+    ),
+  );
 
   return {
-    verify: (token: Redacted.Redacted<string>, input: Oidc.VerificationInput) =>
-      verifier.verify(token, input).pipe(Effect.provideContext(context)),
+    jwks: entra.service,
+    algorithms,
+    issuerPolicy: makeEntraIssuerPolicy({
+      signingKeyIssuerRequired: options.signingKeyIssuerRequired,
+      expectedTenantId: options.expectedTenantId,
+      excludedTenantId: options.excludedTenantId,
+      issuerOf: entra.issuerOf,
+    }),
+    signature,
+    digest,
   };
 });
 
@@ -196,12 +369,14 @@ export const installConfigurations = Effect.fn("OpenIdConnect.installConfigurati
   input: OpenIdConnectOAuthProtocolOptions<R>,
 ) {
   const discovery = yield* ProviderDiscovery;
+  const http = yield* captureHardenedHttp;
   const { providers, timeoutSeconds } = yield* prepareConfigurations(input);
   const installed: InstalledProvider<R>[] = [];
 
   for (const provider of providers) {
     let raw: Discovery.Metadata;
     let signingKeyIssuerRequired = false;
+    let expectedTenantId: string | undefined;
     let excludedTenantId: string | undefined;
 
     if (provider.protocol === "oidc") {
@@ -214,6 +389,7 @@ export const installConfigurations = Effect.fn("OpenIdConnect.installConfigurati
 
       raw = discovered.metadata;
       signingKeyIssuerRequired = discovered.signingKeyIssuerRequired;
+      expectedTenantId = discovered.expectedTenantId;
       excludedTenantId = discovered.excludedTenantId;
     } else {
       raw = {
@@ -226,31 +402,50 @@ export const installConfigurations = Effect.fn("OpenIdConnect.installConfigurati
 
     const entry = yield* installProvider(provider, raw, timeoutSeconds);
 
-    installed.push(
-      provider.protocol === "oidc"
-        ? {
-            ...entry,
-            verifier: yield* makeVerifier(
-              signingKeyIssuerRequired
-                ? { ...entry.metadata, signing_key_issuer_required: true }
-                : entry.metadata,
-              provider.clientId,
-              timeoutSeconds,
-              {
-                algorithms: provider.idTokenSignedResponseAlg,
-                pkceS256: provider.pkceS256,
-                excludedTenantId,
-                ...(hasStaticSecret(provider.authentication)
-                  ? { clientSecret: provider.authentication.secret }
-                  : {}),
-                ...(provider[nativeAudiences] === undefined
-                  ? {}
-                  : { audiences: provider[nativeAudiences] }),
-              },
-            ),
-          }
-        : entry,
+    if (provider.protocol !== "oidc") {
+      installed.push(entry);
+      continue;
+    }
+
+    if (registrationKind(provider) === "native") {
+      installed.push({
+        ...entry,
+        nativeKeySet: yield* makeNativeKeySet(entry.metadata, timeoutSeconds, {
+          algorithms: provider.idTokenSignedResponseAlg,
+          signingKeyIssuerRequired,
+          expectedTenantId,
+          excludedTenantId,
+        }),
+      });
+      continue;
+    }
+
+    const localDiscovery = yield* Discovery.makeLocal(entry.metadata).pipe(
+      Effect.catchCause((cause) =>
+        Effect.failCause(Cause.map(cause, classifyOAuthConfigurationError)),
+      ),
     );
+
+    installed.push({
+      ...entry,
+      discovery: localDiscovery,
+      http,
+      verifier: yield* makeVerifier(
+        entry.metadata,
+        localDiscovery,
+        provider.clientId,
+        timeoutSeconds,
+        {
+          algorithms: provider.idTokenSignedResponseAlg,
+          signingKeyIssuerRequired,
+          expectedTenantId,
+          excludedTenantId,
+          ...(hasStaticSecret(provider.authentication)
+            ? { clientSecret: provider.authentication.secret }
+            : {}),
+        },
+      ),
+    });
   }
 
   return { installed, timeoutSeconds };
@@ -260,12 +455,14 @@ export const installConnectedConfigurations = Effect.fn(
   "OpenIdConnect.installConnectedConfigurations",
 )(function* <R>(input: OpenIdConnectConnectedProtocolOptions<R>) {
   const discovery = yield* ProviderDiscovery;
+  const http = yield* captureHardenedHttp;
   const { providers, timeoutSeconds } = yield* prepareConnectedConfigurations(input);
   const installed: InstalledConnectedProvider<R>[] = [];
 
   for (const provider of providers) {
     let raw: Discovery.Metadata;
     let signingKeyIssuerRequired = false;
+    let expectedTenantId: string | undefined;
     let excludedTenantId: string | undefined;
 
     if (provider.protocol === "oidc") {
@@ -278,6 +475,7 @@ export const installConnectedConfigurations = Effect.fn(
 
       raw = discovered.metadata;
       signingKeyIssuerRequired = discovered.signingKeyIssuerRequired;
+      expectedTenantId = discovered.expectedTenantId;
       excludedTenantId = discovered.excludedTenantId;
     } else {
       raw = {
@@ -293,28 +491,37 @@ export const installConnectedConfigurations = Effect.fn(
 
     const entry = yield* installConnectedProvider(provider, raw, timeoutSeconds);
 
-    installed.push(
-      provider.protocol === "oidc"
-        ? {
-            ...entry,
-            verifier: yield* makeVerifier(
-              signingKeyIssuerRequired
-                ? { ...entry.metadata, signing_key_issuer_required: true }
-                : entry.metadata,
-              provider.clientId,
-              timeoutSeconds,
-              {
-                algorithms: provider.idTokenSignedResponseAlg,
-                pkceS256: provider.pkceS256,
-                excludedTenantId,
-                ...(hasStaticSecret(provider.authentication)
-                  ? { clientSecret: provider.authentication.secret }
-                  : {}),
-              },
-            ),
-          }
-        : entry,
+    if (provider.protocol !== "oidc") {
+      installed.push(entry);
+      continue;
+    }
+
+    const localDiscovery = yield* Discovery.makeLocal(entry.metadata).pipe(
+      Effect.catchCause((cause) =>
+        Effect.failCause(Cause.map(cause, classifyOAuthConfigurationError)),
+      ),
     );
+
+    installed.push({
+      ...entry,
+      discovery: localDiscovery,
+      http,
+      verifier: yield* makeVerifier(
+        entry.metadata,
+        localDiscovery,
+        provider.clientId,
+        timeoutSeconds,
+        {
+          algorithms: provider.idTokenSignedResponseAlg,
+          signingKeyIssuerRequired,
+          expectedTenantId,
+          excludedTenantId,
+          ...(hasStaticSecret(provider.authentication)
+            ? { clientSecret: provider.authentication.secret }
+            : {}),
+        },
+      ),
+    });
   }
 
   return { installed, timeoutSeconds };

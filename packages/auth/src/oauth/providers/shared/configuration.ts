@@ -564,11 +564,7 @@ export const installProvider = Effect.fn("OpenIdConnect.installProvider")(functi
       clientId: provider.clientId,
       authentication: nativeAuthentication(provider.authentication),
       timeoutMs: timeoutSeconds * 1000,
-      ...(provider.protocol === "oauth"
-        ? nativeOAuthClientOptions(provider)
-        : provider.userInfo === "merge" && metadata.userinfo_endpoint !== undefined
-          ? { profile: { url: metadata.userinfo_endpoint } }
-          : {}),
+      ...(provider.protocol === "oauth" ? nativeOAuthClientOptions(provider) : {}),
     },
     provider.protocol === "oauth" && provider[githubVerifiedPrimaryEmail] === true,
   );

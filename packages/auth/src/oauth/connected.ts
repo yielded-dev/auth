@@ -630,6 +630,7 @@ export const makeOAuthConnected = <const Id extends string>(
               secrets,
               response,
               verificationStartedAt: DateTime.makeUnsafe(start),
+              requestedAt: DateTime.makeUnsafe(context.issuedAtMillis),
             });
 
             const projected = yield* connectedGrantResponse(protocolConfiguration, rawGrant, start);
