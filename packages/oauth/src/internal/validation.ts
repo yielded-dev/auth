@@ -46,30 +46,206 @@ export const integer = (minimum: number, maximum: number) =>
 export const secret = (maximum: number) =>
   Schema.Redacted(text(maximum), { disallowJsonEncode: true });
 
-/** At most 64 nested containers and 65,536 values, including the root object. */
-export const JsonObject = Schema.Record(Schema.String, Schema.Json).check(
-  Schema.makeFilter((value) => {
-    const pending: Array<{ value: Schema.JsonObject | Schema.JsonArray; depth: number }> = [
-      { value, depth: 1 },
-    ];
+const forbiddenJsonKeys: ReadonlySet<string> = new Set(["__proto__", "constructor", "prototype"]);
+const maxJsonDepth = 64;
+const maxJsonValues = 65536;
 
-    let values = 1;
+const defineDataProperty = (
+  target: Record<string, Schema.Json>,
+  key: string,
+  value: Schema.Json,
+): void => {
+  Object.defineProperty(target, key, {
+    value,
+    enumerable: true,
+    configurable: true,
+    writable: true,
+  });
+};
 
-    for (let entry = pending.pop(); entry !== undefined; entry = pending.pop()) {
-      const { value, depth } = entry;
+const isCanonicalArrayIndex = (key: string, length: number): boolean => {
+  if (!/^(?:0|[1-9][0-9]*)$/u.test(key)) return false;
+  const index = Number(key);
 
-      if (depth > 64) return false;
-      const children = Object.values(value);
+  return index >= 0 && index < length;
+};
 
-      values += children.length;
-      if (values > 65536) return false;
-      for (const child of children)
-        if (child !== null && typeof child === "object")
-          pending.push({ value: child, depth: depth + 1 });
+// Single descriptor-only plain JSON walker: never invokes getters, enforces
+// plain Object/Array prototypes, canonical array indices without expando
+// properties, max depth 64, and max 65,536 values. When `rejectForbiddenKeys`
+// is true, also rejects `__proto__`, `constructor`, and `prototype`. When
+// `copy` is false, validates in place without allocating clones.
+function walkPlainJsonObject(
+  root: unknown,
+  copy: true,
+  rejectForbiddenKeys: boolean,
+): Record<string, Schema.Json> | undefined;
+function walkPlainJsonObject(root: unknown, copy: false, rejectForbiddenKeys: boolean): boolean;
+function walkPlainJsonObject(
+  root: unknown,
+  copy: boolean,
+  rejectForbiddenKeys: boolean,
+): Record<string, Schema.Json> | boolean | undefined {
+  if (root === null || typeof root !== "object" || Array.isArray(root)) {
+    return copy ? undefined : false;
+  }
+
+  const rootPrototype = Object.getPrototypeOf(root);
+
+  if (rootPrototype !== Object.prototype && rootPrototype !== null) {
+    return copy ? undefined : false;
+  }
+
+  const result: Record<string, Schema.Json> | undefined = copy ? {} : undefined;
+
+  const pending: Array<
+    | {
+        readonly kind: "object";
+        readonly source: object;
+        readonly target: Record<string, Schema.Json> | undefined;
+        readonly depth: number;
+      }
+    | {
+        readonly kind: "array";
+        readonly source: ReadonlyArray<unknown>;
+        readonly target: Array<Schema.Json> | undefined;
+        readonly depth: number;
+      }
+  > = [{ kind: "object", source: root, target: result, depth: 1 }];
+
+  let values = 1;
+
+  const enqueue = (
+    value: unknown,
+    depth: number,
+  ): { readonly ok: true; readonly value: Schema.Json | undefined } | { readonly ok: false } => {
+    if (
+      value === null ||
+      typeof value === "string" ||
+      typeof value === "boolean" ||
+      (typeof value === "number" && Number.isFinite(value))
+    ) {
+      return { ok: true, value };
     }
 
-    return true;
-  }),
+    if (typeof value !== "object") return { ok: false };
+
+    const nextDepth = depth + 1;
+
+    if (nextDepth > maxJsonDepth) return { ok: false };
+
+    if (Array.isArray(value)) {
+      if (Object.getPrototypeOf(value) !== Array.prototype) return { ok: false };
+      const target: Array<Schema.Json> | undefined = copy ? [] : undefined;
+
+      pending.push({ kind: "array", source: value, target, depth: nextDepth });
+
+      return { ok: true, value: target };
+    }
+
+    const prototype = Object.getPrototypeOf(value);
+
+    if (prototype !== Object.prototype && prototype !== null) return { ok: false };
+    const target: Record<string, Schema.Json> | undefined = copy ? {} : undefined;
+
+    pending.push({ kind: "object", source: value, target, depth: nextDepth });
+
+    return { ok: true, value: target };
+  };
+
+  for (let frame = pending.pop(); frame !== undefined; frame = pending.pop()) {
+    if (frame.kind === "array") {
+      const lengthDescriptor = Object.getOwnPropertyDescriptor(frame.source, "length");
+
+      if (
+        lengthDescriptor === undefined ||
+        !("value" in lengthDescriptor) ||
+        typeof lengthDescriptor.value !== "number" ||
+        !Number.isSafeInteger(lengthDescriptor.value) ||
+        lengthDescriptor.value < 0
+      ) {
+        return copy ? undefined : false;
+      }
+
+      const length = lengthDescriptor.value;
+
+      values += length;
+      if (values > maxJsonValues) return copy ? undefined : false;
+
+      const keys = Reflect.ownKeys(frame.source);
+
+      if (keys.length !== length + 1) return copy ? undefined : false;
+
+      for (const key of keys) {
+        if (typeof key !== "string") return copy ? undefined : false;
+        if (key !== "length" && !isCanonicalArrayIndex(key, length)) {
+          return copy ? undefined : false;
+        }
+      }
+
+      for (let index = 0; index < length; index++) {
+        const descriptor = Object.getOwnPropertyDescriptor(frame.source, String(index));
+
+        if (descriptor === undefined || !("value" in descriptor) || !descriptor.enumerable) {
+          return copy ? undefined : false;
+        }
+
+        const child = enqueue(descriptor.value, frame.depth);
+
+        if (!child.ok) return copy ? undefined : false;
+        if (frame.target !== undefined && child.value !== undefined) frame.target.push(child.value);
+      }
+
+      continue;
+    }
+
+    const keys = Reflect.ownKeys(frame.source);
+
+    values += keys.length;
+    if (values > maxJsonValues) return copy ? undefined : false;
+
+    for (const key of keys) {
+      if (typeof key !== "string" || (rejectForbiddenKeys && forbiddenJsonKeys.has(key))) {
+        return copy ? undefined : false;
+      }
+
+      const descriptor = Object.getOwnPropertyDescriptor(frame.source, key);
+
+      if (descriptor === undefined || !("value" in descriptor) || !descriptor.enumerable) {
+        return copy ? undefined : false;
+      }
+
+      const child = enqueue(descriptor.value, frame.depth);
+
+      if (!child.ok) return copy ? undefined : false;
+      if (frame.target !== undefined && child.value !== undefined) {
+        defineDataProperty(frame.target, key, child.value);
+      }
+    }
+  }
+
+  return copy ? result : true;
+}
+
+export const hasSafeJsonGraph = (root: unknown): boolean => walkPlainJsonObject(root, false, true);
+
+export const snapshotPlainJson = (
+  input: unknown,
+  onError: () => OAuthError.OAuthError,
+): Effect.Effect<Record<string, Schema.Json>, OAuthError.OAuthError> =>
+  Effect.try({
+    try: () => walkPlainJsonObject(input, true, true),
+    catch: onError,
+  }).pipe(
+    Effect.filterOrFail(
+      (snapshot): snapshot is Record<string, Schema.Json> => snapshot !== undefined,
+      onError,
+    ),
+  );
+
+/** At most 64 nested containers and 65,536 values, including the root object. */
+export const JsonObject = Schema.Record(Schema.String, Schema.Json).check(
+  Schema.makeFilter((value) => walkPlainJsonObject(value, false, false)),
 );
 
 /** HTTPS, or HTTP on an exact loopback host for local development. */

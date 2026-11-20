@@ -183,7 +183,7 @@ it.effect("binds HTTP loopback endpoints to an explicitly local issuer", () =>
   }).pipe(Effect.scoped),
 );
 
-// Explicit human test request on PR #318, 2026-11-19: guard against prototype pollution in discovery metadata.
+// Requested security seam: discovery metadata rejects prototype-polluting keys.
 it.effect("rejects __proto__ members in remote and local discovery metadata", () =>
   Effect.gen(function* () {
     const polluted = {

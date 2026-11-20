@@ -92,11 +92,11 @@ export const Metadata: Schema.StructWithRest<
     ),
     authorization_response_iss_parameter_supported: Schema.optionalKey(Schema.Boolean),
   }),
-  [V.JsonObject],
+  [Schema.Record(Schema.String, Schema.Json)],
 ).check(
   Schema.makeFilter(
     (metadata) =>
-      hasSafeJsonGraph(metadata) &&
+      V.hasSafeJsonGraph(metadata) &&
       endpointsOf(metadata).every((endpoint) => V.endpointMatchesIssuer(metadata.issuer, endpoint)),
   ),
 );
@@ -206,181 +206,6 @@ const endpointsOf = (metadata: {
     metadata.revocation_endpoint,
   ].filter((endpoint): endpoint is string => endpoint !== undefined);
 
-const forbiddenJsonKeys: ReadonlySet<string> = new Set(["__proto__", "constructor", "prototype"]);
-const maxJsonDepth = 64;
-const maxJsonValues = 65536;
-
-const defineDataProperty = (
-  target: Record<string, Schema.Json>,
-  key: string,
-  value: Schema.Json,
-): void => {
-  Object.defineProperty(target, key, {
-    value,
-    enumerable: true,
-    configurable: true,
-    writable: true,
-  });
-};
-
-const isCanonicalArrayIndex = (key: string, length: number): boolean => {
-  if (!/^(?:0|[1-9][0-9]*)$/u.test(key)) return false;
-  const index = Number(key);
-
-  return index >= 0 && index < length;
-};
-
-// Descriptor-only plain JSON snapshot: never invokes getters, requires plain
-// Object/Array prototypes, canonical array indices without expando properties,
-// no forbidden prototype keys, max depth 64, and max 65,536 values.
-const copyPlainJsonObject = (root: unknown): Record<string, Schema.Json> | undefined => {
-  if (root === null || typeof root !== "object" || Array.isArray(root)) return undefined;
-
-  const rootPrototype = Object.getPrototypeOf(root);
-
-  if (rootPrototype !== Object.prototype && rootPrototype !== null) return undefined;
-
-  const result: Record<string, Schema.Json> = {};
-
-  const pending: Array<
-    | {
-        readonly kind: "object";
-        readonly source: object;
-        readonly target: Record<string, Schema.Json>;
-        readonly depth: number;
-      }
-    | {
-        readonly kind: "array";
-        readonly source: ReadonlyArray<unknown>;
-        readonly target: Array<Schema.Json>;
-        readonly depth: number;
-      }
-  > = [{ kind: "object", source: root, target: result, depth: 1 }];
-
-  let values = 1;
-
-  const enqueue = (
-    value: unknown,
-    depth: number,
-  ): { readonly ok: true; readonly value: Schema.Json } | { readonly ok: false } => {
-    if (
-      value === null ||
-      typeof value === "string" ||
-      typeof value === "boolean" ||
-      (typeof value === "number" && Number.isFinite(value))
-    ) {
-      return { ok: true, value };
-    }
-
-    if (typeof value !== "object") return { ok: false };
-
-    const nextDepth = depth + 1;
-
-    if (nextDepth > maxJsonDepth) return { ok: false };
-
-    if (Array.isArray(value)) {
-      if (Object.getPrototypeOf(value) !== Array.prototype) return { ok: false };
-      const target: Array<Schema.Json> = [];
-
-      pending.push({ kind: "array", source: value, target, depth: nextDepth });
-
-      return { ok: true, value: target };
-    }
-
-    const prototype = Object.getPrototypeOf(value);
-
-    if (prototype !== Object.prototype && prototype !== null) return { ok: false };
-    const target: Record<string, Schema.Json> = {};
-
-    pending.push({ kind: "object", source: value, target, depth: nextDepth });
-
-    return { ok: true, value: target };
-  };
-
-  for (let frame = pending.pop(); frame !== undefined; frame = pending.pop()) {
-    if (frame.kind === "array") {
-      const lengthDescriptor = Object.getOwnPropertyDescriptor(frame.source, "length");
-
-      if (
-        lengthDescriptor === undefined ||
-        !("value" in lengthDescriptor) ||
-        typeof lengthDescriptor.value !== "number" ||
-        !Number.isSafeInteger(lengthDescriptor.value) ||
-        lengthDescriptor.value < 0
-      ) {
-        return undefined;
-      }
-
-      const length = lengthDescriptor.value;
-
-      values += length;
-      if (values > maxJsonValues) return undefined;
-
-      const keys = Reflect.ownKeys(frame.source);
-
-      if (keys.length !== length + 1) return undefined;
-
-      for (const key of keys) {
-        if (typeof key !== "string") return undefined;
-        if (key !== "length" && !isCanonicalArrayIndex(key, length)) return undefined;
-      }
-
-      for (let index = 0; index < length; index++) {
-        const descriptor = Object.getOwnPropertyDescriptor(frame.source, String(index));
-
-        if (descriptor === undefined || !("value" in descriptor) || !descriptor.enumerable) {
-          return undefined;
-        }
-
-        const child = enqueue(descriptor.value, frame.depth);
-
-        if (!child.ok) return undefined;
-        frame.target.push(child.value);
-      }
-
-      continue;
-    }
-
-    const keys = Reflect.ownKeys(frame.source);
-
-    values += keys.length;
-    if (values > maxJsonValues) return undefined;
-
-    for (const key of keys) {
-      if (typeof key !== "string" || forbiddenJsonKeys.has(key)) return undefined;
-
-      const descriptor = Object.getOwnPropertyDescriptor(frame.source, key);
-
-      if (descriptor === undefined || !("value" in descriptor) || !descriptor.enumerable) {
-        return undefined;
-      }
-
-      const child = enqueue(descriptor.value, frame.depth);
-
-      if (!child.ok) return undefined;
-      defineDataProperty(frame.target, key, child.value);
-    }
-  }
-
-  return result;
-};
-
-const hasSafeJsonGraph = (root: object): boolean => copyPlainJsonObject(root) !== undefined;
-
-const snapshotPlainJson = (
-  input: unknown,
-  onError: () => OAuthError.OAuthError,
-): Effect.Effect<Record<string, Schema.Json>, OAuthError.OAuthError> =>
-  Effect.try({
-    try: () => copyPlainJsonObject(input),
-    catch: onError,
-  }).pipe(
-    Effect.filterOrFail(
-      (snapshot): snapshot is Record<string, Schema.Json> => snapshot !== undefined,
-      onError,
-    ),
-  );
-
 const discoveryFailed = (description: string, cause?: unknown): OAuthError.OAuthError =>
   new OAuthError.OAuthError({
     reason: new OAuthError.DiscoveryFailed({
@@ -487,7 +312,7 @@ const buildWellKnownUrl = (
 export const makeLocal: (
   metadata: Metadata,
 ) => Effect.Effect<Discovery["Service"], OAuthError.OAuthError> = (metadata) =>
-  snapshotPlainJson(metadata, () => V.invalidArgument("Invalid OAuth discovery metadata")).pipe(
+  V.snapshotPlainJson(metadata, () => V.invalidArgument("Invalid OAuth discovery metadata")).pipe(
     Effect.flatMap((snapshot) =>
       V.decode(Metadata, snapshot, () => V.invalidArgument("Invalid OAuth discovery metadata")),
     ),
@@ -668,7 +493,7 @@ export const makeRemote: (
         ? normalized
         : yield* supplement(normalized).pipe(
             Effect.flatMap((supplemented) =>
-              snapshotPlainJson(supplemented, () =>
+              V.snapshotPlainJson(supplemented, () =>
                 discoveryFailed("Supplemented OAuth discovery metadata is invalid"),
               ),
             ),
