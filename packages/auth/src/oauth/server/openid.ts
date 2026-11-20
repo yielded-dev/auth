@@ -115,11 +115,15 @@ export const makeIdentityTokens = Effect.fnUntraced(function* <Subject extends s
     }) {
       const issuedAt = Math.floor(input.nowMillis / 1000);
 
+      const sub = yield* Schema.encodeEffect(subject)(input.authentication.subjectId).pipe(
+        Effect.mapError(() => Unavailable.make({})),
+      );
+
       return yield* Jwt.sign(
         IdentityToken,
         {
           iss: input.issuer,
-          sub: input.authentication.subjectId,
+          sub,
           aud: input.clientId,
           iat: issuedAt,
           exp: Math.min(issuedAt + 300, Math.floor(input.authentication.expiresAtMillis / 1000)),

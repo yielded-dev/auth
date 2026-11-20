@@ -26,7 +26,7 @@ export const Scopes = Schema.NonEmptyArray(Scope).check(Schema.isMaxLength(maxim
 /** Space-separated scopes. Declared scopes must fit, so a client can request all of them. */
 export const ScopeText = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(8192));
 
-export const nonEmptySubject = <Subject extends string>(subject: Schema.Codec<Subject, string>) =>
+export const nonEmptySubject = <S extends Schema.Codec<string, string>>(subject: S): S["Rebuild"] =>
   subject.check(Schema.makeFilter((value) => value.length > 0));
 
 export const makeScopesSchema = <Scope extends OAuthScope.OAuthScope>(
@@ -178,9 +178,7 @@ export const Authorization = Schema.Struct({
 
 export type Authorization = typeof Authorization.Type;
 
-export const makeAuthenticationSchema = <Subject extends string>(
-  subject: Schema.Codec<Subject, string>,
-) =>
+export const makeAuthenticationSchema = <S extends Schema.Codec<string, string>>(subject: S) =>
   Schema.Struct({
     subjectId: nonEmptySubject(subject),
     sessionId: Text,
@@ -190,7 +188,7 @@ export const makeAuthenticationSchema = <Subject extends string>(
   });
 
 export type Authentication<Subject extends string = string> = ReturnType<
-  typeof makeAuthenticationSchema<Subject>
+  typeof makeAuthenticationSchema<Schema.Codec<Subject, string>>
 >["Type"];
 
 /** Application-approved claims. Scope filtering happens before credential delivery. */
@@ -228,13 +226,10 @@ export const OpenIdMetadata = Schema.Struct({
   request_uri_parameter_supported: Schema.Literal(false),
 });
 
-export const makeUserInfoSchema = <Subject extends string>(
-  subject: Schema.Codec<Subject, string>,
-) => Schema.Struct({ sub: nonEmptySubject(subject), ...OpenIdProfile.fields });
+export const makeUserInfoSchema = <S extends Schema.Codec<string, string>>(subject: S) =>
+  Schema.Struct({ sub: nonEmptySubject(subject), ...OpenIdProfile.fields });
 
-export const makeRecordSchema = <Subject extends string>(
-  subject: Schema.Codec<Subject, string>,
-) => {
+export const makeRecordSchema = <S extends Schema.Codec<string, string>>(subject: S) => {
   const checked = nonEmptySubject(subject);
 
   return Schema.Struct({
@@ -249,15 +244,15 @@ export const makeRecordSchema = <Subject extends string>(
 };
 
 export type Record<Subject extends string = string> = ReturnType<
-  typeof makeRecordSchema<Subject>
+  typeof makeRecordSchema<Schema.Codec<Subject, string>>
 >["Type"];
 
 export const makeAccessSchema = <
   Scope extends OAuthScope.OAuthScope,
-  Subject extends string = string,
+  S extends Schema.Codec<string, string>,
 >(
   scope: Schema.Codec<Scope, string>,
-  subject: Schema.Codec<Subject, string>,
+  subject: S,
 ) =>
   Schema.Struct({
     subjectId: nonEmptySubject(subject),
@@ -271,7 +266,7 @@ export const makeAccessSchema = <
 export type Access<
   Scope extends OAuthScope.OAuthScope = OAuthScope.OAuthScope,
   Subject extends string = string,
-> = ReturnType<typeof makeAccessSchema<Scope, Subject>>["Type"];
+> = ReturnType<typeof makeAccessSchema<Scope, Schema.Codec<Subject, string>>>["Type"];
 
 /** A consumed assertion's identity and retention deadline, never its signed credential. */
 export const AssertionReceipt = Schema.Struct({

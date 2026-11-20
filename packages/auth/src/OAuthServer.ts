@@ -96,7 +96,7 @@ export class OpenIdConsent extends Context.Service<
   static readonly defaultLayer = Layer.succeed(OpenIdConsent, OpenIdConsent.default);
 }
 
-export type Consent = ServerConsent<SubjectId>;
+export interface Consent extends ServerConsent<SubjectId> {}
 
 /** Render trusted consent metadata. Escape all displayed values and preserve the
  * POST action, csrf field and approve/deny decisions. Scripts are forbidden;
@@ -112,7 +112,7 @@ export class ConsentRenderer extends Context.Service<
   static readonly defaultLayer = Layer.succeed(ConsentRenderer, ConsentRenderer.default);
 }
 
-const binding: ServerBinding<SubjectId, Persistence, ConsentRenderer, OpenIdConsent> = {
+const binding: ServerBinding<typeof SubjectId, Persistence, ConsentRenderer, OpenIdConsent> = {
   subject: SubjectId,
   cookiePrefix: "yielded",
   onFailure: (cause) => reportAuthFailure("http", cause),
@@ -147,8 +147,9 @@ export const makeOpenId = <
   options: { readonly scopes?: S } = {},
 ) => makeOpenIdServer(id, options, binding);
 
-export type OpenIdIdentity<Scope extends OAuthScope.OAuthScope = OAuthScope.OAuthScope> =
-  ServerOpenIdIdentity<Scope, SubjectId>;
+export interface OpenIdIdentity<
+  Scope extends OAuthScope.OAuthScope = OAuthScope.OAuthScope,
+> extends ServerOpenIdIdentity<Scope, SubjectId> {}
 
 interface VerifiedAccessToken<Scope extends OAuthScope.OAuthScope> {
   readonly verify: (

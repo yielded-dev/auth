@@ -85,19 +85,27 @@ import {
 import { makeIdentityTokens, scopedProfile, type IdentitySigningKeys } from "./openid";
 
 export interface ServerBinding<
-  Subject extends string,
+  SubjectCodec extends Schema.Codec<string, string>,
   PersistenceId,
   ConsentRendererId,
   OpenIdConsentId,
 > {
-  readonly subject: Schema.Codec<Subject, string>;
+  readonly subject: SubjectCodec;
   readonly cookiePrefix: string;
   readonly onFailure: (cause: Cause.Cause<unknown>) => Effect.Effect<void>;
   readonly reportedDefect: () => unknown;
-  readonly Persistence: Context.Service<PersistenceId, PersistenceService<Subject>>;
-  readonly CurrentAccess: Context.Reference<Access<OAuthScope.OAuthScope, Subject> | undefined>;
-  readonly ConsentRenderer: Context.Service<ConsentRendererId, ConsentRendererService<Subject>>;
-  readonly OpenIdConsent: Context.Service<OpenIdConsentId, OpenIdConsentService<Subject>>;
+  readonly Persistence: Context.Service<PersistenceId, PersistenceService<SubjectCodec["Type"]>>;
+  readonly CurrentAccess: Context.Reference<
+    Access<OAuthScope.OAuthScope, SubjectCodec["Type"]> | undefined
+  >;
+  readonly ConsentRenderer: Context.Service<
+    ConsentRendererId,
+    ConsentRendererService<SubjectCodec["Type"]>
+  >;
+  readonly OpenIdConsent: Context.Service<
+    OpenIdConsentId,
+    OpenIdConsentService<SubjectCodec["Type"]>
+  >;
 }
 
 const now = DateTime.now.pipe(Effect.map(DateTime.toEpochMillis));
@@ -326,7 +334,7 @@ interface ServerIdentity<
 const makeServer = <
   const Id extends string,
   const S extends ReadonlyArray<OAuthScope.OAuthScope>,
-  Subject extends string,
+  SubjectCodec extends Schema.Codec<string, string>,
   PersistenceId,
   ConsentRendererId,
   OpenIdConsentId,
@@ -334,18 +342,24 @@ const makeServer = <
 >(
   id: Id,
   input: { readonly scopes: S },
-  identitySource: Effect.Effect<ServerIdentity<NoInfer<S[number]>, NoInfer<Subject>>, never, R>,
-  binding: ServerBinding<Subject, PersistenceId, ConsentRendererId, OpenIdConsentId>,
+  identitySource: Effect.Effect<
+    ServerIdentity<NoInfer<S[number]>, NoInfer<SubjectCodec["Type"]>>,
+    never,
+    R
+  >,
+  binding: ServerBinding<SubjectCodec, PersistenceId, ConsentRendererId, OpenIdConsentId>,
 ) => {
   type Scope = S[number];
+  type Subject = SubjectCodec["Type"];
   const scopes = [...new Set<Scope>(input.scopes)];
   const ScopeSchema = Schema.Literals(scopes);
   const ScopesSchema = makeScopesSchema<Scope>(ScopeSchema);
-  const SubjectSchema = nonEmptySubject(binding.subject);
+  const SubjectSchema: Schema.Codec<Subject, string> = nonEmptySubject(binding.subject);
   const SubjectType = Schema.toType(SubjectSchema);
   const AuthenticationSchema = makeAuthenticationSchema(SubjectType);
   const UserInfoSchema = makeUserInfoSchema(SubjectType);
-  const AccessSchema = makeAccessSchema<Scope, Subject>(ScopeSchema, SubjectSchema);
+  const AccessSchema = makeAccessSchema(ScopeSchema, SubjectSchema);
+  const PublicAccessSchema = makeAccessSchema(ScopeSchema, binding.subject);
   const AuthorizationResult = makeResultSchema(ScopeSchema);
   const Clients = makeClientStore(id);
 
@@ -468,6 +482,7 @@ const makeServer = <
         const resourceUrl = new URL(config.resource);
 
         if (
+          binding.subject.ast.encoding !== undefined ||
           (resourceUrl.pathname !== "/" && resourceUrl.href !== config.resource) ||
           (options.identityKeys === undefined && resourceUrl.origin !== config.origin) ||
           resourceUrl.search ||
@@ -1741,7 +1756,7 @@ const makeServer = <
     securityLayer,
     paths,
     Scope: ScopeSchema,
-    Access: AccessSchema,
+    Access: PublicAccessSchema,
     CurrentAccess: ScopedCurrentAccess,
     Clients,
   };
@@ -1750,16 +1765,17 @@ const makeServer = <
 export const makeOAuthServer = <
   const Id extends string,
   const S extends ReadonlyArray<OAuthScope.OAuthScope>,
-  Subject extends string,
+  SubjectCodec extends Schema.Codec<string, string>,
   PersistenceId,
   ConsentRendererId,
   OpenIdConsentId,
 >(
   id: Id,
   input: { readonly scopes: S },
-  binding: ServerBinding<Subject, PersistenceId, ConsentRendererId, OpenIdConsentId>,
+  binding: ServerBinding<SubjectCodec, PersistenceId, ConsentRendererId, OpenIdConsentId>,
 ) => {
   type Scope = S[number];
+  type Subject = SubjectCodec["Type"];
 
   const Identity = Context.Service<
     { readonly server: Id; readonly kind: "identity" },
@@ -1816,16 +1832,17 @@ export const makeOAuthServer = <
 export const makeOpenIdServer = <
   const Id extends string,
   const S extends ReadonlyArray<OAuthScope.OAuthScope> = readonly [],
-  Subject extends string = string,
+  SubjectCodec extends Schema.Codec<string, string> = Schema.Codec<string, string>,
   PersistenceId = never,
   ConsentRendererId = never,
   OpenIdConsentId = never,
 >(
   id: Id,
   options: { readonly scopes?: S },
-  binding: ServerBinding<Subject, PersistenceId, ConsentRendererId, OpenIdConsentId>,
+  binding: ServerBinding<SubjectCodec, PersistenceId, ConsentRendererId, OpenIdConsentId>,
 ) => {
   type OpenIdScope = S[number] | (typeof standardOpenIdScopes)[number];
+  type Subject = SubjectCodec["Type"];
   const scopes: ReadonlyArray<OpenIdScope> = [...(options.scopes ?? []), ...standardOpenIdScopes];
 
   const Identity = Context.Service<

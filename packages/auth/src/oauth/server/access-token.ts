@@ -26,9 +26,7 @@ import {
 } from "./models";
 
 /** RFC 9068 access tokens use a distinct type and audience from ID tokens. */
-export const makeAccessTokenClaimsSchema = <Subject extends string>(
-  subject: Schema.Codec<Subject, string>,
-) =>
+export const makeAccessTokenClaimsSchema = <S extends Schema.Codec<string, string>>(subject: S) =>
   Schema.Struct({
     iss: Text,
     sub: nonEmptySubject(subject),
@@ -45,7 +43,7 @@ export const makeAccessTokenClaimsSchema = <Subject extends string>(
   });
 
 export type AccessTokenClaims<Subject extends string = string> = ReturnType<
-  typeof makeAccessTokenClaimsSchema<Subject>
+  typeof makeAccessTokenClaimsSchema<Schema.Codec<Subject, string>>
 >["Type"];
 
 export interface AccessTokenVerifierWithKeySetOptions {
@@ -70,6 +68,8 @@ export const makeVerifier = Effect.fnUntraced(function* <
 ) {
   const signature = yield* Signature.Signature;
   const keys = yield* Jwks.Jwks;
+
+  if (subject.ast.encoding !== undefined) return yield* ConfigurationError.make({});
   const ScopeSchema = Schema.toType(scope);
   const SubjectSchema = nonEmptySubject(subject);
   const ScopesSchema = makeScopesSchema(ScopeSchema);
