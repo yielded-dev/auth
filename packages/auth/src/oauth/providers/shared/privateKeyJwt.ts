@@ -1,4 +1,4 @@
-import { Unavailable } from "@yielded/oauth/Errors";
+import * as OAuthError from "@yielded/oauth/OAuthError";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -30,6 +30,11 @@ const Claims = Schema.Struct({
   exp: Schema.Finite,
 });
 
+const clientAuthFailed = (description: string, cause?: unknown): OAuthError.OAuthError =>
+  new OAuthError.OAuthError({
+    reason: new OAuthError.ClientAuthFailed({ description, cause }),
+  });
+
 /** Sign one ES256 client-secret JWT with an opaque Effect signing key. */
 export const signPrivateKeyJwt = Effect.fn("OpenIdConnect.signPrivateKeyJwt")(function* (
   policy: Omit<PrivateKeyJwt, "privateKey">,
@@ -49,7 +54,11 @@ export const signPrivateKeyJwt = Effect.fn("OpenIdConnect.signPrivateKeyJwt")(fu
     key,
     { kid: policy.keyId },
   ).pipe(
-    Effect.catchCause((cause) => Effect.failCause(Cause.map(cause, () => Unavailable.make({})))),
+    Effect.catchCause((cause) =>
+      Effect.failCause(
+        Cause.map(cause, () => clientAuthFailed("Could not sign private-key client assertion")),
+      ),
+    ),
   );
 });
 
@@ -57,12 +66,17 @@ export const signPrivateKeyJwt = Effect.fn("OpenIdConnect.signPrivateKeyJwt")(fu
 const importPrivateKeyJwt = Effect.fnUntraced(function* (policy: PrivateKeyJwt) {
   const der = Result.getOrUndefined(Base64.decode(Redacted.value(policy.privateKey)));
 
-  if (der === undefined || der.length === 0) return yield* Unavailable.make({});
+  if (der === undefined || der.length === 0)
+    return yield* clientAuthFailed("Invalid PKCS#8 private key encoding");
 
   return yield* Jwk.importPkcs8(Redacted.make(der), policy.algorithm, {
     kid: policy.keyId,
   }).pipe(
-    Effect.catchCause((cause) => Effect.failCause(Cause.map(cause, () => Unavailable.make({})))),
+    Effect.catchCause((cause) =>
+      Effect.failCause(
+        Cause.map(cause, () => clientAuthFailed("Could not import PKCS#8 client signing key")),
+      ),
+    ),
     Effect.ensuring(Effect.sync(() => der.fill(0))),
   );
 });
@@ -73,7 +87,7 @@ export class PrivateKeyClientSecret extends Context.Service<
   {
     readonly mint: (
       authentication: OpenIdConnectAuthentication,
-    ) => Effect.Effect<Redacted.Redacted<string> | undefined, Unavailable>;
+    ) => Effect.Effect<Redacted.Redacted<string> | undefined, OAuthError.OAuthError>;
   }
 >()("effect-auth/oauth/providers/PrivateKeyClientSecret") {
   /** Static client secrets stay on the OAuth client. */
@@ -92,9 +106,9 @@ export class PrivateKeyClientSecret extends Context.Service<
       Scope.close(scope, Exit.void).pipe(Effect.ensuring(Effect.sync(() => keys.clear()))),
     );
 
-    const run = yield* makeScopedOperation(() => Unavailable.make({})).pipe(
-      Effect.provideService(Scope.Scope, scope),
-    );
+    const run = yield* makeScopedOperation(() =>
+      clientAuthFailed("Private-key client authentication scope is closed"),
+    ).pipe(Effect.provideService(Scope.Scope, scope));
 
     const imports = yield* Semaphore.make(1);
 

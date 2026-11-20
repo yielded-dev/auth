@@ -15,7 +15,7 @@ import * as Redacted from "effect/Redacted";
 import * as Scope from "effect/Scope";
 import { expect } from "vite-plus/test";
 
-import { OAuth, Oidc, Pkce } from "../src/index";
+import { OAuth, OAuthError, Oidc, Pkce } from "../src/index";
 import {
   codeInput,
   cryptoLayer,
@@ -27,21 +27,26 @@ import {
   transport,
 } from "./fixtures";
 
-it.effect("uses RFC7636 S256 and fresh private 32-byte transaction secrets", () =>
+it.effect("uses RFC7636 S256 and fresh private 32-byte PKCE verifiers", () =>
   Effect.gen(function* () {
     expect(yield* Pkce.challenge(codeInput.pkceVerifier)).toBe(
       "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
     );
-    const first = yield* Pkce.make();
-    const second = yield* Pkce.random();
+    expect(yield* Pkce.challenge(Redacted.value(codeInput.pkceVerifier))).toBe(
+      "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
+    );
+    const first = yield* Pkce.generate;
+    const second = yield* Pkce.generate;
 
     expect(Redacted.value(first.verifier)).toMatch(/^[\w-]{43}$/);
     expect(first.challenge).toBe(yield* Pkce.challenge(first.verifier));
-    expect(Redacted.value(first.verifier)).not.toBe(Redacted.value(second));
+    expect(Redacted.value(first.verifier)).not.toBe(Redacted.value(second.verifier));
     expect(JSON.stringify(first)).not.toContain(Redacted.value(first.verifier));
-    expect((yield* Pkce.challenge(Redacted.make("short")).pipe(Effect.flip))._tag).toBe(
-      "OAuthUnavailable",
-    );
+    const invalid = yield* Pkce.challenge(Redacted.make("short")).pipe(Effect.flip);
+
+    expect(OAuthError.isOAuthError(invalid)).toBe(true);
+    expect(OAuthError.isOAuthErrorReason(invalid.reason)).toBe(true);
+    expect(invalid).toMatchObject({ _tag: "OAuthError", reason: { _tag: "InvalidArgument" } });
   }).pipe(Effect.provide(cryptoLayer)),
 );
 
@@ -66,17 +71,17 @@ it.effect(
       expect(requests).toEqual(["https://issuer.example/tenant/.well-known/openid-configuration"]);
       document = { ...metadata, issuer: metadata.issuer.slice(0, -1) };
       expect(
-        (yield* Oidc.discover(metadata.issuer, { timeoutMs: 1000 }).pipe(
+        yield* Oidc.discover(metadata.issuer, { timeoutMs: 1000 }).pipe(
           Effect.provideService(HttpClient.HttpClient, client),
           Effect.flip,
-        ))._tag,
-      ).toBe("OAuthConfigurationError");
+        ),
+      ).toMatchObject({ _tag: "OAuthError", reason: { _tag: "DiscoveryFailed" } });
       expect(
-        (yield* Oidc.discover("http://issuer.example", { timeoutMs: 1000 }).pipe(
+        yield* Oidc.discover("http://issuer.example", { timeoutMs: 1000 }).pipe(
           Effect.provideService(HttpClient.HttpClient, client),
           Effect.flip,
-        ))._tag,
-      ).toBe("OAuthConfigurationError");
+        ),
+      ).toMatchObject({ _tag: "OAuthError", reason: { _tag: "InvalidArgument" } });
       expect(requests).toHaveLength(2);
 
       const loopback = {
@@ -114,29 +119,29 @@ it.effect("binds HTTP loopback endpoints to an explicitly local issuer", () =>
     });
 
     expect(
-      (yield* Oidc.discover(metadata.issuer, { timeoutMs: 1000 }).pipe(
+      yield* Oidc.discover(metadata.issuer, { timeoutMs: 1000 }).pipe(
         Effect.provideService(HttpClient.HttpClient, http),
         Effect.flip,
-      ))._tag,
-    ).toBe("OAuthConfigurationError");
+      ),
+    ).toMatchObject({ _tag: "OAuthError", reason: { _tag: "DiscoveryFailed" } });
     expect(
-      (yield* Oidc.discover(metadata.issuer, {
+      yield* Oidc.discover(metadata.issuer, {
         timeoutMs: 1000,
         metadataUrl: "http://localhost:8080/discovery",
-      }).pipe(Effect.provideService(HttpClient.HttpClient, http), Effect.flip))._tag,
-    ).toBe("OAuthConfigurationError");
+      }).pipe(Effect.provideService(HttpClient.HttpClient, http), Effect.flip),
+    ).toMatchObject({ _tag: "OAuthError", reason: { _tag: "InvalidArgument" } });
     expect(
-      (yield* OAuth.make({ ...options, metadata: remote }).pipe(
+      yield* OAuth.make({ ...options, metadata: remote }).pipe(
         Effect.provideService(HttpClient.HttpClient, http),
         Effect.flip,
-      ))._tag,
-    ).toBe("OAuthConfigurationError");
+      ),
+    ).toMatchObject({ _tag: "OAuthError", reason: { _tag: "InvalidArgument" } });
     expect(
-      (yield* OAuth.make({ ...options, profile: { url: "http://localhost:8080/user" } }).pipe(
+      yield* OAuth.make({ ...options, profile: { url: "http://localhost:8080/user" } }).pipe(
         Effect.provideService(HttpClient.HttpClient, http),
         Effect.flip,
-      ))._tag,
-    ).toBe("OAuthConfigurationError");
+      ),
+    ).toMatchObject({ _tag: "OAuthError", reason: { _tag: "InvalidArgument" } });
     expect(requests).toEqual(["https://issuer.example/tenant/.well-known/openid-configuration"]);
 
     const local = yield* OAuth.make({
@@ -174,7 +179,7 @@ it.effect("rejects HTTP JWKS before constructing an asymmetric verifier", () =>
       Effect.flip,
     );
 
-    expect(result._tag).toBe("OAuthConfigurationError");
+    expect(result).toMatchObject({ _tag: "OAuthError", reason: { _tag: "InvalidArgument" } });
     expect(requests).toEqual([]);
   }).pipe(Effect.scoped),
 );
@@ -243,39 +248,66 @@ it.effect("authenticates Basic/Post/None once and preserves private raw provider
   }).pipe(Effect.scoped),
 );
 
-it.effect("distinguishes complete invalid_grant400 from ambiguous or malformed receipts", () =>
-  Effect.gen(function* () {
-    expect(
-      (yield* OAuth.tokens(
+it.effect(
+  "distinguishes complete invalid_grant 400 from other endpoint or malformed receipts",
+  () =>
+    Effect.gen(function* () {
+      const invalidGrant = yield* OAuth.tokens(
         receipt({ error: "invalid_grant", error_description: "private-provider-data" }, 400),
-      ).pipe(Effect.flip))._tag,
-    ).toBe("OAuthRejected");
-    for (const raw of [
-      receipt({ error: "invalid_grant" }, 200),
-      receipt({ error: "invalid_grant" }, 500),
-      receipt({ error: "invalid_client" }, 400),
-      receipt({ error: "invalid_client" }, 401),
-      receipt({ error: "invalid_grant", error_description: 12 }, 400),
-      receipt({ error: "invalid_grant", access_token: "private-access" }, 400),
-      receipt({ ...tokenBody, expires_in: "60junk" }),
-      receipt({ ...tokenBody, expires_in: -1 }),
-      receipt({ ...tokenBody, token_type: "DPoP" }),
-      { ...receipt(tokenBody), contentType: "text/plain" },
-    ]) {
-      const failure = yield* OAuth.tokens(raw).pipe(Effect.flip);
+      ).pipe(Effect.flip);
 
-      expect(failure._tag).toBe("OAuthUnavailable");
-      expect(JSON.stringify(failure)).not.toContain("private-");
-    }
-    expect((yield* OAuth.tokens(receipt({ ...tokenBody, expires_in: 0 }))).expiresIn).toBe(0);
-    const omitted = yield* OAuth.tokens(receipt({ ...tokenBody, refresh_token: null }));
+      expect(invalidGrant).toMatchObject({
+        _tag: "OAuthError",
+        reason: { _tag: "EndpointError", endpoint: "token", code: "invalid_grant", status: 400 },
+      });
+      expect(JSON.stringify(invalidGrant)).not.toContain("private-");
+      for (const [raw, expected] of [
+        [receipt({ error: "invalid_grant" }, 200), { _tag: "InvalidResponse", endpoint: "token" }],
+        [receipt({ error: "invalid_grant" }, 500), { _tag: "InvalidResponse", endpoint: "token" }],
+        [
+          receipt({ error: "invalid_client" }, 400),
+          { _tag: "EndpointError", endpoint: "token", code: "invalid_client", status: 400 },
+        ],
+        [
+          receipt({ error: "invalid_client" }, 401),
+          { _tag: "EndpointError", endpoint: "token", code: "invalid_client", status: 401 },
+        ],
+        [
+          receipt({ error: "invalid_grant", error_description: 12 }, 400),
+          { _tag: "InvalidResponse", endpoint: "token" },
+        ],
+        [
+          receipt({ error: "invalid_grant", access_token: "private-access" }, 400),
+          { _tag: "InvalidResponse", endpoint: "token" },
+        ],
+        [
+          receipt({ ...tokenBody, expires_in: "60junk" }),
+          { _tag: "InvalidResponse", endpoint: "token" },
+        ],
+        [receipt({ ...tokenBody, expires_in: -1 }), { _tag: "InvalidResponse", endpoint: "token" }],
+        [
+          receipt({ ...tokenBody, token_type: "DPoP" }),
+          { _tag: "InvalidResponse", endpoint: "token" },
+        ],
+        [
+          { ...receipt(tokenBody), contentType: "text/plain" },
+          { _tag: "InvalidResponse", endpoint: "token" },
+        ],
+      ] as const) {
+        const failure = yield* OAuth.tokens(raw).pipe(Effect.flip);
 
-    expect(omitted.refreshToken).toBeUndefined();
-    expect(Redacted.value(omitted.accessToken)).toBe("private-access");
-    const extension = receipt({ error: "bad_verification_code" });
+        expect(failure).toMatchObject({ _tag: "OAuthError", reason: expected });
+        expect(JSON.stringify(failure)).not.toContain("private-");
+      }
+      expect((yield* OAuth.tokens(receipt({ ...tokenBody, expires_in: 0 }))).expiresIn).toBe(0);
+      const omitted = yield* OAuth.tokens(receipt({ ...tokenBody, refresh_token: null }));
 
-    expect(Redacted.value(extension.body).error).toBe("bad_verification_code");
-  }),
+      expect(omitted.refreshToken).toBeUndefined();
+      expect(Redacted.value(omitted.accessToken)).toBe("private-access");
+      const extension = receipt({ error: "bad_verification_code" });
+
+      expect(Redacted.value(extension.body).error).toBe("bad_verification_code");
+    }),
 );
 
 it.effect("binds authorization parameters and snapshots configuration before network effects", () =>
@@ -312,15 +344,15 @@ it.effect("binds authorization parameters and snapshots configuration before net
     expect(url.searchParams.getAll("resource")).toEqual(["urn:legacy", "urn:one", "urn:two"]);
     expect(url.searchParams.get("audience")).toBe("api");
     expect(
-      (yield* client
+      yield* client
         .authorizationUrl({ ...input, parameters: { CLIENT_ID: "attacker" } })
-        .pipe(Effect.flip))._tag,
-    ).toBe("OAuthConfigurationError");
+        .pipe(Effect.flip),
+    ).toMatchObject({ _tag: "OAuthError", reason: { _tag: "InvalidArgument" } });
     expect(
-      (yield* client
+      yield* client
         .codeGrant({ ...codeInput, parameters: { code: "replacement" } })
-        .pipe(Effect.flip))._tag,
-    ).toBe("OAuthConfigurationError");
+        .pipe(Effect.flip),
+    ).toMatchObject({ _tag: "OAuthError", reason: { _tag: "InvalidArgument" } });
   }).pipe(Effect.scoped),
 );
 
@@ -352,7 +384,10 @@ it.effect("keeps installed metadata arrays detached and immutable through revoca
     };
 
     expect(installed).toEqual(["client_secret_basic"]);
-    expect((yield* client.revoke(input).pipe(Effect.flip))._tag).toBe("OAuthConfigurationError");
+    expect(yield* client.revoke(input).pipe(Effect.flip)).toMatchObject({
+      _tag: "OAuthError",
+      reason: { _tag: "InvalidArgument" },
+    });
     const changed = Reflect.set(installed, 0, "client_secret_post");
     const revoked = yield* client.revoke(input).pipe(Effect.exit);
 
@@ -447,11 +482,11 @@ it.effect(
         { ...options, timeoutMs: Infinity },
       ])
         expect(
-          (yield* OAuth.make(configured).pipe(
+          yield* OAuth.make(configured).pipe(
             Effect.provideService(HttpClient.HttpClient, http),
             Effect.flip,
-          ))._tag,
-        ).toBe("OAuthConfigurationError");
+          ),
+        ).toMatchObject({ _tag: "OAuthError", reason: { _tag: "InvalidArgument" } });
       expect(requests).toBe(0);
     }).pipe(Effect.scoped),
 );
@@ -460,12 +495,18 @@ it.effect(
   "bounds bodies, refuses redirects and unexpected URLs, and never repeats failed exchange/revocation",
   () =>
     Effect.gen(function* () {
-      for (const response of [
-        new Response(null, { status: 302, headers: { location: "https://attacker.example" } }),
-        new Response("x".repeat(129), { headers: { "content-type": "application/json" } }),
-        new Response("{}", { headers: { "content-type": "text/plain" } }),
-        Response.json([]),
-      ]) {
+      for (const [response, reasonTag] of [
+        [
+          new Response(null, { status: 302, headers: { location: "https://attacker.example" } }),
+          "TransportFailed",
+        ],
+        [
+          new Response("x".repeat(129), { headers: { "content-type": "application/json" } }),
+          "TransportFailed",
+        ],
+        [new Response("{}", { headers: { "content-type": "text/plain" } }), "InvalidResponse"],
+        [Response.json([]), "InvalidResponse"],
+      ] as const) {
         let count = 0;
 
         const client = yield* OAuth.make({ ...options, maxResponseBytes: 128 }).pipe(
@@ -479,9 +520,10 @@ it.effect(
           ),
         );
 
-        expect((yield* client.codeGrant(codeInput).pipe(Effect.flip))._tag).toBe(
-          "OAuthUnavailable",
-        );
+        expect(yield* client.codeGrant(codeInput).pipe(Effect.flip)).toMatchObject({
+          _tag: "OAuthError",
+          reason: { _tag: reasonTag, endpoint: "token" },
+        });
         expect(count).toBe(1);
       }
       const moved = Response.json(tokenBody);
@@ -495,7 +537,10 @@ it.effect(
         ),
       );
 
-      expect((yield* client.codeGrant(codeInput).pipe(Effect.flip))._tag).toBe("OAuthUnavailable");
+      expect(yield* client.codeGrant(codeInput).pipe(Effect.flip)).toMatchObject({
+        _tag: "OAuthError",
+        reason: { _tag: "TransportFailed", endpoint: "token" },
+      });
       let revocations = 0;
 
       const revoke = yield* OAuth.make(options).pipe(
@@ -510,10 +555,13 @@ it.effect(
       );
 
       expect(
-        (yield* revoke
+        yield* revoke
           .revoke({ token: Redacted.make("private-refresh"), tokenTypeHint: "refresh_token" })
-          .pipe(Effect.flip))._tag,
-      ).toBe("OAuthUnavailable");
+          .pipe(Effect.flip),
+      ).toMatchObject({
+        _tag: "OAuthError",
+        reason: { _tag: "TransportFailed", endpoint: "revocation", status: 503 },
+      });
       expect(revocations).toBe(1);
     }).pipe(Effect.scoped),
 );
@@ -542,7 +590,10 @@ it.effect("rejects deeply nested provider JSON as unavailable without repeating 
       ),
     );
 
-    expect((yield* client.codeGrant(codeInput).pipe(Effect.flip))._tag).toBe("OAuthUnavailable");
+    expect(yield* client.codeGrant(codeInput).pipe(Effect.flip)).toMatchObject({
+      _tag: "OAuthError",
+      reason: { _tag: "InvalidResponse", endpoint: "token" },
+    });
     expect(calls).toBe(1);
   }).pipe(Effect.scoped),
 );
@@ -584,7 +635,11 @@ for (const termination of ["interruption", "timeout"] as const) {
 
       yield* Deferred.await(reading);
       if (termination === "interruption") yield* Fiber.interrupt(fiber);
-      else expect((yield* Fiber.join(fiber).pipe(Effect.flip))._tag).toBe("OAuthUnavailable");
+      else
+        expect(yield* Fiber.join(fiber).pipe(Effect.flip)).toMatchObject({
+          _tag: "OAuthError",
+          reason: { _tag: "TransportFailed", endpoint: "token" },
+        });
       expect(cancelled).toBe(true);
       expect(calls).toBe(1);
     }).pipe(Effect.scoped),
@@ -637,8 +692,14 @@ it.live("closing the owner scope cancels an active exchange before returning", (
     yield* Scope.close(scope, Exit.void);
     expect(cancelled).toBe(true);
     expect(aborted).toBe(true);
-    expect((yield* Fiber.join(fiber).pipe(Effect.flip))._tag).toBe("OAuthUnavailable");
-    expect((yield* client.codeGrant(codeInput).pipe(Effect.flip))._tag).toBe("OAuthUnavailable");
+    expect(yield* Fiber.join(fiber).pipe(Effect.flip)).toMatchObject({
+      _tag: "OAuthError",
+      reason: { _tag: "TransportFailed", endpoint: "token" },
+    });
+    expect(yield* client.codeGrant(codeInput).pipe(Effect.flip)).toMatchObject({
+      _tag: "OAuthError",
+      reason: { _tag: "TransportFailed", endpoint: "token" },
+    });
     expect(calls).toBe(1);
   }).pipe(Effect.scoped),
 );
@@ -661,7 +722,10 @@ it.effect("invalidates clients when their owning scope closes", () =>
     );
 
     yield* Scope.close(scope, Exit.void);
-    expect((yield* client.codeGrant(codeInput).pipe(Effect.flip))._tag).toBe("OAuthUnavailable");
+    expect(yield* client.codeGrant(codeInput).pipe(Effect.flip)).toMatchObject({
+      _tag: "OAuthError",
+      reason: { _tag: "TransportFailed", endpoint: "token" },
+    });
     expect(calls).toBe(0);
     expect(DateTime.toEpochMillis(yield* DateTime.now)).toBeGreaterThanOrEqual(0);
   }),
@@ -674,11 +738,10 @@ it.effect("decodes whole decimal expiry strings while preserving the private raw
     expect((yield* OAuth.tokens(raw)).expiresIn).toBe(60.5);
     expect(Redacted.value(raw.body).expires_in).toBe("60.5");
     expect(
-      (yield* OAuth.tokens(receipt({ ...tokenBody, expires_in: " 60" })).pipe(Effect.flip))._tag,
-    ).toBe("OAuthUnavailable");
+      yield* OAuth.tokens(receipt({ ...tokenBody, expires_in: " 60" })).pipe(Effect.flip),
+    ).toMatchObject({ _tag: "OAuthError", reason: { _tag: "InvalidResponse", endpoint: "token" } });
     expect(
-      (yield* OAuth.tokens(receipt({ ...tokenBody, expires_in: "Infinity" })).pipe(Effect.flip))
-        ._tag,
-    ).toBe("OAuthUnavailable");
+      yield* OAuth.tokens(receipt({ ...tokenBody, expires_in: "Infinity" })).pipe(Effect.flip),
+    ).toMatchObject({ _tag: "OAuthError", reason: { _tag: "InvalidResponse", endpoint: "token" } });
   }),
 );

@@ -122,7 +122,7 @@ const checkReusableOperations = Effect.fn("packageConsumers.reusableOperations")
 import { Effect, Layer, Redacted } from "effect";
 import { Digest, SecureRandom } from "effect/crypto";
 import { FetchHttpClient } from "effect/http";
-import { OAuth, Pkce } from "@yielded/oauth";
+import { OAuth, OAuthError, Pkce } from "@yielded/oauth";
 const text = (value) => new TextDecoder().decode(value);
 const effectCrypto = Layer.merge(SecureRandom.layerWebCrypto, Digest.layerWebCrypto);
 let requests = 0;
@@ -139,6 +139,11 @@ const fetchReceipt = async (url, init) => {
 await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
   const verifier = Redacted.make("dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk");
   assert.equal(yield* Pkce.challenge(verifier), "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM");
+  const pair = yield* Pkce.generate;
+  assert.equal(yield* Pkce.challenge(pair.verifier), pair.challenge);
+  const invalid = yield* Pkce.challenge("short").pipe(Effect.flip);
+  assert.equal(OAuthError.isOAuthError(invalid), true);
+  assert.equal(invalid.reason._tag, "InvalidArgument");
   const client = yield* OAuth.make({
     metadata: { issuer: "https://issuer.example", authorization_endpoint: "https://issuer.example/authorize", token_endpoint: "https://issuer.example/token" },
     clientId: "client", authentication: { method: "client_secret_basic", secret: Redacted.make("secret") }, timeoutMs: 1000,
@@ -563,7 +568,7 @@ const checkReusableConsumers = Effect.fn("packageConsumers.reusable")(function* 
 
   yield* fs.symlink(effectSource, path.join(stage, "node_modules/effect"));
 
-  const oauthNamespaces = ["Errors", "OAuth", "Oidc", "Pkce"];
+  const oauthNamespaces = ["OAuth", "OAuthError", "Oidc", "Pkce"];
 
   // Only OAuth and Effect exist throughout this stage.
   yield* withPublishManifests(stage, () =>

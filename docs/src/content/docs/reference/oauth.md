@@ -545,7 +545,9 @@ Callbacks use HTTPS, with HTTP loopback support for local development.
 Auth provider configuration requires HTTPS endpoints. The lower-level
 `@yielded/oauth` package accepts HTTP endpoints and discovery URLs on `localhost`,
 `127.0.0.1`, or `[::1]` only with an explicitly configured HTTP loopback issuer.
-Asymmetric OIDC verification still requires an HTTPS JWKS URL.
+Asymmetric OIDC verification still requires an HTTPS JWKS URL. Protocol failures
+surface as `OAuthError` with a closed `reason` union, and `Pkce.generate` and
+`Pkce.challenge` handle RFC 7636 `S256` verifiers and challenges.
 
 ```ts
 const AuthRoutes = Http.layer(AppAuth, {

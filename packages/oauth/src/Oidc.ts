@@ -14,12 +14,12 @@ import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 
-import { ConfigurationError, Rejected, Unavailable } from "./Errors";
-import * as OidcJwks from "./internal/jwks";
-import * as Ownership from "./internal/ownership";
-import * as Transport from "./internal/transport";
-import * as V from "./internal/validation";
-import { JsonObject, Metadata, type RequestOptions } from "./OAuth";
+import * as OidcJwks from "./internal/jwks.ts";
+import * as Ownership from "./internal/ownership.ts";
+import * as Transport from "./internal/transport.ts";
+import * as V from "./internal/validation.ts";
+import { JsonObject, Metadata, type RequestOptions } from "./OAuth.ts";
+import * as OAuthError from "./OAuthError.ts";
 
 export const IdTokenAlgorithm = Schema.Literals(["RS256", "PS256", "ES256", "EdDSA", "HS256"]);
 export type IdTokenAlgorithm = typeof IdTokenAlgorithm.Type;
@@ -93,7 +93,7 @@ export interface Verifier {
   readonly verify: (
     token: Redacted.Redacted<string>,
     input: VerificationInput,
-  ) => Effect.Effect<Verified, Rejected | Unavailable, VerificationRequirements>;
+  ) => Effect.Effect<Verified, OAuthError.OAuthError, VerificationRequirements>;
 }
 
 const Configuration = Schema.Struct({
@@ -131,7 +131,7 @@ const IdClaims = Schema.Struct({
   sub: V.text(1024),
   aud: Schema.Union([
     V.text(1024),
-    Schema.Array(V.text(1024)).check(Schema.isMinLength(1), Schema.isMaxLength(1)),
+    Schema.Array(V.text(1024)).check(Schema.isMinLength(1), Schema.isMaxLength(64)),
   ]),
   azp: Schema.optionalKey(V.text(1024)),
   exp: V.NumericDate,
@@ -294,6 +294,19 @@ const DiscoverConfiguration = Schema.Struct({
   metadataUrl: Schema.optionalKey(V.Endpoint),
 });
 
+const discoveryFailed = (description: string): OAuthError.OAuthError =>
+  new OAuthError.OAuthError({
+    reason: new OAuthError.DiscoveryFailed({ description }),
+  });
+
+const tokenFailed = (
+  reason: OAuthError.TokenVerificationFailed["reason"],
+  cause?: unknown,
+): OAuthError.OAuthError =>
+  new OAuthError.OAuthError({
+    reason: new OAuthError.TokenVerificationFailed({ reason, cause }),
+  });
+
 /** OIDC discovery uses the trusted issuer identifier, retaining its exact
  * spelling for claim comparison even if its network URL normalizes. A discovered
  * `{tenantid}` path segment is accepted when it templates this same authority.
@@ -303,13 +316,19 @@ const DiscoverConfiguration = Schema.Struct({
 export const discover = Effect.fnUntraced(function* (
   input: string,
   inputOptions: DiscoverOptions,
-): Effect.fn.Return<Metadata, ConfigurationError | Unavailable, HttpClient.HttpClient> {
-  const issuer = yield* V.configuration(V.Issuer, input, "issuer");
+): Effect.fn.Return<Metadata, OAuthError.OAuthError, HttpClient.HttpClient> {
+  const issuer = yield* V.configuration(V.Issuer, input, "Invalid OIDC issuer");
 
-  const options = yield* V.configuration(DiscoverConfiguration, inputOptions);
+  const options = yield* V.configuration(
+    DiscoverConfiguration,
+    inputOptions,
+    "Invalid OIDC discovery options",
+  );
 
   if (options.metadataUrl !== undefined && !V.endpointMatchesIssuer(issuer, options.metadataUrl))
-    return yield* ConfigurationError.make({ reason: "metadata" });
+    return yield* V.invalidArgument(
+      "Discovery metadata URL does not match configured issuer scheme",
+    );
   const url = new URL(options.metadataUrl ?? issuer);
 
   if (options.metadataUrl === undefined) {
@@ -322,51 +341,96 @@ export const discover = Effect.fnUntraced(function* (
     http,
     HttpClientRequest.get(url.href).pipe(HttpClientRequest.acceptJson),
     options,
+    "discovery",
   );
 
-  if (response.status !== 200) return yield* Unavailable.make({});
-  const document = yield* Transport.json(response);
-  const metadata = yield* V.configuration(Metadata, yield* V.reveal(document.body), "metadata");
+  if (response.status !== 200)
+    return yield* new OAuthError.OAuthError({
+      reason: new OAuthError.TransportFailed({
+        endpoint: "discovery",
+        status: response.status,
+        description: "Unexpected discovery response status",
+      }),
+    });
+  const document = yield* Transport.json(response, "discovery");
+
+  const metadata = yield* V.decode(Metadata, yield* V.reveal(document.body), () =>
+    discoveryFailed("Invalid OIDC discovery metadata"),
+  );
 
   if (!discoveredIssuerMatches(issuer, metadata.issuer))
-    return yield* ConfigurationError.make({ reason: "issuer" });
+    return yield* discoveryFailed("Discovered issuer does not match configured issuer");
 
   const segment = templateTenantSegment(issuer, metadata.issuer);
   const pinned = pinnedConcreteIssuer(issuer, metadata.issuer);
 
   if (segment !== undefined && !multiTenantAlias(segment) && pinned === undefined)
-    return yield* ConfigurationError.make({ reason: "issuer" });
+    return yield* discoveryFailed("Discovered issuer template does not match configured authority");
 
   const accepted =
     pinned === undefined
       ? metadata
-      : yield* V.configuration(
+      : yield* V.decode(
           Metadata,
           { ...metadata, issuer: pinned, signing_key_issuer_required: true },
-          "metadata",
+          () => discoveryFailed("Pinned OIDC discovery metadata is invalid"),
         );
 
   return V.freeze(accepted);
 });
 
-const claimFailure = () => Rejected.make({ reason: "claims" });
+const mapJwtError = (error: Jwt.JwtError): OAuthError.OAuthError => {
+  if (error._tag !== "JoseError") return tokenFailed("claim");
+  switch (error.reason._tag) {
+    case "InvalidToken":
+    case "InvalidArgument":
+    case "DecryptionFailed":
+      return tokenFailed("malformed", error);
+    case "AlgorithmNotAllowed":
+      return tokenFailed("algorithm", error);
+    case "KeySetUnavailable":
+      return new OAuthError.OAuthError({
+        reason: new OAuthError.TransportFailed({
+          endpoint: "jwks",
+          description: error.message,
+          cause: error,
+        }),
+      });
+    case "KeyNotFound":
+    case "AmbiguousKey":
+    case "InvalidKey":
+      return tokenFailed("key", error);
+    case "SignatureVerificationFailed":
+      return tokenFailed("signature");
+    case "ClaimValidationFailed":
+      if (error.reason.claim === "iss") return tokenFailed("issuer");
+      if (error.reason.claim === "aud") return tokenFailed("audience");
+      if (error.reason.claim === "typ") return tokenFailed("typ");
+      if (error.reason.reason === "expired") return tokenFailed("expired");
+      if (error.reason.reason === "notYetValid" || error.reason.reason === "future")
+        return tokenFailed("notYetValid");
+
+      return tokenFailed("claim");
+  }
+};
 
 /** Signed ID tokens using advertised RS256, PS256, ES256, EdDSA, or explicit
  * HS256. Asymmetric verification requires an HTTPS JWKS URL; an HTTP URL
- * fails with ConfigurationError. Verification and the bounded JWKS cache belong to the
- * caller's Scope. HS256 uses the supplied client secret as the HMAC key and
- * does not install JWKS. Owner closure cancels and joins active verification,
- * returning Unavailable; caller interruption joins its operation without
- * closing the verifier. Unexpected cleanup failures remain observable in the
- * Cause. No process cache or automatic exchange retry is created. */
+ * fails with `OAuthError` (`InvalidArgument`). Verification and the bounded
+ * JWKS cache belong to the caller's Scope. HS256 uses the supplied client
+ * secret as the HMAC key and does not install JWKS. Owner closure cancels and
+ * joins active verification, failing with `TransportFailed`; caller
+ * interruption joins its operation without closing the verifier. Unexpected
+ * cleanup failures remain observable in the Cause. No process cache or
+ * automatic exchange retry is created. */
 export const makeVerifier = Effect.fnUntraced(function* (
   input: VerifierOptions,
-): Effect.fn.Return<
-  Verifier,
-  ConfigurationError | Unavailable,
-  HttpClient.HttpClient | Scope.Scope
-> {
-  const options = yield* V.configuration(Configuration, input, "metadata");
+): Effect.fn.Return<Verifier, OAuthError.OAuthError, HttpClient.HttpClient | Scope.Scope> {
+  const options = yield* V.configuration(
+    Configuration,
+    input,
+    "Invalid OIDC verifier configuration",
+  );
 
   const metadata = V.freeze(options.metadata);
   const audiences = V.freeze([...(options.audiences ?? [options.clientId])]);
@@ -387,14 +451,14 @@ export const makeVerifier = Effect.fnUntraced(function* (
     !metadata.response_types_supported?.includes("code") ||
     ((options.pkceS256 ?? true) && !metadata.code_challenge_methods_supported?.includes("S256"))
   )
-    return yield* ConfigurationError.make({ reason: "metadata" });
+    return yield* V.invalidArgument("OIDC metadata does not support required verification policy");
   if (hmacOnly && options.clientSecret === undefined)
-    return yield* ConfigurationError.make({ reason: "authentication" });
+    return yield* V.invalidArgument("HS256 ID token verification requires a client secret");
 
   const jwksUri = metadata.jwks_uri;
 
   if (!hmacOnly && (jwksUri === undefined || new URL(jwksUri).protocol !== "https:"))
-    return yield* ConfigurationError.make({ reason: "metadata" });
+    return yield* V.invalidArgument("Asymmetric OIDC verification requires an HTTPS jwks_uri");
 
   const hmacKey =
     hmacOnly && options.clientSecret !== undefined
@@ -405,7 +469,11 @@ export const makeVerifier = Effect.fnUntraced(function* (
             k: Base64Url.encode(new TextEncoder().encode(yield* V.reveal(options.clientSecret))),
           }),
           "HS256",
-        ).pipe(Effect.mapError(() => ConfigurationError.make({ reason: "authentication" })))
+        ).pipe(
+          Effect.mapError((cause) =>
+            V.invalidArgument("Client secret cannot be imported as an HS256 key", cause),
+          ),
+        )
       : undefined;
 
   const keys =
@@ -415,17 +483,31 @@ export const makeVerifier = Effect.fnUntraced(function* (
           url: jwksUri,
           timeoutMs: options.timeoutMs,
           maxResponseBytes: options.maxResponseBytes,
-        }).pipe(Effect.mapError(() => Unavailable.make({})));
+        }).pipe(
+          Effect.mapError(
+            (cause) =>
+              new OAuthError.OAuthError({
+                reason: new OAuthError.TransportFailed({
+                  endpoint: "jwks",
+                  description: "Could not initialize remote JWKS resolver",
+                  cause,
+                }),
+              }),
+          ),
+        );
 
-  const { use } = yield* Ownership.make;
+  const { use } = yield* Ownership.make("jwks");
 
   const verify = Effect.fnUntraced(function* (
     token: Redacted.Redacted<string>,
     input: VerificationInput,
-  ): Effect.fn.Return<Verified, Rejected | Unavailable, VerificationRequirements> {
+  ): Effect.fn.Return<Verified, OAuthError.OAuthError, VerificationRequirements> {
     // Capture caller policy and secret values before key lookup or cryptography.
-    const policy = yield* V.decode(VerifyInput, input);
-    const credential = yield* V.decode(V.secret(65536), token);
+    const policy = yield* V.decode(VerifyInput, input, () =>
+      V.invalidArgument("Invalid OIDC verification input"),
+    );
+
+    const credential = yield* V.decode(V.secret(65536), token, () => tokenFailed("malformed"));
     const start = DateTime.toEpochMillis(policy.verificationStartedAt);
     const expectedNonce = yield* V.reveal(policy.nonce);
 
@@ -445,11 +527,6 @@ export const makeVerifier = Effect.fnUntraced(function* (
       clockTolerance: 0,
     };
 
-    const mapJwtError = (error: Jwt.JwtError) =>
-      error._tag === "JoseError" && error.reason._tag === "ClaimValidationFailed"
-        ? claimFailure()
-        : Unavailable.make({});
-
     const opened =
       hmacKey !== undefined
         ? {
@@ -459,7 +536,12 @@ export const makeVerifier = Effect.fnUntraced(function* (
             signingKey: undefined,
           }
         : keys === undefined
-          ? yield* Unavailable.make({})
+          ? yield* new OAuthError.OAuthError({
+              reason: new OAuthError.TransportFailed({
+                endpoint: "jwks",
+                description: "No signing key source is configured",
+              }),
+            })
           : yield* Jwt.verifyWithKeySet(JsonObject, credential, {
               ...jwtPolicy,
               algorithms: advertised.filter((algorithm) => algorithm !== "HS256"),
@@ -473,16 +555,16 @@ export const makeVerifier = Effect.fnUntraced(function* (
     const signingKey = opened.signingKey;
     const keyIssuer = signingKey === undefined ? undefined : keys?.issuerOf(signingKey);
 
-    const claims = yield* V.decode(IdClaims, verified.claims).pipe(Effect.mapError(claimFailure));
+    const claims = yield* V.decode(IdClaims, verified.claims, () => tokenFailed("claim"));
 
     if (tenantTemplate) {
       const tenant = yield* Schema.decodeUnknownEffect(Schema.Struct({ tid: TenantId }))(
         verified.claims,
-      ).pipe(Effect.mapError(claimFailure));
+      ).pipe(Effect.mapError(() => tokenFailed("issuer")));
 
       const expected = substituteTenantIssuer(metadata.issuer, tenant.tid);
 
-      if (expected === undefined || claims.iss !== expected) return yield* claimFailure();
+      if (expected === undefined || claims.iss !== expected) return yield* tokenFailed("issuer");
     }
 
     if (
@@ -491,86 +573,87 @@ export const makeVerifier = Effect.fnUntraced(function* (
       keyIssuer !== undefined
     ) {
       if (verified.protectedHeader.alg === "HS256" || signingKey === undefined)
-        return yield* claimFailure();
+        return yield* tokenFailed("issuer");
 
-      if (keyIssuer === undefined) return yield* claimFailure();
+      if (keyIssuer === undefined) return yield* tokenFailed("issuer");
 
       const allowed = isTenantIssuerTemplate(keyIssuer)
         ? substituteTenantIssuer(
             keyIssuer,
             (yield* Schema.decodeUnknownEffect(Schema.Struct({ tid: TenantId }))(
               verified.claims,
-            ).pipe(Effect.mapError(claimFailure))).tid,
+            ).pipe(Effect.mapError(() => tokenFailed("issuer")))).tid,
           )
         : keyIssuer;
 
-      if (allowed !== claims.iss) return yield* claimFailure();
+      if (allowed !== claims.iss) return yield* tokenFailed("issuer");
     }
 
     const now = (yield* Clock.currentTimeMillis) / 1000;
 
+    if (start < 0 || start > now * 1000) return yield* tokenFailed("claim");
     if (
-      start < 0 ||
-      start > now * 1000 ||
-      (claims.azp !== undefined && !audiences.includes(claims.azp)) ||
-      claims.exp <= now ||
+      (Array.isArray(claims.aud) && claims.aud.length !== 1) ||
+      (claims.azp !== undefined && !audiences.includes(claims.azp))
+    )
+      return yield* tokenFailed("audience");
+    if (claims.exp <= now) return yield* tokenFailed("expired");
+    if (
       claims.iat > now ||
       (claims.nbf !== undefined && claims.nbf > now) ||
       (claims.auth_time !== undefined && claims.auth_time > now)
     )
-      return yield* claimFailure();
+      return yield* tokenFailed("notYetValid");
     if (policy.previous === undefined) {
+      if (claims.nonce !== expectedNonce) return yield* tokenFailed("nonce");
       if (
-        claims.nonce !== expectedNonce ||
-        (policy.maxAgeSeconds !== undefined &&
-          (claims.auth_time === undefined ||
-            claims.auth_time + policy.maxAgeSeconds < Math.floor(now)))
+        policy.maxAgeSeconds !== undefined &&
+        (claims.auth_time === undefined ||
+          claims.auth_time + policy.maxAgeSeconds < Math.floor(now))
       )
-        return yield* claimFailure();
-    } else if (
-      claims.sub !== policy.previous.subject ||
-      (tenantTemplate
-        ? claims.iss !== policy.previous.issuer
-        : policy.previous.issuer !== undefined && claims.iss !== policy.previous.issuer) ||
-      (claims.nonce !== undefined && claims.nonce !== expectedNonce) ||
-      (claims.auth_time !== undefined && claims.auth_time !== policy.previous.authTime)
-    )
-      return yield* claimFailure();
+        return yield* tokenFailed("maxAge");
+    } else {
+      if (
+        claims.sub !== policy.previous.subject ||
+        (tenantTemplate
+          ? claims.iss !== policy.previous.issuer
+          : policy.previous.issuer !== undefined && claims.iss !== policy.previous.issuer) ||
+        (claims.auth_time !== undefined && claims.auth_time !== policy.previous.authTime)
+      )
+        return yield* tokenFailed("continuity");
+      if (claims.nonce !== undefined && claims.nonce !== expectedNonce)
+        return yield* tokenFailed("nonce");
+    }
     const hashProfile = tokenHash(verified.protectedHeader.alg);
 
-    if (hashProfile === undefined) return yield* claimFailure();
+    if (hashProfile === undefined) return yield* tokenFailed("algorithm");
 
     for (const [hash, secret] of [
       [claims.at_hash, accessToken],
       [claims.c_hash, code],
     ] as const) {
       if (hash === undefined) continue;
-      if (secret === undefined) return yield* claimFailure();
+      if (secret === undefined) return yield* tokenFailed("hash");
       const digests = yield* Digest.Digest;
 
-      const digest = yield* digests
-        .digest(hashProfile.digest, new TextEncoder().encode(secret))
-        .pipe(
-          Effect.catchCause((cause) =>
-            Effect.failCause(Cause.map(cause, () => Unavailable.make({}))),
-          ),
-        );
+      const digest = yield* digests.digest(hashProfile.digest, new TextEncoder().encode(secret));
 
-      if (digest.length !== hashProfile.octets * 2) return yield* Unavailable.make({});
+      if (digest.length !== hashProfile.octets * 2)
+        return yield* Effect.die(new RangeError("Digest returned an unexpected byte length"));
       if (hash !== Base64Url.encode(digest.subarray(0, hashProfile.octets)))
-        return yield* claimFailure();
+        return yield* tokenFailed("hash");
     }
     // Re-read time after optional digest I/O so expired tokens cannot escape.
     const finished = (yield* Clock.currentTimeMillis) / 1000;
 
+    if (claims.exp <= finished) return yield* tokenFailed("expired");
     if (
-      claims.exp <= finished ||
-      (policy.previous === undefined &&
-        policy.maxAgeSeconds !== undefined &&
-        claims.auth_time !== undefined &&
-        claims.auth_time + policy.maxAgeSeconds < Math.floor(finished))
+      policy.previous === undefined &&
+      policy.maxAgeSeconds !== undefined &&
+      claims.auth_time !== undefined &&
+      claims.auth_time + policy.maxAgeSeconds < Math.floor(finished)
     )
-      return yield* claimFailure();
+      return yield* tokenFailed("maxAge");
 
     return {
       claims: Redacted.make(V.freeze(verified.claims)),

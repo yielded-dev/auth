@@ -29,6 +29,7 @@ import {
   OAuthTransactionSecrets,
 } from "../../../signInModels";
 import { makeOAuthSnapshot } from "../../../signInSnapshot";
+import { classifyOAuthError } from "../classifyOAuthError";
 import { type ConnectedCompatibility } from "../compatibility";
 import {
   persistedResponseIssuerMode,
@@ -38,6 +39,7 @@ import {
 import { PrivateKeyClientSecret } from "../privateKeyJwt";
 import { decodeOidcProfile, mergeUserInfo } from "../profile";
 import { ProviderRevocation } from "../ProviderRevocation";
+import { randomSecret } from "../randomSecret";
 import { tokens } from "../receipt";
 import { subjectInTenant } from "../tenantSubject";
 import {
@@ -167,10 +169,19 @@ export const makeConnectedProtocolWithCompatibility = Effect.fn(
   // Own the entire operation, including provider callbacks, in this lifetime.
   const run = yield* makeScopedOperation(unavailable);
 
-  const requestSecret = (authentication: OpenIdConnectAuthentication) =>
+  const requestSecret = (
+    authentication: OpenIdConnectAuthentication,
+    operation: "authorization_code" | "refresh_token" | "revocation",
+  ) =>
     clientSecrets
       .mint(authentication)
-      .pipe(Effect.catchCause((cause) => Effect.failCause(Cause.map(cause, unavailable))));
+      .pipe(
+        Effect.catchCause((cause) =>
+          Effect.failCause(
+            Cause.map(cause, (error) => classifyOAuthError(error, { operation, phase: "preSend" })),
+          ),
+        ),
+      );
 
   // Setup shares the protocol's containment for supplied platform services.
   const { installed, timeoutSeconds } = yield* installation;
@@ -390,27 +401,20 @@ export const makeConnectedProtocolWithCompatibility = Effect.fn(
 
     if (!entry || !callback || request.profile.issuance !== "active") return yield* rejected();
 
-    const state = yield* Pkce.random().pipe(
+    const state = yield* randomSecret.pipe(
       Effect.provideService(SecureRandom.SecureRandom, crypto),
-      Effect.provideService(Digest.Digest, digests),
-      Effect.catchCause((cause) => Effect.failCause(Cause.map(cause, unavailable))),
     );
 
     const pkce = entry.provider.pkceS256
-      ? yield* Pkce.make().pipe(
+      ? yield* Pkce.generate.pipe(
           Effect.provideService(SecureRandom.SecureRandom, crypto),
           Effect.provideService(Digest.Digest, digests),
-          Effect.catchCause((cause) => Effect.failCause(Cause.map(cause, unavailable))),
         )
       : undefined;
 
     const nonce =
       entry.provider.protocol === "oidc"
-        ? yield* Pkce.random().pipe(
-            Effect.provideService(SecureRandom.SecureRandom, crypto),
-            Effect.provideService(Digest.Digest, digests),
-            Effect.catchCause((cause) => Effect.failCause(Cause.map(cause, unavailable))),
-          )
+        ? yield* randomSecret.pipe(Effect.provideService(SecureRandom.SecureRandom, crypto))
         : undefined;
 
     const authorizationUrl = yield* entry.client
@@ -437,7 +441,15 @@ export const makeConnectedProtocolWithCompatibility = Effect.fn(
           ? {}
           : { responseMode: entry.provider.responseMode }),
       })
-      .pipe(Effect.catchCause((cause) => Effect.failCause(Cause.map(cause, unavailable))));
+      .pipe(
+        Effect.catchCause((cause) =>
+          Effect.failCause(
+            Cause.map(cause, (error) =>
+              classifyOAuthError(error, { operation: "authorization_code", phase: "preSend" }),
+            ),
+          ),
+        ),
+      );
 
     const responseIssuerMode = persistedResponseIssuerMode(
       entry.provider.responseIssuerMode,
@@ -495,7 +507,7 @@ export const makeConnectedProtocolWithCompatibility = Effect.fn(
       return yield* rejected();
     const start = yield* checkedStart(request.verificationStartedAt);
 
-    const clientSecret = yield* requestSecret(provider.authentication);
+    const clientSecret = yield* requestSecret(provider.authentication, "authorization_code");
 
     const receipt = yield* entry.client
       .codeGrant({
@@ -509,7 +521,13 @@ export const makeConnectedProtocolWithCompatibility = Effect.fn(
         ...(clientSecret === undefined ? {} : { clientSecret }),
       })
       .pipe(
-        Effect.catchCause((cause) => Effect.failCause(Cause.map(cause, unavailable))),
+        Effect.catchCause((cause) =>
+          Effect.failCause(
+            Cause.map(cause, (error) =>
+              classifyOAuthError(error, { operation: "authorization_code", phase: "token" }),
+            ),
+          ),
+        ),
         Effect.ensuring(
           Effect.sync(() => {
             if (clientSecret !== undefined) Redacted.wipeUnsafe(clientSecret);
@@ -540,16 +558,34 @@ export const makeConnectedProtocolWithCompatibility = Effect.fn(
               accessToken: grant.accessToken,
               code: request.response.code,
             })
-            .pipe(Effect.catchCause((cause) => Effect.failCause(Cause.map(cause, unavailable))));
+            .pipe(
+              Effect.catchCause((cause) =>
+                Effect.failCause(
+                  Cause.map(cause, (error) =>
+                    classifyOAuthError(error, {
+                      operation: "authorization_code",
+                      phase: "idToken",
+                    }),
+                  ),
+                ),
+              ),
+            );
 
           const claims =
             provider.userInfo === "merge"
               ? yield* (function* () {
-                  const userInfo = yield* entry.client
-                    .fetchProfile(grant.accessToken)
-                    .pipe(
-                      Effect.catchCause((cause) => Effect.failCause(Cause.map(cause, unavailable))),
-                    );
+                  const userInfo = yield* entry.client.fetchProfile(grant.accessToken).pipe(
+                    Effect.catchCause((cause) =>
+                      Effect.failCause(
+                        Cause.map(cause, (error) =>
+                          classifyOAuthError(error, {
+                            operation: "authorization_code",
+                            phase: "userInfo",
+                          }),
+                        ),
+                      ),
+                    ),
+                  );
 
                   const subject = yield* Schema.decodeUnknownEffect(userInfoSubject)(userInfo).pipe(
                     Effect.mapError(unavailable),
@@ -572,7 +608,16 @@ export const makeConnectedProtocolWithCompatibility = Effect.fn(
       : provider.identitySource.from === "token"
         ? decodeIdentity(entry, Redacted.value(receipt.body), grant.accessToken)
         : entry.client.fetchProfile(grant.accessToken).pipe(
-            Effect.catchCause((cause) => Effect.failCause(Cause.map(cause, unavailable))),
+            Effect.catchCause((cause) =>
+              Effect.failCause(
+                Cause.map(cause, (error) =>
+                  classifyOAuthError(error, {
+                    operation: "authorization_code",
+                    phase: "userInfo",
+                  }),
+                ),
+              ),
+            ),
             Effect.flatMap((body) => decodeIdentity(entry, body, grant.accessToken)),
           );
 
@@ -633,7 +678,7 @@ export const makeConnectedProtocolWithCompatibility = Effect.fn(
     )
       return yield* unavailable();
 
-    const clientSecret = yield* requestSecret(provider.authentication);
+    const clientSecret = yield* requestSecret(provider.authentication, "refresh_token");
 
     const receipt = yield* entry.client
       .refreshGrant({
@@ -646,7 +691,13 @@ export const makeConnectedProtocolWithCompatibility = Effect.fn(
         ...(clientSecret === undefined ? {} : { clientSecret }),
       })
       .pipe(
-        Effect.catchCause((cause) => Effect.failCause(Cause.map(cause, unavailable))),
+        Effect.catchCause((cause) =>
+          Effect.failCause(
+            Cause.map(cause, (error) =>
+              classifyOAuthError(error, { operation: "refresh_token", phase: "token" }),
+            ),
+          ),
+        ),
         Effect.ensuring(
           Effect.sync(() => {
             if (clientSecret !== undefined) Redacted.wipeUnsafe(clientSecret);
@@ -683,7 +734,15 @@ export const makeConnectedProtocolWithCompatibility = Effect.fn(
               ...(previous.authTime === undefined ? {} : { authTime: previous.authTime }),
             },
           })
-          .pipe(Effect.catchCause((cause) => Effect.failCause(Cause.map(cause, unavailable))));
+          .pipe(
+            Effect.catchCause((cause) =>
+              Effect.failCause(
+                Cause.map(cause, (error) =>
+                  classifyOAuthError(error, { operation: "refresh_token", phase: "idToken" }),
+                ),
+              ),
+            ),
+          );
 
         yield* oidcIdentity(entry, verified, previous.nonce, {
           identity: request.context.identity,
@@ -702,7 +761,15 @@ export const makeConnectedProtocolWithCompatibility = Effect.fn(
     } else {
       const body = yield* entry.client
         .fetchProfile(grant.accessToken)
-        .pipe(Effect.catchCause((cause) => Effect.failCause(Cause.map(cause, unavailable))));
+        .pipe(
+          Effect.catchCause((cause) =>
+            Effect.failCause(
+              Cause.map(cause, (error) =>
+                classifyOAuthError(error, { operation: "refresh_token", phase: "userInfo" }),
+              ),
+            ),
+          ),
+        );
 
       const identity = yield* decodeIdentity(entry, body);
 
@@ -770,7 +837,7 @@ export const makeConnectedProtocolWithCompatibility = Effect.fn(
     const revocationAuthentication = revocation.authentication;
 
     if (request.material.refreshToken !== undefined) {
-      const clientSecret = yield* requestSecret(revocationAuthentication);
+      const clientSecret = yield* requestSecret(revocationAuthentication, "revocation");
 
       yield* entry.client
         .revoke({
@@ -779,7 +846,13 @@ export const makeConnectedProtocolWithCompatibility = Effect.fn(
           ...(clientSecret === undefined ? {} : { clientSecret }),
         })
         .pipe(
-          Effect.catchCause((cause) => Effect.failCause(Cause.map(cause, unavailable))),
+          Effect.catchCause((cause) =>
+            Effect.failCause(
+              Cause.map(cause, (error) =>
+                classifyOAuthError(error, { operation: "revocation", phase: "revocation" }),
+              ),
+            ),
+          ),
           Effect.ensuring(
             Effect.sync(() => {
               if (clientSecret !== undefined) Redacted.wipeUnsafe(clientSecret);
@@ -787,7 +860,7 @@ export const makeConnectedProtocolWithCompatibility = Effect.fn(
           ),
         );
     }
-    const accessSecret = yield* requestSecret(revocationAuthentication);
+    const accessSecret = yield* requestSecret(revocationAuthentication, "revocation");
 
     yield* entry.client
       .revoke({
@@ -796,7 +869,13 @@ export const makeConnectedProtocolWithCompatibility = Effect.fn(
         ...(accessSecret === undefined ? {} : { clientSecret: accessSecret }),
       })
       .pipe(
-        Effect.catchCause((cause) => Effect.failCause(Cause.map(cause, unavailable))),
+        Effect.catchCause((cause) =>
+          Effect.failCause(
+            Cause.map(cause, (error) =>
+              classifyOAuthError(error, { operation: "revocation", phase: "revocation" }),
+            ),
+          ),
+        ),
         Effect.ensuring(
           Effect.sync(() => {
             if (accessSecret !== undefined) Redacted.wipeUnsafe(accessSecret);

@@ -11,7 +11,8 @@ import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
 import type * as Redacted from "effect/Redacted";
 
-import { OAuthUnavailable } from "../../signInErrors";
+import type { OAuthUnavailable } from "../../signInErrors";
+import { classifyOAuthConfigurationError } from "./classifyOAuthError";
 import { nativeAudiences } from "./compatibility";
 import { installProvider, prepareConfigurations, type InstalledProvider } from "./configuration";
 import {
@@ -23,17 +24,12 @@ import type { OpenIdConnectConnectedProtocolOptions } from "./connected/models";
 import { discoveryMetadataUrl, discoveryProfile, supplementDiscovery } from "./discovery";
 import {
   hasStaticSecret,
-  OpenIdConnectConfigurationError,
+  type OpenIdConnectConfigurationError,
   type OpenIdConnectOAuthProtocolOptions,
 } from "./models";
 import type { Requirements as OAuthRequirements } from "./native";
 
 export type Requirements = OAuthRequirements | Signature.Signature | Mac.Mac;
-
-const configurationError = (error: Effect.Error<ReturnType<typeof Oidc.discover>>) =>
-  error._tag === "OAuthConfigurationError"
-    ? OpenIdConnectConfigurationError.make({ reason: "metadata" })
-    : OAuthUnavailable.make({});
 
 /** Inward discovery port. One initialization owns the successful raw responses;
  * exact discovery policy and effective transport identities stay independent. */
@@ -80,7 +76,9 @@ export class ProviderDiscovery extends Context.Service<
           timeoutMs: timeoutSeconds * 1000,
           ...(metadataUrl === undefined ? {} : { metadataUrl }),
         }).pipe(
-          Effect.catchCause((cause) => Effect.failCause(Cause.map(cause, configurationError))),
+          Effect.catchCause((cause) =>
+            Effect.failCause(Cause.map(cause, classifyOAuthConfigurationError)),
+          ),
         );
 
         cache.set(key, { client, fetch, metadata });
@@ -116,7 +114,11 @@ const makeVerifier = Effect.fn("OpenIdConnect.makeVerifier")(function* (
     pkceS256: options.pkceS256,
     ...(options.clientSecret === undefined ? {} : { clientSecret: options.clientSecret }),
     ...(options.audiences === undefined ? {} : { audiences: options.audiences }),
-  }).pipe(Effect.catchCause((cause) => Effect.failCause(Cause.map(cause, configurationError))));
+  }).pipe(
+    Effect.catchCause((cause) =>
+      Effect.failCause(Cause.map(cause, classifyOAuthConfigurationError)),
+    ),
+  );
 
   return {
     verify: (token: Redacted.Redacted<string>, input: Oidc.VerificationInput) =>

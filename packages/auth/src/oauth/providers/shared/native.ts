@@ -8,9 +8,8 @@ import type * as HttpClient from "effect/http/HttpClient";
 import type * as Redacted from "effect/Redacted";
 import type * as Scope from "effect/Scope";
 
-import { OAuthUnavailable } from "../../signInErrors";
 import { makeEmailEnrichment } from "../github/email";
-import { OpenIdConnectConfigurationError } from "./models";
+import { classifyOAuthConfigurationError } from "./classifyOAuthError";
 
 /** Provider construction captures explicit platform/crypto services within its Scope. */
 export type Requirements =
@@ -35,13 +34,7 @@ export const install = Effect.fn("OpenIdConnect.installNative")(function* (
 ) {
   const client = yield* OAuth.make(options).pipe(
     Effect.catchCause((cause) =>
-      Effect.failCause(
-        Cause.map(cause, (error) =>
-          error._tag === "OAuthConfigurationError"
-            ? OpenIdConnectConfigurationError.make({ reason: "metadata" })
-            : OAuthUnavailable.make({}),
-        ),
-      ),
+      Effect.failCause(Cause.map(cause, classifyOAuthConfigurationError)),
     ),
   );
 

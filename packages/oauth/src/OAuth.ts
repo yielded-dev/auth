@@ -6,10 +6,10 @@ import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 
-import { ConfigurationError, Rejected, Unavailable } from "./Errors";
-import * as Ownership from "./internal/ownership";
-import * as Transport from "./internal/transport";
-import * as V from "./internal/validation";
+import * as Ownership from "./internal/ownership.ts";
+import * as Transport from "./internal/transport.ts";
+import * as V from "./internal/validation.ts";
+import * as OAuthError from "./OAuthError.ts";
 
 export const JsonObject = V.JsonObject;
 export type JsonObject = typeof JsonObject.Type;
@@ -161,19 +161,15 @@ export interface Client {
   readonly metadata: Metadata;
   readonly authorizationUrl: (
     input: AuthorizationInput,
-  ) => Effect.Effect<Redacted.Redacted<string>, ConfigurationError | Unavailable>;
-  readonly codeGrant: (
-    input: CodeGrantInput,
-  ) => Effect.Effect<TokenReceipt, ConfigurationError | Unavailable>;
+  ) => Effect.Effect<Redacted.Redacted<string>, OAuthError.OAuthError>;
+  readonly codeGrant: (input: CodeGrantInput) => Effect.Effect<TokenReceipt, OAuthError.OAuthError>;
   readonly refreshGrant: (
     input: RefreshGrantInput,
-  ) => Effect.Effect<TokenReceipt, ConfigurationError | Unavailable>;
+  ) => Effect.Effect<TokenReceipt, OAuthError.OAuthError>;
   readonly fetchProfile: (
     accessToken: Redacted.Redacted<string>,
-  ) => Effect.Effect<JsonObject, ConfigurationError | Unavailable>;
-  readonly revoke: (
-    input: RevocationInput,
-  ) => Effect.Effect<void, ConfigurationError | Unavailable>;
+  ) => Effect.Effect<JsonObject, OAuthError.OAuthError>;
+  readonly revoke: (input: RevocationInput) => Effect.Effect<void, OAuthError.OAuthError>;
 }
 
 const ClientOptionsSchema = Schema.Struct({
@@ -279,6 +275,20 @@ const successFields = [
   "refresh_token_expires_in",
 ];
 
+const invalidResponse = (
+  endpoint: OAuthError.InvalidResponse["endpoint"],
+  status: number,
+  description: string,
+): OAuthError.OAuthError =>
+  new OAuthError.OAuthError({
+    reason: new OAuthError.InvalidResponse({ endpoint, status, description }),
+  });
+
+const clientAuthFailed = (description: string, cause?: unknown): OAuthError.OAuthError =>
+  new OAuthError.OAuthError({
+    reason: new OAuthError.ClientAuthFailed({ description, cause }),
+  });
+
 /** Parse once provider-specific receipt checks have succeeded. expires_in accepts
  * finite nonnegative numbers and whole decimal strings (for example "60.5").
  * Whitespace, exponent/prefix syntax and nonfinite values are rejected. Raw
@@ -286,28 +296,60 @@ const successFields = [
  * array scope is joined with spaces. No request, retry or claim verification. */
 export const tokens = Effect.fnUntraced(function* (
   input: TokenReceipt,
-): Effect.fn.Return<TokenSet, Rejected | Unavailable> {
-  const receipt = yield* V.decode(TokenReceipt, input);
+): Effect.fn.Return<TokenSet, OAuthError.OAuthError> {
+  const receipt = yield* V.decode(TokenReceipt, input, () =>
+    V.invalidArgument("Invalid OAuth token receipt"),
+  );
 
-  if (!Transport.isJson(receipt.contentType)) return yield* Unavailable.make({});
-  const raw = yield* V.reveal(receipt.body);
+  if (!Transport.isJson(receipt.contentType))
+    return yield* invalidResponse(
+      "token",
+      receipt.status,
+      "Expected application/json token receipt",
+    );
+
+  const raw = yield* V.reveal(receipt.body, () =>
+    V.invalidArgument("Token receipt body is unavailable"),
+  );
 
   if (Object.hasOwn(raw, "error")) {
-    if (successFields.some((key) => Object.hasOwn(raw, key))) return yield* Unavailable.make({});
-    const terminal = yield* V.decode(Terminal, raw);
+    if (successFields.some((key) => Object.hasOwn(raw, key)))
+      return yield* invalidResponse(
+        "token",
+        receipt.status,
+        "Token error response must not include token fields",
+      );
 
-    if (receipt.status === 400 && terminal.error === "invalid_grant")
-      return yield* Rejected.make({ reason: "invalid_grant" });
+    const terminal = yield* V.decode(Terminal, raw, () =>
+      invalidResponse("token", receipt.status, "Invalid OAuth token error payload"),
+    );
 
-    return yield* Unavailable.make({});
+    if (receipt.status >= 400 && receipt.status < 500) {
+      return yield* new OAuthError.OAuthError({
+        reason: new OAuthError.EndpointError({
+          endpoint: "token",
+          status: receipt.status,
+          ...V.normalizeOAuthErrorCode(terminal.error),
+        }),
+      });
+    }
+
+    return yield* invalidResponse(
+      "token",
+      receipt.status,
+      "Token error payload returned with non-4xx HTTP status",
+    );
   }
   if (
     receipt.status !== 200 ||
     Object.hasOwn(raw, "error_description") ||
     Object.hasOwn(raw, "error_uri")
   )
-    return yield* Unavailable.make({});
-  const value = yield* V.decode(RawToken, raw);
+    return yield* invalidResponse("token", receipt.status, "Unexpected OAuth token response");
+
+  const value = yield* V.decode(RawToken, raw, () =>
+    invalidResponse("token", receipt.status, "Invalid OAuth token response payload"),
+  );
 
   const scope: string | undefined =
     typeof value.scope === "string"
@@ -316,7 +358,8 @@ export const tokens = Effect.fnUntraced(function* (
         ? undefined
         : value.scope.join(" ");
 
-  if (scope !== undefined && scope.length > 16447) return yield* Unavailable.make({});
+  if (scope !== undefined && scope.length > 16447)
+    return yield* invalidResponse("token", receipt.status, "Token scope exceeds maximum length");
 
   return {
     tokenType: "bearer",
@@ -357,11 +400,13 @@ const authenticated = Effect.fnUntraced(function* (
   let request = HttpClientRequest.post(url).pipe(HttpClientRequest.acceptJson);
 
   if (authentication.method === "client_secret_basic") {
-    const secret = yield* V.reveal(authentication.secret);
+    const secret = yield* V.reveal(authentication.secret, () =>
+      clientAuthFailed("Client secret is unavailable"),
+    );
 
     const credential = yield* Effect.try({
       try: () => Base64.encode(`${basicComponent(clientId)}:${basicComponent(secret)}`),
-      catch: () => Unavailable.make({}),
+      catch: (cause) => clientAuthFailed("Could not encode HTTP Basic client credentials", cause),
     });
 
     request = HttpClientRequest.setHeader(request, "authorization", `Basic ${credential}`);
@@ -370,8 +415,12 @@ const authenticated = Effect.fnUntraced(function* (
     if (authentication.method === "client_secret_post") {
       const secret = authentication.secret ?? clientSecret;
 
-      if (secret === undefined) return yield* Unavailable.make({});
-      body.set("client_secret", yield* V.reveal(secret));
+      if (secret === undefined)
+        return yield* clientAuthFailed("Missing client secret for client_secret_post");
+      body.set(
+        "client_secret",
+        yield* V.reveal(secret, () => clientAuthFailed("Client secret is unavailable")),
+      );
       if (authentication.secret === undefined) Redacted.wipeUnsafe(secret);
     }
   }
@@ -380,7 +429,8 @@ const authenticated = Effect.fnUntraced(function* (
     const seen = new Set<string>();
 
     for (const key of body.keys()) {
-      if (seen.has(key)) return yield* ConfigurationError.make({ reason: "parameters" });
+      if (seen.has(key))
+        return yield* V.invalidArgument("JSON token request cannot contain repeated parameters");
       seen.add(key);
     }
   }
@@ -389,7 +439,7 @@ const authenticated = Effect.fnUntraced(function* (
     format === "json" ? JSON.stringify(Object.fromEntries(body.entries())) : body.toString();
 
   if (new TextEncoder().encode(encoded).length > 131072)
-    return yield* ConfigurationError.make({ reason: "parameters" });
+    return yield* V.invalidArgument("Encoded token request body exceeds maximum size");
 
   return HttpClientRequest.bodyText(
     request,
@@ -406,8 +456,12 @@ const authenticated = Effect.fnUntraced(function* (
  * cleanup failures remain observable in the operation's Cause. */
 export const make = Effect.fnUntraced(function* (
   input: ClientOptions,
-): Effect.fn.Return<Client, ConfigurationError | Unavailable, HttpClient.HttpClient | Scope.Scope> {
-  const options = yield* V.configuration(ClientOptionsSchema, input, "metadata");
+): Effect.fn.Return<Client, OAuthError.OAuthError, HttpClient.HttpClient | Scope.Scope> {
+  const options = yield* V.configuration(
+    ClientOptionsSchema,
+    input,
+    "Invalid OAuth client options",
+  );
 
   const authentication = yield* detachAuthentication(options.authentication);
 
@@ -433,8 +487,8 @@ export const make = Effect.fnUntraced(function* (
       revokeSupported !== undefined &&
       !revokeSupported.includes(revocationAuthentication.method))
   )
-    return yield* ConfigurationError.make({ reason: "authentication" });
-  const { available, use } = yield* Ownership.make;
+    return yield* V.invalidArgument("Client authentication method is not supported by metadata");
+  const { available, use } = yield* Ownership.make("token");
   const http = yield* Transport.capture;
   const profile = options.profile === undefined ? undefined : V.freeze(options.profile);
 
@@ -448,7 +502,7 @@ export const make = Effect.fnUntraced(function* (
     (profile.method === undefined || profile.method === "GET") &&
     profile.body !== undefined
   )
-    return yield* ConfigurationError.make({ reason: "metadata" });
+    return yield* V.invalidArgument("GET profile requests cannot include a body");
 
   yield* Effect.addFinalizer(() =>
     Effect.sync(() => {
@@ -477,12 +531,15 @@ export const make = Effect.fnUntraced(function* (
       clientSecret,
     );
 
-    return yield* Transport.json(yield* Transport.request(http, request, options));
+    return yield* Transport.json(
+      yield* Transport.request(http, request, options, "token"),
+      "token",
+    );
   });
 
   const authorizationUrl = Effect.fnUntraced(function* (input: AuthorizationInput) {
     yield* available;
-    const value = yield* V.configuration(Authorization, input);
+    const value = yield* V.configuration(Authorization, input, "Invalid authorization parameters");
     const url = new URL(metadata.authorization_endpoint);
     const body = parameters(value);
 
@@ -501,14 +558,21 @@ export const make = Effect.fnUntraced(function* (
     if (value.prompt !== undefined) body.set("prompt", value.prompt);
     if (value.loginHint !== undefined) body.set("login_hint", value.loginHint);
     for (const [key, item] of body) url.searchParams.append(key, item);
-    if (url.href.length > 16384) return yield* ConfigurationError.make({ reason: "parameters" });
+    if (url.href.length > 16384)
+      return yield* V.invalidArgument("Authorization URL exceeds maximum length");
 
     return Redacted.make(url.href);
   }, use);
 
   const codeGrant = Effect.fnUntraced(function* (input: CodeGrantInput) {
     yield* available;
-    const value = yield* V.configuration(CodeGrant, input);
+
+    const value = yield* V.configuration(
+      CodeGrant,
+      input,
+      "Invalid authorization code grant input",
+    );
+
     const body = parameters(value);
 
     body.set("grant_type", "authorization_code");
@@ -522,7 +586,7 @@ export const make = Effect.fnUntraced(function* (
 
   const refreshGrant = Effect.fnUntraced(function* (input: RefreshGrantInput) {
     yield* available;
-    const value = yield* V.configuration(RefreshGrant, input);
+    const value = yield* V.configuration(RefreshGrant, input, "Invalid refresh token grant input");
     const body = parameters(value);
 
     body.set("grant_type", "refresh_token");
@@ -535,8 +599,12 @@ export const make = Effect.fnUntraced(function* (
 
   const fetchProfile = Effect.fnUntraced(function* (input: Redacted.Redacted<string>) {
     yield* available;
-    if (profile === undefined) return yield* ConfigurationError.make({ reason: "endpoint" });
-    const token = yield* V.reveal(yield* V.decode(Bearer, input));
+    if (profile === undefined) return yield* V.invalidArgument("No profile endpoint is configured");
+
+    const token = yield* V.reveal(
+      yield* V.decode(Bearer, input, () => V.invalidArgument("Invalid bearer access token")),
+    );
+
     const url = new URL(profile.url).href;
 
     let request = (
@@ -550,20 +618,27 @@ export const make = Effect.fnUntraced(function* (
     if (profile.method === "POST" && profile.body !== undefined)
       request = HttpClientRequest.bodyText(request, profile.body, "application/json");
 
-    const response = yield* Transport.request(http, request, options);
+    const response = yield* Transport.request(http, request, options, "userinfo");
 
-    if (response.status !== 200) return yield* Unavailable.make({});
+    if (response.status !== 200)
+      return yield* invalidResponse(
+        "userinfo",
+        response.status,
+        "Unexpected profile response status",
+      );
 
-    return yield* V.reveal((yield* Transport.json(response)).body);
+    return yield* V.reveal((yield* Transport.json(response, "userinfo")).body);
   }, use);
 
   const revoke = Effect.fnUntraced(function* (input: RevocationInput) {
     yield* available;
     if (metadata.revocation_endpoint === undefined)
-      return yield* ConfigurationError.make({ reason: "endpoint" });
+      return yield* V.invalidArgument("No revocation endpoint is configured");
     if (revokeSupported !== undefined && !revokeSupported.includes(revocationAuthentication.method))
-      return yield* ConfigurationError.make({ reason: "authentication" });
-    const value = yield* V.configuration(Revocation, input);
+      return yield* V.invalidArgument(
+        "Revocation authentication method is not supported by metadata",
+      );
+    const value = yield* V.configuration(Revocation, input, "Invalid revocation input");
 
     const request = yield* authenticated(
       new URL(metadata.revocation_endpoint).href,
@@ -577,9 +652,33 @@ export const make = Effect.fnUntraced(function* (
       value.clientSecret,
     );
 
-    const response = yield* Transport.request(http, request, options);
+    const response = yield* Transport.request(http, request, options, "revocation");
 
-    if (response.status !== 200) return yield* Unavailable.make({});
+    if (response.status === 200) return;
+
+    if (response.status >= 400 && response.status < 500 && Transport.isJson(response.contentType)) {
+      const parsed = yield* Transport.json(response, "revocation").pipe(
+        Effect.flatMap((document) => V.reveal(document.body)),
+        Effect.flatMap((raw) => V.decode(Terminal, raw)),
+        Effect.option,
+      );
+
+      if (parsed._tag === "Some") {
+        return yield* new OAuthError.OAuthError({
+          reason: new OAuthError.EndpointError({
+            endpoint: "revocation",
+            status: response.status,
+            ...V.normalizeOAuthErrorCode(parsed.value.error),
+          }),
+        });
+      }
+    }
+
+    return yield* invalidResponse(
+      "revocation",
+      response.status,
+      "Unexpected revocation response status",
+    );
   }, use);
 
   return { metadata, authorizationUrl, codeGrant, refreshGrant, fetchProfile, revoke };
@@ -591,11 +690,19 @@ const Bearer = Schema.Redacted(V.text(16384).check(Schema.isPattern(/^[A-Za-z0-9
 
 const detachAuthentication = Effect.fnUntraced(function* (
   authentication: Authentication,
-): Effect.fn.Return<Authentication, Unavailable> {
+): Effect.fn.Return<Authentication, OAuthError.OAuthError> {
   if (authentication.method === "none") return { ...authentication };
   if (authentication.method === "client_secret_post" && authentication.secret === undefined)
     return { method: "client_secret_post" };
-  if (authentication.secret === undefined) return yield* Unavailable.make({});
+  if (authentication.secret === undefined)
+    return yield* clientAuthFailed("Missing client secret for configured authentication method");
 
-  return { ...authentication, secret: Redacted.make(yield* V.reveal(authentication.secret)) };
+  return {
+    ...authentication,
+    secret: Redacted.make(
+      yield* V.reveal(authentication.secret, () =>
+        clientAuthFailed("Client secret is unavailable"),
+      ),
+    ),
+  };
 });

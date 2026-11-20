@@ -6,7 +6,7 @@ callbacks, provider configuration, permissions, identity, and grant storage.
 
 Use `OAuth.make` for an installed client and `Oidc.makeVerifier` for its OIDC
 verifier. Both require `HttpClient` and an owning `Scope`; keep that scope open
-for their lifetime. `Pkce` requires Effect `SecureRandom` and `Digest`; verification also requires
+for their lifetime. `Pkce.generate` and `Pkce.challenge` require Effect `SecureRandom` and `Digest`; verification also requires
 `Signature` from `effect/crypto`. `Oidc.discover` retrieves metadata from the
 exact trusted issuer, or from an explicit `metadataUrl`. A discovered issuer
 may use a `{tenantid}` path segment when that template matches the configured
@@ -41,7 +41,7 @@ cookies. Bound the complete workflow as well as individual requests; keep token
 receipts out of logs and telemetry.
 
 Asymmetric OIDC verification still requires an HTTPS JWKS URL, even for a loopback
-issuer; an HTTP JWKS URL fails with `ConfigurationError`. Each verifier owns a scoped JWKS cache. It never
+issuer; an HTTP JWKS URL fails with `OAuthError` (`InvalidArgument`). All protocol failures surface as `OAuthError` with a closed `reason` union (`InvalidArgument`, `ClientAuthFailed`, `DiscoveryFailed`, `TransportFailed`, `InvalidResponse`, `CallbackRejected`, `AuthorizationDenied`, `EndpointError`, or `TokenVerificationFailed`). Each verifier owns a scoped JWKS cache. It never
 takes a key endpoint from a token or serves expired keys after refresh failure.
 Configure the issuer's advertised
 code flow and signing algorithms. HS256 is accepted only with a client secret of

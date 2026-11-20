@@ -3,7 +3,7 @@ import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
 
-import { OAuthProtocolRejected, OAuthUnavailable } from "../../signInErrors";
+import { classifyOAuthError } from "./classifyOAuthError";
 import { type TokenCompatibility } from "./compatibility";
 
 /** Provider-specific raw fields are inspected before the generic token projection. */
@@ -19,9 +19,7 @@ export const tokens = Effect.fn("OpenIdConnect.tokens")(function* (
     Effect.catchCause((cause) =>
       Effect.failCause(
         Cause.map(cause, (error) =>
-          error._tag === "OAuthRejected"
-            ? OAuthProtocolRejected.make({})
-            : OAuthUnavailable.make({}),
+          classifyOAuthError(error, { operation: input.operation, phase: "token" }),
         ),
       ),
     ),

@@ -105,7 +105,13 @@ it.effect("requires signing-key issuer authority after pinning discovery metadat
 
       expect(result).toMatchObject(
         keyIssuer === undefined
-          ? { _tag: "Failure", failure: { _tag: "OAuthRejected", reason: "claims" } }
+          ? {
+              _tag: "Failure",
+              failure: {
+                _tag: "OAuthError",
+                reason: { _tag: "TokenVerificationFailed", reason: "issuer" },
+              },
+            }
           : { _tag: "Success", success: { subject: "provider-subject" } },
       );
     }
@@ -187,47 +193,61 @@ it.effect(
       );
 
       // Existing Auth requires one audience even when an azp names this client.
-      for (const override of [
-        { iss: metadata.issuer.slice(0, -1) },
-        { aud: "other" },
-        { aud: ["client", "other"] },
-        { azp: "other" },
-        { exp: seconds },
-        { iat: seconds + 1 },
-        { nbf: seconds + 1 },
-        { nonce: "other" },
-        { nonce: undefined },
-        { auth_time: seconds + 1 },
-        { auth_time: seconds - 61 },
-        { auth_time: undefined },
-        { at_hash: hash("other") },
-        { c_hash: hash("other") },
-        { sub: "" },
-      ]) {
+      const invalidCases: ReadonlyArray<readonly [Partial<jose.JWTPayload>, string]> = [
+        [{ iss: metadata.issuer.slice(0, -1) }, "issuer"],
+        [{ aud: "other" }, "audience"],
+        [{ aud: ["client", "other"] }, "audience"],
+        [{ azp: "other" }, "audience"],
+        [{ exp: seconds }, "expired"],
+        [{ iat: seconds + 1 }, "notYetValid"],
+        [{ nbf: seconds + 1 }, "notYetValid"],
+        [{ nonce: "other" }, "nonce"],
+        [{ nonce: undefined }, "nonce"],
+        [{ auth_time: seconds + 1 }, "notYetValid"],
+        [{ auth_time: seconds - 61 }, "maxAge"],
+        [{ auth_time: undefined }, "maxAge"],
+        [{ at_hash: hash("other") }, "hash"],
+        [{ c_hash: hash("other") }, "hash"],
+        [{ sub: "" }, "claim"],
+      ];
+
+      for (const [override, expectedReason] of invalidCases) {
         expect(
-          (yield* verifier
+          yield* verifier
             .verify(yield* sign(keys.privateKey, { ...claims, ...override }), verification)
-            .pipe(Effect.flip))._tag,
-        ).toBe("OAuthRejected");
+            .pipe(Effect.flip),
+        ).toMatchObject({
+          _tag: "OAuthError",
+          reason: { _tag: "TokenVerificationFailed", reason: expectedReason },
+        });
       }
       expect(
-        (yield* verifier
+        yield* verifier
           .verify(yield* sign(keys.privateKey, claims), {
             ...verification,
             verificationStartedAt: DateTime.makeUnsafe(seconds * 1000 + 1),
           })
-          .pipe(Effect.flip))._tag,
-      ).toBe("OAuthRejected");
+          .pipe(Effect.flip),
+      ).toMatchObject({
+        _tag: "OAuthError",
+        reason: { _tag: "TokenVerificationFailed", reason: "claim" },
+      });
       expect(
-        (yield* verifier
+        yield* verifier
           .verify(yield* sign(keys.privateKey, claims), Struct.omit(verification, ["accessToken"]))
-          .pipe(Effect.flip))._tag,
-      ).toBe("OAuthRejected");
+          .pipe(Effect.flip),
+      ).toMatchObject({
+        _tag: "OAuthError",
+        reason: { _tag: "TokenVerificationFailed", reason: "hash" },
+      });
       expect(
-        (yield* verifier
+        yield* verifier
           .verify(yield* sign(keys.privateKey, claims), Struct.omit(verification, ["code"]))
-          .pipe(Effect.flip))._tag,
-      ).toBe("OAuthRejected");
+          .pipe(Effect.flip),
+      ).toMatchObject({
+        _tag: "OAuthError",
+        reason: { _tag: "TokenVerificationFailed", reason: "hash" },
+      });
     }).pipe(Effect.scoped, Effect.provide(cryptoLayer)),
 );
 
@@ -257,14 +277,18 @@ it.effect(
         exp: 0,
       });
 
-      expect((yield* verifier.verify(invalid, verification).pipe(Effect.flip))._tag).toBe(
-        "OAuthUnavailable",
-      );
+      expect(yield* verifier.verify(invalid, verification).pipe(Effect.flip)).toMatchObject({
+        _tag: "OAuthError",
+        reason: { _tag: "TokenVerificationFailed", reason: "signature" },
+      });
       expect(
-        (yield* verifier
+        yield* verifier
           .verify(Redacted.make("malformed.jwt.signature"), verification)
-          .pipe(Effect.flip))._tag,
-      ).toBe("OAuthUnavailable");
+          .pipe(Effect.flip),
+      ).toMatchObject({
+        _tag: "OAuthError",
+        reason: { _tag: "TokenVerificationFailed", reason: "malformed" },
+      });
 
       const unavailable = yield* Oidc.makeVerifier({
         metadata,
@@ -278,10 +302,13 @@ it.effect(
       );
 
       expect(
-        (yield* unavailable
+        yield* unavailable
           .verify(yield* sign(keys.privateKey, claims), verification)
-          .pipe(Effect.flip))._tag,
-      ).toBe("OAuthUnavailable");
+          .pipe(Effect.flip),
+      ).toMatchObject({
+        _tag: "OAuthError",
+        reason: { _tag: "TransportFailed", endpoint: "jwks" },
+      });
     }).pipe(Effect.scoped, Effect.provide(cryptoLayer)),
 );
 
@@ -319,16 +346,19 @@ it.effect(
       expect((yield* verifier.verify(yield* sign(keys.privateKey, refreshed), input)).subject).toBe(
         "provider-subject",
       );
-      for (const override of [
-        { sub: "different" },
-        { nonce: "different" },
-        { auth_time: seconds - 7199 },
-      ])
+      for (const [override, expectedReason] of [
+        [{ sub: "different" }, "continuity"],
+        [{ nonce: "different" }, "nonce"],
+        [{ auth_time: seconds - 7199 }, "continuity"],
+      ] as const)
         expect(
-          (yield* verifier
+          yield* verifier
             .verify(yield* sign(keys.privateKey, { ...refreshed, ...override }), input)
-            .pipe(Effect.flip))._tag,
-        ).toBe("OAuthRejected");
+            .pipe(Effect.flip),
+        ).toMatchObject({
+          _tag: "OAuthError",
+          reason: { _tag: "TokenVerificationFailed", reason: expectedReason },
+        });
     }).pipe(Effect.scoped, Effect.provide(cryptoLayer)),
 );
 
@@ -343,12 +373,12 @@ it.effect("rejects unsupported OIDC metadata and closes the issuer's scoped JWKS
       { ...metadata, response_types_supported: ["id_token"] },
     ]) {
       expect(
-        (yield* Oidc.makeVerifier({
+        yield* Oidc.makeVerifier({
           metadata: unsupported,
           clientId: "client",
           timeoutMs: 1000,
-        }).pipe(Effect.provideService(HttpClient.HttpClient, http), Effect.flip))._tag,
-      ).toBe("OAuthConfigurationError");
+        }).pipe(Effect.provideService(HttpClient.HttpClient, http), Effect.flip),
+      ).toMatchObject({ _tag: "OAuthError", reason: { _tag: "InvalidArgument" } });
     }
     const scope = yield* Scope.make();
 
@@ -365,9 +395,8 @@ it.effect("rejects unsupported OIDC metadata and closes the issuer's scoped JWKS
     const keys = yield* generate;
 
     expect(
-      (yield* verifier.verify(yield* sign(keys.privateKey, claims), verification).pipe(Effect.flip))
-        ._tag,
-    ).toBe("OAuthUnavailable");
+      yield* verifier.verify(yield* sign(keys.privateKey, claims), verification).pipe(Effect.flip),
+    ).toMatchObject({ _tag: "OAuthError", reason: { _tag: "TransportFailed", endpoint: "jwks" } });
   }).pipe(Effect.scoped, Effect.provide(cryptoLayer)),
 );
 
@@ -485,7 +514,10 @@ for (const termination of ["owner closure", "caller interruption"] as const) {
       expect(cleanupFinished).toBe(true);
 
       if (termination === "owner closure") {
-        expect((yield* Fiber.join(active).pipe(Effect.flip))._tag).toBe("OAuthUnavailable");
+        expect(yield* Fiber.join(active).pipe(Effect.flip)).toMatchObject({
+          _tag: "OAuthError",
+          reason: { _tag: "TransportFailed", endpoint: "jwks" },
+        });
       } else {
         const exit = yield* Fiber.await(active);
 

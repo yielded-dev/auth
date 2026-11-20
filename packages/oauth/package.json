@@ -21,8 +21,8 @@
   "sideEffects": [],
   "exports": {
     ".": "./src/index.ts",
-    "./Errors": "./src/Errors.ts",
     "./OAuth": "./src/OAuth.ts",
+    "./OAuthError": "./src/OAuthError.ts",
     "./Oidc": "./src/Oidc.ts",
     "./Pkce": "./src/Pkce.ts"
   },
@@ -47,6 +47,6 @@
     "vitest": "catalog:"
   },
   "peerDependencies": {
-    "effect": "^4.1.2"
+    "effect": "^4.1.4"
   }
 }

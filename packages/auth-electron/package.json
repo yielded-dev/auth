@@ -38,7 +38,7 @@
     "vite-plus": "catalog:"
   },
   "peerDependencies": {
-    "effect": "^4.1.2",
+    "effect": "^4.1.4",
     "electron": "^44.5.1 || ^45.2.3"
   }
 }

@@ -8,9 +8,9 @@ import * as Jwks from "effect/jose/Jwks";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 
-import { Unavailable } from "../Errors";
-import * as Transport from "./transport";
-import * as V from "./validation";
+import * as OAuthError from "../OAuthError.ts";
+import * as Transport from "./transport.ts";
+import * as V from "./validation.ts";
 
 const Issuers = Schema.Struct({
   keys: Schema.Array(
@@ -21,6 +21,15 @@ const Issuers = Schema.Struct({
 });
 
 const keyId = Schema.encodeSync(Schema.fromJsonString(Jwk.PublicJwk));
+
+const jwksUnavailable = (description: string, status?: number) =>
+  new OAuthError.OAuthError({
+    reason: new OAuthError.TransportFailed({
+      endpoint: "jwks",
+      description,
+      ...(status === undefined ? {} : { status }),
+    }),
+  });
 
 /** OIDC owns Microsoft's per-key issuer extension, which Effect's JOSE schema
  * omits. Retain it beside the bounded key document; Effect owns key selection,
@@ -38,13 +47,23 @@ export const makeRemote = Effect.fnUntraced(function* (
 
   const client = HttpClient.make((request) =>
     Effect.gen(function* () {
-      const response = yield* Transport.request(http, request, options);
+      const response = yield* Transport.request(http, request, options, "jwks");
 
-      if (response.status !== 200) return yield* Unavailable.make({});
-      const document = yield* Transport.json(response);
-      const body = yield* V.reveal(document.body);
-      const extensions = yield* V.decode(Issuers, body);
-      const keySet = yield* V.decode(Jwks.KeySet, body);
+      if (response.status !== 200)
+        return yield* jwksUnavailable("Unexpected JWKS response status", response.status);
+      const document = yield* Transport.json(response, "jwks");
+
+      const body = yield* V.reveal(document.body, () =>
+        jwksUnavailable("JWKS response body is unavailable", response.status),
+      );
+
+      const extensions = yield* V.decode(Issuers, body, () =>
+        jwksUnavailable("Invalid JWKS key issuer extensions", response.status),
+      );
+
+      const keySet = yield* V.decode(Jwks.KeySet, body, () =>
+        jwksUnavailable("Invalid JWKS document", response.status),
+      );
 
       issuers.clear();
       for (const [index, key] of keySet.keys.entries()) {

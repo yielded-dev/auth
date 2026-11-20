@@ -9,13 +9,27 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as Tracer from "effect/Tracer";
 
-import { Unavailable } from "../Errors";
-import * as V from "./validation";
+import * as OAuthError from "../OAuthError.ts";
+import * as V from "./validation.ts";
 
 export interface Options {
   readonly timeoutMs: number;
   readonly maxResponseBytes: number;
 }
+
+const transportFailed = (
+  endpoint: OAuthError.TransportFailed["endpoint"],
+  description: string,
+  options?: { readonly status?: number | undefined; readonly cause?: unknown },
+): OAuthError.OAuthError =>
+  new OAuthError.OAuthError({
+    reason: new OAuthError.TransportFailed({
+      endpoint,
+      description,
+      ...(options?.status === undefined ? {} : { status: options.status }),
+      ...(options?.cause === undefined ? {} : { cause: options.cause }),
+    }),
+  });
 
 /** Caller supplies a nonretrying, nonredirecting HttpClient. Each body and socket
  * belongs to this request's Scope; cancellation reaches the entire body read. */
@@ -24,25 +38,43 @@ export const request = Effect.fnUntraced(
     client: HttpClient.HttpClient,
     request: HttpClientRequest.HttpClientRequest,
     options: Options,
+    endpoint: OAuthError.TransportFailed["endpoint"],
   ) {
     const response = yield* HttpClient.withScope(client).execute(request);
 
     if (response.url !== request.url || (response.status >= 300 && response.status < 400))
-      return yield* Unavailable.make({});
+      return yield* transportFailed(
+        endpoint,
+        "Redirects and unexpected response URLs are not allowed",
+        {
+          status: response.status,
+        },
+      );
+    if (response.status >= 500)
+      return yield* transportFailed(endpoint, "Upstream OAuth endpoint returned a server error", {
+        status: response.status,
+      });
     const announced = response.headers["content-length"];
 
     if (
       announced !== undefined &&
       (!/^\d+$/u.test(announced) || Number(announced) > options.maxResponseBytes)
     )
-      return yield* Unavailable.make({});
+      return yield* transportFailed(endpoint, "Response body exceeds maximum allowed size", {
+        status: response.status,
+      });
     const buffer = new Uint8Array(options.maxResponseBytes);
 
     const length = yield* Stream.runFoldEffect(
       response.stream,
       () => 0,
       (length, chunk) => {
-        if (chunk.byteLength > buffer.length - length) return Effect.fail(Unavailable.make({}));
+        if (chunk.byteLength > buffer.length - length)
+          return Effect.fail(
+            transportFailed(endpoint, "Response body exceeds maximum allowed size", {
+              status: response.status,
+            }),
+          );
         buffer.set(chunk, length);
 
         return Effect.succeed(length + chunk.byteLength);
@@ -67,9 +99,9 @@ export const request = Effect.fnUntraced(
       bytes: Redacted.make(buffer.subarray(0, length)),
     };
   },
-  (effect, _client, _request, options) =>
+  (effect, _client, _request, options, endpoint) =>
     Effect.suspend(() => {
-      let failure: Cause.Cause<Unavailable> | undefined;
+      let failure: Cause.Cause<OAuthError.OAuthError> | undefined;
 
       return effect.pipe(
         Effect.scoped,
@@ -81,7 +113,13 @@ export const request = Effect.fnUntraced(
         }),
         Effect.provideService(Tracer.DisablePropagation, true),
         Effect.catchCause((cause) =>
-          Effect.failCause(Cause.map(cause, () => Unavailable.make({}))),
+          Effect.failCause(
+            Cause.map(cause, (error) =>
+              OAuthError.isOAuthError(error)
+                ? error
+                : transportFailed(endpoint, "HTTP transport request failed", { cause: error }),
+            ),
+          ),
         ),
         // timeoutOrElse joins its loser but discards that Exit. Retain cleanup
         // failures before the race, including when the caller cancels the race.
@@ -92,12 +130,15 @@ export const request = Effect.fnUntraced(
         ),
         Effect.timeoutOrElse({
           duration: options.timeoutMs,
-          orElse: () =>
-            Effect.failCause(
+          orElse: () => {
+            const timeout = transportFailed(endpoint, "HTTP request timed out");
+
+            return Effect.failCause(
               failure === undefined
-                ? Cause.fail(Unavailable.make({}))
-                : Cause.combine(Cause.fail(Unavailable.make({})), failure),
-            ),
+                ? Cause.fail(timeout)
+                : Cause.combine(Cause.fail(timeout), failure),
+            );
+          },
         }),
         Effect.onInterrupt(() => (failure === undefined ? Effect.void : Effect.failCause(failure))),
       );
@@ -107,18 +148,38 @@ export const request = Effect.fnUntraced(
 export const isJson = (contentType: string | null) =>
   contentType?.split(";", 1)[0]?.trim().toLowerCase() === "application/json";
 
+const jsonError = (
+  endpoint: OAuthError.TransportFailed["endpoint"],
+  status: number,
+  description: string,
+): OAuthError.OAuthError =>
+  endpoint === "discovery"
+    ? new OAuthError.OAuthError({ reason: new OAuthError.DiscoveryFailed({ description }) })
+    : endpoint === "jwks"
+      ? transportFailed("jwks", description, { status })
+      : new OAuthError.OAuthError({
+          reason: new OAuthError.InvalidResponse({ endpoint, status, description }),
+        });
+
 export const json = Effect.fnUntraced(function* (
   response: Effect.Success<ReturnType<typeof request>>,
+  endpoint: OAuthError.TransportFailed["endpoint"],
 ) {
-  if (!isJson(response.contentType)) return yield* Unavailable.make({});
-  const bytes = yield* V.reveal(response.bytes);
+  if (!isJson(response.contentType))
+    return yield* jsonError(endpoint, response.status, "Expected application/json response");
+
+  const bytes = yield* V.reveal(response.bytes, () =>
+    jsonError(endpoint, response.status, "Response body is unavailable"),
+  );
 
   const text = yield* Effect.try({
     try: () => new TextDecoder("utf-8", { fatal: true }).decode(bytes),
-    catch: () => Unavailable.make({}),
+    catch: () => jsonError(endpoint, response.status, "Response body is not valid UTF-8"),
   });
 
-  const body = yield* V.decode(Json, text);
+  const body = yield* V.decode(Json, text, () =>
+    jsonError(endpoint, response.status, "Response body is not a bounded JSON object"),
+  );
 
   return {
     status: response.status,

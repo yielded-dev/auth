@@ -35,6 +35,7 @@
           "@effect/sql-sqlite-node",
           "@effect/sql-sqlite-wasm",
           "@effect/vitest",
+          "@yielded/oauth",
           "effect/crypto",
           "effect/FileSystem",
           "effect/Path",

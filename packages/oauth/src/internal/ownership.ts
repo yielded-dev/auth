@@ -3,14 +3,22 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 
-import { Unavailable } from "../Errors";
+import * as OAuthError from "../OAuthError.ts";
 
 /** Each operation belongs to the factory's Scope and is joined by its caller. */
-export const make = Effect.gen(function* () {
+export const make = Effect.fnUntraced(function* (endpoint: OAuthError.TransportFailed["endpoint"]) {
   const scope = yield* Effect.scope;
 
+  const closed = () =>
+    new OAuthError.OAuthError({
+      reason: new OAuthError.TransportFailed({
+        endpoint,
+        description: "The owning scope is closed",
+      }),
+    });
+
   const available = Effect.suspend(() =>
-    scope.state._tag === "Closed" ? Effect.fail(Unavailable.make({})) : Effect.void,
+    scope.state._tag === "Closed" ? Effect.fail(closed()) : Effect.void,
   );
 
   // Closure cannot publish success or a definite rejection. Keep failures from
@@ -29,9 +37,9 @@ export const make = Effect.gen(function* () {
               delivered = true;
               if (scope.state._tag === "Closed") {
                 if (Exit.isFailure(exit) && !Cause.hasInterruptsOnly(exit.cause))
-                  return yield* Effect.failCause(Cause.map(exit.cause, () => Unavailable.make({})));
+                  return yield* Effect.failCause(Cause.map(exit.cause, closed));
 
-                return yield* Unavailable.make({});
+                return yield* closed();
               }
 
               return yield* exit;

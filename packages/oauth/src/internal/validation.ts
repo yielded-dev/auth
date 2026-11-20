@@ -3,7 +3,40 @@ import * as Predicate from "effect/Predicate";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 
-import { ConfigurationError, Unavailable } from "../Errors";
+import * as OAuthError from "../OAuthError.ts";
+
+export const invalidArgument = (description: string, cause?: unknown): OAuthError.OAuthError =>
+  new OAuthError.OAuthError({
+    reason: new OAuthError.InvalidArgument({ description, cause }),
+  });
+
+const knownOAuthErrorCodes: ReadonlySet<string> = new Set<OAuthError.OAuthErrorCode>([
+  "invalid_request",
+  "invalid_client",
+  "invalid_grant",
+  "unauthorized_client",
+  "unsupported_grant_type",
+  "unsupported_response_type",
+  "unsupported_token_type",
+  "invalid_scope",
+  "invalid_target",
+  "invalid_token",
+  "insufficient_scope",
+  "access_denied",
+  "interaction_required",
+  "login_required",
+  "account_selection_required",
+  "consent_required",
+  "temporarily_unavailable",
+  "server_error",
+]);
+
+export const normalizeOAuthErrorCode = (
+  value: string,
+): { readonly code: OAuthError.OAuthErrorCode; readonly rawCode?: string | undefined } =>
+  knownOAuthErrorCodes.has(value)
+    ? { code: value as OAuthError.OAuthErrorCode }
+    : { code: "other", rawCode: value };
 
 export const text = (maximum: number) => Schema.NonEmptyString.check(Schema.isMaxLength(maximum));
 
@@ -207,21 +240,28 @@ export const ProtocolEndpoint = Endpoint.check(
 export const configuration = <S extends Schema.Constraint>(
   schema: S,
   input: unknown,
-  reason: ConfigurationError["reason"] = "parameters",
+  description = "Invalid OAuth configuration or parameters",
 ) =>
   Effect.suspend(() => Schema.decodeUnknownEffect(schema)(input, { reportInput: false })).pipe(
-    Effect.mapError(() => ConfigurationError.make({ reason })),
-    Effect.catchDefect(() => ConfigurationError.make({ reason })),
+    Effect.mapError(() => invalidArgument(description)),
+    Effect.catchDefect(() => Effect.fail(invalidArgument(description))),
   );
 
-export const decode = <S extends Schema.Constraint>(schema: S, input: unknown) =>
+export const decode = <S extends Schema.Constraint>(
+  schema: S,
+  input: unknown,
+  onError: () => OAuthError.OAuthError = () => invalidArgument("Invalid OAuth input"),
+) =>
   Effect.suspend(() => Schema.decodeUnknownEffect(schema)(input, { reportInput: false })).pipe(
-    Effect.mapError(() => Unavailable.make({})),
-    Effect.catchDefect(() => Unavailable.make({})),
+    Effect.mapError(onError),
+    Effect.catchDefect(() => Effect.fail(onError())),
   );
 
-export const reveal = <A>(value: Redacted.Redacted<A>) =>
-  Effect.try({ try: () => Redacted.value(value), catch: () => Unavailable.make({}) });
+export const reveal = <A>(
+  value: Redacted.Redacted<A>,
+  onError: () => OAuthError.OAuthError = () =>
+    invalidArgument("Redacted OAuth value is unavailable"),
+) => Effect.try({ try: () => Redacted.value(value), catch: onError });
 
 /** Freeze owned configuration snapshots or freshly parsed wire JSON, not caller-owned graphs. */
 export const freeze = <A>(value: A): A => {
