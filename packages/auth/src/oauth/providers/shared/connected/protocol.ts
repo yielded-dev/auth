@@ -34,6 +34,7 @@ import { makeOAuthSnapshot } from "../../../signInSnapshot";
 import { isTenantIssuerTemplate } from "../../microsoft/discovery";
 import { classifyOAuthError } from "../classifyOAuthError";
 import { type ConnectedCompatibility } from "../compatibility";
+import { discoveryProfile } from "../discovery";
 import {
   persistedResponseIssuerMode,
   type OpenIdConnectAuthentication,
@@ -313,6 +314,7 @@ export const makeConnectedProtocolWithCompatibility = Effect.fn(
       provider.issuer,
       Redacted.value(verified.claims),
       decodedSubject,
+      provider[discoveryProfile] === "microsoft",
     ).pipe(Effect.catchCause((cause) => Effect.failCause(Cause.map(cause, unavailable))));
 
     if (

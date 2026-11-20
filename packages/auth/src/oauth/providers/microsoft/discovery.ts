@@ -46,6 +46,21 @@ const issuerOriginAndPath = (value: string) => {
   return origin === undefined ? undefined : { origin, path: match[2] ?? "" };
 };
 
+/** True when `issuer` belongs to a known Microsoft Entra / CIAM / v1 host or
+ * the Microsoft provider preset. Case-insensitive tenant GUID matching and
+ * lowercase subject canonicalization apply only to these authorities. */
+export const isKnownEntraAuthority = (issuer: string, isMicrosoftProfile = false): boolean => {
+  if (isMicrosoftProfile) return true;
+
+  const parts = issuerOriginAndPath(issuer);
+
+  if (parts === undefined) return false;
+
+  return (
+    isEntraV2TenantHost(parts.origin) || parts.origin.toLowerCase() === "https://sts.windows.net"
+  );
+};
+
 /** Extract the concrete tenant GUID and signing-key issuer policy from an Entra
  * / CIAM single-tenant authority. v2 authorities (`/<tenantId>/v2.0` on known
  * Entra hosts, `*.ciamlogin.com`, or Microsoft-profile registrations) require

@@ -2,6 +2,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import { OAuthProtocolRejected } from "../../signInErrors";
+import { isKnownEntraAuthority } from "../microsoft/discovery";
 
 const tenantId = Schema.String.check(
   Schema.isPattern(
@@ -22,6 +23,7 @@ export const subjectInTenant = Effect.fnUntraced(function* (
   configuredIssuer: string,
   claims: unknown,
   subject: string,
+  isMicrosoftProfile = false,
 ) {
   const issuer = yield* Schema.decodeUnknownEffect(issuerClaim)(claims).pipe(
     Effect.mapError(() => OAuthProtocolRejected.make({})),
@@ -33,7 +35,11 @@ export const subjectInTenant = Effect.fnUntraced(function* (
     Effect.mapError(() => OAuthProtocolRejected.make({})),
   );
 
-  const scoped = `${tenant.tid.toLowerCase()}:${subject}`;
+  const tenantPrefix = isKnownEntraAuthority(configuredIssuer, isMicrosoftProfile)
+    ? tenant.tid.toLowerCase()
+    : tenant.tid;
+
+  const scoped = `${tenantPrefix}:${subject}`;
 
   if (scoped.length > 1024) return yield* OAuthProtocolRejected.make({});
 

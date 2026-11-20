@@ -18,7 +18,11 @@ import * as Tracer from "effect/Tracer";
 
 import { makeScopedOperation } from "../../../internal/scoped-operation";
 import { OAuthUnavailable } from "../../signInErrors";
-import { concreteEntraAuthority, isTenantIssuerTemplate } from "../microsoft/discovery";
+import {
+  concreteEntraAuthority,
+  isKnownEntraAuthority,
+  isTenantIssuerTemplate,
+} from "../microsoft/discovery";
 import { makeEntraIssuerPolicy, makeEntraJwks } from "../microsoft/jwks";
 import { classifyOAuthConfigurationError } from "./classifyOAuthError";
 import {
@@ -253,6 +257,7 @@ const makeVerifier = Effect.fn("OpenIdConnect.makeVerifier")(function* (
     readonly signingKeyIssuerRequired: boolean;
     readonly expectedTenantId: string | undefined;
     readonly excludedTenantId: string | undefined;
+    readonly caseInsensitiveTenantId: boolean;
     readonly clientSecret?: Redacted.Redacted<string>;
   },
 ) {
@@ -303,6 +308,7 @@ const makeVerifier = Effect.fn("OpenIdConnect.makeVerifier")(function* (
     signingKeyIssuerRequired: options.signingKeyIssuerRequired,
     expectedTenantId: options.expectedTenantId,
     excludedTenantId: options.excludedTenantId,
+    caseInsensitiveTenantId: options.caseInsensitiveTenantId,
     issuerOf: entra.issuerOf,
   });
 
@@ -327,6 +333,7 @@ const makeNativeKeySet = Effect.fn("OpenIdConnect.makeNativeKeySet")(function* (
     readonly signingKeyIssuerRequired: boolean;
     readonly expectedTenantId: string | undefined;
     readonly excludedTenantId: string | undefined;
+    readonly caseInsensitiveTenantId: boolean;
   },
 ): Effect.fn.Return<
   NativeKeySet,
@@ -365,6 +372,7 @@ const makeNativeKeySet = Effect.fn("OpenIdConnect.makeNativeKeySet")(function* (
       signingKeyIssuerRequired: options.signingKeyIssuerRequired,
       expectedTenantId: options.expectedTenantId,
       excludedTenantId: options.excludedTenantId,
+      caseInsensitiveTenantId: options.caseInsensitiveTenantId,
       issuerOf: entra.issuerOf,
     }),
     signature,
@@ -386,6 +394,7 @@ export const installConfigurations = Effect.fn("OpenIdConnect.installConfigurati
     let signingKeyIssuerRequired = false;
     let expectedTenantId: string | undefined;
     let excludedTenantId: string | undefined;
+    let caseInsensitiveTenantId = false;
 
     if (provider.protocol === "oidc") {
       const discovered = yield* discovery.discover(
@@ -395,16 +404,18 @@ export const installConfigurations = Effect.fn("OpenIdConnect.installConfigurati
         provider[discoveryProfile],
       );
 
-      const concrete = concreteEntraAuthority(
-        discovered.metadata.issuer,
-        provider[discoveryProfile] === "microsoft",
-      );
+      const isMicrosoftProfile = provider[discoveryProfile] === "microsoft";
+      const concrete = concreteEntraAuthority(discovered.metadata.issuer, isMicrosoftProfile);
 
       raw = discovered.metadata;
       signingKeyIssuerRequired =
         discovered.signingKeyIssuerRequired || (concrete?.signingKeyIssuerRequired ?? false);
       expectedTenantId = discovered.expectedTenantId ?? concrete?.tenantId;
       excludedTenantId = discovered.excludedTenantId;
+      caseInsensitiveTenantId = isKnownEntraAuthority(
+        discovered.metadata.issuer,
+        isMicrosoftProfile,
+      );
     } else {
       raw = {
         issuer: provider.issuer,
@@ -429,6 +440,7 @@ export const installConfigurations = Effect.fn("OpenIdConnect.installConfigurati
           signingKeyIssuerRequired,
           expectedTenantId,
           excludedTenantId,
+          caseInsensitiveTenantId,
         }),
       });
       continue;
@@ -454,6 +466,7 @@ export const installConfigurations = Effect.fn("OpenIdConnect.installConfigurati
           signingKeyIssuerRequired,
           expectedTenantId,
           excludedTenantId,
+          caseInsensitiveTenantId,
           ...(hasStaticSecret(provider.authentication)
             ? { clientSecret: provider.authentication.secret }
             : {}),
@@ -478,6 +491,7 @@ export const installConnectedConfigurations = Effect.fn(
     let signingKeyIssuerRequired = false;
     let expectedTenantId: string | undefined;
     let excludedTenantId: string | undefined;
+    let caseInsensitiveTenantId = false;
 
     if (provider.protocol === "oidc") {
       const discovered = yield* discovery.discover(
@@ -487,13 +501,18 @@ export const installConnectedConfigurations = Effect.fn(
         undefined,
       );
 
-      const concrete = concreteEntraAuthority(discovered.metadata.issuer);
+      const isMicrosoftProfile = provider[discoveryProfile] === "microsoft";
+      const concrete = concreteEntraAuthority(discovered.metadata.issuer, isMicrosoftProfile);
 
       raw = discovered.metadata;
       signingKeyIssuerRequired =
         discovered.signingKeyIssuerRequired || (concrete?.signingKeyIssuerRequired ?? false);
       expectedTenantId = discovered.expectedTenantId ?? concrete?.tenantId;
       excludedTenantId = discovered.excludedTenantId;
+      caseInsensitiveTenantId = isKnownEntraAuthority(
+        discovered.metadata.issuer,
+        isMicrosoftProfile,
+      );
     } else {
       raw = {
         issuer: provider.issuer,
@@ -533,6 +552,7 @@ export const installConnectedConfigurations = Effect.fn(
           signingKeyIssuerRequired,
           expectedTenantId,
           excludedTenantId,
+          caseInsensitiveTenantId,
           ...(hasStaticSecret(provider.authentication)
             ? { clientSecret: provider.authentication.secret }
             : {}),

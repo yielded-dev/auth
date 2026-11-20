@@ -700,6 +700,7 @@ it.live("owns GitHub cohort revocation until its provider scope closes", () =>
 const entraHost = "https://login.microsoftonline.com";
 const entraV1Host = "https://sts.windows.net";
 const ciamHost = "https://contoso.ciamlogin.com";
+const genericTenantHost = "https://idp.example";
 const entraTemplate = `${entraHost}/{tenantid}/v2.0`;
 const workTenant = "11111111-1111-1111-1111-111111111111";
 const otherWorkTenant = "22222222-2222-2222-2222-222222222222";
@@ -841,6 +842,35 @@ it.effect.each<EntraDiscoveryCase>([
       { keyIssuer: undefined, accepted: true },
       { keyIssuer: undefined, tid: otherWorkTenant, accepted: false },
       { keyIssuer: `${entraV1Host}/${otherWorkTenant}/`, accepted: false },
+    ],
+  },
+  // Generic {tenantid} OIDC registrations keep exact tid casing in their subject
+  // namespace and compare pinned tenant IDs case-sensitively.
+  {
+    name: "preserves exact tid casing on generic multi-tenant OIDC registrations",
+    host: genericTenantHost,
+    authority: "common",
+    discoveryIssuer: `${genericTenantHost}/{tenantid}/v2.0`,
+    tokenIssuer: `${genericTenantHost}/${uppercasePersonalTenant}/v2.0`,
+    tid: uppercasePersonalTenant,
+    expectedSubject: `${uppercasePersonalTenant}:provider-subject`,
+    keys: [{ keyIssuer: `${genericTenantHost}/${uppercasePersonalTenant}/v2.0`, accepted: true }],
+  },
+  {
+    name: "checks pinned tid case-sensitively on generic OIDC registrations",
+    host: genericTenantHost,
+    authority: personalTenant,
+    discoveryIssuer: `${genericTenantHost}/{tenantid}/v2.0`,
+    tokenIssuer: `${genericTenantHost}/${personalTenant}/v2.0`,
+    tid: personalTenant,
+    expectedSubject: "provider-subject",
+    keys: [
+      {
+        keyIssuer: `${genericTenantHost}/${personalTenant}/v2.0`,
+        tid: uppercasePersonalTenant,
+        accepted: false,
+      },
+      { keyIssuer: `${genericTenantHost}/${personalTenant}/v2.0`, accepted: true },
     ],
   },
 ])(

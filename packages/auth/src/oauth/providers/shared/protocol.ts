@@ -121,6 +121,7 @@ const oidcIdentity = Effect.fnUntraced(function* (
     provider.issuer,
     Redacted.value(verified.claims),
     decodedSubject,
+    provider[discoveryProfile] === "microsoft",
   );
 
   return yield* snapshotOAuthVerifiedExternalIdentity.effect({

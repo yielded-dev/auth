@@ -379,11 +379,17 @@ export const makeEntraIssuerPolicy = (options: {
   readonly signingKeyIssuerRequired: boolean;
   readonly expectedTenantId?: string | undefined;
   readonly excludedTenantId?: string | undefined;
+  readonly caseInsensitiveTenantId?: boolean | undefined;
   readonly issuerOf: (key: Jwk.PublicKey) => SigningKeyAuthority | undefined;
 }): Oidc.IssuerPolicy =>
   Effect.fnUntraced(function* ({ configuredIssuer, tokenIssuer, claims, signingKey }) {
     const tenantTemplate = isTenantIssuerTemplate(configuredIssuer);
-    const expectedTenantId = options.expectedTenantId?.toLowerCase();
+    const caseInsensitiveTenantId = options.caseInsensitiveTenantId === true;
+
+    const expectedTenantId = caseInsensitiveTenantId
+      ? options.expectedTenantId?.toLowerCase()
+      : options.expectedTenantId;
+
     const excludedTenantId = options.excludedTenantId?.toLowerCase();
 
     if (tenantTemplate) {
@@ -407,7 +413,9 @@ export const makeEntraIssuerPolicy = (options: {
         Effect.mapError(issuerFailed),
       );
 
-      if (tenant.tid.toLowerCase() !== expectedTenantId) {
+      const actualTenantId = caseInsensitiveTenantId ? tenant.tid.toLowerCase() : tenant.tid;
+
+      if (actualTenantId !== expectedTenantId) {
         return yield* issuerFailed();
       }
     }
