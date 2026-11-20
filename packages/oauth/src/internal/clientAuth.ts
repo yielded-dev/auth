@@ -30,22 +30,45 @@ export const isMethod = (u: unknown): u is ClientAuth.Method<unknown> =>
   Predicate.hasProperty(u, "apply") &&
   Predicate.isFunction(u.apply);
 
+const wipeDataValue = (value: unknown): void => {
+  if (Redacted.isRedacted(value) && ephemeralRedacted.has(value as Redacted.Redacted<string>)) {
+    Redacted.wipeUnsafe(value);
+  }
+};
+
+/** Traverses own data descriptors only so cleanup never invokes accessors and
+ * always finishes every owned handle even when validation rejected `applied`. */
 export const wipeApplied = (applied: ClientAuth.Applied): void => {
   if (!Predicate.isObject(applied)) return;
-  if (Predicate.isObject(applied.headers)) {
-    for (const value of Object.values(applied.headers)) {
-      if (Redacted.isRedacted(value) && ephemeralRedacted.has(value as Redacted.Redacted<string>)) {
-        Redacted.wipeUnsafe(value);
+
+  const headersDesc = Object.getOwnPropertyDescriptor(applied, "headers");
+
+  const headers =
+    headersDesc !== undefined && "value" in headersDesc ? headersDesc.value : undefined;
+
+  if (Predicate.isObject(headers)) {
+    for (const key of Object.keys(headers)) {
+      const descriptor = Object.getOwnPropertyDescriptor(headers, key);
+
+      if (descriptor !== undefined && "value" in descriptor) {
+        wipeDataValue(descriptor.value);
       }
     }
   }
-  if (Array.isArray(applied.form)) {
-    for (const entry of applied.form) {
-      if (!Array.isArray(entry) || entry.length < 2) continue;
-      const value: unknown = entry[1];
 
-      if (Redacted.isRedacted(value) && ephemeralRedacted.has(value as Redacted.Redacted<string>)) {
-        Redacted.wipeUnsafe(value);
+  const formDesc = Object.getOwnPropertyDescriptor(applied, "form");
+  const form = formDesc !== undefined && "value" in formDesc ? formDesc.value : undefined;
+
+  if (Array.isArray(form)) {
+    for (let i = 0; i < form.length; i++) {
+      const entryDesc = Object.getOwnPropertyDescriptor(form, String(i));
+      const entry = entryDesc !== undefined && "value" in entryDesc ? entryDesc.value : undefined;
+
+      if (!Array.isArray(entry) || entry.length < 2) continue;
+      const valueDesc = Object.getOwnPropertyDescriptor(entry, "1");
+
+      if (valueDesc !== undefined && "value" in valueDesc) {
+        wipeDataValue(valueDesc.value);
       }
     }
   }

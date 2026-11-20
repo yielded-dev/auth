@@ -155,13 +155,8 @@ const clientAuthFailed = (description: string): OAuthError.OAuthError =>
   });
 
 const sanitizeMethodError = (error: unknown): OAuthError.OAuthError => {
-  if (OAuthError.isOAuthError(error)) {
-    if (error.reason._tag === "InvalidArgument") {
-      return V.invalidArgument(error.reason.description);
-    }
-    if (error.reason._tag === "ClientAuthFailed") {
-      return clientAuthFailed(error.reason.description);
-    }
+  if (OAuthError.isOAuthError(error) && error.reason._tag === "InvalidArgument") {
+    return V.invalidArgument("Invalid client authentication arguments");
   }
 
   return clientAuthFailed("Client authentication failed");
@@ -368,12 +363,21 @@ const prepareApplied = Effect.fnUntraced(function* (
   applied: Applied,
   baseParameters: ReadonlyArray<readonly [string, string]>,
   forbidGrantType: boolean,
+  authPosition: "append" | "prepend",
 ): Effect.fn.Return<PreparedRequest, OAuthError.OAuthError> {
-  if (
-    !Predicate.isObject(applied) ||
-    !Predicate.isObject(applied.headers) ||
-    !Array.isArray(applied.form)
-  ) {
+  if (!Predicate.isObject(applied)) {
+    return yield* clientAuthFailed("Client authentication method returned an invalid result");
+  }
+
+  const headersDesc = Object.getOwnPropertyDescriptor(applied, "headers");
+  const formDesc = Object.getOwnPropertyDescriptor(applied, "form");
+
+  const rawHeaders =
+    headersDesc !== undefined && "value" in headersDesc ? headersDesc.value : undefined;
+
+  const rawForm = formDesc !== undefined && "value" in formDesc ? formDesc.value : undefined;
+
+  if (!Predicate.isObject(rawHeaders) || !Array.isArray(rawForm)) {
     return yield* clientAuthFailed("Client authentication method returned an invalid result");
   }
 
@@ -381,7 +385,7 @@ const prepareApplied = Effect.fnUntraced(function* (
   const seenHeaders = new Set<string>();
   let hasBasicAuthorization = false;
 
-  for (const name of Object.keys(applied.headers)) {
+  for (const name of Object.keys(rawHeaders)) {
     const lower = name.toLowerCase();
 
     if (
@@ -392,7 +396,7 @@ const prepareApplied = Effect.fnUntraced(function* (
       return yield* clientAuthFailed("Client authentication method emitted a disallowed header");
     }
 
-    const descriptor = Object.getOwnPropertyDescriptor(applied.headers, name);
+    const descriptor = Object.getOwnPropertyDescriptor(rawHeaders, name);
 
     if (descriptor === undefined || !("value" in descriptor)) {
       return yield* clientAuthFailed("Client authentication method header is unreadable");
@@ -423,17 +427,16 @@ const prepareApplied = Effect.fnUntraced(function* (
     });
   }
 
-  const parameters: Array<readonly [string, string]> = [];
   const reservedBaseKeys = new Set<string>();
 
-  for (const [key, value] of baseParameters) {
+  for (const [key] of baseParameters) {
     reservedBaseKeys.add(key.toLowerCase());
-    parameters.push([key, value]);
   }
 
+  const authParameters: Array<readonly [string, string]> = [];
   let hasClientIdInForm = false;
 
-  for (const entry of applied.form) {
+  for (const entry of rawForm) {
     if (!Array.isArray(entry) || entry.length !== 2) {
       return yield* clientAuthFailed("Client authentication method emitted an invalid form field");
     }
@@ -468,12 +471,17 @@ const prepareApplied = Effect.fnUntraced(function* (
     );
 
     if (lower === "client_id") hasClientIdInForm = true;
-    parameters.push([key, revealed]);
+    authParameters.push([key, revealed]);
   }
 
   if (!hasBasicAuthorization && !hasClientIdInForm) {
-    parameters.push(["client_id", clientId]);
+    authParameters.push(["client_id", clientId]);
   }
+
+  const parameters: ReadonlyArray<readonly [string, string]> =
+    authPosition === "prepend"
+      ? [...authParameters, ...baseParameters]
+      : [...baseParameters, ...authParameters];
 
   return { headers, parameters };
 });
@@ -483,8 +491,10 @@ const prepareApplied = Effect.fnUntraced(function* (
  * fields with `baseParameters`, runs `encode`, and wipes any per-request
  * `Redacted` credentials produced by built-in methods on every exit.
  *
- * Caller-owned `Redacted` handles returned by custom {@link make} methods are
- * left untouched.
+ * Restores caller interruptibility around both `method.apply` and `encode`,
+ * masking only the handoff from an acquired `Applied` result to its cleanup
+ * finalizer. Caller-owned `Redacted` handles returned by custom {@link make}
+ * methods are left untouched.
  *
  * @stability unstable
  * @category combinators
@@ -495,7 +505,10 @@ export const withPreparedRequest: <A, E, R, R2>(
   request: Request,
   baseParameters: ReadonlyArray<readonly [string, string]>,
   encode: (prepared: PreparedRequest) => Effect.Effect<A, E, R2>,
-  options?: { readonly forbidGrantType?: boolean | undefined },
+  options?: {
+    readonly forbidGrantType?: boolean | undefined;
+    readonly authPosition?: "append" | "prepend" | undefined;
+  },
 ) => Effect.Effect<A, OAuthError.OAuthError | E, R | R2> = (
   method,
   request,
@@ -508,17 +521,27 @@ export const withPreparedRequest: <A, E, R, R2>(
   }
 
   const forbidGrantType = options?.forbidGrantType ?? true;
+  const authPosition = options?.authPosition ?? "append";
 
-  return Effect.acquireUseRelease(
-    method
-      .apply(request)
-      .pipe(Effect.catchCause((cause) => Effect.failCause(Cause.map(cause, sanitizeMethodError)))),
-    (applied) =>
-      Effect.flatMap(
-        prepareApplied(request.clientId, applied, baseParameters, forbidGrantType),
-        encode,
+  return Effect.uninterruptibleMask((restore) =>
+    Effect.flatMap(
+      restore(method.apply(request)).pipe(
+        Effect.catchCause((cause) => Effect.failCause(Cause.map(cause, sanitizeMethodError))),
       ),
-    (applied) => Effect.sync(() => InternalClientAuth.wipeApplied(applied)),
+      (applied) =>
+        restore(
+          Effect.flatMap(
+            prepareApplied(
+              request.clientId,
+              applied,
+              baseParameters,
+              forbidGrantType,
+              authPosition,
+            ),
+            encode,
+          ),
+        ).pipe(Effect.ensuring(Effect.sync(() => InternalClientAuth.wipeApplied(applied)))),
+    ),
   );
 };
 

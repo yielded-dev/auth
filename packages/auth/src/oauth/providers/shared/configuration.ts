@@ -219,6 +219,7 @@ const reserved = new Set([
   "code_challenge_method",
   "nonce",
   "scope",
+  "resource",
   "iss",
   "grant_type",
   "max_age",
