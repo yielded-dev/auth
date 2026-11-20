@@ -565,7 +565,9 @@ export const installConnectedProvider = Effect.fn("OpenIdConnect.installConnecte
           ? { revocationAuthentication: nativeAuthentication(provider.revocation.authentication) }
           : {}),
       },
-      provider.protocol === "oauth" ? nativeVendorOptions(provider) : undefined,
+      provider.protocol === "oauth"
+        ? { ...nativeVendorOptions(provider), supportsRefresh: true }
+        : undefined,
     );
 
     return { provider, metadata, ...native };
