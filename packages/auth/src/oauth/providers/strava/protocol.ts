@@ -192,6 +192,14 @@ export const makeConnectedProtocol = Effect.fn("Strava.configure")(function* (
     ) {
       const revealedCredential = yield* reveal(credential);
 
+      if (
+        typeof revealedCredential !== "string" ||
+        revealedCredential.length === 0 ||
+        revealedCredential.length > 16_384
+      ) {
+        return yield* OAuthUnavailable.make({});
+      }
+
       // Preserve Strava's released field order (`client_id`, `client_secret`,
       // `grant_type`, `code`/`refresh_token`) while keeping credentials and
       // `grant_type` framework-owned via `ClientAuth.withPreparedRequest`.

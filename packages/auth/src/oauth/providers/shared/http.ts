@@ -165,7 +165,7 @@ export const RequestOptions = Schema.Struct({
   ),
 });
 
-const reservedParameters: ReadonlySet<string> = new Set([
+const reservedEndpointQueryParameters: ReadonlySet<string> = new Set([
   "client_id",
   "client_secret",
   "client_assertion",
@@ -180,7 +180,6 @@ const reservedParameters: ReadonlySet<string> = new Set([
   "code_challenge_method",
   "nonce",
   "scope",
-  "resource",
   "iss",
   "grant_type",
   "refresh_token",
@@ -200,6 +199,11 @@ const reservedParameters: ReadonlySet<string> = new Set([
   "requested_token_type",
 ]);
 
+const reservedBodyParameters: ReadonlySet<string> = new Set([
+  ...reservedEndpointQueryParameters,
+  "resource",
+]);
+
 const Parameters = Schema.Record(
   Schema.String.check(Schema.isPattern(/^[A-Za-z][A-Za-z0-9._~-]{0,63}$/)),
   Schema.String.check(Schema.isMaxLength(2048)),
@@ -207,14 +211,14 @@ const Parameters = Schema.Record(
   Schema.makeFilter(
     (value) =>
       Object.keys(value).length <= 16 &&
-      Object.keys(value).every((key) => !reservedParameters.has(key.toLowerCase())),
+      Object.keys(value).every((key) => !reservedBodyParameters.has(key.toLowerCase())),
   ),
 );
 
 const ProtocolEndpoint = Endpoint.check(
   Schema.makeFilter((value) =>
     Array.from(new URL(value).searchParams.keys()).every(
-      (key) => !reservedParameters.has(key.toLowerCase()),
+      (key) => !reservedEndpointQueryParameters.has(key.toLowerCase()),
     ),
   ),
 );

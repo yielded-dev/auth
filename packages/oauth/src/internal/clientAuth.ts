@@ -36,8 +36,10 @@ const wipeDataValue = (value: unknown): void => {
   }
 };
 
-/** Traverses own data descriptors only so cleanup never invokes accessors and
- * always finishes every owned handle even when validation rejected `applied`. */
+/** Traverses own data descriptors on `applied.headers` and indexed own data
+ * elements on `applied.form` without invoking getters, wiping every registered
+ * ephemeral `Redacted` handle present in those slots even when validation
+ * rejected `applied` while leaving caller-owned handles untouched. */
 export const wipeApplied = (applied: ClientAuth.Applied): void => {
   if (!Predicate.isObject(applied)) return;
 
