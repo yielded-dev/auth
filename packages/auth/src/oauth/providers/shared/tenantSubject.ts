@@ -33,7 +33,7 @@ export const subjectInTenant = Effect.fnUntraced(function* (
     Effect.mapError(() => OAuthProtocolRejected.make({})),
   );
 
-  const scoped = `${tenant.tid}:${subject}`;
+  const scoped = `${tenant.tid.toLowerCase()}:${subject}`;
 
   if (scoped.length > 1024) return yield* OAuthProtocolRejected.make({});
 

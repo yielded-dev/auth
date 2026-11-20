@@ -11,15 +11,14 @@ export const entraTenantId = Schema.String.check(
 /** Commercial personal-account tenant; `consumers` is this GUID's nickname. */
 export const personalMicrosoftAccountTenant = "9188040d-6c67-4c5b-b112-36a304b66dad";
 
-const entraTenantHosts: ReadonlySet<string> = new Set([
+const entraV2TenantHosts: ReadonlySet<string> = new Set([
   "login.microsoftonline.com",
   "login.microsoftonline.us",
   "login.partner.microsoftonline.cn",
   "login.chinacloudapi.cn",
-  "sts.windows.net",
 ]);
 
-const isEntraTenantHost = (origin: string): boolean => {
+const isEntraV2TenantHost = (origin: string): boolean => {
   let url: URL;
 
   try {
@@ -32,7 +31,7 @@ const isEntraTenantHost = (origin: string): boolean => {
   const host = url.hostname.toLowerCase();
 
   return (
-    entraTenantHosts.has(host) ||
+    entraV2TenantHosts.has(host) ||
     (host.endsWith(".ciamlogin.com") && host.length > ".ciamlogin.com".length)
   );
 };
@@ -47,28 +46,37 @@ const issuerOriginAndPath = (value: string) => {
   return origin === undefined ? undefined : { origin, path: match[2] ?? "" };
 };
 
-/** Extract the concrete tenant GUID from an Entra / CIAM single-tenant
- * authority (`/<tenantId>/v2.0`, or `/<tenantId>/` on `sts.windows.net`). */
-export const concreteEntraTenantId = (
+/** Extract the concrete tenant GUID and signing-key issuer policy from an Entra
+ * / CIAM single-tenant authority. v2 authorities (`/<tenantId>/v2.0` on known
+ * Entra hosts, `*.ciamlogin.com`, or Microsoft-profile registrations) require
+ * per-key `issuer` metadata; v1 authorities (`https://sts.windows.net/<tenantId>/`)
+ * bind `tid` without requiring per-key `issuer` because Microsoft's v1 JWKS
+ * omits it. */
+export const concreteEntraAuthority = (
   issuer: string,
   isMicrosoftProfile = false,
-): string | undefined => {
+): { readonly tenantId: string; readonly signingKeyIssuerRequired: boolean } | undefined => {
   const parts = issuerOriginAndPath(issuer);
 
   if (parts === undefined) return undefined;
-  if (!isMicrosoftProfile && !isEntraTenantHost(parts.origin)) return undefined;
 
   const segments = parts.path.split("/");
 
   if (
-    segments.length === 3 &&
-    segments[0] === "" &&
-    segments[1] !== undefined &&
-    Schema.is(entraTenantId)(segments[1]) &&
-    (segments[2] === "v2.0" ||
-      (parts.origin.toLowerCase() === "https://sts.windows.net" && segments[2] === ""))
+    segments.length !== 3 ||
+    segments[0] !== "" ||
+    segments[1] === undefined ||
+    !Schema.is(entraTenantId)(segments[1])
   ) {
-    return segments[1];
+    return undefined;
+  }
+
+  if (segments[2] === "v2.0" && (isMicrosoftProfile || isEntraV2TenantHost(parts.origin))) {
+    return { tenantId: segments[1], signingKeyIssuerRequired: true };
+  }
+
+  if (segments[2] === "" && parts.origin.toLowerCase() === "https://sts.windows.net") {
+    return { tenantId: segments[1], signingKeyIssuerRequired: false };
   }
 
   return undefined;
@@ -173,11 +181,15 @@ export const matchEntraDiscoveryIssuer = (
     }
   | undefined => {
   if (configured === discovered) {
-    const concreteTenant = concreteEntraTenantId(discovered, isMicrosoftProfile);
+    const concrete = concreteEntraAuthority(discovered, isMicrosoftProfile);
 
-    return concreteTenant === undefined
+    return concrete === undefined
       ? { issuer: discovered, pinned: false }
-      : { issuer: discovered, pinned: true, expectedTenantId: concreteTenant };
+      : {
+          issuer: discovered,
+          pinned: concrete.signingKeyIssuerRequired,
+          expectedTenantId: concrete.tenantId,
+        };
   }
 
   const personal = personalAccountIssuer(configured);

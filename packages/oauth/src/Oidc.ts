@@ -267,7 +267,6 @@ interface ParsedPolicy {
   readonly trustedAudiences: ReadonlySet<string>;
   readonly requireAzpForMultipleAudiences: boolean;
   readonly clockToleranceMillis: number;
-  readonly clockToleranceSeconds: number;
   readonly allowedTyp: ReadonlySet<string>;
   readonly requireTyp: boolean;
   readonly maxTokenLength: number;
@@ -533,7 +532,6 @@ const parsePolicy = Effect.fnUntraced(function* (
     trustedAudiences,
     requireAzpForMultipleAudiences: options.requireAzpForMultipleAudiences ?? true,
     clockToleranceMillis,
-    clockToleranceSeconds: clockToleranceMillis / 1000,
     allowedTyp,
     requireTyp: options.requireTyp ?? false,
     maxTokenLength,
@@ -759,6 +757,12 @@ const isAuthTimeTooOld = (
     : authTime < cutoffMillis / 1000;
 };
 
+const authTimeMillis = (authTime: number): number => {
+  const rounded = Math.round(authTime * 1000);
+
+  return rounded / 1000 === authTime ? rounded : Math.trunc(authTime * 1000);
+};
+
 const verifyTokenPayload = Effect.fnUntraced(function* (
   verified: Jws.Verified,
   signingKey: Jwk.PublicKey | undefined,
@@ -835,17 +839,17 @@ const verifyTokenPayload = Effect.fnUntraced(function* (
 
   // 5. Time claims: exp, nbf, iat, and future auth_time.
   const nowMillis = yield* Clock.currentTimeMillis;
-  const now = nowMillis / 1000;
-  const tolerance = policy.clockToleranceSeconds;
+  const minExp = (nowMillis - policy.clockToleranceMillis) / 1000;
+  const maxIssuedAt = (nowMillis + policy.clockToleranceMillis) / 1000;
 
-  if (claims.exp <= now - tolerance) {
+  if (claims.exp <= minExp) {
     return yield* tokenFailed("expired");
   }
 
   if (
-    (claims.nbf !== undefined && claims.nbf > now + tolerance) ||
-    claims.iat > now + tolerance ||
-    (claims.auth_time !== undefined && claims.auth_time > now + tolerance)
+    (claims.nbf !== undefined && claims.nbf > maxIssuedAt) ||
+    claims.iat > maxIssuedAt ||
+    (claims.auth_time !== undefined && claims.auth_time > maxIssuedAt)
   ) {
     return yield* tokenFailed("notYetValid");
   }
@@ -948,9 +952,8 @@ const verifyTokenPayload = Effect.fnUntraced(function* (
 
   // Re-read time after optional digest I/O so expired tokens cannot escape.
   const finishedMillis = yield* Clock.currentTimeMillis;
-  const finished = finishedMillis / 1000;
 
-  if (claims.exp <= finished - tolerance) {
+  if (claims.exp <= (finishedMillis - policy.clockToleranceMillis) / 1000) {
     return yield* tokenFailed("expired");
   }
   if (
@@ -979,7 +982,7 @@ const verifyTokenPayload = Effect.fnUntraced(function* (
       : {
           authTime: claims.auth_time,
           authenticatedAt: DateTime.makeUnsafe(
-            Math.min(nowMillis, Math.trunc(claims.auth_time * 1000)),
+            Math.min(nowMillis, authTimeMillis(claims.auth_time)),
           ),
         }),
   };

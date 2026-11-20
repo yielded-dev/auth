@@ -47,7 +47,7 @@ const MicrosoftIdentity = Schema.Struct({ oid: entraTenantId, tid: entraTenantId
 
 const decodeSubject = (claims: unknown) =>
   Schema.decodeUnknownEffect(MicrosoftIdentity)(claims).pipe(
-    Effect.map(({ oid, tid }) => `${oid}:${tid}`),
+    Effect.map(({ oid, tid }) => `${oid}:${tid.toLowerCase()}`),
     Effect.mapError(() => OAuthProtocolRejected.make({})),
   );
 

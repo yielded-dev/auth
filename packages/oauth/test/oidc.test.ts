@@ -215,6 +215,63 @@ it.effect(
         _tag: "OAuthError",
         reason: { _tag: "TokenVerificationFailed", reason: "hash" },
       });
+
+      // Exact future-tolerance boundary divides once ((nowMillis + toleranceMillis) / 1000)
+      // so exact equality passes for iat, nbf, and auth_time.
+      const boundaryNowMillis = Date.parse("2026-01-01T00:00:00.001Z");
+      const exactFutureSeconds = (boundaryNowMillis + 100) / 1000;
+      const pastFutureSeconds = (boundaryNowMillis + 101) / 1000;
+
+      yield* TestClock.setTime(boundaryNowMillis);
+
+      const tolerantVerifier = yield* makeRemoteVerifier(
+        transport(() => Response.json({ keys: [{ ...jwk, kid: "key" }] })),
+        { clockTolerance: "100 millis" },
+      );
+
+      const boundaryVerified = yield* tolerantVerifier.verify(
+        yield* sign(keys.privateKey, {
+          ...claims,
+          iat: exactFutureSeconds,
+          nbf: exactFutureSeconds,
+          auth_time: exactFutureSeconds,
+          exp: Math.floor(boundaryNowMillis / 1000) + 300,
+        }),
+        {
+          ...verification,
+          requestedAt: DateTime.makeUnsafe(boundaryNowMillis),
+        },
+      );
+
+      expect(boundaryVerified.subject).toBe("provider-subject");
+      expect(DateTime.toEpochMillis(boundaryVerified.authenticatedAt!)).toBe(boundaryNowMillis);
+
+      for (const futureOverride of [
+        { iat: pastFutureSeconds },
+        { nbf: pastFutureSeconds },
+        { auth_time: pastFutureSeconds },
+      ]) {
+        expect(
+          yield* tolerantVerifier
+            .verify(
+              yield* sign(keys.privateKey, {
+                ...claims,
+                iat: Math.floor(boundaryNowMillis / 1000),
+                exp: Math.floor(boundaryNowMillis / 1000) + 300,
+                auth_time: Math.floor(boundaryNowMillis / 1000),
+                ...futureOverride,
+              }),
+              {
+                ...verification,
+                requestedAt: DateTime.makeUnsafe(boundaryNowMillis),
+              },
+            )
+            .pipe(Effect.flip),
+        ).toMatchObject({
+          _tag: "OAuthError",
+          reason: { _tag: "TokenVerificationFailed", reason: "notYetValid" },
+        });
+      }
     }).pipe(Effect.scoped, Effect.provide(cryptoLayer)),
 );
 
@@ -418,6 +475,7 @@ it.effect(
       );
 
       expect(exactY2038.authTime).toBe(y2038Seconds);
+      expect(DateTime.toEpochMillis(exactY2038.authenticatedAt!)).toBe(y2038Millis);
     }).pipe(Effect.scoped, Effect.provide(cryptoLayer)),
 );
 

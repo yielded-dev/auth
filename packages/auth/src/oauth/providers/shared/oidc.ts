@@ -18,7 +18,7 @@ import * as Tracer from "effect/Tracer";
 
 import { makeScopedOperation } from "../../../internal/scoped-operation";
 import { OAuthUnavailable } from "../../signInErrors";
-import { concreteEntraTenantId, isTenantIssuerTemplate } from "../microsoft/discovery";
+import { concreteEntraAuthority, isTenantIssuerTemplate } from "../microsoft/discovery";
 import { makeEntraIssuerPolicy, makeEntraJwks } from "../microsoft/jwks";
 import { classifyOAuthConfigurationError } from "./classifyOAuthError";
 import {
@@ -268,7 +268,11 @@ const makeVerifier = Effect.fn("OpenIdConnect.makeVerifier")(function* (
   const hmacOnly = advertised.length === 1 && advertised[0] === "HS256";
 
   if (hmacOnly) {
-    if (options.signingKeyIssuerRequired || isTenantIssuerTemplate(metadata.issuer)) {
+    if (
+      options.signingKeyIssuerRequired ||
+      options.expectedTenantId !== undefined ||
+      isTenantIssuerTemplate(metadata.issuer)
+    ) {
       return yield* OpenIdConnectConfigurationError.make({ reason: "metadata" });
     }
     if (options.clientSecret === undefined) {
@@ -391,15 +395,15 @@ export const installConfigurations = Effect.fn("OpenIdConnect.installConfigurati
         provider[discoveryProfile],
       );
 
-      const concreteTenant = concreteEntraTenantId(
+      const concrete = concreteEntraAuthority(
         discovered.metadata.issuer,
         provider[discoveryProfile] === "microsoft",
       );
 
       raw = discovered.metadata;
       signingKeyIssuerRequired =
-        discovered.signingKeyIssuerRequired || concreteTenant !== undefined;
-      expectedTenantId = discovered.expectedTenantId ?? concreteTenant;
+        discovered.signingKeyIssuerRequired || (concrete?.signingKeyIssuerRequired ?? false);
+      expectedTenantId = discovered.expectedTenantId ?? concrete?.tenantId;
       excludedTenantId = discovered.excludedTenantId;
     } else {
       raw = {
@@ -483,12 +487,12 @@ export const installConnectedConfigurations = Effect.fn(
         undefined,
       );
 
-      const concreteTenant = concreteEntraTenantId(discovered.metadata.issuer);
+      const concrete = concreteEntraAuthority(discovered.metadata.issuer);
 
       raw = discovered.metadata;
       signingKeyIssuerRequired =
-        discovered.signingKeyIssuerRequired || concreteTenant !== undefined;
-      expectedTenantId = discovered.expectedTenantId ?? concreteTenant;
+        discovered.signingKeyIssuerRequired || (concrete?.signingKeyIssuerRequired ?? false);
+      expectedTenantId = discovered.expectedTenantId ?? concrete?.tenantId;
       excludedTenantId = discovered.excludedTenantId;
     } else {
       raw = {

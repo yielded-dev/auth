@@ -698,6 +698,7 @@ it.live("owns GitHub cohort revocation until its provider scope closes", () =>
 );
 
 const entraHost = "https://login.microsoftonline.com";
+const entraV1Host = "https://sts.windows.net";
 const ciamHost = "https://contoso.ciamlogin.com";
 const entraTemplate = `${entraHost}/{tenantid}/v2.0`;
 const workTenant = "11111111-1111-1111-1111-111111111111";
@@ -705,7 +706,23 @@ const otherWorkTenant = "22222222-2222-2222-2222-222222222222";
 const personalTenant = "9188040d-6c67-4c5b-b112-36a304b66dad";
 const uppercasePersonalTenant = personalTenant.toUpperCase();
 
-it.effect.each([
+interface EntraDiscoveryCase {
+  readonly name: string;
+  readonly host: string;
+  readonly authority: string;
+  readonly v1?: boolean;
+  readonly discoveryIssuer: string;
+  readonly tokenIssuer: string;
+  readonly tid: string;
+  readonly expectedSubject: string;
+  readonly keys: ReadonlyArray<{
+    readonly keyIssuer: string | undefined;
+    readonly tid?: string;
+    readonly accepted: boolean;
+  }>;
+}
+
+it.effect.each<EntraDiscoveryCase>([
   // Regression at 25217c71: pinning a discovery template admitted an issuer-less key.
   {
     name: "requires key issuer authority for a pinned tenant template",
@@ -728,7 +745,7 @@ it.effect.each([
     discoveryIssuer: entraTemplate,
     tokenIssuer: `${entraHost}/${uppercasePersonalTenant}/v2.0`,
     tid: uppercasePersonalTenant,
-    expectedSubject: `${uppercasePersonalTenant}:provider-subject`,
+    expectedSubject: `${personalTenant}:provider-subject`,
     keys: [{ keyIssuer: `${entraHost}/${uppercasePersonalTenant}/v2.0`, accepted: false }],
   },
   // Regression at 881f94d: concrete consumers discovery admitted an issuer-less key.
@@ -743,6 +760,11 @@ it.effect.each([
     keys: [
       { keyIssuer: undefined, accepted: false },
       { keyIssuer: `${entraHost}/${personalTenant}/v2.0`, accepted: true },
+      {
+        keyIssuer: `${entraHost}/${personalTenant}/v2.0`,
+        tid: uppercasePersonalTenant,
+        accepted: true,
+      },
     ],
   },
   // Regression at 881f94d (carried into 0609a81): pinned consumers with a concrete
@@ -804,19 +826,47 @@ it.effect.each([
       { keyIssuer: `${ciamHost}/${workTenant}/v2.0`, accepted: true },
     ],
   },
+  // Entra v1 (sts.windows.net/<tenant>/) JWKS omits per-key issuer, so valid v1
+  // sign-ins must succeed while still binding tid to the concrete tenant GUID.
+  {
+    name: "accepts Entra v1 JWKS without key issuer while binding tid",
+    host: entraV1Host,
+    authority: workTenant,
+    v1: true,
+    discoveryIssuer: `${entraV1Host}/${workTenant}/`,
+    tokenIssuer: `${entraV1Host}/${workTenant}/`,
+    tid: workTenant,
+    expectedSubject: "provider-subject",
+    keys: [
+      { keyIssuer: undefined, accepted: true },
+      { keyIssuer: undefined, tid: otherWorkTenant, accepted: false },
+      { keyIssuer: `${entraV1Host}/${otherWorkTenant}/`, accepted: false },
+    ],
+  },
 ])(
   "Entra discovery $name",
-  ({ host, authority, discoveryIssuer, tokenIssuer, tid, expectedSubject, keys }) =>
+  ({ host, authority, v1, discoveryIssuer, tokenIssuer, tid, expectedSubject, keys }) =>
     Effect.gen(function* () {
       const seconds = 2_000_000_000;
 
       yield* TestClock.setTime(seconds * 1000);
       const pair = yield* Jwk.generateKeyPair({ algorithm: "ES256", kid: "key" });
       const signingKey = yield* Jwk.importPrivate(pair.privateKey, "ES256");
-      const configuredIssuer = `${host}/${authority}/v2.0`;
-      const discoveryUrl = `${configuredIssuer}/.well-known/openid-configuration`;
-      const tokenUrl = `${host}/${authority}/oauth2/v2.0/token`;
-      const jwksUrl = `${host}/${authority}/discovery/v2.0/keys`;
+      const configuredIssuer = v1 ? `${host}/${authority}/` : `${host}/${authority}/v2.0`;
+
+      const endpoints = v1
+        ? {
+            discovery: `${host}/${authority}/.well-known/openid-configuration`,
+            authorization: `${entraHost}/${authority}/oauth2/authorize`,
+            token: `${entraHost}/${authority}/oauth2/token`,
+            jwks: `${entraHost}/${authority}/discovery/keys`,
+          }
+        : {
+            discovery: `${configuredIssuer}/.well-known/openid-configuration`,
+            authorization: `${host}/${authority}/oauth2/v2.0/authorize`,
+            token: `${host}/${authority}/oauth2/v2.0/token`,
+            jwks: `${host}/${authority}/discovery/v2.0/keys`,
+          };
 
       const EntraIdToken = Schema.Struct({
         iss: Schema.String,
@@ -837,27 +887,27 @@ it.effect.each([
         const fetch: typeof globalThis.fetch = async (input) => {
           const url = input instanceof Request ? input.url : String(input);
 
-          if (url === discoveryUrl) {
+          if (url === endpoints.discovery) {
             return json({
               issuer: discoveryIssuer,
-              signing_key_issuer_required: false,
-              authorization_endpoint: `${host}/${authority}/oauth2/v2.0/authorize`,
-              token_endpoint: tokenUrl,
-              jwks_uri: jwksUrl,
+              ...(v1 ? {} : { signing_key_issuer_required: false }),
+              authorization_endpoint: endpoints.authorization,
+              token_endpoint: endpoints.token,
+              jwks_uri: endpoints.jwks,
               response_types_supported: ["code"],
               code_challenge_methods_supported: ["S256"],
               id_token_signing_alg_values_supported: ["ES256"],
               token_endpoint_auth_methods_supported: ["client_secret_basic"],
             });
           }
-          if (url === tokenUrl) {
+          if (url === endpoints.token) {
             return json({
               access_token: "private-access",
               token_type: "bearer",
               id_token: idToken,
             });
           }
-          if (url === jwksUrl) {
+          if (url === endpoints.jwks) {
             return json({
               keys: [
                 {
