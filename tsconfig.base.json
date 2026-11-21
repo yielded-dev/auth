@@ -148,7 +148,7 @@
             "options": {
               "diagnosticSeverity": {
                 "nodeBuiltinImport": "warning",
-                "preferSchemaOverJson": "suggestion"
+                "globalJsonInEffect": "suggestion"
               }
             }
           }

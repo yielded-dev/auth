@@ -114,7 +114,7 @@ export default defineConfig({
     options: {
       // Preserve semantic lint (e.g. exhaustive switches and unbound methods).
       typeAware: true,
-      // effect-tsrs owns TypeScript and Effect diagnostics.
+      // @effect/tsgo (effect-tsgo tsrs) owns TypeScript and Effect diagnostics.
       typeCheck: false,
     },
     jsPlugins: [

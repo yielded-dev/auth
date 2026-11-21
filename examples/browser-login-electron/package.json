@@ -5,7 +5,7 @@
   "type": "module",
   "main": "dist/main.cjs",
   "scripts": {
-    "check": "effect-tsrs diagnostics --project tsconfig.json --type-check --strict",
+    "check": "effect-tsgo tsrs --noEmit -p tsconfig.json",
     "build": "vp pack && vp build",
     "start": "vp run build && electron ."
   },

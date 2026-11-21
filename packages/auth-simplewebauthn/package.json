@@ -26,7 +26,7 @@
     "access": "public"
   },
   "scripts": {
-    "check": "effect-tsrs diagnostics --project tsconfig.json --type-check --strict",
+    "check": "effect-tsgo tsrs --noEmit -p tsconfig.json",
     "test": "vp test --passWithNoTests"
   },
   "dependencies": {

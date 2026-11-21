@@ -25,13 +25,13 @@ Bun can also fall back to `.tmp` inside its install cache. Set
 read-only.
 
 `vp check` runs formatting and linting. `vp run check` also runs TypeScript and
-Effect diagnostics through `effect-tsrs` across workspaces and scripts. Its bundled
-tsrs compiler checks both with `--type-check`; `--strict` makes warnings fail the check.
+Effect diagnostics through `@effect/tsgo` (`effect-tsgo tsrs --noEmit -p ...`)
+across workspaces and scripts, failing on both errors and warnings by default.
 Keep optional dependencies enabled for its platform binaries. Include
 `vp env doctor` output when reporting toolchain failures.
 
-TypeScript and `@effect/tsgo` remain available for editor features and the Effect
-configuration schema; typecheck tasks do not patch or invoke them.
+TypeScript remains available for editor features, and `@effect/tsgo` provides
+both the Effect configuration schema and CLI typechecking.
 
 The shared Effect policy makes correctness, composition, and Schema diagnostics
 errors. Exact severities and scoped exceptions live in `tsconfig.base.json`.
