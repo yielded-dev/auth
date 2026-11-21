@@ -67,7 +67,7 @@
     "@cloudflare/workers-types": "5.20261108.1",
     "@effect/platform-bun": "4.1.4",
     "@effect/platform-node": "4.1.4",
-    "@effect/tsgo": "0.67.7",
+    "@effect/tsgo": "0.70.0",
     "@effect/vitest": "4.1.4",
     "@types/node": "26.6.6",
     "effect": "4.1.4",
